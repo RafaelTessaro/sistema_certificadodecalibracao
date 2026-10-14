@@ -248,7 +248,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
         </div>
 
         <div className="flex flex-col gap-6">
-          {emissao && <Autenticidade k={k} />}
+          {emissao && <CartaoEmissao k={k} />}
 
           <Card>
             <CardHeader icone={<ClipboardList className="h-4 w-4" />} titulo="Calibração" />
@@ -437,7 +437,7 @@ function imprimir(url: string) {
   document.body.appendChild(quadro)
 }
 
-function Autenticidade({ k }: { k: Calibracao }) {
+function CartaoEmissao({ k }: { k: Calibracao }) {
   const emissao = k.emissao!
   const [copiado, setCopiado] = useState(false)
   const copiar = async () => {
@@ -453,10 +453,10 @@ function Autenticidade({ k }: { k: Calibracao }) {
     <Card className="overflow-hidden">
       <div className="relative isolate overflow-hidden bg-brand px-5 py-4 text-on-brand">
         <ShieldCheck className="absolute -top-3 -right-3 -z-10 h-24 w-24 opacity-15" />
-        <p className="text-xs font-medium opacity-85">Código de autenticidade</p>
-        <p className="tnum mt-0.5 font-mono text-[26px] leading-tight font-semibold tracking-[0.06em]">{emissao.codigo}</p>
+        <p className="text-xs font-medium opacity-85">Certificado emitido</p>
+        <p className="tnum mt-0.5 text-[24px] leading-tight font-semibold">{k.numero}</p>
         <p className="mt-1 text-xs opacity-85">
-          Emitido em {dataHora(emissao.emitidoEm)} por {emissao.emitidoPor}
+          Em {dataHora(emissao.emitidoEm)} por {emissao.emitidoPor}
         </p>
       </div>
       <div className="flex flex-col gap-3 px-5 py-4">
@@ -477,15 +477,7 @@ function Autenticidade({ k }: { k: Calibracao }) {
             </Button>
           </div>
         </div>
-        <a
-          href={`#/verificar/${encodeURIComponent(emissao.codigo)}`}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1.5 text-[13px] font-medium text-brand-ink hover:underline"
-        >
-          Ver como o cliente confere a autenticidade
-          <ExternalLink className="h-3.5 w-3.5" />
-        </a>
+        <p className="text-xs text-muted">Confere se um arquivo PDF é exatamente o que foi emitido pelo sistema.</p>
       </div>
     </Card>
   )
@@ -585,7 +577,7 @@ function MotivoModal({
       descricao={
         revisar
           ? `Abre uma revisão com os mesmos dados. Ao ser emitida, ela substitui o nº ${numero} e informa o motivo.`
-          : 'O certificado continua guardado, com a marca “cancelado”, e a verificação de autenticidade passa a mostrar que ele não vale mais.'
+          : 'O certificado continua guardado no sistema, com a marca “cancelado”, e não pode mais ser enviado.'
       }
       icone={revisar ? <FilePen className="h-5 w-5" /> : <Ban className="h-5 w-5" />}
       rodape={

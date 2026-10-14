@@ -1,5 +1,5 @@
 // Configurações (só o administrador): dados da empresa, certificado, cálculo da incerteza, vencimentos e
-// lembretes, e-mail, verificação pelo QR code, cópias de segurança, aparência e sobre.
+// lembretes, e-mail, cópias de segurança, aparência e sobre.
 // Cada seção tem o seu "Salvar" e grava só a sua parte; as alterações de uma seção continuam guardadas
 // ao trocar de seção (o menu marca as que não foram salvas).
 
@@ -13,7 +13,6 @@ import {
   ExternalLink,
   FileBadge2,
   FolderOpen,
-  Globe,
   HardDrive,
   Info,
   KeyRound,
@@ -25,7 +24,6 @@ import {
   Moon,
   Network,
   Palette,
-  QrCode,
   RefreshCw,
   RotateCcw,
   Save,
@@ -71,7 +69,7 @@ import { avisarErro, toast, useUI, type Tema } from '../store/ui'
 
 // ---- Seções ----------------------------------------------------------------------------
 
-type IdSecao = 'empresa' | 'certificado' | 'calculo' | 'vencimentos' | 'email' | 'verificacao' | 'backup' | 'aparencia' | 'sobre'
+type IdSecao = 'empresa' | 'certificado' | 'calculo' | 'vencimentos' | 'email' | 'backup' | 'aparencia' | 'sobre'
 
 interface InfoSecao {
   id: IdSecao
@@ -93,7 +91,6 @@ const GRUPOS: Array<{ grupo: string; secoes: InfoSecao[] }> = [
     secoes: [
       { id: 'vencimentos', label: 'Vencimentos e lembretes', icone: BellRing },
       { id: 'email', label: 'E-mail', icone: Mail },
-      { id: 'verificacao', label: 'Verificação (QR code)', icone: QrCode },
     ],
   },
   {
@@ -109,7 +106,7 @@ const GRUPOS: Array<{ grupo: string; secoes: InfoSecao[] }> = [
 const SECOES = GRUPOS.flatMap((g) => g.secoes)
 
 /** Seções que editam as configurações gerais (precisam delas carregadas). */
-const DA_CONFIG = new Set<IdSecao>(['empresa', 'certificado', 'calculo', 'vencimentos', 'verificacao'])
+const DA_CONFIG = new Set<IdSecao>(['empresa', 'certificado', 'calculo', 'vencimentos'])
 
 type AoSujo = (id: IdSecao, sujo: boolean) => void
 type SalvarParte = (parte: Partial<Config>, rotulo: string) => Promise<Config>
@@ -215,8 +212,6 @@ export function Configuracoes() {
         return <SecaoCalculo {...props} />
       case 'vencimentos':
         return <SecaoVencimentos {...props} />
-      case 'verificacao':
-        return <SecaoVerificacao {...props} />
       case 'email':
         return <SecaoEmail aoSujo={aoSujo} />
       case 'backup':
@@ -2274,126 +2269,6 @@ function FormEmail({
         </div>
       </Card>
     </>
-  )
-}
-
-// ---- Verificação de autenticidade -----------------------------------------------------------
-
-/** Endereço que só funciona dentro da empresa (rede local ou o próprio computador). */
-function enderecoInterno(url: string) {
-  try {
-    const host = new URL(url).hostname
-    return (
-      host === 'localhost' ||
-      host.endsWith('.local') ||
-      /^127\./.test(host) ||
-      /^10\./.test(host) ||
-      /^192\.168\./.test(host) ||
-      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-      !host.includes('.')
-    )
-  } catch {
-    return false
-  }
-}
-
-function SecaoVerificacao({ config, salvarParte, aoSujo }: PropsSecao) {
-  const atual = useMemo(() => ({ urlVerificacao: config.urlVerificacao }), [config])
-  const s = useSecao('verificacao', atual, aoSujo)
-  const url = s.valor.urlVerificacao.trim()
-  const erro = url && !/^https?:\/\/[^\s/]+/i.test(url) ? 'O endereço precisa começar com https:// (ou http://).' : null
-  const interno = !erro && url ? enderecoInterno(url) : false
-  const exemplo = `${url.replace(/\/+$/, '')}/#/verificar/AB12-CD34`
-  const local = `${location.protocol}//${location.host}/#/verificar/`
-
-  const enviar = (ev: FormEvent) => {
-    ev.preventDefault()
-    s.setTentou(true)
-    if (erro) return toast.erro('Confira o endereço', erro)
-    void s.gravar(async () => ({ urlVerificacao: (await salvarParte({ urlVerificacao: url }, 'Verificação')).urlVerificacao }))
-  }
-
-  return (
-    <FormSecao
-      id="verificacao"
-      icone={<QrCode className="h-4 w-4" />}
-      titulo="Verificação de autenticidade"
-      descricao="Cada certificado tem um QR code e um código para o cliente conferir se o documento é verdadeiro."
-      sujo={s.sujo}
-      salvando={s.salvando}
-      aoDescartar={s.descartar}
-      aoEnviar={enviar}
-    >
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className={cn('rounded-xl border p-4', url ? 'border-brand/50 bg-brand-soft/40' : 'border-line bg-surface-2/40')}>
-          <p className="flex items-center gap-2 text-sm font-semibold text-ink">
-            <Globe className="h-4 w-4 text-brand" /> Com um endereço público
-          </p>
-          <p className="mt-1.5 text-[13px] leading-snug text-ink-2">
-            O QR code abre a página de conferência deste sistema, que mostra se o certificado é autêntico, cancelado ou
-            substituído. Só funciona fora da empresa se o sistema estiver publicado na internet nesse endereço.
-          </p>
-        </div>
-        <div className={cn('rounded-xl border p-4', !url ? 'border-brand/50 bg-brand-soft/40' : 'border-line bg-surface-2/40')}>
-          <p className="flex items-center gap-2 text-sm font-semibold text-ink">
-            <QrCode className="h-4 w-4 text-ink-2" /> Sem endereço (em branco)
-          </p>
-          <p className="mt-1.5 text-[13px] leading-snug text-ink-2">
-            O QR code traz escritos o número do certificado, o CNPJ, as datas, a série da balança e o código de autenticidade.
-            Quem tiver dúvida liga para a empresa e confere o código.
-          </p>
-        </div>
-      </div>
-
-      <Field
-        label={
-          <>
-            Endereço público de verificação <span className="font-normal text-muted">(opcional)</span>
-          </>
-        }
-        htmlFor="verif-url"
-        erro={erro}
-        hint={
-          url && !erro ? (
-            <>
-              O QR code vai abrir, por exemplo: <span className="font-mono">{exemplo}</span>
-            </>
-          ) : (
-            'Deixe em branco se o sistema só é usado dentro da empresa.'
-          )
-        }
-      >
-        <Input
-          id="verif-url"
-          type="url"
-          inputMode="url"
-          placeholder="https://certificados.suaempresa.com.br"
-          value={s.valor.urlVerificacao}
-          onChange={(x) => s.mudar(() => ({ urlVerificacao: x.target.value }))}
-          autoCapitalize="none"
-          spellCheck={false}
-          className={cn('font-mono text-[13.5px]', erro && 'border-danger!')}
-        />
-      </Field>
-
-      {interno && (
-        <Nota tom="aviso" icone={<TriangleAlert />}>
-          Esse endereço só funciona dentro da empresa: o celular de um cliente, fora da rede, não vai conseguir abrir. Nesse caso,
-          é melhor deixar em branco.
-        </Nota>
-      )}
-
-      <Nota tom="neutro" icone={<Network />}>
-        <p>
-          Publicar o sistema na internet precisa de um técnico de informática: o servidor tem de ficar acessível nesse endereço,
-          com https. Por segurança, o BC Calibração vem configurado para aceitar só acessos da rede da empresa.
-        </p>
-        <p className="mt-2">Dentro da empresa, qualquer computador confere um certificado em:</p>
-        <div className="mt-1.5">
-          <TextoCopiavel texto={`${local}<código>`} rotulo="o endereço de conferência" />
-        </div>
-      </Nota>
-    </FormSecao>
   )
 }
 

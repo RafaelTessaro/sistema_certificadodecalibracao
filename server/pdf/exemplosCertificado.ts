@@ -296,21 +296,15 @@ function ensaio(metodo: MetodoCarregamento, pontos: PontoIndicacao[], retornoZer
 function montar(
   calibracao: Calibracao,
   emissao: EmissaoCertificado,
-  extra: Partial<Pick<DadosCertificadoPdf, 'marcaDagua' | 'qrCode' | 'urlVerificacao'>> = {},
+  extra: Partial<Pick<DadosCertificadoPdf, 'marcaDagua'>> = {},
 ): DadosCertificadoPdf {
   const { resultado, comoEncontrado } = calcularCalibracao(calibracao, emissao.balanca, emissao.padroes)
-  const urlVerificacao = extra.urlVerificacao ?? ''
   return {
     calibracao: { ...calibracao, emissao },
     emissao,
     resultado,
     comoEncontrado,
     marcaDagua: extra.marcaDagua ?? '',
-    qrCode:
-      extra.qrCode ??
-      (urlVerificacao ||
-        `Certificado ${calibracao.numero} · ${calibracao.dataCalibracao} · código ${emissao.codigo} · ${emissao.empresa.nomeFantasia}`),
-    urlVerificacao,
   }
 }
 
@@ -451,7 +445,7 @@ export function exemploPlataforma(): DadosCertificadoPdf {
     substituiNumero: '',
     substituiEmissao: '',
   }
-  return montar(k, e, { urlVerificacao: 'https://balancass.com/verificar/7KQ2-9XHM' })
+  return montar(k, e)
 }
 
 // ---- 2. Bancada 30 kg × 5 g -----------------------------------------------------------------------

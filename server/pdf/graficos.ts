@@ -3,7 +3,6 @@
 // diagrama das posições do ensaio de excentricidade. Legíveis em preto e branco: a diferença entre
 // as séries está na forma do marcador e no traço, não só na cor.
 
-import { createRequire } from 'node:module'
 import { COR } from './marca.ts'
 
 const FONTE = 'Inter'
@@ -424,55 +423,4 @@ function seta(xa: number, xb: number, y: number, paraDireita: boolean): string {
 
 function svg(w: number, h: number, partes: string[]): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">${partes.join('')}</svg>`
-}
-
-// ---- QR code -------------------------------------------------------------------------------------
-
-interface CodificadorQr {
-  measure(no: { qr: string; fit: number; eccLevel: string }): {
-    _width: number
-    _canvas: Array<{ x: number; y: number; w: number }>
-  }
-}
-
-const requerer = createRequire(import.meta.url)
-let codificadorQr: CodificadorQr | null = null
-
-/**
- * QR code (correção de erro M) em SVG, do tamanho pedido. O `{ qr }` do pdfmake arredonda o módulo para
- * um número inteiro de pontos (um código de 45 módulos sairia com 45 pt); aqui o módulo é fracionário.
- * A matriz vem do próprio codificador do pdfmake. `margem` em módulos (zona de silêncio).
- */
-export function qrSvg(texto: string, tamanho: number, margem = 2): Diagrama {
-  codificadorQr ??= (requerer('pdfmake/js/qrEnc.js') as { default: CodificadorQr }).default
-  const ESCALA = 4000
-  const medido = codificadorQr.measure({ qr: texto, fit: ESCALA, eccLevel: 'M' })
-  const modulos = medido._canvas.slice(1)
-  const lado = modulos[0]?.w ?? 1
-  const n = Math.round(medido._width / lado)
-  const escuro: boolean[][] = Array.from({ length: n }, () => Array(n).fill(false))
-  for (const r of modulos) escuro[Math.round(r.y / lado)][Math.round(r.x / lado)] = true
-  // Um retângulo por trecho contínuo de módulos escuros em cada linha
-  let d = ''
-  for (let i = 0; i < n; i++) {
-    let j = 0
-    while (j < n) {
-      if (!escuro[i][j]) {
-        j++
-        continue
-      }
-      const inicio = j
-      while (j < n && escuro[i][j]) j++
-      d += `M${inicio} ${i}h${j - inicio}v1h${inicio - j}z`
-    }
-  }
-  const total = n + 2 * margem
-  return {
-    svg:
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-margem} ${-margem} ${total} ${total}" width="${tamanho}" height="${tamanho}">` +
-      `<rect x="${-margem}" y="${-margem}" width="${total}" height="${total}" fill="#FFFFFF"/>` +
-      `<path d="${d}" fill="#000000"/></svg>`,
-    largura: tamanho,
-    altura: tamanho,
-  }
 }

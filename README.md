@@ -23,8 +23,7 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
 - **Certificado em PDF** com:
   - número único, "Página X de Y" e "Fim do certificado";
   - rastreabilidade, incerteza expandida com k e νeff, condições ambientais e resultados antes e depois do ajuste;
-  - declaração de laboratório não acreditado;
-  - **QR code** e **código de autenticidade**, que o cliente confere na página de verificação.
+  - declaração de laboratório não acreditado.
 - **Revisão** (o certificado novo ganha o sufixo "-R1" e diz qual substitui) e **cancelamento** com motivo. O PDF emitido nunca muda.
 - **Envio por e-mail** do PDF ao cliente, com histórico de envios, e **lembretes** de calibração para as balanças que vão vencer.
 - **Usuários**:

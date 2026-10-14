@@ -6,13 +6,7 @@ import { createHash, randomInt } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import {
-  formatarDataBr,
-  formatarNumeroCertificado,
-  hojeLocalIso,
-  nomeArquivoCertificado,
-  pendenciasEmissao,
-} from '#shared/dominio.ts'
+import { formatarNumeroCertificado, hojeLocalIso, nomeArquivoCertificado, pendenciasEmissao } from '#shared/dominio.ts'
 import type {
   Calibracao,
   CalibracaoInput,
@@ -92,33 +86,10 @@ export function montarEmissao(
   }
 }
 
-/** Conteúdo do QR code: o endereço de verificação ou, sem ele, os dados para conferir por telefone. */
-function conteudoQr(config: Configuracoes, emissao: EmissaoCertificado, k: Calibracao): { qr: string; url: string } {
-  const base = config.urlVerificacao.replace(/\/+$/, '')
-  if (base) {
-    const url = `${base}/#/verificar/${emissao.codigo}`
-    return { qr: url, url }
-  }
-  const qr = [
-    `CERTIFICADO DE CALIBRACAO ${k.numero}`,
-    `Emissor: ${emissao.empresa.razaoSocial} - CNPJ ${emissao.empresa.cnpj}`,
-    `Calibracao: ${formatarDataBr(k.dataCalibracao)} - Emissao: ${formatarDataBr(k.dataEmissao)}`,
-    `Instrumento: serie ${emissao.balanca.numeroSerie || '-'}`,
-    `Codigo de autenticidade: ${emissao.codigo}`,
-  ].join('\n')
-  return { qr, url: '' }
-}
-
 /** Gera o PDF de uma calibração com os dados indicados. */
-export async function gerarPdf(
-  k: Calibracao,
-  emissao: EmissaoCertificado,
-  config: Configuracoes,
-  marcaDagua: string,
-): Promise<Buffer> {
+export async function gerarPdf(k: Calibracao, emissao: EmissaoCertificado, marcaDagua: string): Promise<Buffer> {
   const { resultado, comoEncontrado } = calcularCalibracao(k, emissao.balanca, emissao.padroes)
-  const { qr, url } = conteudoQr(config, emissao, k)
-  return gerarCertificadoPdf({ calibracao: k, emissao, resultado, comoEncontrado, marcaDagua, qrCode: qr, urlVerificacao: url })
+  return gerarCertificadoPdf({ calibracao: k, emissao, resultado, comoEncontrado, marcaDagua })
 }
 
 const pastaCertificados = (ctx: Contexto, ano: number | null) => join(ctx.pastaDados, 'certificados', String(ano ?? 'sem-ano'))
@@ -157,14 +128,14 @@ export async function emitirCertificado(
       codigo: gerarCodigo,
     },
   )
-  await salvarPdf(ctx, emitida, config)
+  await salvarPdf(ctx, emitida)
   return ctx.repo.obterCalibracao(id)!
 }
 
 /** Gera o PDF do certificado emitido e grava o arquivo e o hash. */
-async function salvarPdf(ctx: Contexto, k: Calibracao, config: Configuracoes): Promise<Buffer> {
+async function salvarPdf(ctx: Contexto, k: Calibracao): Promise<Buffer> {
   if (!k.emissao) throw new ErroApi(409, 'Certificado sem dados de emissão.')
-  const pdf = await gerarPdf(k, k.emissao, config, '')
+  const pdf = await gerarPdf(k, k.emissao, '')
   const pasta = pastaCertificados(ctx, k.ano)
   mkdirSync(pasta, { recursive: true })
   const arquivo = nomeArquivoCertificado(k.numero)
@@ -185,9 +156,9 @@ export async function pdfDaCalibracao(ctx: Contexto, k: Calibracao): Promise<Buf
     if (k.status === 'EMITIDO') {
       const caminho = k.emissao.arquivo ? join(ctx.pastaDados, 'certificados', k.emissao.arquivo) : ''
       if (caminho && existsSync(caminho)) return readFileSync(caminho)
-      return salvarPdf(ctx, k, config)
+      return salvarPdf(ctx, k)
     }
-    return gerarPdf(k, k.emissao, config, k.status === 'CANCELADO' ? 'CANCELADO' : 'SUBSTITUÍDO')
+    return gerarPdf(k, k.emissao, k.status === 'CANCELADO' ? 'CANCELADO' : 'SUBSTITUÍDO')
   }
   return previa(ctx, k, config)
 }
@@ -205,5 +176,5 @@ export async function previa(ctx: Contexto, k: Calibracao, config = ctx.repo.obt
     emitidoPor: '',
     signatarioId: k.signatarioId,
   })
-  return gerarPdf(provisorio, emissao, config, 'PRÉVIA — SEM VALOR')
+  return gerarPdf(provisorio, emissao, 'PRÉVIA — SEM VALOR')
 }

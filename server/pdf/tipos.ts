@@ -21,11 +21,4 @@ export interface DadosCertificadoPdf {
    * "SUBSTITUÍDO". Vazio = documento válido.
    */
   marcaDagua: string
-  /**
-   * Conteúdo do QR code: o endereço de verificação (quando configurado) ou um texto com o número,
-   * a data e o código de autenticidade.
-   */
-  qrCode: string
-  /** Endereço de verificação mostrado por extenso ao lado do QR (vazio = não mostra). */
-  urlVerificacao: string
 }
