@@ -45,8 +45,8 @@ ${enderecos.map((e) => `  Na rede da empresa: ${e}`).join('\n')}
 
 if (usuarios.administradoresAtivos() === 0)
   console.log(
-    '  Nenhum administrador cadastrado: ninguém consegue entrar. No computador do servidor, clique em Iniciar, ' +
-      'digite BC Calibração e abra "Redefinir senha do BC Calibração" (no Linux: npm run usuarios -- definir <banco>).\n',
+    `  Primeiro acesso: neste computador, abra http://localhost:${porta} no navegador e crie a conta do administrador.\n` +
+      '  (Esqueceu a senha do administrador? Menu Iniciar → "Redefinir senha do BC Calibração"; no Linux: npm run usuarios.)\n',
   )
 
 let encerrando = false

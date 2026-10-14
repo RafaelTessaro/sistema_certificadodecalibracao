@@ -76,17 +76,24 @@ export function montarCarga(
 }
 
 function indicacaoParaCalculo(ensaio: EnsaioIndicacao, padroes: Padrao[], unidade: Unidade): EntradaCalculo['indicacao'] {
+  const etapa = ensaio.substituicao.ativa ? cargaDasPecas(ensaio.substituicao.pecas, padroes, unidade) : 0
   return {
     metodo: ensaio.metodo,
     retornoZero: ensaio.retornoZero,
-    pontos: ensaio.pontos.map((p) => ({
-      id: p.id,
-      carga: p.pecas.length ? cargaDasPecas(p.pecas, padroes, unidade) : p.carga,
-      pecas: pecasParaCalculo(p.pecas, padroes, unidade),
-      crescente: p.crescente,
-      decrescente: p.decrescente,
-      nivelSubstituicao: ensaio.substituicao.ativa ? p.nivelSubstituicao : 0,
-    })),
+    pontos: ensaio.pontos.map((p) => {
+      const nivel = ensaio.substituicao.ativa ? p.nivelSubstituicao : 0
+      const pesos = p.pecas.length ? cargaDasPecas(p.pecas, padroes, unidade) : 0
+      // Carga nominal do ponto: com substituição, as etapas (nível × carga dos pesos da etapa) mais os pesos por cima
+      const carga = nivel > 0 && etapa > 0 ? Number((nivel * etapa + pesos).toPrecision(12)) : p.pecas.length ? pesos : p.carga
+      return {
+        id: p.id,
+        carga,
+        pecas: pecasParaCalculo(p.pecas, padroes, unidade),
+        crescente: p.crescente,
+        decrescente: p.decrescente,
+        nivelSubstituicao: nivel,
+      }
+    }),
     substituicao: {
       ativa: ensaio.substituicao.ativa,
       pecas: pecasParaCalculo(ensaio.substituicao.pecas, padroes, unidade),
