@@ -45,7 +45,7 @@ export function EscolhaNivel({
                 <span
                   className={cn(
                     'flex h-7 w-7 items-center justify-center rounded-lg',
-                    ativo ? 'bg-brand text-white dark:text-bg' : 'bg-surface-2 text-ink-2',
+                    ativo ? 'bg-brand text-on-brand' : 'bg-surface-2 text-ink-2',
                   )}
                 >
                   <Icone className="h-4 w-4" />

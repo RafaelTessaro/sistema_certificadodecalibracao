@@ -349,16 +349,16 @@ export function StatCard({
       transition={{ delay, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className={cn(
         'relative overflow-hidden rounded-2xl border p-5 shadow-xs',
-        destaque ? 'border-transparent bg-brand text-white' : 'border-line bg-surface',
+        destaque ? 'border-transparent bg-brand text-on-brand' : 'border-line bg-surface',
       )}
     >
       {destaque && <div className="pointer-events-none absolute -top-16 -right-10 h-44 w-44 rounded-full bg-white/10 blur-2xl" />}
       <div className="relative flex items-center justify-between">
-        <p className={cn('text-[13px] font-medium', destaque ? 'text-white/85' : 'text-muted')}>{rotulo}</p>
+        <p className={cn('text-[13px] font-medium', destaque ? 'text-on-brand/85' : 'text-muted')}>{rotulo}</p>
         <div
           className={cn(
             'flex h-8 w-8 items-center justify-center rounded-lg',
-            destaque ? 'bg-white/15 text-white' : 'bg-surface-2 text-ink-2',
+            destaque ? 'bg-on-brand/15 text-on-brand' : 'bg-surface-2 text-ink-2',
           )}
         >
           {icone}
@@ -367,12 +367,12 @@ export function StatCard({
       <p
         className={cn(
           'relative mt-3 text-[26px] leading-none font-semibold tracking-[-0.025em]',
-          destaque ? 'text-white' : 'text-ink',
+          destaque ? 'text-on-brand' : 'text-ink',
         )}
       >
         <AnimatedNumber valor={valor} formatar={formatar} />
       </p>
-      {detalhe && <div className={cn('relative mt-2 text-[12.5px]', destaque ? 'text-white/80' : 'text-muted')}>{detalhe}</div>}
+      {detalhe && <div className={cn('relative mt-2 text-[12.5px]', destaque ? 'text-on-brand/80' : 'text-muted')}>{detalhe}</div>}
     </motion.div>
   )
 }

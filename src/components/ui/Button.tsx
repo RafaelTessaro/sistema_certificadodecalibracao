@@ -6,7 +6,7 @@ type Variante = 'primary' | 'secondary' | 'ghost' | 'danger' | 'soft'
 type Tamanho = 'sm' | 'md' | 'icon' | 'icon-sm'
 
 const variantes: Record<Variante, string> = {
-  primary: 'bg-brand text-white shadow-xs hover:bg-brand-hover disabled:hover:bg-brand [text-shadow:0_1px_0_rgb(0_0_0/0.06)]',
+  primary: 'bg-brand text-on-brand shadow-xs hover:bg-brand-hover disabled:hover:bg-brand',
   secondary: 'bg-surface text-ink border border-line-strong/80 shadow-xs hover:bg-surface-2 hover:border-line-strong',
   ghost: 'text-ink-2 hover:bg-surface-2 hover:text-ink',
   soft: 'bg-brand-soft text-brand-ink hover:brightness-[0.97] dark:hover:brightness-125',

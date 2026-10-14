@@ -30,7 +30,7 @@ export class ErroInesperado extends Component<{ children: ReactNode }, { erro: E
           <button
             type="button"
             onClick={() => location.reload()}
-            className="mt-6 h-10 w-full cursor-pointer rounded-xl bg-brand text-sm font-medium text-white hover:bg-brand-hover"
+            className="mt-6 h-10 w-full cursor-pointer rounded-xl bg-brand text-sm font-medium text-on-brand hover:bg-brand-hover"
           >
             Recarregar
           </button>

@@ -42,11 +42,16 @@
   --ink-2: #4b5059;
   --muted: #858b94;
 
-  --brand: #0b9e4f;
-  --brand-hover: #098a45;
-  --brand-ink: #077a3c;
-  --brand-soft: #e7f6ee;
-  --ring: rgb(11 158 79 / 0.32);
+  /* Verde da marca (logo: #019F42). Nos botões, um tom mais fechado para o texto branco ter
+     contraste AA (4,7:1); o verde vivo do logo fica para detalhes e gráficos. */
+  --brand: #078541;
+  --brand-hover: #066f37;
+  --brand-ink: #067a3b;
+  --brand-soft: #e6f4ec;
+  --brand-vivo: #019f42;
+  --on-brand: #ffffff;
+  --grafite: #58585a;
+  --ring: rgb(7 133 65 / 0.3);
 
   --success: #0f8a47;
   --success-soft: #e6f5ec;
@@ -60,7 +65,7 @@
   --neutral: #5d636c;
   --neutral-soft: #eff1f3;
 
-  --series-1: #0b9e4f;
+  --series-1: #019f42;
   --series-2: #2a78d6;
   --grid: #eceef1;
   --axis: #c9cdd3;
@@ -82,11 +87,15 @@
   --ink-2: #b3b9c2;
   --muted: #7c838d;
 
-  --brand: #14b05c;
-  --brand-hover: #1cc068;
-  --brand-ink: #4fd18a;
-  --brand-soft: rgb(20 176 92 / 0.14);
-  --ring: rgb(20 176 92 / 0.4);
+  /* No escuro o verde é claro: texto escuro por cima (contraste AAA) */
+  --brand: #19b862;
+  --brand-hover: #2cc672;
+  --brand-ink: #5bd795;
+  --brand-soft: rgb(25 184 98 / 0.14);
+  --brand-vivo: #1fc26a;
+  --on-brand: #04170c;
+  --grafite: #a3a5a8;
+  --ring: rgb(25 184 98 / 0.4);
 
   --success: #3ccf7f;
   --success-soft: rgb(60 207 127 / 0.13);
@@ -127,6 +136,11 @@
   --color-brand-hover: var(--brand-hover);
   --color-brand-ink: var(--brand-ink);
   --color-brand-soft: var(--brand-soft);
+  --color-brand-vivo: var(--brand-vivo);
+  --color-on-brand: var(--on-brand);
+  --color-grafite: var(--grafite);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
 
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
