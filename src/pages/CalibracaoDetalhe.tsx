@@ -212,7 +212,19 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
                 <ExternalLink className="h-3.5 w-3.5" />
               </a>
             </div>
-            <iframe title={`Certificado ${k.numero}`} src={urlPdf} className="block h-[78vh] min-h-[520px] w-full bg-surface-2" />
+            {/* Navegadores de celular não mostram PDF dentro da página: lá, um botão para abrir */}
+            <iframe title={`Certificado ${k.numero}`} src={urlPdf} className="hidden h-[78vh] min-h-[520px] w-full bg-surface-2 md:block" />
+            <div className="flex flex-col items-center gap-3 px-6 py-10 text-center md:hidden">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-soft text-brand-ink">
+                <FileBadge2 className="h-6 w-6" />
+              </div>
+              <p className="text-sm text-muted">Certificado nº {k.numero}</p>
+              <a href={urlPdf} target="_blank" rel="noreferrer">
+                <Button variante="primary" icone={<ExternalLink className="h-4 w-4" />} tabIndex={-1}>
+                  Abrir o PDF
+                </Button>
+              </a>
+            </div>
           </Card>
           <Resultados k={k} dados={dados} />
         </div>
