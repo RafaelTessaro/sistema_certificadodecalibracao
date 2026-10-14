@@ -105,7 +105,7 @@ function pdfmake(): PdfMakeServidor {
 
 // ---- Página e tipografia -------------------------------------------------------------------------
 
-// Página A4 com 45 pt de margem lateral; margens de cima e de baixo vêm do papel timbrado (timbrado.ts)
+// Página A4 com 18 mm de margem lateral; margens de cima e de baixo vêm do papel timbrado (timbrado.ts)
 const NUM: NoObjeto = { fontFeatures: ['tnum'] }
 
 const ESTILOS: Record<string, NoObjeto> = {
@@ -896,9 +896,9 @@ function repetibilidade(ctx: Contexto, abertura: No[]): No[] {
           [
             { titulo: th('Carga', u), largura: 58, numerica: true },
             { titulo: th('Indicações', u), largura: '*' },
-            { titulo: th('Medições', 'n'), largura: 44, numerica: true },
+            { titulo: th('Medições', 'n'), largura: 40, numerica: true },
             { titulo: th('Média', u), largura: 58, numerica: true },
-            { titulo: th('Desvio-padrão s', u), largura: 72, numerica: true },
+            { titulo: th('Desvio-padrão s', u), largura: 62, numerica: true },
           ],
           linhas,
         ),
@@ -1572,7 +1572,7 @@ export function definicaoCertificado(d: DadosCertificadoPdf, opcoes: { assinatur
   conteudo.push(...blocoFinal(ctx, opcoes.assinaturas !== false))
 
   const e = d.emissao
-  const papel = timbrado(e.empresa, ctx.numero)
+  const papel = timbrado(e.empresa, ctx.numero, d.marcaDagua)
   const data = dataDoDocumento(d)
   const titulo = `Certificado de calibração nº ${ctx.numero}`
   const instrumento = [
@@ -1584,6 +1584,8 @@ export function definicaoCertificado(d: DadosCertificadoPdf, opcoes: { assinatur
     .filter((x) => !vazio(x))
     .join(' ')
   return {
+    // A marca d'água usa opacidade, que é do PDF 1.4 (o pdfmake declara 1.3 se nada for dito)
+    version: '1.4',
     pageSize: 'A4',
     pageOrientation: 'portrait',
     pageMargins: papel.margens,

@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { definicaoCertificado, gerarCertificadoPdf } from './certificado.ts'
 import { exemploBancada, exemploPlataforma, exemploRodoviaria } from './exemplosCertificado.ts'
+import { MARGEM_X, passoMarca, unidades } from './timbrado.ts'
 import type { DadosCertificadoPdf } from './tipos.ts'
 
 const PASTA_EXEMPLOS = fileURLToPath(new URL('./exemplos/', import.meta.url))
@@ -344,12 +345,12 @@ describe('papel timbrado', () => {
           expect(linha.some((p) => p.x1 < sep.x0 && sep.x0 - p.x1 < 6)).toBe(true)
         }
       }
-      // Todo texto fica na área que a impressora imprime (A4 = 595 × 842 pt; caixas do pdftotext, que
-      // incluem o espaço dos acentos acima das versais)
+      // Todo texto fica dentro das margens laterais, longe da furação de arquivo, e na área que a impressora
+      // imprime (A4 = 595 × 842 pt; caixas do pdftotext, que incluem o espaço dos acentos acima das versais)
       for (const pagina of palavrasDoPdf(pdf))
         for (const p of pagina) {
-          expect(p.x0, p.texto).toBeGreaterThanOrEqual(44)
-          expect(p.x1, p.texto).toBeLessThanOrEqual(551)
+          expect(p.x0, p.texto).toBeGreaterThanOrEqual(MARGEM_X - 1)
+          expect(p.x1, p.texto).toBeLessThanOrEqual(595.28 - MARGEM_X + 1)
           expect(p.y0, p.texto).toBeGreaterThanOrEqual(18)
           expect(p.y1, p.texto).toBeLessThanOrEqual(842 - 22)
         }
@@ -357,10 +358,65 @@ describe('papel timbrado', () => {
   )
 })
 
+describe('papel timbrado: quebras e entrelinhas', () => {
+  it('prende as palavras curtas à seguinte e o traço solto às duas vizinhas', () => {
+    expect(unidades('COMÉRCIO E MANUTENÇÃO DE BALANÇAS SÃO JOÃO DA BOA VISTA EIRELI - ME')).toEqual([
+      'COMÉRCIO',
+      'E MANUTENÇÃO',
+      'DE BALANÇAS',
+      'SÃO',
+      'JOÃO',
+      'DA BOA',
+      'VISTA',
+      'EIRELI - ME',
+    ])
+    expect(unidades('BALANÇAS LTDA – EPP')).toEqual(['BALANÇAS', 'LTDA – EPP'])
+  })
+
+  it('abre a entrelinha da marca só quando um acento fica sob uma letra ou uma cedilha', () => {
+    // Versais sem acento: entrelinha justa
+    expect(passoMarca(['BALANÇAS', 'COMERCIAL'])).toBeLessThanOrEqual(1.15)
+    // Acento sob uma versal (0,99 em de acento + o branco mínimo)
+    expect(passoMarca(['COMÉRCIO', 'ÉTNICA'])).toBeGreaterThanOrEqual(0.99 + 0.15)
+    // Acento sob a cedilha do Ç (que desce 0,27 em)
+    expect(passoMarca(['AÇO', 'AÉREO'])).toBeGreaterThanOrEqual(0.99 + 0.27 + 0.15)
+    // Uma linha só: nada a abrir
+    expect(passoMarca(['BALANÇAS.COM'])).toBe(1.08)
+  })
+
+  it.runIf(temPdftotext)(
+    'cancelado: a situação sai em preto no timbrado de toda página e a razão social não quebra no traço',
+    async () => {
+      const d = exemploPlataforma()
+      d.emissao = {
+        ...d.emissao,
+        empresa: {
+          ...d.emissao.empresa,
+          nomeFantasia: 'Comércio de Balanças e Serviços Águia Ímpar Ótima Étnica Úmida',
+          razaoSocial: 'Comércio e Manutenção de Balanças e Equipamentos de Pesagem Industrial São João da Boa Vista Eireli - ME',
+        },
+      }
+      d.calibracao = { ...d.calibracao, emissao: d.emissao }
+      d.marcaDagua = 'CANCELADO'
+      const pdf = await gerarCertificadoPdf(d)
+      expect(pdf.subarray(0, 8).toString('latin1')).toBe('%PDF-1.4')
+      const folhas = textoDoPdf(pdf)
+        .split('\f')
+        .filter((p) => p.trim())
+      for (const folha of folhas) {
+        expect(folha).toContain('CANCELADO')
+        // Nenhuma linha (de nenhuma coluna) termina num traço solto nem numa palavra curta ("DA", "DE", "E")
+        for (const trecho of folha.split(/\n|\s{2,}/)) expect(trecho.trimEnd(), trecho).not.toMatch(/\s(-|–|DA|DE|DO|E)$/)
+        expect(corrido(folha)).toContain('EIRELI - ME')
+      }
+    },
+  )
+})
+
 describe.runIf(temPdftotext)('papel timbrado: alinhamentos', () => {
   it.each(EXEMPLOS)('nº do certificado e "Página X de Y" terminam na margem direita: $arquivo', async ({ arquivo, dados }) => {
     const numero = dados().calibracao.numero
-    const direita = 595.28 - 45
+    const direita = 595.28 - MARGEM_X
     for (const [i, pagina] of palavrasDoPdf(await pdfDe(arquivo)).entries()) {
       // nº no cabeçalho (o primeiro da página: o do título, na capa)
       const n = pagina.find((p) => p.texto === numero)

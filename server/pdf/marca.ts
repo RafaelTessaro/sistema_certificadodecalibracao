@@ -2,7 +2,13 @@
 // Tudo em SVG simples (sem <mask>/<use>/<clipPath>), que o svg-to-pdfkit do pdfmake desenha com fidelidade e
 // sem grupos de transparência.
 
-/** Paleta do certificado: a marca em doses mínimas, texto quase preto e cinzas neutros (bom em P&B). */
+/**
+ * Paleta do certificado: a marca em doses mínimas, texto em preto puro e cinzas neutros (bom em P&B). O texto
+ * é #000, como o do timbrado (TINTA): o driver manda o preto puro só para o toner preto e sem retícula, e o
+ * corpo sai tão nítido quanto o rodapé (um quase preto sairia pontilhado na laser P&B e montado com C+M+Y+K,
+ * com halos de desregistro, na colorida). Os cinzas de texto são exatamente neutros (R = G = B), pelo mesmo
+ * motivo; a hierarquia vem do corpo, do peso e desses dois cinzas.
+ */
 export const COR = {
   /** Verde da marca (logo, detalhes). */
   marca: '#019F42',
@@ -12,9 +18,9 @@ export const COR = {
   marcaFundo: '#EEF7F1',
   /** Grafite da marca (logo e desenhos do corpo; o texto do timbrado usa as TINTAs neutras). */
   grafite: '#58585A',
-  texto: '#1B1D1F',
-  textoSecundario: '#565B60',
-  rotulo: '#6B7075',
+  texto: '#000000',
+  textoSecundario: '#5A5A5A',
+  rotulo: '#6F6F6F',
   fio: '#CDD2CF',
   fioClaro: '#E6E9E7',
   fundoCabecalho: '#F1F3F2',

@@ -18,8 +18,11 @@
 // Tipografia: o cabeçalho é da marca, em Poppins (a geométrica do logotipo oficial): palavra-marca, razão
 // social, contatos, título e nº; o rodapé é do documento, em Inter, como o corpo. Cinco corpos e só eles
 // (CORPO). Todo texto e todo fio em preto 100 % (TINTA): a hierarquia vem do corpo e do peso, e a impressão
-// sai nítida em qualquer laser. Nada é chapado em área grande e tudo fica a ≥ 13 mm da borda. Os dados vêm
-// da emissão: nada da empresa fica escrito aqui.
+// sai nítida em qualquer laser. Nada é chapado em área grande e tudo fica a ≥ 12,7 mm da borda (18 mm nas
+// laterais, fora da furação de arquivo). Os dados vêm da emissão: nada da empresa fica escrito aqui.
+//
+// Prévia, certificado cancelado ou substituído: a situação sai em preto sob o nº, na capa e no cabeçalho
+// corrido, além da marca d'água.
 //
 // O timbrado é desenhado no fundo da página (o background do pdfmake ocupa a folha inteira; o cabeçalho
 // do pdfmake descarta o que passa da margem de cima) e o rodapé, que precisa do total de páginas, no
@@ -37,8 +40,13 @@ type NoObjeto = Record<string, unknown>
 // ---- Página -------------------------------------------------------------------------------------------
 
 export const A4 = { largura: 595.28, altura: 841.89 }
-export const MARGEM_X = 45
-/** Largura útil (≈ 178 mm). */
+/**
+ * Margens laterais de 18 mm, iguais dos dois lados (frente e verso): o certificado é arquivado em pasta AZ,
+ * e a furação de dois furos (ISO 838: centro a 12 ± 1 mm da borda, Ø 6 mm) chega a no máximo ≈ 16 mm da
+ * borda, sem tocar o texto. Mais que isso estreitaria as tabelas de erro e alongaria o certificado.
+ */
+export const MARGEM_X = 51
+/** Largura útil (≈ 174 mm). */
 export const LARGURA = A4.largura - 2 * MARGEM_X
 const DIREITA = MARGEM_X + LARGURA
 
@@ -133,7 +141,11 @@ const alturaX = (m: Medida) => (ehInter(m) ? 0.546 : 0.55)
 
 interface FonteMedida {
   unitsPerEm: number
-  layout(texto: string): { advanceWidth: number }
+  layout(texto: string): {
+    advanceWidth: number
+    glyphs: Array<{ bbox: { minX: number; maxX: number; minY: number; maxY: number } }>
+    positions: Array<{ xAdvance: number; xOffset: number }>
+  }
 }
 const fontesMedidas = new Map<Medida, FonteMedida | null>()
 
@@ -172,27 +184,57 @@ function larguraTexto(medida: Medida, texto: string, corpo: number, espacamento 
   return natural + espacamento * Math.max(texto.length - 1, 0)
 }
 
+/** Palavras curtas (artigos, preposições, "e") que não terminam linha: descem junto com a palavra seguinte. */
+const CURTAS = new Set('A À AO AOS AS ÀS O OS E DA DAS DE DO DOS EM NA NAS NO NOS &'.split(' '))
+const TRACO_SOLTO = /^[-–—]$/
+
 /**
- * Quebra o texto em linhas de até `largura`: nos espaços e, numa palavra maior que a linha (e-mail, site),
- * depois de ".", "@", "/", "-" ou "_".
+ * Unidades de quebra: as palavras, com as curtas presas à seguinte ("DA BOA") e o traço solto preso às duas
+ * vizinhas ("EIRELI - ME", "LTDA - EPP"): nenhuma linha termina em "DA" ou em "-", nem começa com um "ME".
+ */
+export function unidades(texto: string): string[] {
+  const lista: string[] = []
+  let prende = false
+  for (const palavra of texto.split(/\s+/).filter(Boolean)) {
+    const traco = TRACO_SOLTO.test(palavra)
+    if (lista.length && (prende || traco)) lista[lista.length - 1] += ` ${palavra}`
+    else lista.push(palavra)
+    prende = traco || CURTAS.has(palavra.toUpperCase())
+  }
+  return lista
+}
+
+/**
+ * Quebra o texto em linhas de até `largura`: entre as unidades (unidades()); uma unidade maior que a linha,
+ * nos espaços; e uma palavra maior que a linha (e-mail, site), depois de ".", "@", "/", "-" ou "_".
  */
 function quebrar(texto: string, medida: Medida, corpo: number, largura: number, espacamento = 0): string[] {
   const cabe = (t: string) => larguraTexto(medida, t, corpo, espacamento) <= largura
   const linhas: string[] = []
   let atual = ''
-  for (const palavra of texto.split(/\s+/).filter(Boolean)) {
-    const junto = atual ? `${atual} ${palavra}` : palavra
-    if (cabe(junto)) {
-      atual = junto
+  const acrescentar = (pedaco: string, separador: string) => {
+    const junto = atual ? atual + separador + pedaco : pedaco
+    if (cabe(junto)) atual = junto
+    else {
+      if (atual) linhas.push(atual)
+      atual = pedaco
+    }
+  }
+  for (const unidade of unidades(texto)) {
+    if (cabe(unidade)) {
+      acrescentar(unidade, ' ')
       continue
     }
-    if (atual) linhas.push(atual)
-    atual = ''
-    for (const pedaco of cabe(palavra) ? [palavra] : palavra.split(/(?<=[.@/_-])/)) {
-      if (atual && !cabe(atual + pedaco)) {
-        linhas.push(atual)
-        atual = pedaco
-      } else atual += pedaco
+    for (const palavra of unidade.split(' ')) {
+      if (cabe(palavra)) acrescentar(palavra, ' ')
+      else
+        palavra.split(/(?<=[.@/_-])/).forEach((pedaco, i) => {
+          if (i === 0 && atual) {
+            linhas.push(atual)
+            atual = ''
+          }
+          acrescentar(pedaco, '')
+        })
     }
   }
   if (atual) linhas.push(atual)
@@ -255,6 +297,48 @@ function ajustar(
   while (ultima.length > 1 && larguraTexto(medida, `${ultima}…`, minimo, esp) > largura) ultima = ultima.slice(0, -1).trimEnd()
   linhas[linhas.length - 1] = `${ultima}…`
   return { corpo: minimo, linhas, cortado: true }
+}
+
+/** Entrelinha da palavra-marca em várias linhas (em): versais justas, como num logotipo. */
+const ENTRELINHA_MARCA = 1.08
+/** Branco mínimo (em) entre o que sobe de uma linha da marca (acento) e o que desce da de cima (cedilha). */
+const FOLGA_LINHAS_MARCA = 0.15
+
+/** Tinta de cada letra de uma linha da marca (em): de x0 a x1 e quanto sobe e desce da linha de base. */
+function tintaDasLetras(texto: string) {
+  const f = fonteMedida('extrabold')
+  if (!f) return null
+  const run = f.layout(texto)
+  const em = f.unitsPerEm
+  let x = 0
+  return run.glyphs.flatMap((g, i) => {
+    const p = run.positions[i]
+    const x0 = x + p.xOffset
+    x += p.xAdvance
+    // O espaço não tem contorno (caixa infinita)
+    if (!Number.isFinite(g.bbox.minX)) return []
+    return [{ x0: (x0 + g.bbox.minX) / em, x1: (x0 + g.bbox.maxX) / em, sobe: g.bbox.maxY / em, desce: -g.bbox.minY / em }]
+  })
+}
+
+/**
+ * Passo (em) entre as linhas de base da palavra-marca em várias linhas, igual para todas: a entrelinha justa
+ * (ENTRELINHA_MARCA), aberta só o necessário para que nenhum acento das versais (Á, É, Ó: 0,99 em na
+ * Poppins ExtraBold) chegue a menos de FOLGA_LINHAS_MARCA da letra logo acima dele, nem da cedilha do Ç
+ * (que desce 0,27 em). Sem as medidas da fonte, o pior caso.
+ */
+export function passoMarca(linhas: string[]): number {
+  let passo = ENTRELINHA_MARCA
+  for (let i = 1; i < linhas.length; i++) {
+    const cima = tintaDasLetras(linhas[i - 1])
+    const baixo = tintaDasLetras(linhas[i])
+    if (!cima || !baixo) return 1.42
+    for (const b of baixo)
+      for (const c of cima)
+        if (b.x0 < c.x1 + FOLGA_LINHAS_MARCA && c.x0 < b.x1 + FOLGA_LINHAS_MARCA)
+          passo = Math.max(passo, b.sobe + c.desce + FOLGA_LINHAS_MARCA)
+  }
+  return Math.ceil(passo * 100) / 100
 }
 
 /** Palavra-marca: primeiro numa linha só (até `minimoUmaLinha`); se não der, em até `maxLinhas`. */
@@ -401,6 +485,13 @@ const CONTATO = { corpo: CORPO.texto, passo: 11, passoQuebra: 9, icone: 8, vao: 
 const TITULO = { texto: 'CERTIFICADO DE CALIBRAÇÃO', corpo: CORPO.titulo, espacamento: 0.35, numero: CORPO.capa }
 /** Do fim do timbrado da empresa ao topo das versais do título. */
 const VAO_TITULO = 22
+/**
+ * Situação do documento (prévia, cancelado, substituído): repetida no timbrado de toda página, sob o nº, em
+ * versal SemiBold preta. A marca d'água é um tom claro, que uma laser em economia de toner pode apagar; sem
+ * esta linha, a cópia impressa de um certificado cancelado passaria por válida. Corpo na capa e no
+ * cabeçalho corrido, espaçamento (em) e vão do pé do nº ao topo das versais dela.
+ */
+const SITUACAO = { capa: CORPO.corrido, corrido: CORPO.texto, espacamento: 0.06, vao: 5 }
 
 interface Linha {
   no: NoObjeto
@@ -418,9 +509,10 @@ function blocoMarca(empresa: DadosEmpresa, largura: number, maxLinhasMarca = CAP
     ? ajustar(n.razao, 'regular', CAPA.razao, CAPA.razaoMinimo, largura, maxLinhasRazao, CAPA.espacamentoRazao)
     : null
   const linhas: Linha[] = []
+  const passo = passoMarca(marca.linhas) * marca.corpo
   let base = 0
   marca.linhas.forEach((l, i) => {
-    base = i === 0 ? versal('extrabold') * marca.corpo : base + marca.corpo * 1.08
+    base = i === 0 ? versal('extrabold') * marca.corpo : base + passo
     linhas.push({ no: { text: l, color: TINTA.grafite }, corpo: marca.corpo, medida: 'extrabold', base })
   })
   razao?.linhas.forEach((l, i) => {
@@ -449,11 +541,21 @@ function contatos(empresa: DadosEmpresa): Array<[Icone, string]> {
   return itens.filter(([, v]) => v)
 }
 
+/** Linha da situação do documento, alinhada à margem direita, com a linha de base em `base`. */
+function linhaSituacao(situacao: string, base: number, corpo: number): NoObjeto {
+  const espacamento = arredondar(SITUACAO.espacamento * corpo)
+  const largura = larguraTexto('semibold', situacao, corpo, espacamento)
+  return linhaDireita(situacao, DIREITA, Math.min(largura + 2, LARGURA), base, corpo, 'semibold', {
+    color: TINTA.texto,
+    characterSpacing: espacamento,
+  })
+}
+
 /**
- * Timbrado da capa (nós absolutos) e onde ele termina: logo e bloco da marca à esquerda, contatos à direita
- * (os dois blocos centrados na altura do logo), o título com o nº e o fio.
+ * Timbrado da capa (nós absolutos) e onde ele termina: logo e bloco da marca à esquerda (centrado na altura
+ * do logo), contatos à direita (na grade do bloco da marca), o título com o nº, a situação e o fio.
  */
-function capa(empresa: DadosEmpresa, numero: string): { nos: NoObjeto[]; fimFio: number } {
+function capa(empresa: DadosEmpresa, numero: string, situacao: string): { nos: NoObjeto[]; fimFio: number } {
   const itens = contatos(empresa)
   // Coluna dos contatos: até 45 % da largura, sempre no mesmo corpo; um valor longo quebra em "." e "@"
   const maxTexto = LARGURA * 0.45 - CONTATO.icone - CONTATO.vao
@@ -472,15 +574,23 @@ function capa(empresa: DadosEmpresa, numero: string): { nos: NoObjeto[]; fimFio:
   const basesMarca = linhasMarca.map((l) => topoMarca + l.base)
 
   // Contatos: um passo entre dois contatos e um passo menor entre as linhas de um mesmo contato (a
-  // continuação de um e-mail longo não se lê como mais um item); o bloco (do topo das versais da primeira à
-  // última linha de base) centrado no logo
+  // continuação de um e-mail longo não se lê como mais um item). Os dois blocos ficam na mesma grade: a
+  // última linha de base dos contatos é a do bloco da marca (a razão social) e, se o vão entre as duas
+  // últimas linhas da marca for um pouco maior que o passo, ele vira o passo, e a linha de cima também
+  // coincide. Só quando isso faria os contatos subirem acima do logo (muitos contatos ao lado de um bloco da
+  // marca baixo), o bloco dos contatos fica centrado na altura do logo, como o da marca.
   const capContato = versal('regular') * CONTATO.corpo
-  const desvios = linhasContato.reduce<number[]>(
-    (d, x, i) => [...d, i === 0 ? 0 : d[i - 1] + (x.icone ? CONTATO.passo : CONTATO.passoQuebra)],
-    [],
-  )
-  const alturaContatos = (desvios.at(-1) ?? 0) + capContato
-  const primeiraContato = TOPO + CAPA.logo / 2 - alturaContatos / 2 + capContato
+  const desviosCom = (passo: number) =>
+    linhasContato.reduce<number[]>((d, x, i) => [...d, i === 0 ? 0 : d[i - 1] + (x.icone ? passo : CONTATO.passoQuebra)], [])
+  const ultimaMarca = basesMarca[basesMarca.length - 1]
+  const vaoMarca = basesMarca.length > 1 ? ultimaMarca - basesMarca[basesMarca.length - 2] : 0
+  const passoContato = vaoMarca >= CONTATO.passo && vaoMarca <= CONTATO.passo + 1.5 ? vaoMarca : CONTATO.passo
+  let desvios = desviosCom(passoContato)
+  let primeiraContato = ultimaMarca - (desvios.at(-1) ?? 0)
+  if (primeiraContato - capContato < TOPO) {
+    desvios = desviosCom(CONTATO.passo)
+    primeiraContato = TOPO + CAPA.logo / 2 - ((desvios.at(-1) ?? 0) + capContato) / 2 + capContato
+  }
   const basesContato = desvios.map((d) => primeiraContato + d)
   const nosContato = linhasContato.flatMap(({ icone, l }, i) => {
     const base = basesContato[i]
@@ -516,8 +626,9 @@ function capa(empresa: DadosEmpresa, numero: string): { nos: NoObjeto[]; fimFio:
   if (!cabe) corpoNumero = TITULO.numero
   const baseNumero = cabe ? baseTitulo : baseTitulo + 8 + versal('semibold') * corpoNumero
   const larguraN = Math.min(larguraNumero(numero, corpoNumero) + 2, LARGURA)
-  // O fio a VAO_FIO + a cedilha do título abaixo da linha de base
-  const yFio = baseNumero + 0.2 * TITULO.corpo + VAO_FIO
+  // A situação do documento, sob o nº; o fio a VAO_FIO da cedilha do título ou da linha de base da situação
+  const baseSituacao = situacao ? baseNumero + SITUACAO.vao + versal('semibold') * SITUACAO.capa : 0
+  const yFio = Math.max(baseNumero + 0.2 * TITULO.corpo, baseSituacao) + VAO_FIO
 
   const nos: NoObjeto[] = [
     logo(CAPA.logo),
@@ -530,6 +641,7 @@ function capa(empresa: DadosEmpresa, numero: string): { nos: NoObjeto[]; fimFio:
       color: TINTA.texto,
     }),
     linhaDireita(numeroCertificado(numero), DIREITA, larguraN, baseNumero, corpoNumero, 'semibold', {}),
+    ...(situacao ? [linhaSituacao(situacao, baseSituacao, SITUACAO.capa)] : []),
     fioTimbrado(yFio),
   ]
   return { nos, fimFio: yFio + FIO.espessura }
@@ -551,7 +663,7 @@ const FIO_CORRIDO = TOPO + CORRIDO.logo + VAO_FIO
 /** Topo do corpo (o pdfmake tem uma margem de cima só para o documento todo): abaixo do fio do cabeçalho. */
 export const MARGEM_TOPO = arredondar(FIO_CORRIDO + FIO.espessura + VAO_CORPO)
 
-function cabecalhoCorrido(empresa: DadosEmpresa, numero: string): NoObjeto[] {
+function cabecalhoCorrido(empresa: DadosEmpresa, numero: string, situacao: string): NoObjeto[] {
   // À direita, numa linha: o título e o nº; nunca quebra
   let corpoNumero: number = CORPO.corrido
   while (corpoNumero > 7.5 && larguraNumero(numero, corpoNumero) > LARGURA * 0.3) corpoNumero -= 0.25
@@ -561,10 +673,12 @@ function cabecalhoCorrido(empresa: DadosEmpresa, numero: string): NoObjeto[] {
   // À esquerda, logo e palavra-marca (uma linha; nomes longos em duas), centrada na altura do logo
   const xMarca = MARGEM_X + CORRIDO.logo + arredondar(ASSINATURA.vaoLogo * CORRIDO.logo)
   const marca = ajustarMarca(nomes(empresa).marca, CORRIDO.marca, DIREITA - xMarca - larguraDireita - 24, CORRIDO.maxLinhasMarca)
-  const passo = marca.corpo * 1.08
+  const passo = passoMarca(marca.linhas) * marca.corpo
   const altura = versal('extrabold') * marca.corpo + (marca.linhas.length - 1) * passo
   const primeiraBase = TOPO + (CORRIDO.logo - altura) / 2 + versal('extrabold') * marca.corpo
   const ultimaBase = primeiraBase + (marca.linhas.length - 1) * passo
+  // A situação do documento, sob o nº (como na capa), sem chegar a menos de 4 pt do fio
+  const baseSituacao = Math.min(ultimaBase + SITUACAO.vao + versal('semibold') * SITUACAO.corrido, FIO_CORRIDO - 4)
   return [
     logo(CORRIDO.logo),
     ...marca.linhas.map((l, i) =>
@@ -581,6 +695,7 @@ function cabecalhoCorrido(empresa: DadosEmpresa, numero: string): NoObjeto[] {
       { color: TINTA.texto, characterSpacing: TITULO_CORRIDO.espacamento },
     ),
     linhaDireita(numeroCertificado(numero), DIREITA, larguraN + 2, ultimaBase, corpoNumero, 'semibold', {}),
+    ...(situacao ? [linhaSituacao(situacao, baseSituacao, SITUACAO.corrido)] : []),
     fioTimbrado(FIO_CORRIDO),
   ]
 }
@@ -626,9 +741,14 @@ export interface Timbrado {
   marcaDagua: (texto: string) => NoObjeto | undefined
 }
 
-/** Papel timbrado de um certificado: margens, timbrado da capa, cabeçalho corrido, rodapé e marca d'água. */
-export function timbrado(empresa: DadosEmpresa, numero: string): Timbrado {
+/**
+ * Papel timbrado de um certificado: margens, timbrado da capa, cabeçalho corrido, rodapé e marca d'água.
+ * `situacao` ("PRÉVIA — SEM VALOR", "CANCELADO", "SUBSTITUÍDO"; vazio num certificado válido) sai no timbrado
+ * de toda página, sob o nº, e na marca d'água.
+ */
+export function timbrado(empresa: DadosEmpresa, numero: string, situacao = ''): Timbrado {
   const n = nomes(empresa)
+  const status = limpo(situacao).toUpperCase()
 
   // Rodapé em duas colunas: à esquerda a identificação legal (razão social · CNPJ, endereço); à direita,
   // alinhadas à margem e por baixo, a cláusula e a paginação. A coluna da direita tem a largura da cláusula.
@@ -713,14 +833,14 @@ export function timbrado(empresa: DadosEmpresa, numero: string): Timbrado {
   })
 
   // Página 1: o corpo começa abaixo do fio da capa
-  const daCapa = capa(empresa, numero)
+  const daCapa = capa(empresa, numero, status)
   const topoCorpoCapa = daCapa.fimFio + VAO_CORPO
   const fimCorpo = A4.altura - margemBase
 
   // Nó novo a cada página (o pdfmake guarda posições no nó: reaproveitar desenha fios soltos)
   const fundo = (pagina: number): NoObjeto => ({
     stack: [
-      ...(pagina === 1 ? capa(empresa, numero).nos : cabecalhoCorrido(empresa, numero)),
+      ...(pagina === 1 ? capa(empresa, numero, status).nos : cabecalhoCorrido(empresa, numero, status)),
       {
         svg: svgFioMarca,
         width: LARGURA,
@@ -734,7 +854,8 @@ export function timbrado(empresa: DadosEmpresa, numero: string): Timbrado {
    * Marca d'água diagonal (-50°), centrada na folha como o pdfmake a desenha, no maior corpo (até 84 pt) que
    * cabe na área do corpo da capa, com 14 pt de folga: não passa sobre o timbrado, o nº nem o rodapé, e fica
    * longe da borda que a impressora não imprime. Cinza neutro a 16 % (vermelho a 22 % no CANCELADO), que
-   * continua visível impresso em P&B.
+   * continua visível impresso em P&B. A opacidade é do PDF 1.4: o documento declara essa versão
+   * (certificado.ts). E a situação não depende só deste tom claro: ela sai em preto no timbrado de toda página.
    */
   const marcaDagua = (texto: string): NoObjeto | undefined => {
     const t = texto.trim()
