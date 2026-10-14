@@ -98,6 +98,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       padroes: k.emissao?.padroes ?? padroesDa(ctx, k),
       envios: repo.listarEnvios({ calibracaoId: k.id }),
       pendencias: aberta ? pendenciasDa(ctx, k) : [],
+      revisoes: repo.revisoesDe(k.id),
     }
   })
 

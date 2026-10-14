@@ -53,7 +53,12 @@ const MULTIPLICADORES: Record<Exclude<CriterioEma, 'CLIENTE'>, readonly [number,
  * (m = 500e ainda é 0,5e na classe III). Classe '' dá null, exceto no critério CLIENTE, que devolve a
  * tolerância do cliente (null se não informada).
  */
-export function emaInstrumento(m: number, instrumento: InstrumentoEma, criterio: CriterioEma, toleranciaCliente = 0): number | null {
+export function emaInstrumento(
+  m: number,
+  instrumento: InstrumentoEma,
+  criterio: CriterioEma,
+  toleranciaCliente = 0,
+): number | null {
   if (criterio === 'CLIENTE') return toleranciaCliente > 0 ? toleranciaCliente : null
   if (!instrumento.classe || !instrumento.faixas.length) return null
   const { e } = faixaDoValor(m, instrumento)

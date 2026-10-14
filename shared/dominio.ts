@@ -405,6 +405,11 @@ export function textoComEmpresa(t: string, empresa: DadosEmpresa) {
   return t.replaceAll('{empresa}', empresa.razaoSocial || empresa.nomeFantasia)
 }
 
+/** Troca as marcas {chave} de um modelo de texto (e-mail, lembrete) pelos valores; marcas desconhecidas ficam. */
+export function preencherModelo(t: string, valores: Record<string, string>) {
+  return t.replace(/\{(\w+)\}/g, (marca, chave: string) => (chave in valores ? valores[chave] : marca))
+}
+
 /**
  * Número do certificado a partir do formato: {seq} (sequência com zeros), {ano} (4 dígitos), {aa} (2 dígitos).
  * Revisões ganham o sufixo "-R1", "-R2"…

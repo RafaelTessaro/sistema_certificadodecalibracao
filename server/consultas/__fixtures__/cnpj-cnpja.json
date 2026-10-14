@@ -1,0 +1,80 @@
+{
+  "updated": "2026-09-12T23:59:59.999Z",
+  "taxId": "12403843000118",
+  "alias": "Balancas.Com",
+  "founded": "2010-08-05",
+  "head": true,
+  "company": {
+    "members": [],
+    "name": "FABIO DE GODOY LIMA LTDA",
+    "equity": 5000,
+    "nature": {
+      "id": 2062,
+      "text": "Sociedade Empresária Limitada"
+    },
+    "size": {
+      "id": 1,
+      "acronym": "ME",
+      "text": "Microempresa"
+    },
+    "simples": {
+      "optant": true,
+      "since": "2017-01-01",
+      "history": []
+    },
+    "simei": {
+      "optant": false,
+      "since": null,
+      "history": []
+    },
+    "id": "12403843"
+  },
+  "statusDate": "2010-08-05",
+  "status": {
+    "id": 2,
+    "text": "Ativa"
+  },
+  "address": {
+    "municipality": 3543907,
+    "street": "Rua 13",
+    "number": "650",
+    "district": "Bairro da Boa Morte",
+    "city": "Rio Claro",
+    "state": "SP",
+    "details": null,
+    "zip": "13500120",
+    "country": {
+      "id": 76,
+      "name": "Brasil"
+    }
+  },
+  "phones": [
+    {
+      "type": "MOBILE",
+      "area": "19",
+      "number": "81182225"
+    }
+  ],
+  "emails": [
+    {
+      "ownership": "PERSONAL",
+      "address": "balancas.com@gmail.com",
+      "domain": "gmail.com"
+    }
+  ],
+  "mainActivity": {
+    "id": 4751201,
+    "text": "Comércio varejista especializado de equipamentos e suprimentos de informática"
+  },
+  "sideActivities": [
+    {
+      "id": 4530703,
+      "text": "Comércio a varejo de peças e acessórios novos para veículos automotores"
+    },
+    {
+      "id": 9511800,
+      "text": "Reparação e manutenção de computadores e de equipamentos periféricos"
+    }
+  ],
+  "suframa": []
+}

@@ -143,7 +143,9 @@ function somaEmaSerie(gramas: number, classe: ClassePeso): number | null {
  * Confere as cargas críticas: as mudanças de EMA (L1·e, L2·e) e o Max de cada faixa.
  * Ex.: classe III 30 kg / 5 g → M1; 30 kg / 10 g → M2. Null se a classe do instrumento não é marcada.
  */
-export function classeMinimaPesos(instrumento: Pick<InstrumentoCalculo, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>): ClassePeso | null {
+export function classeMinimaPesos(
+  instrumento: Pick<InstrumentoCalculo, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>,
+): ClassePeso | null {
   if (!instrumento.classe || !instrumento.faixas.length) return null
   const [l1, l2] = LIMIARES_EMA[instrumento.classe]
   const cargas: number[] = []

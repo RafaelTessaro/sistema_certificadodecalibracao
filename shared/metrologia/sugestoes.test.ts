@@ -15,12 +15,18 @@ describe('sugerirPontos', () => {
     expect(sugerirPontos({ classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 60000, e: 20, d: 20 }] })).toEqual([
       0, 10000, 15000, 30000, 40000, 45000, 60000,
     ])
-    expect(sugerirPontos({ classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 60, e: 0.02, d: 0.02 }] })).toEqual([0, 10, 15, 30, 40, 45, 60])
+    expect(sugerirPontos({ classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 60, e: 0.02, d: 0.02 }] })).toEqual([
+      0, 10, 15, 30, 40, 45, 60,
+    ])
   })
 
   it('sem classe só os percentuais; valores redondos múltiplos de e', () => {
-    expect(sugerirPontos({ classe: '', tipoFaixas: 'UNICA', faixas: [{ max: 30000, e: 5, d: 5 }] })).toEqual([0, 7500, 15000, 22500, 30000])
-    expect(sugerirPontos({ classe: '', tipoFaixas: 'UNICA', faixas: [{ max: 1500, e: 0.5, d: 0.5 }] })).toEqual([0, 375, 750, 1100, 1500])
+    expect(sugerirPontos({ classe: '', tipoFaixas: 'UNICA', faixas: [{ max: 30000, e: 5, d: 5 }] })).toEqual([
+      0, 7500, 15000, 22500, 30000,
+    ])
+    expect(sugerirPontos({ classe: '', tipoFaixas: 'UNICA', faixas: [{ max: 1500, e: 0.5, d: 0.5 }] })).toEqual([
+      0, 375, 750, 1100, 1500,
+    ])
   })
 
   it('multi-intervalo: mudanças de EMA de cada faixa parcial, sem duplicados', () => {
@@ -50,7 +56,13 @@ describe('cargaExcentricidade (DOQ-CGCRE-097 10.4.1)', () => {
 
 describe('posicoesExcentricidade', () => {
   it('rótulos por receptor', () => {
-    expect(posicoesExcentricidade('RETANGULAR')).toEqual(['Centro', 'Frente esquerda', 'Trás esquerda', 'Trás direita', 'Frente direita'])
+    expect(posicoesExcentricidade('RETANGULAR')).toEqual([
+      'Centro',
+      'Frente esquerda',
+      'Trás esquerda',
+      'Trás direita',
+      'Frente direita',
+    ])
     expect(posicoesExcentricidade('CIRCULAR')).toHaveLength(5)
     expect(posicoesExcentricidade('CIRCULAR')[0]).toBe('Centro')
     expect(posicoesExcentricidade('APOIOS', 6)).toEqual(['Apoio 1', 'Apoio 2', 'Apoio 3', 'Apoio 4', 'Apoio 5', 'Apoio 6'])

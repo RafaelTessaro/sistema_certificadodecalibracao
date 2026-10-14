@@ -17,15 +17,15 @@ vi.mock('zustand', async (original) => {
   return { ...real, create: <T>(f?: StateCreator<T>) => (f ? criar(f) : criar) }
 })
 
-const maria: UsuarioSessao = { id: 'u1', login: 'maria', nome: 'Maria Souza', nivel: 'COMUM', trocarSenha: false }
-const joao: UsuarioSessao = { id: 'u2', login: 'joao', nome: 'João Lima', nivel: 'ADMIN', trocarSenha: false }
+const maria: UsuarioSessao = { id: 'u1', login: 'maria', nome: 'Maria Souza', nivel: 'COMUM', trocarSenha: false, signatario: false }
+const joao: UsuarioSessao = { id: 'u2', login: 'joao', nome: 'João Lima', nivel: 'ADMIN', trocarSenha: false, signatario: true }
 
 function Sonda() {
   const usuario = useUsuarioAtual()
   const admin = useEhAdmin()
-  const faturamento = usePode('verFaturamento')
-  const anexo = usePode('excluirAnexo')
-  return `${usuario?.login ?? '-'}|admin:${admin}|faturamento:${faturamento}|anexo:${anexo}`
+  const cancelar = usePode('cancelarCertificado')
+  const cliente = usePode('excluirCliente')
+  return `${usuario?.login ?? '-'}|admin:${admin}|cancelar:${cancelar}|cliente:${cliente}`
 }
 const desenhar = () => renderToString(createElement(Sonda))
 
@@ -37,17 +37,17 @@ describe('ganchos da sessão', () => {
     expect(inicial.estado).toBe('verificando')
     expect(inicial.usuario).toBeNull()
     expect(inicial.build).toBe('')
-    expect(desenhar()).toBe('-|admin:false|faturamento:false|anexo:false')
+    expect(desenhar()).toBe('-|admin:false|cancelar:false|cliente:false')
   })
 
   it('administrador pode tudo', () => {
     useSessao.setState({ estado: 'logado', usuario: joao })
-    expect(desenhar()).toBe('joao|admin:true|faturamento:true|anexo:true')
+    expect(desenhar()).toBe('joao|admin:true|cancelar:true|cliente:true')
   })
 
-  it('comum não vê o faturamento, mas apaga anexos', () => {
+  it('técnico não cancela certificados nem exclui clientes', () => {
     useSessao.setState({ estado: 'logado', usuario: maria })
-    expect(desenhar()).toBe('maria|admin:false|faturamento:false|anexo:true')
+    expect(desenhar()).toBe('maria|admin:false|cancelar:false|cliente:false')
   })
 })
 

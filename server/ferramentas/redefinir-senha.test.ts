@@ -172,7 +172,7 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
         (db.prepare("SELECT detalhe FROM auditoria WHERE acao = 'FERRAMENTA_LOCAL' ORDER BY id DESC LIMIT 1").get() as Linha)
           .detalhe,
     )
-    expect(detalhe).toContain('nível: Comum → Administrador')
+    expect(detalhe).toContain('nível: Técnico → Administrador')
 
     // Sem tornarAdmin, o nível fica como está
     await cadastrarComum(banco, 'joao', 'João Lima')
@@ -272,7 +272,9 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
           senha: SENHA_FORTE,
         })
         abrirSessoes(db, r.usuario.id, 2)
-        db.prepare("INSERT INTO clientes (id, dados, versao, criado_em, atualizado_em) VALUES ('c1', '{}', 1, 'x', 'x')").run()
+        db.prepare(
+          "INSERT INTO clientes (id, tipo, nome, dados, versao, criado_em, atualizado_em) VALUES ('c1', 'PJ', 'Cliente', '{}', 1, 'x', 'x')",
+        ).run()
       })
       // O banco atual: as contas de hoje
       rodar(['definir', banco], { login: 'admin', nome: 'Fabio', senha: SENHA_FORTE })
@@ -303,16 +305,6 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
         const ultima = db.prepare('SELECT acao FROM auditoria ORDER BY id DESC LIMIT 1').get() as Linha
         expect(ultima.acao).toBe('COPIA_RESTAURADA')
       })
-    })
-
-    it('cópia de antes da 2.6 (sem as tabelas de usuários) recebe as contas atuais', async () => {
-      await comBanco(restaurado, (db) =>
-        db.exec('DROP TABLE sessoes; DROP TABLE auditoria; DROP TABLE usuarios; PRAGMA user_version = 4'),
-      )
-      const r = rodar(['transplantar', banco, restaurado])
-      expect(r.json).toMatchObject({ transplantado: true, usuarios: 2 })
-      expect(await contar(restaurado, 'SELECT COUNT(*) AS n FROM usuarios')).toBe(2)
-      expect(await contar(restaurado, 'SELECT COUNT(*) AS n FROM clientes')).toBe(1)
     })
 
     it('banco atual sem nenhuma conta (computador novo): as contas da cópia voltam, sem sessões', async () => {

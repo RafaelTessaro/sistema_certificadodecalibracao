@@ -22,6 +22,7 @@ import type {
   RespostaLogin,
   ResultadoSenha,
   ResumoPainel,
+  StatusCalibracao,
   TrocaSenha,
   Usuario,
   UsuarioSessao,
@@ -73,6 +74,8 @@ export interface DetalheCalibracao {
   envios: Envio[]
   /** O que falta para emitir (vazio = pode emitir). */
   pendencias: string[]
+  /** Revisões feitas a partir deste certificado (a que o substituiu e a que está em andamento). */
+  revisoes: Array<{ id: string; numero: string; status: StatusCalibracao }>
 }
 
 export interface FiltroCalibracoesTela {

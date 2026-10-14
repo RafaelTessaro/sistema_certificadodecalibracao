@@ -724,7 +724,7 @@ describe('ferramenta local (API usada pelo redefinir-senha.mjs)', () => {
     expect(registro).toMatchObject({ login: 'fabio', ip: 'local', alvo: r.usuario.id })
     // Os nomes dos níveis, como no resto da tela (não os códigos COMUM e ADMIN)
     expect(registro.detalhe).toBe('criado como Administrador; senha temporária')
-    expect(auditoria('USUARIO_CRIADO')[0].detalhe).toBe('comum (Comum); senha gerada pelo sistema')
+    expect(auditoria('USUARIO_CRIADO')[0].detalhe).toBe('comum (Técnico); senha gerada pelo sistema')
   })
 
   it('redefine a senha (digitada: sem troca, ou com trocarSenha), promove, reativa e derruba as sessões da conta', async () => {
@@ -734,7 +734,7 @@ describe('ferramenta local (API usada pelo redefinir-senha.mjs)', () => {
     expect(r.senhaTemporaria).toBeUndefined()
     expect(r.usuario).toMatchObject({ nivel: 'ADMIN', ativo: true, trocarSenha: false, nome: 'Comum Teste' })
     expect(await statusDados(t.cookieComum)).toBe(401)
-    expect(auditoria('FERRAMENTA_LOCAL').at(-1)!.detalhe).toBe('senha redefinida; nível: Comum → Administrador; reativado')
+    expect(auditoria('FERRAMENTA_LOCAL').at(-1)!.detalhe).toBe('senha redefinida; nível: Técnico → Administrador; reativado')
     const temporaria = await t.usuarios.definirSenhaLocal({ login: 'comum', senha: 'outra-frase-local', trocarSenha: true })
     expect(temporaria.usuario.trocarSenha).toBe(true)
     const gerada = await t.usuarios.definirSenhaLocal({ login: 'comum', nome: 'Novo Nome' })

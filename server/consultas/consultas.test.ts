@@ -42,6 +42,8 @@ function fetchFalso(rotas: Record<string, Resposta | Resposta[]>) {
   return { fetch: f, chamadas }
 }
 
+const OPENCNPJ = 'https://api.opencnpj.org/'
+const CNPJA = 'https://open.cnpja.com/office/'
 const BRASILAPI_CNPJ = 'https://brasilapi.com.br/api/cnpj/v1/'
 const CNPJWS = 'https://publica.cnpj.ws/cnpj/'
 const MINHA_RECEITA = 'https://minhareceita.org/'
@@ -120,8 +122,32 @@ describe('formato de título', () => {
   })
 })
 
+const provedor = <T extends { nome: string }>(lista: T[], nome: string) => {
+  const p = lista.find((x) => x.nome === nome)
+  if (!p) throw new Error(`provedor ${nome} não existe`)
+  return p
+}
+
 describe('normalização de cada provedor de CNPJ', () => {
-  const [brasilApi, cnpjWs, minhaReceita] = PROVEDORES_CNPJ
+  const openCnpj = provedor(PROVEDORES_CNPJ, 'OpenCNPJ')
+  const cnpja = provedor(PROVEDORES_CNPJ, 'CNPJá')
+  const brasilApi = provedor(PROVEDORES_CNPJ, 'BrasilAPI')
+  const cnpjWs = provedor(PROVEDORES_CNPJ, 'CNPJ.ws')
+  const minhaReceita = provedor(PROVEDORES_CNPJ, 'Minha Receita')
+
+  it('ordem: primeiro os que trazem o e-mail', () => {
+    expect(PROVEDORES_CNPJ.map((p) => p.nome)).toEqual(['OpenCNPJ', 'CNPJá', 'CNPJ.ws', 'BrasilAPI', 'Minha Receita'])
+  })
+
+  it('OpenCNPJ (e-mail em maiúsculas, telefone sem o fax)', () => {
+    const r = openCnpj.interpretar(200, fixture('cnpj-opencnpj.json'))
+    expect(r).toEqual({ tipo: 'ok', dados: { ...ESPERADO_EMPRESA, email: 'balancas.com@gmail.com', fonte: 'OpenCNPJ' } })
+  })
+
+  it('CNPJá', () => {
+    const r = cnpja.interpretar(200, fixture('cnpj-cnpja.json'))
+    expect(r).toEqual({ tipo: 'ok', dados: { ...ESPERADO_EMPRESA, email: 'balancas.com@gmail.com', fonte: 'CNPJá' } })
+  })
 
   it('BrasilAPI', () => {
     const r = brasilApi.interpretar(200, fixture('cnpj-brasilapi.json'))
@@ -170,7 +196,9 @@ describe('normalização de cada provedor de CNPJ', () => {
 })
 
 describe('normalização de cada provedor de CEP', () => {
-  const [brasilApi, viaCep, openCep] = PROVEDORES_CEP
+  const brasilApi = provedor(PROVEDORES_CEP, 'BrasilAPI')
+  const viaCep = provedor(PROVEDORES_CEP, 'ViaCEP')
+  const openCep = provedor(PROVEDORES_CEP, 'OpenCEP')
   const esperado = { cep: '13504-000', logradouro: 'Rua Saibreiro 1', bairro: 'Vila Saibreiro', cidade: 'Rio Claro', uf: 'SP' }
 
   it('BrasilAPI, ViaCEP e OpenCEP', () => {
@@ -204,38 +232,40 @@ describe('normalização de cada provedor de CEP', () => {
 
 describe('consulta de CNPJ com fallback', () => {
   it('usa o primeiro provedor quando ele responde', async () => {
-    const { fetch, chamadas } = fetchFalso({ [BRASILAPI_CNPJ]: { status: 200, corpo: fixture('cnpj-brasilapi.json') } })
+    const { fetch, chamadas } = fetchFalso({ [OPENCNPJ]: { status: 200, corpo: fixture('cnpj-opencnpj.json') } })
     const s = criarServicoConsultas({ fetch })
     const r = await s.cnpj('12.403.843/0001-18')
-    expect(r).toMatchObject({ ...ESPERADO_EMPRESA, fonte: 'BrasilAPI' })
-    expect(chamadas).toEqual([`${BRASILAPI_CNPJ}${CNPJ}`])
+    expect(r).toMatchObject({ ...ESPERADO_EMPRESA, email: 'balancas.com@gmail.com', fonte: 'OpenCNPJ' })
+    expect(chamadas).toEqual([`${OPENCNPJ}${CNPJ}`])
   })
 
   it('429 e 5xx passam para o próximo provedor, na ordem', async () => {
     const { fetch, chamadas } = fetchFalso({
-      [BRASILAPI_CNPJ]: { status: 429, corpo: { message: 'Too many requests' } },
-      [CNPJWS]: { status: 502 },
+      [OPENCNPJ]: { status: 429, corpo: { message: 'Too many requests' } },
+      [CNPJA]: { status: 502 },
+      [CNPJWS]: { status: 500 },
+      [BRASILAPI_CNPJ]: { status: 503 },
       [MINHA_RECEITA]: { status: 200, corpo: fixture('cnpj-minhareceita.json') },
     })
     const r = await criarServicoConsultas({ fetch }).cnpj(CNPJ)
     expect(r.fonte).toBe('Minha Receita')
-    expect(chamadas).toEqual([`${BRASILAPI_CNPJ}${CNPJ}`, `${CNPJWS}${CNPJ}`, `${MINHA_RECEITA}${CNPJ}`])
+    expect(chamadas).toEqual([OPENCNPJ, CNPJA, CNPJWS, BRASILAPI_CNPJ, MINHA_RECEITA].map((u) => `${u}${CNPJ}`))
   })
 
   it('erro de rede ou tempo esgotado em um provedor tenta o seguinte', async () => {
     const { fetch } = fetchFalso({
-      [BRASILAPI_CNPJ]: 'tempo',
-      [CNPJWS]: { status: 200, corpo: fixture('cnpj-cnpjws.json') },
+      [OPENCNPJ]: 'tempo',
+      [CNPJA]: { status: 200, corpo: fixture('cnpj-cnpja.json') },
     })
     const r = await criarServicoConsultas({ fetch }).cnpj(CNPJ)
-    expect(r.fonte).toBe('CNPJ.ws')
+    expect(r.fonte).toBe('CNPJá')
     expect(r.email).toBe('balancas.com@gmail.com')
   })
 
   it('404 definitivo encerra a busca com "não encontrado"', async () => {
     const { fetch, chamadas } = fetchFalso({
-      [BRASILAPI_CNPJ]: { status: 404, corpo: fixture('cnpj-brasilapi-nao-encontrado.json') },
-      [CNPJWS]: { status: 200, corpo: fixture('cnpj-cnpjws.json') },
+      [OPENCNPJ]: { status: 404, corpo: { message: 'CNPJ não encontrado' } },
+      [CNPJA]: { status: 200, corpo: fixture('cnpj-cnpja.json') },
     })
     const p = criarServicoConsultas({ fetch }).cnpj(CNPJ)
     await expect(p).rejects.toMatchObject({ status: 404, message: MENSAGENS.cnpjNaoEncontrado })
@@ -247,11 +277,17 @@ describe('consulta de CNPJ com fallback', () => {
     const p = criarServicoConsultas({ fetch }).cnpj(CNPJ)
     await expect(p).rejects.toBeInstanceOf(ErroApi)
     await expect(p).rejects.toMatchObject({ status: 503, message: MENSAGENS.semInternet, dados: { motivo: 'sem_internet' } })
-    expect(chamadas).toHaveLength(3)
+    expect(chamadas).toHaveLength(PROVEDORES_CNPJ.length)
   })
 
   it('todos os serviços fora do ar (sem ser rede): 503 de serviço indisponível', async () => {
-    const { fetch } = fetchFalso({ [BRASILAPI_CNPJ]: { status: 500 }, [CNPJWS]: 'rede', [MINHA_RECEITA]: { status: 503 } })
+    const { fetch } = fetchFalso({
+      [OPENCNPJ]: { status: 500 },
+      [CNPJA]: { status: 429 },
+      [CNPJWS]: 'rede',
+      [BRASILAPI_CNPJ]: { status: 502 },
+      [MINHA_RECEITA]: { status: 503 },
+    })
     await expect(criarServicoConsultas({ fetch }).cnpj(CNPJ)).rejects.toMatchObject({
       status: 503,
       dados: { motivo: 'servicos_indisponiveis' },
@@ -268,17 +304,19 @@ describe('consulta de CNPJ com fallback', () => {
   })
 
   it('CNPJ alfanumérico é consultado como está, com as letras', async () => {
-    const corpo = { ...(fixture('cnpj-brasilapi.json') as object), cnpj: '12ABC34501DE35' }
-    const { fetch, chamadas } = fetchFalso({ [BRASILAPI_CNPJ]: { status: 200, corpo } })
+    const corpo = { ...(fixture('cnpj-opencnpj.json') as object), cnpj: '12ABC34501DE35' }
+    const { fetch, chamadas } = fetchFalso({ [OPENCNPJ]: { status: 200, corpo } })
     const r = await criarServicoConsultas({ fetch }).cnpj('12.abc.345/01de-35')
-    expect(chamadas).toEqual([`${BRASILAPI_CNPJ}12ABC34501DE35`])
+    expect(chamadas).toEqual([`${OPENCNPJ}12ABC34501DE35`])
     expect(r.cnpj).toBe('12.ABC.345/01DE-35')
   })
 
   it('CNPJ alfanumérico que os provedores ainda não aceitam: 404 com mensagem para preencher à mão', async () => {
     const { fetch } = fetchFalso({
-      [BRASILAPI_CNPJ]: { status: 400, corpo: { message: 'CNPJ 12ABC34501DE35 inválido.' } },
+      [OPENCNPJ]: { status: 400 },
+      [CNPJA]: { status: 400 },
       [CNPJWS]: { status: 400 },
+      [BRASILAPI_CNPJ]: { status: 400, corpo: { message: 'CNPJ 12ABC34501DE35 inválido.' } },
       [MINHA_RECEITA]: { status: 400 },
     })
     await expect(criarServicoConsultas({ fetch }).cnpj('12ABC34501DE35')).rejects.toMatchObject({
@@ -286,7 +324,7 @@ describe('consulta de CNPJ com fallback', () => {
       message: MENSAGENS.cnpjAlfanumerico,
       dados: { motivo: 'cnpj_alfanumerico' },
     })
-    const naoAchou = fetchFalso({ [BRASILAPI_CNPJ]: { status: 404 } })
+    const naoAchou = fetchFalso({ [OPENCNPJ]: { status: 404 } })
     await expect(criarServicoConsultas({ fetch: naoAchou.fetch }).cnpj('12ABC34501DE35')).rejects.toMatchObject({
       status: 404,
       dados: { motivo: 'cnpj_alfanumerico' },
@@ -302,7 +340,7 @@ describe('consulta de CNPJ com fallback', () => {
 
   it('guarda o resultado em cache por 24 h', async () => {
     let agora = 1_000_000
-    const { fetch, chamadas } = fetchFalso({ [BRASILAPI_CNPJ]: { status: 200, corpo: fixture('cnpj-brasilapi.json') } })
+    const { fetch, chamadas } = fetchFalso({ [OPENCNPJ]: { status: 200, corpo: fixture('cnpj-opencnpj.json') } })
     const s = criarServicoConsultas({ fetch, agora: () => agora })
     await s.cnpj(CNPJ)
     agora += 23 * 60 * 60 * 1000
@@ -315,24 +353,22 @@ describe('consulta de CNPJ com fallback', () => {
 
   it('não guarda falhas de rede em cache e junta pedidos simultâneos', async () => {
     const { fetch, chamadas } = fetchFalso({
-      [BRASILAPI_CNPJ]: ['rede', { status: 200, corpo: fixture('cnpj-brasilapi.json') }],
-      [CNPJWS]: 'rede',
-      [MINHA_RECEITA]: 'rede',
+      [OPENCNPJ]: ['rede', { status: 200, corpo: fixture('cnpj-opencnpj.json') }],
     })
     const s = criarServicoConsultas({ fetch })
     await expect(s.cnpj(CNPJ)).rejects.toMatchObject({ status: 503 })
     const [a, b] = await Promise.all([s.cnpj(CNPJ), s.cnpj(CNPJ)])
     expect(a).toEqual(b)
-    expect(chamadas).toHaveLength(4)
+    expect(chamadas).toHaveLength(PROVEDORES_CNPJ.length + 1)
   })
 })
 
 describe('consulta de CEP com fallback', () => {
-  it('BrasilAPI → ViaCEP → OpenCEP', async () => {
+  it('ViaCEP → OpenCEP → BrasilAPI', async () => {
     const { fetch, chamadas } = fetchFalso({
-      [BRASILAPI_CEP]: { status: 500 },
-      [VIACEP]: 'rede',
-      [OPENCEP]: { status: 200, corpo: fixture('cep-opencep.json') },
+      [VIACEP]: { status: 500 },
+      [OPENCEP]: 'rede',
+      [BRASILAPI_CEP]: { status: 200, corpo: fixture('cep-brasilapi.json') },
     })
     const r = await criarServicoConsultas({ fetch }).cep('13504-000')
     expect(r).toEqual({
@@ -341,9 +377,9 @@ describe('consulta de CEP com fallback', () => {
       bairro: 'Vila Saibreiro',
       cidade: 'Rio Claro',
       uf: 'SP',
-      fonte: 'OpenCEP',
+      fonte: 'BrasilAPI',
     })
-    expect(chamadas).toEqual([`${BRASILAPI_CEP}${CEP}`, `${VIACEP}${CEP}/json/`, `${OPENCEP}${CEP}`])
+    expect(chamadas).toEqual([`${VIACEP}${CEP}/json/`, `${OPENCEP}${CEP}`, `${BRASILAPI_CEP}${CEP}`])
   })
 
   it('não encontrado: 404 (mesmo com a BrasilAPI ambígua)', async () => {
@@ -383,7 +419,7 @@ describe('motor', () => {
 
   it('resposta que não é JSON conta como falha e segue para o próximo', async () => {
     const f = (async (url: string) =>
-      String(url).includes('brasilapi')
+      String(url).includes('opencnpj')
         ? new Response('<html>manutenção</html>', { status: 200 })
         : new Response(JSON.stringify(fixture('cnpj-cnpjws.json')), { status: 200 })) as unknown as Fetch
     const r = await consultarEmOrdem(CNPJ, PROVEDORES_CNPJ, { fetch: f, timeoutMs: 1000 })
@@ -405,17 +441,17 @@ describe('rotas de consulta', () => {
   }
 
   it('GET /api/consultas/cnpj/:cnpj devolve os dados normalizados', async () => {
-    const { fetch } = fetchFalso({ [BRASILAPI_CNPJ]: { status: 200, corpo: fixture('cnpj-brasilapi.json') } })
+    const { fetch } = fetchFalso({ [OPENCNPJ]: { status: 200, corpo: fixture('cnpj-opencnpj.json') } })
     const app = await appComFetch(fetch)
     const r = await app.inject({ url: `/api/consultas/cnpj/${CNPJ}` })
     expect(r.statusCode).toBe(200)
-    expect(r.json()).toMatchObject({ ...ESPERADO_EMPRESA, fonte: 'BrasilAPI' })
+    expect(r.json()).toMatchObject({ ...ESPERADO_EMPRESA, email: 'balancas.com@gmail.com', fonte: 'OpenCNPJ' })
     await app.close()
   })
 
   it('códigos de erro: 400, 404 e 503', async () => {
     const { fetch } = fetchFalso({
-      [`${BRASILAPI_CNPJ}98765432000198`]: { status: 404, corpo: fixture('cnpj-brasilapi-nao-encontrado.json') },
+      [`${OPENCNPJ}98765432000198`]: { status: 404 },
       [`${BRASILAPI_CEP}`]: 'rede',
     })
     const app = await appComFetch(fetch)

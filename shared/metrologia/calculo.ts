@@ -322,8 +322,14 @@ function prepararSubstituicao(ctx: Contexto): CadeiaSubstituicao | null {
 }
 
 /** Referência do ponto, ou o motivo (texto) de não dar para calcular. */
-function referenciaPonto(ponto: PontoCalculo, nivel: number, massa: Massa, cadeia: CadeiaSubstituicao | null): Referencia | string {
-  if (nivel === 0 || !cadeia) return { carga: ponto.carga, valor: massa.temPecas ? massa.valor : ponto.carga, massa, substituicao: null }
+function referenciaPonto(
+  ponto: PontoCalculo,
+  nivel: number,
+  massa: Massa,
+  cadeia: CadeiaSubstituicao | null,
+): Referencia | string {
+  if (nivel === 0 || !cadeia)
+    return { carga: ponto.carga, valor: massa.temPecas ? massa.valor : ponto.carga, massa, substituicao: null }
   if (!cadeia.massa.temPecas) return 'informe os pesos padrão usados nas etapas de substituição'
   if (nivel > cadeia.etapas.length) return `faltam etapas de substituição (o ponto usa ${nivel})`
   let delta = 0
@@ -391,11 +397,15 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   }
 
   /** Carga nas casas de d (ou mais, se o valor tiver); `rotulo` acrescenta a unidade (para os avisos). */
-  const textoCarga = (carga: number) => formatarNumero(carga, Math.max(casasDecimais(divisaoNaCarga(carga, carga, ctx)), casasDecimais(carga)))
+  const textoCarga = (carga: number) =>
+    formatarNumero(carga, Math.max(casasDecimais(divisaoNaCarga(carga, carga, ctx)), casasDecimais(carga)))
   const rotulo = (carga: number) => `${textoCarga(carga)} ${unidade}`
   const leituraTexto = (leitura: number | null, carga: number) =>
-    leitura === null ? '' : formatarNumero(leitura, Math.max(casasDecimais(divisaoNaCarga(leitura, carga, ctx)), casasDecimais(leitura)))
-  const implausivel = (leitura: number | null, carga: number) => leitura !== null && carga > 0 && Math.abs(leitura - carga) > 0.1 * carga
+    leitura === null
+      ? ''
+      : formatarNumero(leitura, Math.max(casasDecimais(divisaoNaCarga(leitura, carga, ctx)), casasDecimais(leitura)))
+  const implausivel = (leitura: number | null, carga: number) =>
+    leitura !== null && carga > 0 && Math.abs(leitura - carga) > 0.1 * carga
 
   const cadeia = prepararSubstituicao(ctx)
   const porMedia = opcoes.histerese === 'MEDIA'
@@ -419,7 +429,8 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     if (temLeitura) {
       pontosLidos++
       maiorCargaLida = Math.max(maiorCargaLida, ponto.carga)
-      for (const l of [sobe, desce]) if (implausivel(l, ponto.carga)) leiturasImplausiveis.push(`${leituraTexto(l, ponto.carga)} em ${rotulo(ponto.carga)}`)
+      for (const l of [sobe, desce])
+        if (implausivel(l, ponto.carga)) leiturasImplausiveis.push(`${leituraTexto(l, ponto.carga)} em ${rotulo(ponto.carga)}`)
       if (nivel === 0 && !massa.temPecas && !ehZero(ponto.carga, ctx)) semPadroes.push(rotulo(ponto.carga))
       if (massa.temPecas && massa.semIncerteza) semIncerteza.push(rotulo(ponto.carga))
       if (nivel === 0 && massa.temPecas && massa.emaConhecido) {
@@ -438,7 +449,9 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       if (desce !== null) decrescente = orcamento(desce, ref, ctx)
       if (porMedia && temLeitura) {
         const ambas = sobe !== null && desce !== null
-        const indicacao = ambas ? limparRuido((sobe + desce) / 2, Math.max(Math.abs(sobe), Math.abs(desce))) : (sobe ?? desce ?? 0)
+        const indicacao = ambas
+          ? limparRuido((sobe + desce) / 2, Math.max(Math.abs(sobe), Math.abs(desce)))
+          : (sobe ?? desce ?? 0)
         mediaOrc = orcamento(indicacao, ref, ctx, ambas ? Math.abs(desce - sobe) / RAIZ12 : 0)
       }
     }
@@ -522,11 +535,21 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   if (ctx.repeticoes.some((r) => r.n < 10))
     avisos.push(
       opcoes.metodoK === 'K2'
-        ? { nivel: 'atencao', mensagem: 'Repetibilidade com menos de 10 leituras: k = 2 fixo não se justifica (cg-18 B2); use k pelos graus de liberdade.' }
-        : { nivel: 'info', mensagem: 'Repetibilidade com menos de 10 leituras: o k calculado pelos graus de liberdade efetivos sai maior que 2.' },
+        ? {
+            nivel: 'atencao',
+            mensagem:
+              'Repetibilidade com menos de 10 leituras: k = 2 fixo não se justifica (cg-18 B2); use k pelos graus de liberdade.',
+          }
+        : {
+            nivel: 'info',
+            mensagem: 'Repetibilidade com menos de 10 leituras: o k calculado pelos graus de liberdade efetivos sai maior que 2.',
+          },
     )
   if (pontosLidos > 0 && pontosLidos < 5)
-    avisos.push({ nivel: 'atencao', mensagem: `Erro de indicação com ${pontosLidos} ponto(s); o mínimo é 5, contando o zero (cg-18 §5.2).` })
+    avisos.push({
+      nivel: 'atencao',
+      mensagem: `Erro de indicação com ${pontosLidos} ponto(s); o mínimo é 5, contando o zero (cg-18 §5.2).`,
+    })
   if (pontosLidos > 0 && maiorCargaLida < 0.9 * max * (1 - TOL))
     avisos.push({
       nivel: 'atencao',
@@ -543,13 +566,17 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
         mensagem: `Carga de excentricidade (${rotulo(lEcc)}) muito diferente da sugerida (${rotulo(sugerida)}, DOQ-CGCRE-097 10.4.1).`,
       })
     const faltando = exc.resultado.desvios.filter((d) => d === null).length
-    if (exc.valida && faltando) avisos.push({ nivel: 'atencao', mensagem: `Excentricidade: ${faltando} posição(ões) sem leitura.` })
+    if (exc.valida && faltando)
+      avisos.push({ nivel: 'atencao', mensagem: `Excentricidade: ${faltando} posição(ões) sem leitura.` })
     if (entrada.excentricidade.metodo === 1 || entrada.excentricidade.metodo === 3)
       for (const p of entrada.excentricidade.posicoes)
-        if (implausivel(lida(p.leitura), lEcc)) leiturasImplausiveis.push(`${leituraTexto(p.leitura, lEcc)} na excentricidade (${p.rotulo})`)
+        if (implausivel(lida(p.leitura), lEcc))
+          leiturasImplausiveis.push(`${leituraTexto(p.leitura, lEcc)} na excentricidade (${p.rotulo})`)
   }
   for (const r of entrada.repetibilidade)
-    for (const l of r.leituras) if (implausivel(lida(l), r.carga)) leiturasImplausiveis.push(`${leituraTexto(l, r.carga)} na repetibilidade a ${rotulo(r.carga)}`)
+    for (const l of r.leituras)
+      if (implausivel(lida(l), r.carga))
+        leiturasImplausiveis.push(`${leituraTexto(l, r.carga)} na repetibilidade a ${rotulo(r.carga)}`)
   if (leiturasImplausiveis.length)
     avisos.push({
       nivel: 'erro',
@@ -578,7 +605,8 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   if (opcoes.divisaoTeste > 0)
     avisos.push({
       nivel: 'info',
-      mensagem: 'Leituras com resolução aumentada (divisão de teste): o certificado deve advertir que a incerteza é menor que a obtida com a divisão normal (cg-18 §8.3).',
+      mensagem:
+        'Leituras com resolução aumentada (divisão de teste): o certificado deve advertir que a incerteza é menor que a obtida com a divisão normal (cg-18 §8.3).',
     })
 
   // ---- Conformidade geral (pior caso) ----

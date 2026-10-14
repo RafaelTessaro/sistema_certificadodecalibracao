@@ -1,0 +1,80 @@
+{
+  "cnpj": "12403843000118",
+  "razao_social": "FABIO DE GODOY LIMA LTDA",
+  "nome_fantasia": "BALANCAS.COM",
+  "situacao_cadastral": "Ativa",
+  "data_situacao_cadastral": "2010-08-05",
+  "matriz_filial": "Matriz",
+  "data_inicio_atividade": "2010-08-05",
+  "cnae_principal": "4751201",
+  "cnaes_secundarios": [
+    "4530703",
+    "9511800"
+  ],
+  "cnaes": [
+    {
+      "codigo": "4751201",
+      "descricao": "Comércio varejista especializado de equipamentos e suprimentos de informática",
+      "is_principal": true
+    },
+    {
+      "codigo": "4530703",
+      "descricao": "Comércio a varejo de peças e acessórios novos para veículos automotores",
+      "is_principal": false
+    },
+    {
+      "codigo": "9511800",
+      "descricao": "Reparação e manutenção de computadores e de equipamentos periféricos",
+      "is_principal": false
+    }
+  ],
+  "natureza_juridica": "Sociedade Empresária Limitada",
+  "tipo_logradouro": "RUA",
+  "logradouro": "13",
+  "numero": "650",
+  "complemento": "",
+  "bairro": "BAIRRO DA BOA MORTE",
+  "cep": "13500120",
+  "uf": "SP",
+  "municipio": "RIO CLARO",
+  "codigo_municipio": "6979",
+  "email": "BALANCAS.COM@GMAIL.COM",
+  "telefones": [
+    {
+      "ddd": "19",
+      "numero": "81182225",
+      "is_fax": false
+    },
+    {
+      "ddd": "19",
+      "numero": "35240090",
+      "is_fax": true
+    }
+  ],
+  "capital_social": "5000,00",
+  "qualificacao_responsavel": {
+    "codigo": "49",
+    "descricao": "Sócio-Administrador"
+  },
+  "ente_federativo": "",
+  "porte_empresa": "Microempresa (ME)",
+  "opcao_simples": "S",
+  "data_opcao_simples": "2017-01-01",
+  "data_exclusao_simples": "0000-00-00",
+  "opcao_mei": "N",
+  "data_opcao_mei": "0000-00-00",
+  "data_exclusao_mei": "0000-00-00",
+  "motivo_situacao_cadastral": {
+    "codigo": "00",
+    "descricao": "SEM MOTIVO"
+  },
+  "nome_cidade_exterior": "",
+  "codigo_pais": "",
+  "pais": {
+    "codigo": "",
+    "descricao": ""
+  },
+  "situacao_especial": "",
+  "data_situacao_especial": "",
+  "updated_at": "2026-09-15T00:54:41.4550104Z"
+}

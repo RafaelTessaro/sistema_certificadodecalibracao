@@ -33,9 +33,9 @@ describe('erros de sessão nas requisições', () => {
     vi.unstubAllGlobals()
   })
 
-  it('401 em /api/dados avisa SEM_SESSAO e pede para repetir a ação', async () => {
+  it('401 em /api/painel avisa SEM_SESSAO e pede para repetir a ação', async () => {
     simularFetch(401, { erro: 'Sua sessão terminou. Entre de novo para continuar.', codigo: 'SEM_SESSAO' })
-    const e = await erroDe(api.dados())
+    const e = await erroDe(api.painel())
     expect(aviso).toHaveBeenCalledExactlyOnceWith('SEM_SESSAO')
     expect(e.status).toBe(401)
     expect(e.message).toBe('Sua sessão terminou. Entre de novo e repita a ação.')
@@ -51,15 +51,15 @@ describe('erros de sessão nas requisições', () => {
 
   it('403 TROCAR_SENHA avisa TROCAR_SENHA', async () => {
     simularFetch(403, { erro: 'Crie sua senha antes de continuar.', codigo: 'TROCAR_SENHA' })
-    const e = await erroDe(api.dados())
+    const e = await erroDe(api.painel())
     expect(aviso).toHaveBeenCalledExactlyOnceWith('TROCAR_SENHA')
     expect(e.message).toBe('Crie sua senha antes de continuar.')
   })
 
   it('403 SEM_PERMISSAO não avisa e traz a mensagem do servidor', async () => {
-    const erro = 'Só o administrador exclui eventos. Para tirar o evento da agenda, mude a situação para Cancelado.'
-    simularFetch(403, { erro, codigo: 'SEM_PERMISSAO', permissao: 'excluirEvento' })
-    const e = await erroDe(api.excluirEvento('abc'))
+    const erro = 'Só o administrador cancela certificados.'
+    simularFetch(403, { erro, codigo: 'SEM_PERMISSAO', permissao: 'cancelarCertificado' })
+    const e = await erroDe(api.cancelar('abc', 'motivo do teste'))
     expect(aviso).not.toHaveBeenCalled()
     expect(e.status).toBe(403)
     expect(e.message).toBe(erro)
@@ -80,7 +80,7 @@ describe('erros de sessão nas requisições', () => {
   it('sem callback registrado, o 401 só vira erro', async () => {
     definirAoErroSessao(null)
     simularFetch(401, {})
-    expect((await erroDe(api.dados())).status).toBe(401)
+    expect((await erroDe(api.painel())).status).toBe(401)
     expect(aviso).not.toHaveBeenCalled()
   })
 })
@@ -119,54 +119,24 @@ describe('rotas de sessão e usuários', () => {
   })
 })
 
-// ---- Envio de arquivo (XMLHttpRequest) --------------------------------------------------
+describe('calibrações', () => {
+  afterEach(() => vi.unstubAllGlobals())
 
-class XhrFalso {
-  static resposta = { status: 200, corpo: '{}' }
-  status = 0
-  responseText = ''
-  timeout = 0
-  upload: { onprogress?: unknown } = {}
-  onload: (() => void) | null = null
-  onerror: (() => void) | null = null
-  ontimeout: (() => void) | null = null
-  open() {}
-  setRequestHeader() {}
-  send() {
-    queueMicrotask(() => {
-      this.status = XhrFalso.resposta.status
-      this.responseText = XhrFalso.resposta.corpo
-      this.onload?.()
-    })
-  }
-}
-
-describe('envio de arquivo', () => {
-  const aviso = vi.fn()
-  beforeEach(() => {
-    definirAoErroSessao(aviso)
-    vi.stubGlobal('XMLHttpRequest', XhrFalso)
-  })
-  afterEach(() => {
-    definirAoErroSessao(null)
-    aviso.mockReset()
-    vi.unstubAllGlobals()
+  it('PDF para ver ou baixar; emitir com o signatário e a versão', async () => {
+    expect(api.urlPdf('k/1')).toBe('/api/calibracoes/k%2F1/pdf')
+    expect(api.urlPdf('k1', true)).toBe('/api/calibracoes/k1/pdf?baixar=1')
+    const fetch = simularFetch(200, { calibracao: {} })
+    await api.emitir('k1', { signatarioId: 'u1', versao: 3 })
+    const [url, init] = fetch.mock.calls[0]
+    expect(url).toBe('/api/calibracoes/k1/emitir')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({ signatarioId: 'u1', versao: 3 })
   })
 
-  it('401 no envio do anexo avisa SEM_SESSAO', async () => {
-    XhrFalso.resposta = { status: 401, corpo: JSON.stringify({ codigo: 'SEM_SESSAO', erro: 'x' }) }
-    const e = await erroDe(api.enviarAnexo('e1', new Blob(['oi']), 'oi.txt'))
-    expect(aviso).toHaveBeenCalledExactlyOnceWith('SEM_SESSAO')
-    expect(e.message).toBe('Sua sessão terminou. Entre de novo e repita a ação.')
-  })
-
-  it('403 TROCAR_SENHA no envio avisa TROCAR_SENHA', async () => {
-    XhrFalso.resposta = {
-      status: 403,
-      corpo: JSON.stringify({ codigo: 'TROCAR_SENHA', erro: 'Crie sua senha antes de continuar.' }),
-    }
-    await erroDe(api.enviarContratoAssinado('k1', new Blob(['%PDF']), 'contrato.pdf'))
-    expect(aviso).toHaveBeenCalledExactlyOnceWith('TROCAR_SENHA')
+  it('a lista leva só os filtros informados', async () => {
+    const fetch = simularFetch(200, { itens: [], total: 0 })
+    await api.calibracoes({ status: 'EMITIDO', busca: 'balança 5', pagina: 2 })
+    expect(fetch.mock.calls[0][0]).toBe('/api/calibracoes?status=EMITIDO&busca=balan%C3%A7a+5&pagina=2')
   })
 })
 

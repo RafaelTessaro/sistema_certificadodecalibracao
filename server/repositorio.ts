@@ -771,6 +771,13 @@ export class Repositorio {
     })
   }
 
+  /** Revisões feitas a partir de um certificado: a emitida que o substituiu e a que está em andamento. */
+  revisoesDe(id: string): Array<{ id: string; numero: string; status: StatusCalibracao }> {
+    return this.db
+      .prepare('SELECT id, numero, status FROM calibracoes WHERE substitui_id = ? ORDER BY criado_em')
+      .all(id) as Array<{ id: string; numero: string; status: StatusCalibracao }>
+  }
+
   listarEnvios(filtro: { calibracaoId?: string; clienteId?: string }): Envio[] {
     const [cond, valor] = filtro.calibracaoId ? ['calibracao_id = ?', filtro.calibracaoId] : ['cliente_id = ?', filtro.clienteId ?? '']
     const linhas = this.db.prepare(`SELECT * FROM envios WHERE ${cond} ORDER BY em DESC LIMIT 100`).all(valor) as Array<

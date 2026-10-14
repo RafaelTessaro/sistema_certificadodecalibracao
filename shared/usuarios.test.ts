@@ -123,7 +123,7 @@ describe('política de senha', () => {
   it('recusa o nome do sistema', () => {
     expect(validarSenhaNova('bccalibracao2026', maria)).toBe(MSG.sistema)
     expect(validarSenhaNova('Minha Calibracao Boa', maria)).toBe(MSG.sistema)
-    expect(validarSenhaNova('fíchas da festa', maria)).toBe(MSG.sistema)
+    expect(validarSenhaNova('calibrações da festa', maria)).toBe(MSG.sistema)
   })
 
   it('recusa uma palavra inteira do nome com 4 letras ou mais, sem acento', () => {
@@ -175,13 +175,21 @@ describe('normalização das entradas', () => {
   it('novo usuário', () => {
     const r = normalizarNovoUsuario({ nome: '  Maria \n  Souza ', login: ' Maria.Souza ', nivel: 'ADMIN', senha: '' })
     expect(r.erros).toEqual([])
-    expect(r.valor).toEqual({ nome: 'Maria Souza', login: 'maria.souza', nivel: 'ADMIN', senha: '' })
+    expect(r.valor).toEqual({
+      nome: 'Maria Souza',
+      login: 'maria.souza',
+      nivel: 'ADMIN',
+      senha: '',
+      signatario: false,
+      cargo: '',
+      registro: '',
+    })
   })
 
   it('novo usuário: nível inválido vira comum e senha vazia é aceita', () => {
     const r = normalizarNovoUsuario({ nome: 'João Lima', login: 'joao', nivel: 'DONO' })
     expect(r.erros).toEqual([])
-    expect(r.valor).toEqual({ nome: 'João Lima', login: 'joao', nivel: 'COMUM', senha: '' })
+    expect(r.valor).toEqual({ nome: 'João Lima', login: 'joao', nivel: 'COMUM', senha: '', signatario: false, cargo: '', registro: '' })
   })
 
   it('novo usuário: valida nome, login e senha digitada', () => {
@@ -213,7 +221,7 @@ describe('normalização das entradas', () => {
   })
 
   it('alteração: nível, situação, versão e nome inválidos são erro', () => {
-    expect(normalizarAlteracaoUsuario({ nivel: 'DONO' }).erros).toEqual(['Nível inválido. Escolha Administrador ou Comum.'])
+    expect(normalizarAlteracaoUsuario({ nivel: 'DONO' }).erros).toEqual(['Nível inválido. Escolha Administrador ou Técnico.'])
     expect(normalizarAlteracaoUsuario({ nivel: 'DONO' }).valor).toEqual({})
     expect(normalizarAlteracaoUsuario({ ativo: 'sim' }).erros).toHaveLength(1)
     expect(normalizarAlteracaoUsuario({ versao: 1.5 }).erros).toHaveLength(1)

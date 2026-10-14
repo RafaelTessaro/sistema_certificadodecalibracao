@@ -1,6 +1,6 @@
 // Consultas de CNPJ e CEP feitas pelo servidor (é ele quem acessa a internet).
 
-import type { Tone } from '#shared/calc.ts'
+import type { Tone } from '#shared/tipos.ts'
 import { mascaraDocumento, normalizarCnpj, somenteDigitos } from '#shared/documentos.ts'
 import type { Cliente, ClienteInput, TipoCliente } from '#shared/tipos.ts'
 import { api, ErroApi } from './api'

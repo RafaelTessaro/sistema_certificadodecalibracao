@@ -8,7 +8,6 @@ import {
   type TextareaHTMLAttributes,
 } from 'react'
 import { cn } from '../../lib/cn'
-import { MAX_CENTAVOS, textoParaReais } from '../../lib/format'
 
 const baseCampo =
   'w-full rounded-xl border border-line-strong/80 bg-surface text-sm text-ink placeholder:text-muted/80 ' +
@@ -88,67 +87,6 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
     </div>
   )
 })
-
-/**
- * Campo monetário no padrão brasileiro, como em maquininha de cartão: os
- * dígitos entram pela direita e os dois últimos viram centavos (8000 → R$ 80,00).
- */
-export function CurrencyInput({
-  valor,
-  aoMudar,
-  id,
-  className,
-  ...props
-}: { valor: number; aoMudar: (v: number) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
-  const centavos = Math.round((valor || 0) * 100)
-  const texto = (centavos / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const cursorNoFim = (el: HTMLInputElement) =>
-    requestAnimationFrame(() => el.setSelectionRange(el.value.length, el.value.length))
-  const definir = (c: number) => aoMudar(Math.min(Math.max(0, c), MAX_CENTAVOS) / 100)
-
-  return (
-    <div className="relative">
-      <span className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-sm text-muted">R$</span>
-      <input
-        id={id}
-        inputMode="numeric"
-        autoComplete="off"
-        className={cn(baseCampo, 'tnum h-10 pr-3.5 pl-10 text-right', className)}
-        value={texto}
-        onKeyDown={(e) => {
-          const el = e.currentTarget
-          const tudoSelecionado = el.selectionStart === 0 && el.selectionEnd === el.value.length
-          if (/^\d$/.test(e.key) && !e.ctrlKey && !e.metaKey) {
-            e.preventDefault()
-            const base = tudoSelecionado ? 0 : centavos
-            if (base * 10 + Number(e.key) <= MAX_CENTAVOS) definir(base * 10 + Number(e.key))
-            cursorNoFim(el)
-          } else if (e.key === 'Backspace') {
-            e.preventDefault()
-            definir(tudoSelecionado ? 0 : Math.floor(centavos / 10))
-            cursorNoFim(el)
-          } else if (e.key === 'Delete') {
-            e.preventDefault()
-            definir(0)
-          }
-        }}
-        onPaste={(e) => {
-          const reais = textoParaReais(e.clipboardData.getData('text'))
-          e.preventDefault()
-          if (reais !== null) aoMudar(reais)
-        }}
-        // Teclados virtuais que não enviam a tecla no keydown caem aqui
-        onChange={(e) => definir(Number(e.target.value.replace(/\D/g, '').slice(-11) || '0'))}
-        onFocus={(e) => cursorNoFim(e.target)}
-        onMouseUp={(e) => {
-          const el = e.currentTarget
-          if (el.selectionStart === el.selectionEnd) cursorNoFim(el)
-        }}
-        {...props}
-      />
-    </div>
-  )
-}
 
 /** Número inteiro com botões − / + ; aceita vazio quando `permitirVazio`. */
 export function NumberInput({

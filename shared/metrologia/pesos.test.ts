@@ -14,7 +14,8 @@ describe('converterMassa', () => {
 })
 
 describe('montarCarga', () => {
-  const pecasKg = (...nominais: number[]): PecaDisponivel[] => nominais.map((n, i) => ({ chave: `p${i}`, nominal: n, quantidade: 1 }))
+  const pecasKg = (...nominais: number[]): PecaDisponivel[] =>
+    nominais.map((n, i) => ({ chave: `p${i}`, nominal: n, quantidade: 1 }))
 
   it('35 kg com 20, 10, 5, 2, 2 e 1 kg → 20 + 10 + 5', () => {
     const r = montarCarga(35, pecasKg(20, 10, 5, 2, 2, 1))
@@ -64,7 +65,15 @@ describe('pecaCalculo', () => {
 
   it('pelo certificado: correção e U em mg viram a unidade da balança', () => {
     const p = pecaCalculo(peso, { uso: 'CERTIFICADO', classe: 'M1' }, 'kg', 2)
-    expect(p).toEqual({ nominal: 10, correcao: 0.00012, incerteza: 0.00016, k: 2, ema: 0.0005, usarCertificado: true, quantidade: 2 })
+    expect(p).toEqual({
+      nominal: 10,
+      correcao: 0.00012,
+      incerteza: 0.00016,
+      k: 2,
+      ema: 0.0005,
+      usarCertificado: true,
+      quantidade: 2,
+    })
   })
 
   it('pelo nominal: sem correção nem U; incerteza pelo EMA da classe', () => {
@@ -76,13 +85,23 @@ describe('pecaCalculo', () => {
 
 describe('classeMinimaPesos', () => {
   it('classe III: M1 para n = 6000 e M2 para n = 3000 (doc §6.2)', () => {
-    expect(classeMinimaPesos({ unidade: 'g', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30000, e: 5, d: 5 }] })).toBe('M1')
-    expect(classeMinimaPesos({ unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })).toBe('M2')
-    expect(classeMinimaPesos({ unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30, e: 0.005, d: 0.005 }] })).toBe('M1')
+    expect(classeMinimaPesos({ unidade: 'g', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30000, e: 5, d: 5 }] })).toBe(
+      'M1',
+    )
+    expect(
+      classeMinimaPesos({ unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30, e: 0.01, d: 0.01 }] }),
+    ).toBe('M2')
+    expect(
+      classeMinimaPesos({ unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30, e: 0.005, d: 0.005 }] }),
+    ).toBe('M1')
   })
 
   it('classe II e balança sem classe', () => {
-    expect(classeMinimaPesos({ unidade: 'g', classe: 'II', tipoFaixas: 'UNICA', faixas: [{ max: 3000, e: 0.1, d: 0.01 }] })).toBe('F2')
-    expect(classeMinimaPesos({ unidade: 'g', classe: '', tipoFaixas: 'UNICA', faixas: [{ max: 3000, e: 0.1, d: 0.01 }] })).toBeNull()
+    expect(classeMinimaPesos({ unidade: 'g', classe: 'II', tipoFaixas: 'UNICA', faixas: [{ max: 3000, e: 0.1, d: 0.01 }] })).toBe(
+      'F2',
+    )
+    expect(
+      classeMinimaPesos({ unidade: 'g', classe: '', tipoFaixas: 'UNICA', faixas: [{ max: 3000, e: 0.1, d: 0.01 }] }),
+    ).toBeNull()
   })
 })

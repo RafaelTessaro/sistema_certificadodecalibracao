@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { desvioPadrao, distribuicaoT, fatorAbrangencia, media, P_95_45, quantilNormal, quantilT, TABELA_G2 } from './estatistica.ts'
+import {
+  desvioPadrao,
+  distribuicaoT,
+  fatorAbrangencia,
+  media,
+  P_95_45,
+  quantilNormal,
+  quantilT,
+  TABELA_G2,
+} from './estatistica.ts'
 
 describe('média e desvio-padrão', () => {
   it('calcula a repetibilidade do exemplo de 30 kg (doc §9.2)', () => {

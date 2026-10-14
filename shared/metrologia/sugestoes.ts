@@ -2,7 +2,13 @@
 // carga e número de leituras da repetibilidade (EURAMET cg-18 §5; DOQ-CGCRE-097 10.4.1; OIML R76 A.4).
 
 import type { Receptor, Unidade } from '../tipos.ts'
-import { algarismosSignificativos, arredondarMeioPar, arredondarSignificativos, casasDecimais, ordemDeGrandeza } from './arredondamento.ts'
+import {
+  algarismosSignificativos,
+  arredondarMeioPar,
+  arredondarSignificativos,
+  casasDecimais,
+  ordemDeGrandeza,
+} from './arredondamento.ts'
 import { faixaDoValor, faixasOrdenadas, LIMIARES_EMA } from './ema.ts'
 import { converterMassa } from './pesos.ts'
 import type { InstrumentoCalculo } from './tipos.ts'

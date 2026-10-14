@@ -290,5 +290,9 @@ export function deveRecarregar(atual: Situacao, novo: Situacao): boolean {
   if (!novo.usuario) return false
   // Alguém entrou noutra aba enquanto esta mostrava a tela de entrada
   if (!atual.usuario) return true
-  return atual.usuario.id !== novo.usuario.id || atual.usuario.nivel !== novo.usuario.nivel
+  return (
+    atual.usuario.id !== novo.usuario.id ||
+    atual.usuario.nivel !== novo.usuario.nivel ||
+    atual.usuario.signatario !== novo.usuario.signatario
+  )
 }
