@@ -115,8 +115,8 @@ export function Entrar() {
             Para segurança, o sistema registra data, hora e computador de cada acesso e alteração.
           </p>
           <p>
-            Esqueceu a senha? Peça ao administrador. Se você é o administrador, use “Redefinir senha do BC Calibração” no computador
-            do servidor: clique em Iniciar e digite BC Calibração.
+            Esqueceu a senha? Peça ao administrador. Se você é o administrador, use “Redefinir senha do BC Calibração” no
+            computador do servidor: clique em Iniciar e digite BC Calibração.
           </p>
         </>
       }
@@ -236,7 +236,13 @@ function CriarAdministrador() {
       />
       <form onSubmit={enviar} className="flex flex-col gap-4" noValidate>
         <Field label="Seu nome completo" htmlFor="pa-nome" hint="Sai nos certificados que você autorizar.">
-          <Input id="pa-nome" autoFocus value={nome} onChange={(e) => setNome(e.target.value)} icone={<User className="h-4 w-4" />} />
+          <Input
+            id="pa-nome"
+            autoFocus
+            value={nome}
+            onChange={(e) => setNome(e.target.value)}
+            icone={<User className="h-4 w-4" />}
+          />
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Usuário (para entrar)" htmlFor="pa-login">

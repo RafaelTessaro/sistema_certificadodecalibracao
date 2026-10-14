@@ -25,17 +25,20 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
       ...e,
       aplicavel: true,
       carga: e.carga || sugerida,
-      posicoes: posicoesSugeridas.map((rotulo, i) => e.posicoes[i] ?? { rotulo, leitura: null, referencia: null }).map((p, i) => ({
-        ...p,
-        rotulo: posicoesSugeridas[i],
-      })),
+      posicoes: posicoesSugeridas
+        .map((rotulo, i) => e.posicoes[i] ?? { rotulo, leitura: null, referencia: null })
+        .map((p, i) => ({
+          ...p,
+          rotulo: posicoesSugeridas[i],
+        })),
     }))
   const usaReferencia = ecc.metodo === 3 || ecc.metodo === 4
 
   // Balança de gancho: a carga se centra sozinha (o ensaio não se aplica)
   const gancho = balanca.receptor === 'GANCHO' && ecc.aplicavel && !ecc.posicoes.length
   useEffect(() => {
-    if (gancho) set((e) => ({ ...e, aplicavel: false, motivo: e.motivo || 'Balança suspensa (gancho): a carga se centraliza sozinha.' }))
+    if (gancho)
+      set((e) => ({ ...e, aplicavel: false, motivo: e.motivo || 'Balança suspensa (gancho): a carga se centraliza sozinha.' }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gancho])
 
@@ -76,7 +79,12 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
               htmlFor="ecc-carga"
               hint={`Sugerida: ${formatarNumero(sugerida, casas)} ${u} (cerca de 1/3 da capacidade)`}
             >
-              <CampoNumero id="ecc-carga" valor={ecc.carga || null} aoMudar={(v) => set((x) => ({ ...x, carga: v ?? 0 }))} unidade={u} />
+              <CampoNumero
+                id="ecc-carga"
+                valor={ecc.carga || null}
+                aoMudar={(v) => set((x) => ({ ...x, carga: v ?? 0 }))}
+                unidade={u}
+              />
             </Field>
             <Field label="Como foi feito" htmlFor="ecc-metodo" className="sm:col-span-2">
               <Select
@@ -129,7 +137,9 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                   <thead>
                     <tr className="text-left text-xs text-muted">
                       <th className="pb-2 font-medium">Posição</th>
-                      {usaReferencia && <th className="pb-2 text-right font-medium">{ecc.metodo === 3 ? 'Zero antes' : 'Centro antes'}</th>}
+                      {usaReferencia && (
+                        <th className="pb-2 text-right font-medium">{ecc.metodo === 3 ? 'Zero antes' : 'Centro antes'}</th>
+                      )}
                       <th className="pb-2 text-right font-medium">Indicação</th>
                       <th className="pb-2 text-right font-medium">Desvio</th>
                     </tr>
@@ -161,7 +171,10 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                                 valor={p.referencia}
                                 aria-label={`Referência da posição ${i + 1}`}
                                 aoMudar={(v) =>
-                                  set((x) => ({ ...x, posicoes: x.posicoes.map((y, j) => (j === i ? { ...y, referencia: v } : y)) }))
+                                  set((x) => ({
+                                    ...x,
+                                    posicoes: x.posicoes.map((y, j) => (j === i ? { ...y, referencia: v } : y)),
+                                  }))
                                 }
                                 grade={{ grupo: 'ecc', lin: i, col: 0 }}
                                 unidade={u}
@@ -182,7 +195,9 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                             />
                           </td>
                           <td className={cn('tnum py-2 pl-3 text-right', maior ? 'font-semibold text-warning' : 'text-ink-2')}>
-                            {desvio === null || desvio === undefined ? '—' : `${desvio > 0 ? '+' : ''}${formatarNumero(desvio, casas)}`}
+                            {desvio === null || desvio === undefined
+                              ? '—'
+                              : `${desvio > 0 ? '+' : ''}${formatarNumero(desvio, casas)}`}
                           </td>
                         </tr>
                       )
@@ -194,8 +209,15 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
           )}
           {r && r.aplicavel && (
             <div className="grid grid-cols-2 gap-px overflow-hidden rounded-b-2xl border-t border-line bg-line">
-              <Resultado rotulo="Maior desvio" valor={`${formatarNumero(r.maiorDesvio, casas)} ${u}`} destaque />
-              <Resultado rotulo="Na posição" valor={r.maiorDesvio > 0 ? `${r.posicaoMaior + 1}. ${ecc.posicoes[r.posicaoMaior]?.rotulo ?? ''}` : '—'} />
+              <Resultado
+                rotulo="Maior desvio"
+                valor={r.desvios.filter((d) => d !== null).length >= 2 ? `${formatarNumero(r.maiorDesvio, casas)} ${u}` : '—'}
+                destaque
+              />
+              <Resultado
+                rotulo="Na posição"
+                valor={r.maiorDesvio > 0 ? `${r.posicaoMaior + 1}. ${ecc.posicoes[r.posicaoMaior]?.rotulo ?? ''}` : '—'}
+              />
             </div>
           )}
         </Card>
@@ -240,13 +262,36 @@ function Diagrama({ receptor, n, destaque }: { receptor: Receptor; n: number; de
             })
   const larga = receptor === 'RODOVIARIA' || receptor === 'APOIOS'
   return (
-    <svg viewBox={larga ? '0 0 100 100' : '0 0 100 100'} className="mx-auto w-full max-w-[220px]" role="img" aria-label="Posições da carga">
+    <svg
+      viewBox={larga ? '0 0 100 100' : '0 0 100 100'}
+      className="mx-auto w-full max-w-[220px]"
+      role="img"
+      aria-label="Posições da carga"
+    >
       {receptor === 'CIRCULAR' ? (
         <circle cx="50" cy="50" r="40" fill="var(--surface-2)" stroke="var(--border-strong)" strokeWidth="1.2" />
       ) : larga ? (
-        <rect x="6" y="20" width="88" height="60" rx="4" fill="var(--surface-2)" stroke="var(--border-strong)" strokeWidth="1.2" />
+        <rect
+          x="6"
+          y="20"
+          width="88"
+          height="60"
+          rx="4"
+          fill="var(--surface-2)"
+          stroke="var(--border-strong)"
+          strokeWidth="1.2"
+        />
       ) : (
-        <rect x="10" y="10" width="80" height="80" rx="6" fill="var(--surface-2)" stroke="var(--border-strong)" strokeWidth="1.2" />
+        <rect
+          x="10"
+          y="10"
+          width="80"
+          height="80"
+          rx="6"
+          fill="var(--surface-2)"
+          stroke="var(--border-strong)"
+          strokeWidth="1.2"
+        />
       )}
       {receptor === 'RODOVIARIA' && (
         <>
@@ -256,7 +301,13 @@ function Diagrama({ receptor, n, destaque }: { receptor: Receptor; n: number; de
       )}
       {pontos.slice(0, Math.max(n, 1)).map(([x, y], i) => (
         <g key={i}>
-          <circle cx={x} cy={y} r="7.5" fill={i === destaque ? 'var(--warning-dot)' : 'var(--brand)'} opacity={i === destaque ? 1 : 0.9} />
+          <circle
+            cx={x}
+            cy={y}
+            r="7.5"
+            fill={i === destaque ? 'var(--warning-dot)' : 'var(--brand)'}
+            opacity={i === destaque ? 1 : 0.9}
+          />
           <text x={x} y={y + 2.8} textAnchor="middle" fontSize="8" fontWeight="600" fill="var(--on-brand)">
             {i + 1}
           </text>

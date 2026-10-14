@@ -21,4 +21,5 @@ export interface ContextoEtapa {
   editarBalanca: () => void
 }
 
-export type IdEtapa = 'identificacao' | 'instrumento' | 'padroes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conclusao' | 'revisao'
+export type IdEtapa =
+  'identificacao' | 'instrumento' | 'padroes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conclusao' | 'revisao'

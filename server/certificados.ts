@@ -6,8 +6,22 @@ import { createHash, randomInt } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { formatarDataBr, formatarNumeroCertificado, hojeLocalIso, nomeArquivoCertificado, pendenciasEmissao } from '#shared/dominio.ts'
-import type { Calibracao, CalibracaoInput, Configuracoes, EmissaoCertificado, Padrao, Signatario, Usuario } from '#shared/tipos.ts'
+import {
+  formatarDataBr,
+  formatarNumeroCertificado,
+  hojeLocalIso,
+  nomeArquivoCertificado,
+  pendenciasEmissao,
+} from '#shared/dominio.ts'
+import type {
+  Calibracao,
+  CalibracaoInput,
+  Configuracoes,
+  EmissaoCertificado,
+  Padrao,
+  Signatario,
+  Usuario,
+} from '#shared/tipos.ts'
 import type { Contexto } from './contexto.ts'
 import { ErroApi } from './erros.ts'
 import { gerarCertificadoPdf } from './pdf/certificado.ts'
@@ -96,7 +110,12 @@ function conteudoQr(config: Configuracoes, emissao: EmissaoCertificado, k: Calib
 }
 
 /** Gera o PDF de uma calibração com os dados indicados. */
-export async function gerarPdf(k: Calibracao, emissao: EmissaoCertificado, config: Configuracoes, marcaDagua: string): Promise<Buffer> {
+export async function gerarPdf(
+  k: Calibracao,
+  emissao: EmissaoCertificado,
+  config: Configuracoes,
+  marcaDagua: string,
+): Promise<Buffer> {
   const { resultado, comoEncontrado } = calcularCalibracao(k, emissao.balanca, emissao.padroes)
   const { qr, url } = conteudoQr(config, emissao, k)
   return gerarCertificadoPdf({ calibracao: k, emissao, resultado, comoEncontrado, marcaDagua, qrCode: qr, urlVerificacao: url })
@@ -122,7 +141,10 @@ export async function emitirCertificado(
       codigo: 'SEM_PERMISSAO',
     })
   if (config.exigirRevisor && atual.tecnicoId === signatarioId)
-    throw new ErroApi(409, 'A empresa exige que outra pessoa revise e autorize: o técnico que executou não pode emitir o próprio certificado.')
+    throw new ErroApi(
+      409,
+      'A empresa exige que outra pessoa revise e autorize: o técnico que executou não pode emitir o próprio certificado.',
+    )
   const pendencias = pendenciasDa(ctx, atual)
   if (pendencias.length) throw new ErroApi(409, pendencias[0], { pendencias })
 

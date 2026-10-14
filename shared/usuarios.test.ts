@@ -189,7 +189,15 @@ describe('normalização das entradas', () => {
   it('novo usuário: nível inválido vira comum e senha vazia é aceita', () => {
     const r = normalizarNovoUsuario({ nome: 'João Lima', login: 'joao', nivel: 'DONO' })
     expect(r.erros).toEqual([])
-    expect(r.valor).toEqual({ nome: 'João Lima', login: 'joao', nivel: 'COMUM', senha: '', signatario: false, cargo: '', registro: '' })
+    expect(r.valor).toEqual({
+      nome: 'João Lima',
+      login: 'joao',
+      nivel: 'COMUM',
+      senha: '',
+      signatario: false,
+      cargo: '',
+      registro: '',
+    })
   })
 
   it('novo usuário: valida nome, login e senha digitada', () => {

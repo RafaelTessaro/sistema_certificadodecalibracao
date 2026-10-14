@@ -203,7 +203,12 @@ function Paleta({ fechar }: { fechar: () => void }) {
         grupo: 'Clientes',
         titulo: c.nome,
         detalhe: [c.documento, c.cidade, c.telefone].filter(Boolean).join(' • '),
-        icone: c.tipo === 'PJ' ? <Building2 className="h-4 w-4" /> : <Avatar nome={c.nome} className="h-6 w-6 rounded-md text-[10px]" />,
+        icone:
+          c.tipo === 'PJ' ? (
+            <Building2 className="h-4 w-4" />
+          ) : (
+            <Avatar nome={c.nome} className="h-6 w-6 rounded-md text-[10px]" />
+          ),
         ir: ir(`/clientes/${c.id}`),
       })),
     )

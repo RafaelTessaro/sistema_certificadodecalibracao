@@ -4,7 +4,8 @@ import { montarCarga } from '#shared/calibracao.ts'
 import type { Balanca, CalibracaoInput, EnsaioIndicacao, Padrao, PecaCarga } from '#shared/tipos.ts'
 
 const iguais = (a: PecaCarga[], b: PecaCarga[]) =>
-  a.length === b.length && a.every((x, i) => x.padraoId === b[i].padraoId && x.pesoId === b[i].pesoId && x.quantidade === b[i].quantidade)
+  a.length === b.length &&
+  a.every((x, i) => x.padraoId === b[i].padraoId && x.pesoId === b[i].pesoId && x.quantidade === b[i].quantidade)
 
 function recomporEnsaio(e: EnsaioIndicacao, balanca: Balanca, padroes: Padrao[]): EnsaioIndicacao {
   let mudou = false

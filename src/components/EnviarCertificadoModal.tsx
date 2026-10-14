@@ -1,7 +1,14 @@
 import { CircleAlert, FileText, Loader2, Mail, Send } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { descricaoBalanca, emailValido, formatarDataBr, listaEmails, nomeArquivoCertificado, preencherModelo } from '#shared/dominio.ts'
+import {
+  descricaoBalanca,
+  emailValido,
+  formatarDataBr,
+  listaEmails,
+  nomeArquivoCertificado,
+  preencherModelo,
+} from '#shared/dominio.ts'
 import type { Balanca, Calibracao, Cliente } from '#shared/tipos.ts'
 import { api } from '../lib/api'
 import { useConsulta } from '../lib/consulta'
@@ -40,7 +47,9 @@ export function EnviarCertificadoModal({
       numero: calibracao.numero,
       empresa: config.empresa.nomeFantasia || config.empresa.razaoSocial,
       cliente: cliente?.nome ?? '',
-      balanca: balanca ? [descricaoBalanca(balanca), balanca.numeroSerie && `nº de série ${balanca.numeroSerie}`].filter(Boolean).join(', ') : '',
+      balanca: balanca
+        ? [descricaoBalanca(balanca), balanca.numeroSerie && `nº de série ${balanca.numeroSerie}`].filter(Boolean).join(', ')
+        : '',
       data: formatarDataBr(calibracao.dataCalibracao),
       os: calibracao.ordemServico,
     }
@@ -115,7 +124,11 @@ export function EnviarCertificadoModal({
         <Field
           label="Para"
           erro={erroPara}
-          hint={cliente && !cliente.emailCertificados && !cliente.email ? 'O cliente não tem e-mail cadastrado.' : 'Separe vários e-mails com vírgula.'}
+          hint={
+            cliente && !cliente.emailCertificados && !cliente.email
+              ? 'O cliente não tem e-mail cadastrado.'
+              : 'Separe vários e-mails com vírgula.'
+          }
         >
           <Input
             value={para}

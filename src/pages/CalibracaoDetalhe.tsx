@@ -49,7 +49,11 @@ import { avisarErro, toast } from '../store/ui'
 export function CalibracaoDetalhe() {
   const { id = '' } = useParams()
   const navegar = useNavigate()
-  const { dados, carregando, erro } = useConsulta(`calibracao:${id}`, () => api.calibracao(id), ['calibracao', 'cliente', 'balanca'])
+  const { dados, carregando, erro } = useConsulta(`calibracao:${id}`, () => api.calibracao(id), [
+    'calibracao',
+    'cliente',
+    'balanca',
+  ])
 
   if (carregando && !dados) return <Carregando />
   if (!dados)
@@ -98,9 +102,18 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
     { label: 'Calibrar de novo esta balança', icone: <Repeat className="h-4 w-4" />, aoClicar: recalibrar },
   ]
   if (emitido && !revisaoAberta)
-    itensMenu.push({ label: 'Corrigir (emitir revisão)', icone: <FilePen className="h-4 w-4" />, aoClicar: () => setPedido('revisar') })
+    itensMenu.push({
+      label: 'Corrigir (emitir revisão)',
+      icone: <FilePen className="h-4 w-4" />,
+      aoClicar: () => setPedido('revisar'),
+    })
   if (emitido && podeCancelar)
-    itensMenu.push('sep', { label: 'Cancelar certificado', icone: <Ban className="h-4 w-4" />, aoClicar: () => setPedido('cancelar'), perigo: true })
+    itensMenu.push('sep', {
+      label: 'Cancelar certificado',
+      icone: <Ban className="h-4 w-4" />,
+      aoClicar: () => setPedido('cancelar'),
+      perigo: true,
+    })
 
   return (
     <div>
@@ -122,7 +135,8 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
         }
         descricao={
           <>
-            {cliente?.nome ?? 'Cliente'} · {balanca ? `${TIPOS_BALANCA[balanca.tipo] ?? 'Balança'} ${capacidadeTexto(balanca)}` : 'Balança'}
+            {cliente?.nome ?? 'Cliente'} ·{' '}
+            {balanca ? `${TIPOS_BALANCA[balanca.tipo] ?? 'Balança'} ${capacidadeTexto(balanca)}` : 'Balança'}
             {k.ordemServico && <> · OS {k.ordemServico}</>}
           </>
         }
@@ -213,7 +227,11 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
               </a>
             </div>
             {/* Navegadores de celular não mostram PDF dentro da página: lá, um botão para abrir */}
-            <iframe title={`Certificado ${k.numero}`} src={urlPdf} className="hidden h-[78vh] min-h-[520px] w-full bg-surface-2 md:block" />
+            <iframe
+              title={`Certificado ${k.numero}`}
+              src={urlPdf}
+              className="hidden h-[78vh] min-h-[520px] w-full bg-surface-2 md:block"
+            />
             <div className="flex flex-col items-center gap-3 px-6 py-10 text-center md:hidden">
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-soft text-brand-ink">
                 <FileBadge2 className="h-6 w-6" />
@@ -258,9 +276,14 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
             <CardHeader icone={<Building2 className="h-4 w-4" />} titulo="Cliente" />
             <div className="px-5 pb-5 text-sm">
               {cliente ? (
-                <Link to={`/clientes/${cliente.id}`} className="group block rounded-xl border border-line px-4 py-3 transition-colors hover:bg-surface-2/60">
+                <Link
+                  to={`/clientes/${cliente.id}`}
+                  className="group block rounded-xl border border-line px-4 py-3 transition-colors hover:bg-surface-2/60"
+                >
                   <p className="font-medium text-ink group-hover:text-brand-ink">{cliente.nome}</p>
-                  {cliente.razaoSocial && cliente.razaoSocial !== cliente.nome && <p className="text-[13px] text-ink-2">{cliente.razaoSocial}</p>}
+                  {cliente.razaoSocial && cliente.razaoSocial !== cliente.nome && (
+                    <p className="text-[13px] text-ink-2">{cliente.razaoSocial}</p>
+                  )}
                   <p className="tnum mt-0.5 text-[13px] text-muted">{cliente.documento}</p>
                 </Link>
               ) : (
@@ -273,13 +296,19 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
             <CardHeader icone={<Scale className="h-4 w-4" />} titulo="Balança" />
             <div className="px-5 pb-5 text-sm">
               {balanca ? (
-                <Link to={`/balancas/${balanca.id}`} className="group block rounded-xl border border-line px-4 py-3 transition-colors hover:bg-surface-2/60">
+                <Link
+                  to={`/balancas/${balanca.id}`}
+                  className="group block rounded-xl border border-line px-4 py-3 transition-colors hover:bg-surface-2/60"
+                >
                   <p className="font-medium text-ink group-hover:text-brand-ink">
                     {[balanca.fabricante, balanca.modelo].filter(Boolean).join(' ') || TIPOS_BALANCA[balanca.tipo]}
                   </p>
                   <p className="tnum text-[13px] text-ink-2">{capacidadeTexto(balanca)}</p>
                   <p className="mt-0.5 text-[13px] text-muted">
-                    {[balanca.numeroSerie && `Série ${balanca.numeroSerie}`, balanca.identificacao && `Id. ${balanca.identificacao}`]
+                    {[
+                      balanca.numeroSerie && `Série ${balanca.numeroSerie}`,
+                      balanca.identificacao && `Id. ${balanca.identificacao}`,
+                    ]
                       .filter(Boolean)
                       .join(' · ') || 'Sem número de série'}
                   </p>
@@ -311,7 +340,12 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
               titulo="Envios por e-mail"
               acoes={
                 emitido ? (
-                  <Button tamanho="sm" variante="ghost" icone={<Send className="h-3.5 w-3.5" />} onClick={() => setEnviando(true)}>
+                  <Button
+                    tamanho="sm"
+                    variante="ghost"
+                    icone={<Send className="h-3.5 w-3.5" />}
+                    onClick={() => setEnviando(true)}
+                  >
                     Enviar
                   </Button>
                 ) : undefined
@@ -342,14 +376,24 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
 
           {k.anotacoesInternas && (
             <Card>
-              <CardHeader icone={<StickyNote className="h-4 w-4" />} titulo="Anotações internas" descricao="Não saem no certificado" />
+              <CardHeader
+                icone={<StickyNote className="h-4 w-4" />}
+                titulo="Anotações internas"
+                descricao="Não saem no certificado"
+              />
               <p className="px-5 pb-5 text-sm whitespace-pre-line text-ink-2">{k.anotacoesInternas}</p>
             </Card>
           )}
         </div>
       </div>
 
-      <EnviarCertificadoModal aberto={enviando} aoFechar={() => setEnviando(false)} calibracao={k} cliente={cliente} balanca={balanca} />
+      <EnviarCertificadoModal
+        aberto={enviando}
+        aoFechar={() => setEnviando(false)}
+        calibracao={k}
+        cliente={cliente}
+        balanca={balanca}
+      />
       <MotivoModal
         pedido={pedido}
         numero={k.numero}
@@ -422,7 +466,10 @@ function Autenticidade({ k }: { k: Calibracao }) {
             Impressão digital do PDF (SHA-256)
           </p>
           <div className="mt-1 flex items-center gap-2">
-            <code className="min-w-0 flex-1 truncate rounded-lg bg-surface-2 px-2.5 py-1.5 font-mono text-[11.5px] text-ink-2" title={emissao.hashPdf}>
+            <code
+              className="min-w-0 flex-1 truncate rounded-lg bg-surface-2 px-2.5 py-1.5 font-mono text-[11.5px] text-ink-2"
+              title={emissao.hashPdf}
+            >
               {emissao.hashPdf}
             </code>
             <Button tamanho="icon-sm" variante="ghost" onClick={copiar} aria-label="Copiar">
@@ -488,7 +535,9 @@ function Resultados({ k, dados }: { k: Calibracao; dados: DetalheCalibracao }) {
             {r.pontos.map((p) => (
               <tr key={p.id} className="border-t border-line">
                 <td className="tnum px-5 py-2 text-ink">{p.texto.carga}</td>
-                <td className="tnum px-3 py-2 text-right text-ink-2">{[p.texto.crescente, p.texto.decrescente].filter(Boolean).join(' / ') || '—'}</td>
+                <td className="tnum px-3 py-2 text-right text-ink-2">
+                  {[p.texto.crescente, p.texto.decrescente].filter(Boolean).join(' / ') || '—'}
+                </td>
                 <td className="tnum px-3 py-2 text-right text-ink">
                   {k.opcoes.histerese === 'MEDIA' && p.texto.erroMedio
                     ? p.texto.erroMedio
@@ -564,7 +613,9 @@ function MotivoModal({
     >
       <Field
         label={revisar ? 'O que será corrigido' : 'Motivo do cancelamento'}
-        hint={revisar ? 'Sai no certificado novo. Ex.: “Correção do número de série da balança”.' : 'Fica registrado no histórico.'}
+        hint={
+          revisar ? 'Sai no certificado novo. Ex.: “Correção do número de série da balança”.' : 'Fica registrado no histórico.'
+        }
       >
         <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={3} maxLength={500} autoFocus />
       </Field>
@@ -572,7 +623,15 @@ function MotivoModal({
   )
 }
 
-function Faixa({ tom, icone, children }: { tom: 'danger' | 'info' | 'warning' | 'neutro'; icone: ReactNode; children: ReactNode }) {
+function Faixa({
+  tom,
+  icone,
+  children,
+}: {
+  tom: 'danger' | 'info' | 'warning' | 'neutro'
+  icone: ReactNode
+  children: ReactNode
+}) {
   return (
     <div
       className={cn(

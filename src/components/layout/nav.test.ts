@@ -6,7 +6,16 @@ const rotas = (nivel: Parameters<typeof paginasDoNivel>[0]) => paginasDoNivel(ni
 
 describe('menu por nível', () => {
   it('o administrador vê todas as páginas, com Usuários e Configurações em "Administração"', () => {
-    expect(rotas('ADMIN')).toEqual(['/', '/certificados', '/vencimentos', '/clientes', '/balancas', '/padroes', '/usuarios', '/configuracoes'])
+    expect(rotas('ADMIN')).toEqual([
+      '/',
+      '/certificados',
+      '/vencimentos',
+      '/clientes',
+      '/balancas',
+      '/padroes',
+      '/usuarios',
+      '/configuracoes',
+    ])
     const admin = navDoNivel('ADMIN').find((g) => g.grupo === 'Administração')
     expect(admin?.itens.map((i) => i.to)).toEqual(['/usuarios', '/configuracoes'])
   })

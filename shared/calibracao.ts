@@ -126,7 +126,10 @@ export function entradaDoCalculo(
 
 /** Calcula os ensaios finais e, quando houve ajuste e foi medido, o "como encontrado". */
 export function calcularCalibracao(
-  k: Pick<CalibracaoInput, 'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade' | 'comoEncontrado' | 'ajuste'>,
+  k: Pick<
+    CalibracaoInput,
+    'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade' | 'comoEncontrado' | 'ajuste'
+  >,
   balanca: Pick<Balanca, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>,
   padroes: Padrao[],
 ): { resultado: ResultadoCalculo; comoEncontrado: ResultadoCalculo | null } {

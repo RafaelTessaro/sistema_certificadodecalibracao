@@ -1,14 +1,4 @@
-import {
-  BellRing,
-  Building2,
-  FileBadge2,
-  LayoutDashboard,
-  Scale,
-  Settings,
-  UserCog,
-  Weight,
-  type LucideIcon,
-} from 'lucide-react'
+import { BellRing, Building2, FileBadge2, LayoutDashboard, Scale, Settings, UserCog, Weight, type LucideIcon } from 'lucide-react'
 import { pode, type Permissao } from '#shared/permissoes.ts'
 import type { NivelUsuario } from '#shared/tipos.ts'
 

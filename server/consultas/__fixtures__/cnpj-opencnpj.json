@@ -7,10 +7,7 @@
   "matriz_filial": "Matriz",
   "data_inicio_atividade": "2010-08-05",
   "cnae_principal": "4751201",
-  "cnaes_secundarios": [
-    "4530703",
-    "9511800"
-  ],
+  "cnaes_secundarios": ["4530703", "9511800"],
   "cnaes": [
     {
       "codigo": "4751201",

@@ -1,6 +1,21 @@
 import { useEffect, useState } from 'react'
 
-const NOMES = ['series-1', 'series-2', 'grid', 'axis', 'muted', 'surface', 'surface-2', 'ink', 'ink-2', 'border', 'brand', 'danger', 'warning', 'danger-soft'] as const
+const NOMES = [
+  'series-1',
+  'series-2',
+  'grid',
+  'axis',
+  'muted',
+  'surface',
+  'surface-2',
+  'ink',
+  'ink-2',
+  'border',
+  'brand',
+  'danger',
+  'warning',
+  'danger-soft',
+] as const
 type Cores = Record<(typeof NOMES)[number], string>
 
 function ler(): Cores {

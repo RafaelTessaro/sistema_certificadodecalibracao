@@ -18,7 +18,10 @@ export function PainelResultados({ calc, balanca, f }: Pick<ContextoEtapa, 'calc
     return Math.max(m, e)
   }, 0)
   const rep = r?.repetibilidade[0]
-  const avisos = [...(r?.avisos ?? []), ...(calc?.comoEncontrado?.avisos.map((a) => ({ ...a, mensagem: `Antes do ajuste: ${a.mensagem}` })) ?? [])]
+  const avisos = [
+    ...(r?.avisos ?? []),
+    ...(calc?.comoEncontrado?.avisos.map((a) => ({ ...a, mensagem: `Antes do ajuste: ${a.mensagem}` })) ?? []),
+  ]
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between border-b border-line px-4 py-3">
@@ -42,9 +45,18 @@ export function PainelResultados({ calc, balanca, f }: Pick<ContextoEtapa, 'calc
         <Item rotulo="Repetibilidade (s)" valor={rep ? `${formatarNumero(rep.s, casas + 1)} ${u}` : '—'} />
         <Item
           rotulo="Excentricidade"
-          valor={r?.excentricidade.aplicavel ? `${formatarNumero(r.excentricidade.maiorDesvio, casas)} ${u}` : f.excentricidade.aplicavel ? '—' : 'N/A'}
+          valor={
+            r?.excentricidade.aplicavel
+              ? `${formatarNumero(r.excentricidade.maiorDesvio, casas)} ${u}`
+              : f.excentricidade.aplicavel
+                ? '—'
+                : 'N/A'
+          }
         />
-        <Item rotulo="Ajuste" valor={f.ajuste.realizado === 'NAO' ? 'Não houve' : f.ajuste.realizado === 'INTERNO' ? 'Interno' : 'Externo'} />
+        <Item
+          rotulo="Ajuste"
+          valor={f.ajuste.realizado === 'NAO' ? 'Não houve' : f.ajuste.realizado === 'INTERNO' ? 'Interno' : 'Externo'}
+        />
       </dl>
       <div className="border-t border-line px-2 pt-3 pb-2">
         <p className="mb-1 px-2 text-xs font-medium text-muted">Erro × carga ({u}) com ±U</p>

@@ -493,7 +493,17 @@ export class ServicoUsuarios {
           `UPDATE usuarios SET nome = ?, nivel = ?, ativo = ?, signatario = ?, cargo = ?, registro = ?, assinatura = ?,
                   versao = versao + 1, atualizado_em = ? WHERE id = ?`,
         )
-        .run(nome, nivel, ativo ? 1 : 0, signatario ? 1 : 0, cargo, registro, assinatura, new Date(this.agora()).toISOString(), id)
+        .run(
+          nome,
+          nivel,
+          ativo ? 1 : 0,
+          signatario ? 1 : 0,
+          cargo,
+          registro,
+          assinatura,
+          new Date(this.agora()).toISOString(),
+          id,
+        )
       const encerradas = mudouNivel || (mudouAtivo && !ativo) ? this.apagarSessoes(id) : []
       const detalhe = [
         mudouNome ? `nome: ${atual.nome} → ${nome}` : '',

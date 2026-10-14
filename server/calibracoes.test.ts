@@ -78,7 +78,11 @@ const peca = (pesoId: string) => ({ padraoId: pesos.id, pesoId, quantidade: 1 })
 
 /** Rascunho preenchido com leituras plausíveis (erros de 0 a 10 g). */
 async function calibracaoPronta(cookie = t.cookieAdmin): Promise<Calibracao> {
-  const { calibracao: k } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: balanca.id, ordemServico: 'OS 4471' }, cookie)) as {
+  const { calibracao: k } = (await criar(
+    '/api/calibracoes',
+    { clienteId: cliente.id, balancaId: balanca.id, ordemServico: 'OS 4471' },
+    cookie,
+  )) as {
     calibracao: Calibracao
   }
   expect(k).toMatchObject({ status: 'RASCUNHO', numero: '', padroesIds: [pesos.id], ordemServico: 'OS 4471' })
@@ -104,8 +108,24 @@ async function calibracaoPronta(cookie = t.cookieAdmin): Promise<Calibracao> {
       substituicao: { ativa: false, pecas: [], etapas: [] },
       pontos: [
         { id: 'a', carga: 5, pecas: [peca('p5')], pecasManuais: true, crescente: 5, decrescente: 5, nivelSubstituicao: 0 },
-        { id: 'b', carga: 10, pecas: [peca('p10a')], pecasManuais: true, crescente: 10, decrescente: 10.01, nivelSubstituicao: 0 },
-        { id: 'c', carga: 20, pecas: [peca('p10a'), peca('p10b')], pecasManuais: true, crescente: 20.01, decrescente: 20.01, nivelSubstituicao: 0 },
+        {
+          id: 'b',
+          carga: 10,
+          pecas: [peca('p10a')],
+          pecasManuais: true,
+          crescente: 10,
+          decrescente: 10.01,
+          nivelSubstituicao: 0,
+        },
+        {
+          id: 'c',
+          carga: 20,
+          pecas: [peca('p10a'), peca('p10b')],
+          pecasManuais: true,
+          crescente: 20.01,
+          decrescente: 20.01,
+          nivelSubstituicao: 0,
+        },
         {
           id: 'd',
           carga: 30,
@@ -216,7 +236,9 @@ describe('emissão do certificado', () => {
 
   it('com revisor obrigatório, quem executou não emite o próprio certificado', async () => {
     const config = (await t.chamar('GET', '/api/config', { cookie: t.cookieAdmin })).json().config
-    expect((await t.chamar('PUT', '/api/config', { cookie: t.cookieAdmin, payload: { ...config, exigirRevisor: true } })).statusCode).toBe(200)
+    expect(
+      (await t.chamar('PUT', '/api/config', { cookie: t.cookieAdmin, payload: { ...config, exigirRevisor: true } })).statusCode,
+    ).toBe(200)
     const k = await calibracaoPronta()
     const r = await emitir(k)
     expect(r.statusCode).toBe(409)
@@ -257,17 +279,32 @@ describe('emissão do certificado', () => {
 describe('revisão e cancelamento', () => {
   it('a revisão herda o número com "-R1", e ao ser emitida substitui o original', async () => {
     const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
-    const semMotivo = await t.chamar('POST', `/api/calibracoes/${original.id}/revisar`, { cookie: t.cookieAdmin, payload: { motivo: '' } })
+    const semMotivo = await t.chamar('POST', `/api/calibracoes/${original.id}/revisar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: '' },
+    })
     expect(semMotivo.statusCode).toBe(400)
 
     const { calibracao: rev } = (await criar(`/api/calibracoes/${original.id}/revisar`, {
       motivo: 'Correção da identificação da balança',
     })) as { calibracao: Calibracao }
-    expect(rev).toMatchObject({ status: 'RASCUNHO', substituiId: original.id, revisao: 1, motivoRevisao: 'Correção da identificação da balança' })
+    expect(rev).toMatchObject({
+      status: 'RASCUNHO',
+      substituiId: original.id,
+      revisao: 1,
+      motivoRevisao: 'Correção da identificação da balança',
+    })
     // Leituras copiadas
     expect(rev.indicacao.pontos.map((p) => p.crescente)).toEqual(original.indicacao.pontos.map((p) => p.crescente))
     // Uma revisão por vez
-    expect((await t.chamar('POST', `/api/calibracoes/${original.id}/revisar`, { cookie: t.cookieAdmin, payload: { motivo: 'outra revisão' } })).statusCode).toBe(409)
+    expect(
+      (
+        await t.chamar('POST', `/api/calibracoes/${original.id}/revisar`, {
+          cookie: t.cookieAdmin,
+          payload: { motivo: 'outra revisão' },
+        })
+      ).statusCode,
+    ).toBe(409)
     const andamento = (await t.chamar('GET', `/api/calibracoes/${original.id}`, { cookie: t.cookieAdmin })).json()
     expect(andamento.revisoes).toEqual([{ id: rev.id, numero: '', status: 'RASCUNHO' }])
 
@@ -289,28 +326,53 @@ describe('revisão e cancelamento', () => {
 
   it('só o administrador cancela, com motivo; a verificação passa a mostrar "cancelado"', async () => {
     const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
-    const tecnico = await t.chamar('POST', `/api/calibracoes/${k.id}/cancelar`, { cookie: t.cookieComum, payload: { motivo: 'Emitido por engano' } })
+    const tecnico = await t.chamar('POST', `/api/calibracoes/${k.id}/cancelar`, {
+      cookie: t.cookieComum,
+      payload: { motivo: 'Emitido por engano' },
+    })
     expect(tecnico.statusCode).toBe(403)
-    const semMotivo = await t.chamar('POST', `/api/calibracoes/${k.id}/cancelar`, { cookie: t.cookieAdmin, payload: { motivo: 'x' } })
+    const semMotivo = await t.chamar('POST', `/api/calibracoes/${k.id}/cancelar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'x' },
+    })
     expect(semMotivo.statusCode).toBe(400)
     const ok = await t.chamar('POST', `/api/calibracoes/${k.id}/cancelar`, {
       cookie: t.cookieAdmin,
       payload: { motivo: 'Emitido por engano', versao: k.versao },
     })
     expect(ok.statusCode).toBe(200)
-    expect(ok.json().calibracao).toMatchObject({ status: 'CANCELADO', cancelamento: { motivo: 'Emitido por engano', por: 'Admin Teste' } })
+    expect(ok.json().calibracao).toMatchObject({
+      status: 'CANCELADO',
+      cancelamento: { motivo: 'Emitido por engano', por: 'Admin Teste' },
+    })
     const v = await t.app.inject({ method: 'GET', url: `/api/verificar/${k.emissao!.codigo}` })
     expect(v.json().status).toBe('CANCELADO')
     // Cancelado não se revisa nem se envia
-    expect((await t.chamar('POST', `/api/calibracoes/${k.id}/revisar`, { cookie: t.cookieAdmin, payload: { motivo: 'corrigir algo' } })).statusCode).toBe(409)
-    const email = await t.chamar('POST', `/api/calibracoes/${k.id}/email`, { cookie: t.cookieAdmin, payload: { para: 'a@b.com' } })
+    expect(
+      (
+        await t.chamar('POST', `/api/calibracoes/${k.id}/revisar`, {
+          cookie: t.cookieAdmin,
+          payload: { motivo: 'corrigir algo' },
+        })
+      ).statusCode,
+    ).toBe(409)
+    const email = await t.chamar('POST', `/api/calibracoes/${k.id}/email`, {
+      cookie: t.cookieAdmin,
+      payload: { para: 'a@b.com' },
+    })
     expect(email.statusCode).toBe(409)
   })
 
   it('calibrar de novo aproveita pontos e padrões, sem as leituras', async () => {
     const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
     const { calibracao: nova } = (await criar(`/api/calibracoes/${k.id}/recalibrar`, {})) as { calibracao: Calibracao }
-    expect(nova).toMatchObject({ status: 'RASCUNHO', clienteId: cliente.id, balancaId: balanca.id, padroesIds: [pesos.id], substituiId: '' })
+    expect(nova).toMatchObject({
+      status: 'RASCUNHO',
+      clienteId: cliente.id,
+      balancaId: balanca.id,
+      padroesIds: [pesos.id],
+      substituiId: '',
+    })
     expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual([5, 10, 20, 30])
     expect(nova.indicacao.pontos.every((p) => p.crescente === null && p.decrescente === null)).toBe(true)
     expect(nova.repetibilidade.flatMap((r) => r.leituras).every((l) => l === null)).toBe(true)
@@ -329,9 +391,13 @@ describe('listas e painel', () => {
     expect(todas.total).toBe(2)
     const abertas = (await t.chamar('GET', '/api/calibracoes?status=ABERTAS', { cookie: t.cookieAdmin })).json()
     expect(abertas.itens.map((i: { status: string }) => i.status)).toEqual(['RASCUNHO'])
-    const busca = (await t.chamar('GET', `/api/calibracoes?busca=${encodeURIComponent('tl-2231')}`, { cookie: t.cookieAdmin })).json()
+    const busca = (
+      await t.chamar('GET', `/api/calibracoes?busca=${encodeURIComponent('tl-2231')}`, { cookie: t.cookieAdmin })
+    ).json()
     expect(busca.total).toBe(2)
-    const porNumero = (await t.chamar('GET', `/api/calibracoes?busca=${encodeURIComponent(emitida.numero)}`, { cookie: t.cookieAdmin })).json()
+    const porNumero = (
+      await t.chamar('GET', `/api/calibracoes?busca=${encodeURIComponent(emitida.numero)}`, { cookie: t.cookieAdmin })
+    ).json()
     expect(porNumero.itens.map((i: { id: string }) => i.id)).toEqual([emitida.id])
     const painel = (await t.chamar('GET', '/api/painel', { cookie: t.cookieAdmin })).json().painel
     expect(painel).toBeTruthy()

@@ -47,7 +47,10 @@ export async function rotasUsuarios(app: FastifyInstance, { usuarios, tempoReal,
   // Primeiro acesso: cria o administrador (só com o banco sem usuários e só pelo próprio servidor)
   app.post('/api/primeiro-acesso', opcoes, async (req, reply): Promise<RespostaLogin> => {
     if (!ehLoopback(ipDe(req)))
-      throw new ErroApi(403, 'Crie o administrador no próprio servidor: abra http://localhost no computador onde o sistema foi instalado.')
+      throw new ErroApi(
+        403,
+        'Crie o administrador no próprio servidor: abra http://localhost no computador onde o sistema foi instalado.',
+      )
     const r = await usuarios.criarPrimeiroAdministrador(req.body, ipDe(req))
     reply.header('Set-Cookie', cookieSessao(nomeCookie, r.token, r.maxAgeSegundos))
     return { usuario: r.usuario, build: tempoReal.build }

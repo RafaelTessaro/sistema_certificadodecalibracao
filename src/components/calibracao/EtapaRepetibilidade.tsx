@@ -17,7 +17,10 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
     alterar((s) => ({ ...s, repetibilidade: mudar(s.repetibilidade) }))
   const novo = () => {
     const sug = repetibilidadeSugerida(maxDe(balanca), u)
-    setEnsaios((l) => [...l, { id: novoId(), carga: sug.carga, leituras: Array.from({ length: Math.max(sug.leituras, 5) }, () => null) }])
+    setEnsaios((l) => [
+      ...l,
+      { id: novoId(), carga: sug.carga, leituras: Array.from({ length: Math.max(sug.leituras, 5) }, () => null) },
+    ])
   }
 
   return (
@@ -73,7 +76,12 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
             />
             <div className="grid grid-cols-1 gap-5 px-5 pb-5 lg:grid-cols-[200px_1fr]">
               <Field label="Carga aplicada" htmlFor={`rep-c-${ens.id}`}>
-                <CampoNumero id={`rep-c-${ens.id}`} valor={ens.carga} aoMudar={(v) => setEns((e) => ({ ...e, carga: v ?? 0 }))} unidade={u} />
+                <CampoNumero
+                  id={`rep-c-${ens.id}`}
+                  valor={ens.carga}
+                  aoMudar={(v) => setEns((e) => ({ ...e, carga: v ?? 0 }))}
+                  unidade={u}
+                />
               </Field>
               <div>
                 <p className="mb-1.5 text-[13px] font-medium text-ink-2">Indicações</p>

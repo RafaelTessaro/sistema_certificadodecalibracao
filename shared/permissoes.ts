@@ -6,13 +6,7 @@
 import type { NivelUsuario, UsuarioSessao } from './tipos.ts'
 
 export type Permissao =
-  | 'excluirCliente'
-  | 'excluirBalanca'
-  | 'excluirPadrao'
-  | 'cancelarCertificado'
-  | 'configuracoes'
-  | 'dadosEBackup'
-  | 'usuarios'
+  'excluirCliente' | 'excluirBalanca' | 'excluirPadrao' | 'cancelarCertificado' | 'configuracoes' | 'dadosEBackup' | 'usuarios'
 
 const SO_ADMIN: readonly NivelUsuario[] = ['ADMIN']
 

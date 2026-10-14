@@ -11,7 +11,14 @@ const pesos: Padrao = {
   descricao: 'Pesos de 500 kg',
   criadoEm: '',
   atualizadoEm: '',
-  pesos: Array.from({ length: 10 }, (_, i) => ({ id: `w${i}`, marca: String(i + 1), nominal: 500_000, correcao: 0, incerteza: 8000, k: 2 })),
+  pesos: Array.from({ length: 10 }, (_, i) => ({
+    id: `w${i}`,
+    marca: String(i + 1),
+    nominal: 500_000,
+    correcao: 0,
+    incerteza: 8000,
+    k: 2,
+  })),
 }
 const balanca: Balanca = {
   ...BALANCA_VAZIA,
@@ -52,7 +59,11 @@ describe('cargas', () => {
     const entrada = entradaDoCalculo({ ...calibracaoVazia(), indicacao }, balanca, [pesos])
     expect(entrada.indicacao.pontos.map((p) => p.carga)).toEqual([5000, 10_000, 5000])
     // Substituição desligada: só os pesos
-    const sem = entradaDoCalculo({ ...calibracaoVazia(), indicacao: { ...indicacao, substituicao: { ...indicacao.substituicao, ativa: false } } }, balanca, [pesos])
+    const sem = entradaDoCalculo(
+      { ...calibracaoVazia(), indicacao: { ...indicacao, substituicao: { ...indicacao.substituicao, ativa: false } } },
+      balanca,
+      [pesos],
+    )
     expect(sem.indicacao.pontos.map((p) => [p.carga, p.nivelSubstituicao])).toEqual([
       [5000, 0],
       [5000, 0],

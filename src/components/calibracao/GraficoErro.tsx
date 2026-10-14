@@ -20,12 +20,20 @@ export function GraficoErro({
     .map((p) => {
       const o = p.media ?? p.crescente ?? p.decrescente
       if (!o) return null
-      return { carga: p.carga, erro: o.erro, u: [p.media ? p.media.U : Math.max(p.crescente?.U ?? 0, p.decrescente?.U ?? 0)], ema: p.ema }
+      return {
+        carga: p.carga,
+        erro: o.erro,
+        u: [p.media ? p.media.U : Math.max(p.crescente?.U ?? 0, p.decrescente?.U ?? 0)],
+        ema: p.ema,
+      }
     })
     .filter((p): p is { carga: number; erro: number; u: number[]; ema: number | null } => !!p)
   if (pontos.length < 2)
     return (
-      <div style={{ height: altura }} className="flex items-center justify-center rounded-xl bg-surface-2/60 px-4 text-center text-[13px] text-muted">
+      <div
+        style={{ height: altura }}
+        className="flex items-center justify-center rounded-xl bg-surface-2/60 px-4 text-center text-[13px] text-muted"
+      >
         O gráfico aparece quando houver leituras em pelo menos dois pontos.
       </div>
     )

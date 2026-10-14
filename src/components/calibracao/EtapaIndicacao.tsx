@@ -67,11 +67,13 @@ export function EtapaIndicacao(ctx: ContextoEtapa) {
               unidade={balanca.unidade}
               aria-label="Indicação no retorno ao zero"
             />
-            {resultado?.erroRetornoZero !== null && resultado?.erroRetornoZero !== undefined && resultado.erroRetornoZero !== 0 && (
-              <p className="mt-2 text-[13px] text-warning">
-                Não voltou exatamente a zero: {formatarNumero(resultado.erroRetornoZero, casasDe(balanca))} {balanca.unidade}.
-              </p>
-            )}
+            {resultado?.erroRetornoZero !== null &&
+              resultado?.erroRetornoZero !== undefined &&
+              resultado.erroRetornoZero !== 0 && (
+                <p className="mt-2 text-[13px] text-warning">
+                  Não voltou exatamente a zero: {formatarNumero(resultado.erroRetornoZero, casasDe(balanca))} {balanca.unidade}.
+                </p>
+              )}
           </div>
         </Card>
       )}
@@ -106,7 +108,8 @@ function TabelaPontos({
   const substituicao = ensaio.substituicao.ativa
 
   const setPontos = (mudar: (l: PontoIndicacao[]) => PontoIndicacao[]) => setEnsaio((e) => ({ ...e, pontos: mudar(e.pontos) }))
-  const setPonto = (id: string, mudar: (p: PontoIndicacao) => PontoIndicacao) => setPontos((l) => l.map((p) => (p.id === id ? mudar(p) : p)))
+  const setPonto = (id: string, mudar: (p: PontoIndicacao) => PontoIndicacao) =>
+    setPontos((l) => l.map((p) => (p.id === id ? mudar(p) : p)))
   const mudarCarga = (p: PontoIndicacao, carga: number | null) =>
     setPonto(p.id, (x) => ({
       ...x,
@@ -309,7 +312,12 @@ function TabelaPontos({
                             )}
                             title={`EMA ±${r.texto.ema} ${u}`}
                           >
-                            {r.conformidade === 'CONFORME' ? <CircleCheck className="h-4 w-4" /> : <CircleX className="h-4 w-4" />}±{r.texto.ema}
+                            {r.conformidade === 'CONFORME' ? (
+                              <CircleCheck className="h-4 w-4" />
+                            ) : (
+                              <CircleX className="h-4 w-4" />
+                            )}
+                            ±{r.texto.ema}
                           </span>
                         ) : (
                           <span className="text-muted">—</span>
@@ -335,7 +343,13 @@ function TabelaPontos({
       )}
       {ensaio.pontos.length > 0 && (
         <div className="flex items-center justify-between gap-3 border-t border-line px-5 py-3">
-          <Button variante="ghost" tamanho="sm" icone={<Plus className="h-3.5 w-3.5" />} onClick={adicionar} disabled={ensaio.pontos.length >= 40}>
+          <Button
+            variante="ghost"
+            tamanho="sm"
+            icone={<Plus className="h-3.5 w-3.5" />}
+            onClick={adicionar}
+            disabled={ensaio.pontos.length >= 40}
+          >
             Adicionar ponto
           </Button>
           <p className="hidden text-xs text-muted sm:block">Enter desce para a próxima leitura · ↑ ↓ mudam de linha</p>
@@ -438,7 +452,9 @@ function PecasModal({
       largura="max-w-xl"
       icone={<Layers className="h-5 w-5" />}
       titulo="Pesos usados nesta carga"
-      descricao={ponto ? `Carga de ${String(ponto.carga).replace('.', ',')} ${unidade}. Marque as peças colocadas na balança.` : undefined}
+      descricao={
+        ponto ? `Carga de ${String(ponto.carga).replace('.', ',')} ${unidade}. Marque as peças colocadas na balança.` : undefined
+      }
       rodape={
         <>
           <Button variante="ghost" onClick={() => aoSalvar([], false)}>
@@ -493,11 +509,14 @@ function PecasModal({
           <p
             className={cn(
               'tnum rounded-xl px-3.5 py-2.5 text-[13px] font-medium',
-              Math.abs(total - ponto.carga) <= ponto.carga * 1e-9 ? 'bg-success-soft text-success' : 'bg-warning-soft text-warning',
+              Math.abs(total - ponto.carga) <= ponto.carga * 1e-9
+                ? 'bg-success-soft text-success'
+                : 'bg-warning-soft text-warning',
             )}
           >
             Soma das peças: {String(total).replace('.', ',')} {unidade}
-            {Math.abs(total - ponto.carga) > ponto.carga * 1e-9 && ` (a carga do ponto é ${String(ponto.carga).replace('.', ',')} ${unidade})`}
+            {Math.abs(total - ponto.carga) > ponto.carga * 1e-9 &&
+              ` (a carga do ponto é ${String(ponto.carga).replace('.', ',')} ${unidade})`}
           </p>
         )}
       </div>
@@ -525,7 +544,13 @@ function Substituicao({ ctx }: { ctx: ContextoEtapa }) {
             <input
               type="checkbox"
               checked={sub.ativa}
-              onChange={(e) => set((s) => ({ ...s, ativa: e.target.checked, etapas: s.etapas.length ? s.etapas : [{ leituraPadroes: null, leituraSubstituicao: null }] }))}
+              onChange={(e) =>
+                set((s) => ({
+                  ...s,
+                  ativa: e.target.checked,
+                  etapas: s.etapas.length ? s.etapas : [{ leituraPadroes: null, leituraSubstituicao: null }],
+                }))
+              }
               className="h-4 w-4 accent-[var(--brand)]"
             />
             Usar substituição
@@ -537,7 +562,11 @@ function Substituicao({ ctx }: { ctx: ContextoEtapa }) {
           <Field
             label="Carga de pesos padrão usada em cada etapa"
             htmlFor="sub-carga"
-            hint={pesos.length ? `Montada com os pesos escolhidos: ${descreverPecas(sub.pecas, pesos) || '—'}` : 'Escolha os pesos padrão primeiro.'}
+            hint={
+              pesos.length
+                ? `Montada com os pesos escolhidos: ${descreverPecas(sub.pecas, pesos) || '—'}`
+                : 'Escolha os pesos padrão primeiro.'
+            }
             className="sm:w-80"
           >
             <CampoNumero
@@ -565,7 +594,9 @@ function Substituicao({ ctx }: { ctx: ContextoEtapa }) {
                       compacto
                       className="ml-auto w-40"
                       valor={e.leituraPadroes}
-                      aoMudar={(v) => set((s) => ({ ...s, etapas: s.etapas.map((x, j) => (j === i ? { ...x, leituraPadroes: v } : x)) }))}
+                      aoMudar={(v) =>
+                        set((s) => ({ ...s, etapas: s.etapas.map((x, j) => (j === i ? { ...x, leituraPadroes: v } : x)) }))
+                      }
                       grade={{ grupo: 'sub', lin: i, col: 0 }}
                       unidade={u}
                     />
@@ -575,7 +606,9 @@ function Substituicao({ ctx }: { ctx: ContextoEtapa }) {
                       compacto
                       className="ml-auto w-40"
                       valor={e.leituraSubstituicao}
-                      aoMudar={(v) => set((s) => ({ ...s, etapas: s.etapas.map((x, j) => (j === i ? { ...x, leituraSubstituicao: v } : x)) }))}
+                      aoMudar={(v) =>
+                        set((s) => ({ ...s, etapas: s.etapas.map((x, j) => (j === i ? { ...x, leituraSubstituicao: v } : x)) }))
+                      }
                       grade={{ grupo: 'sub', lin: i, col: 1 }}
                       unidade={u}
                     />
@@ -606,8 +639,8 @@ function Substituicao({ ctx }: { ctx: ContextoEtapa }) {
             </Button>
           </div>
           <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[13px] text-ink-2">
-            Na tabela acima, escolha em “Substituições” quantas etapas de substituição estão por baixo dos pesos em cada ponto. Cada
-            etapa soma incerteza; o certificado informa que foram usadas cargas de substituição.
+            Na tabela acima, escolha em “Substituições” quantas etapas de substituição estão por baixo dos pesos em cada ponto.
+            Cada etapa soma incerteza; o certificado informa que foram usadas cargas de substituição.
           </p>
         </div>
       )}

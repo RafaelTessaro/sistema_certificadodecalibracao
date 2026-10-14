@@ -34,14 +34,12 @@ export function Painel() {
     'balanca',
   ])
   const primeiroNome = usuario?.nome.trim().split(/\s+/)[0] ?? ''
-  const variacao = p && p.emitidosMesAnterior ? Math.round(((p.emitidosMes - p.emitidosMesAnterior) / p.emitidosMesAnterior) * 100) : null
+  const variacao =
+    p && p.emitidosMesAnterior ? Math.round(((p.emitidosMes - p.emitidosMesAnterior) / p.emitidosMesAnterior) * 100) : null
 
   return (
     <>
-      <PageHeader
-        titulo={`${saudacao()}${primeiroNome ? `, ${primeiroNome}` : ''}`}
-        descricao={dataExtensa(hojeISO())}
-      />
+      <PageHeader titulo={`${saudacao()}${primeiroNome ? `, ${primeiroNome}` : ''}`} descricao={dataExtensa(hojeISO())} />
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
@@ -61,7 +59,9 @@ export function Painel() {
           valor={p?.vencendo ?? 0}
           formatar={(v) => numero(Math.round(v))}
           icone={<BellRing className="h-4 w-4" />}
-          detalhe={p?.vencidas ? <span className="font-medium text-danger">{numero(p.vencidas)} já vencidas</span> : 'Próximos 30 dias'}
+          detalhe={
+            p?.vencidas ? <span className="font-medium text-danger">{numero(p.vencidas)} já vencidas</span> : 'Próximos 30 dias'
+          }
           delay={0.04}
         />
         <StatCard
@@ -139,7 +139,10 @@ export function Painel() {
                   const dias = diasEntre(hojeISO(), v.proximaCalibracao)
                   return (
                     <li key={v.balancaId}>
-                      <Link to={`/balancas/${v.balancaId}`} className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-surface-2/70">
+                      <Link
+                        to={`/balancas/${v.balancaId}`}
+                        className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-surface-2/70"
+                      >
                         <span
                           className={`h-2 w-2 shrink-0 rounded-full ${dias < 0 ? 'bg-danger' : 'bg-warning-dot'}`}
                           aria-hidden="true"
@@ -236,7 +239,10 @@ function ListaCalibracoes({
         descricao={descricao}
         acoes={
           verTodos && (
-            <Link to="/certificados" className="inline-flex items-center gap-1 text-[13px] font-medium text-brand-ink hover:underline">
+            <Link
+              to="/certificados"
+              className="inline-flex items-center gap-1 text-[13px] font-medium text-brand-ink hover:underline"
+            >
               Ver todos <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           )
@@ -248,7 +254,11 @@ function ListaCalibracoes({
             <motion.li key={k.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}>
               <Link to={rotaCalibracao(k)} className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-surface-2/70">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-2 text-ink-2">
-                  {k.status === 'RASCUNHO' || k.status === 'REVISAO' ? <FilePen className="h-4 w-4" /> : <FileBadge2 className="h-4 w-4" />}
+                  {k.status === 'RASCUNHO' || k.status === 'REVISAO' ? (
+                    <FilePen className="h-4 w-4" />
+                  ) : (
+                    <FileBadge2 className="h-4 w-4" />
+                  )}
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-ink">
@@ -287,7 +297,13 @@ function GraficoMensal({ dados }: { dados: Array<{ mes: string; quantidade: numb
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={pontos} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barCategoryGap="30%">
           <CartesianGrid vertical={false} stroke={cores.grid} />
-          <XAxis dataKey="rotulo" tickLine={false} axisLine={{ stroke: cores.axis }} tick={{ fill: cores.muted, fontSize: 12 }} tickMargin={8} />
+          <XAxis
+            dataKey="rotulo"
+            tickLine={false}
+            axisLine={{ stroke: cores.axis }}
+            tick={{ fill: cores.muted, fontSize: 12 }}
+            tickMargin={8}
+          />
           <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: cores.muted, fontSize: 12 }} width={32} />
           <Tooltip
             cursor={{ fill: cores['surface-2'] }}
@@ -320,7 +336,11 @@ function PrimeirosPassos() {
   ]
   return (
     <Card className="mb-6 overflow-hidden">
-      <CardHeader icone={<ShieldAlert className="h-4 w-4" />} titulo="Primeiros passos" descricao="Quatro passos para emitir o primeiro certificado" />
+      <CardHeader
+        icone={<ShieldAlert className="h-4 w-4" />}
+        titulo="Primeiros passos"
+        descricao="Quatro passos para emitir o primeiro certificado"
+      />
       <ol className="grid grid-cols-1 gap-3 px-5 pb-5 sm:grid-cols-2 xl:grid-cols-4">
         {passos.map((p, i) => (
           <li key={p.to}>
@@ -341,4 +361,3 @@ function PrimeirosPassos() {
     </Card>
   )
 }
-

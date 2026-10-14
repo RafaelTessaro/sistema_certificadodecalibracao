@@ -56,7 +56,12 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config }: Cont
             className="sm:col-span-2"
             hint="O número da OS no sistema de ordens de serviço da empresa."
           >
-            <Input id="k-os" value={f.ordemServico} onChange={(e) => set('ordemServico', e.target.value)} placeholder="Ex.: 12345" />
+            <Input
+              id="k-os"
+              value={f.ordemServico}
+              onChange={(e) => set('ordemServico', e.target.value)}
+              placeholder="Ex.: 12345"
+            />
           </Field>
           <Field label="Data da calibração" htmlFor="k-data" className="sm:col-span-2">
             <Input id="k-data" type="date" value={f.dataCalibracao} onChange={(e) => set('dataCalibracao', e.target.value)} />
@@ -93,7 +98,12 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config }: Cont
           </Field>
           {f.local === 'LABORATORIO' && (
             <Field label="Data de recebimento" htmlFor="k-receb" className="sm:col-span-2" hint="Quando a balança chegou.">
-              <Input id="k-receb" type="date" value={f.dataRecebimento} onChange={(e) => set('dataRecebimento', e.target.value)} />
+              <Input
+                id="k-receb"
+                type="date"
+                value={f.dataRecebimento}
+                onChange={(e) => set('dataRecebimento', e.target.value)}
+              />
             </Field>
           )}
 

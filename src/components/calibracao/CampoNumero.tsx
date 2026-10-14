@@ -130,7 +130,9 @@ export const CampoNumero = forwardRef<HTMLInputElement, CampoNumeroProps>(functi
         {...props}
       />
       {unidade && (
-        <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] font-medium text-muted">{unidade}</span>
+        <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] font-medium text-muted">
+          {unidade}
+        </span>
       )}
     </div>
   )

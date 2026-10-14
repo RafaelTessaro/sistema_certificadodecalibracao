@@ -72,7 +72,13 @@ export function ipDaRedeLocal(ip: string): boolean {
   const p = v.split('.').map(Number)
   if (p.length === 4 && p.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
     const [a, b] = p
-    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127)
+    return (
+      a === 10 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254) ||
+      (a === 100 && b >= 64 && b <= 127)
+    )
   }
   return /^(fe8|fe9|fea|feb|fc|fd)/.test(v)
 }
@@ -264,7 +270,9 @@ export async function criarApp(opcoes: OpcoesApp) {
     app.get('/', async (_req, reply) =>
       reply
         .type('text/html; charset=utf-8')
-        .send('<h1>BC Calibração</h1><p>A interface ainda não foi compilada. Rode <code>npm run build</code> e reinicie o servidor.</p>'),
+        .send(
+          '<h1>BC Calibração</h1><p>A interface ainda não foi compilada. Rode <code>npm run build</code> e reinicie o servidor.</p>',
+        ),
     )
   }
 

@@ -49,7 +49,10 @@ function entradaDe(k: Calibracao): CalibracaoInput {
 function semLeituras(k: CalibracaoInput): Pick<CalibracaoInput, 'repetibilidade' | 'excentricidade' | 'indicacao'> {
   return {
     repetibilidade: k.repetibilidade.map((r) => ({ ...r, leituras: r.leituras.map(() => null) })),
-    excentricidade: { ...k.excentricidade, posicoes: k.excentricidade.posicoes.map((p) => ({ ...p, leitura: null, referencia: null })) },
+    excentricidade: {
+      ...k.excentricidade,
+      posicoes: k.excentricidade.posicoes.map((p) => ({ ...p, leitura: null, referencia: null })),
+    },
     indicacao: {
       ...k.indicacao,
       retornoZero: null,
@@ -132,7 +135,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
         clienteId,
         balancaId,
         dataCalibracao: typeof c.dataCalibracao === 'string' && c.dataCalibracao ? c.dataCalibracao : hoje,
-        localEndereco: typeof c.localEndereco === 'string' && c.localEndereco ? c.localEndereco : cliente ? enderecoCliente(cliente) : '',
+        localEndereco:
+          typeof c.localEndereco === 'string' && c.localEndereco ? c.localEndereco : cliente ? enderecoCliente(cliente) : '',
         tecnicoId: u.id,
         padroesIds,
         proximaCalibracao: config.mesesProximaPadrao ? somarMeses(hoje, config.mesesProximaPadrao) : '',
@@ -245,7 +249,10 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     if (k.status !== 'EMITIDO') throw new ErroApi(409, 'Só é possível enviar um certificado emitido e válido.')
     const c = corpo(req)
     const para = destinatarios(c.para)
-    const assunto = String(c.assunto ?? '').trim().slice(0, 200) || `Certificado de calibração ${k.numero}`
+    const assunto =
+      String(c.assunto ?? '')
+        .trim()
+        .slice(0, 200) || `Certificado de calibração ${k.numero}`
     const texto = String(c.texto ?? '').slice(0, 20_000)
     const pdf = await pdfDaCalibracao(ctx, k)
     const r = await email.enviar({
@@ -274,11 +281,21 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     const cliente = repo.obterCliente(clienteId)
     if (!cliente) throw new ErroApi(404, 'Cliente não encontrado.')
     const para = destinatarios(c.para ?? listaEmails(cliente.emailCertificados || cliente.email))
-    const assunto = String(c.assunto ?? '').trim().slice(0, 200)
+    const assunto = String(c.assunto ?? '')
+      .trim()
+      .slice(0, 200)
     const texto = String(c.texto ?? '').slice(0, 20_000)
     if (!assunto || !texto) throw new ErroApi(400, 'Informe o assunto e a mensagem do lembrete.')
     const r = await email.enviar({ para, assunto, texto, anexos: [] })
-    repo.registrarEnvio({ calibracaoId: '', clienteId, tipo: 'LEMBRETE', para: para.join(', '), assunto, usuarioId: u.id, usuarioNome: u.nome })
+    repo.registrarEnvio({
+      calibracaoId: '',
+      clienteId,
+      tipo: 'LEMBRETE',
+      para: para.join(', '),
+      assunto,
+      usuarioId: u.id,
+      usuarioNome: u.nome,
+    })
     return r
   })
 
@@ -291,7 +308,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       .toUpperCase()
       .slice(0, 20)
     const k = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(codigo) ? repo.calibracaoPorCodigo(codigo) : undefined
-    if (!k?.emissao) throw new ErroApi(404, 'Nenhum certificado encontrado com este código. Confira o código impresso no certificado.')
+    if (!k?.emissao)
+      throw new ErroApi(404, 'Nenhum certificado encontrado com este código. Confira o código impresso no certificado.')
     return {
       numero: k.numero,
       status: k.status,

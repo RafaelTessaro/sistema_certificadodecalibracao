@@ -213,9 +213,9 @@ describe('sessão', () => {
     expect((await t.chamar('GET', '/api/sessao?uso=1', { cookie: c })).json().usuario.login).toBe('comum')
     agora = t0 + 6 * HORA + 59 * MINUTO
     expect(await statusDados(c)).toBe(200) // renovado às 3 h
-    expect(
-      (await t.chamar('POST', '/api/clientes', { cookie: c, payload: { tipo: 'PF', nome: 'Barraca' } })).statusCode,
-    ).toBe(201)
+    expect((await t.chamar('POST', '/api/clientes', { cookie: c, payload: { tipo: 'PF', nome: 'Barraca' } })).statusCode).toBe(
+      201,
+    )
     agora = t0 + 10 * HORA
     expect(await statusDados(c)).toBe(200) // renovado pelo POST
     expect((await t.chamar('GET', '/api/sessao?uso=1', { cookie: c })).statusCode).toBe(200)

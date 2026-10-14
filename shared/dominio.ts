@@ -152,14 +152,7 @@ export function listaEmails(s: string): string[] {
 
 /** Texto para busca: minúsculo, sem acentos e com os espaços normalizados. */
 export function textoBusca(...partes: Array<string | undefined | null>): string {
-  return partes
-    .filter(Boolean)
-    .join(' ')
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim()
+  return partes.filter(Boolean).join(' ').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim()
 }
 
 // ---- Rótulos ---------------------------------------------------------------------------
@@ -414,7 +407,12 @@ export function preencherModelo(t: string, valores: Record<string, string>) {
  * Número do certificado a partir do formato: {seq} (sequência com zeros), {ano} (4 dígitos), {aa} (2 dígitos).
  * Revisões ganham o sufixo "-R1", "-R2"…
  */
-export function formatarNumeroCertificado(numeracao: { formato: string; digitos: number }, seq: number, ano: number, revisao = 0) {
+export function formatarNumeroCertificado(
+  numeracao: { formato: string; digitos: number },
+  seq: number,
+  ano: number,
+  revisao = 0,
+) {
   const formato = numeracao.formato.includes('{seq}') ? numeracao.formato : '{seq}/{ano}'
   const base = formato
     .replaceAll('{seq}', String(seq).padStart(Math.min(Math.max(numeracao.digitos, 1), 8), '0'))
@@ -425,7 +423,10 @@ export function formatarNumeroCertificado(numeracao: { formato: string; digitos:
 
 /** Nome de arquivo seguro a partir do número do certificado. */
 export const nomeArquivoCertificado = (numero: string) =>
-  `Certificado-${numero.replace(/[^0-9A-Za-z-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')}.pdf`
+  `Certificado-${numero
+    .replace(/[^0-9A-Za-z-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')}.pdf`
 
 // ---- Situações (validade de padrões e vencimento das balanças) ------------------------
 
@@ -487,7 +488,9 @@ export function descricaoBalanca(b: Pick<Balanca, 'tipo' | 'fabricante' | 'model
 }
 
 /** Endereço do cliente numa linha. */
-export function enderecoCliente(c: Pick<ClienteInput, 'logradouro' | 'numero' | 'complemento' | 'bairro' | 'cidade' | 'uf' | 'cep'>) {
+export function enderecoCliente(
+  c: Pick<ClienteInput, 'logradouro' | 'numero' | 'complemento' | 'bairro' | 'cidade' | 'uf' | 'cep'>,
+) {
   const rua = [c.logradouro, c.numero].filter(Boolean).join(', ')
   const partes = [rua + (c.complemento ? ` – ${c.complemento}` : ''), c.bairro, [c.cidade, c.uf].filter(Boolean).join('/')]
   const linha = partes.filter(Boolean).join(' – ')
@@ -507,12 +510,27 @@ export function enderecoEmpresa(e: DadosEmpresa) {
  */
 const TERMOS_SENSIVEIS: Array<{ padrao: RegExp; motivo: string }> = [
   { padrao: /\bafer(i|e)/i, motivo: '"Aferição" é termo antigo e impreciso: use "calibração".' },
-  { padrao: /\bvalidade\b|\bv[aá]lid[oa]s? at[eé](?![\p{L}\p{N}])/iu, motivo: 'Certificado de calibração não tem validade (ISO/IEC 17025, 7.8.4.3).' },
+  {
+    padrao: /\bvalidade\b|\bv[aá]lid[oa]s? at[eé](?![\p{L}\p{N}])/iu,
+    motivo: 'Certificado de calibração não tem validade (ISO/IEC 17025, 7.8.4.3).',
+  },
   { padrao: /\brbc\b|rastre[aá]vel [aà] rbc/i, motivo: 'A empresa não é acreditada: não cite a RBC como se fosse dela.' },
-  { padrao: /\bacreditad[oa]\b|\bcredenciad[oa]\b/i, motivo: 'Evite "acreditado" ou "credenciado": a empresa não é acreditada pela Cgcre.' },
-  { padrao: /aprovad[oa] pelo inmetro|liberad[oa] para (o )?com[eé]rcio/i, motivo: 'Só o Inmetro/IPEM aprova ou libera o instrumento (verificação legal).' },
-  { padrao: /\breprovad[oa]\b|\baprovad[oa]\b/i, motivo: '"Aprovado/reprovado" só com declaração de conformidade e regra de decisão.' },
-  { padrao: /\btoler[aâ]ncia\b/i, motivo: 'Prefira "erro máximo admissível (EMA)" ou deixe claro que é a tolerância do cliente.' },
+  {
+    padrao: /\bacreditad[oa]\b|\bcredenciad[oa]\b/i,
+    motivo: 'Evite "acreditado" ou "credenciado": a empresa não é acreditada pela Cgcre.',
+  },
+  {
+    padrao: /aprovad[oa] pelo inmetro|liberad[oa] para (o )?com[eé]rcio/i,
+    motivo: 'Só o Inmetro/IPEM aprova ou libera o instrumento (verificação legal).',
+  },
+  {
+    padrao: /\breprovad[oa]\b|\baprovad[oa]\b/i,
+    motivo: '"Aprovado/reprovado" só com declaração de conformidade e regra de decisão.',
+  },
+  {
+    padrao: /\btoler[aâ]ncia\b/i,
+    motivo: 'Prefira "erro máximo admissível (EMA)" ou deixe claro que é a tolerância do cliente.',
+  },
   { padrao: /\bautocalibra/i, motivo: 'Use "ajuste interno": calibração é a comparação com padrões.' },
 ]
 
@@ -1138,15 +1156,13 @@ export function normalizarConfig(entrada: unknown, atual: Configuracoes = CONFIG
   if (empresa.cnpj && !cnpjValido(empresa.cnpj)) erros.push('CNPJ da empresa inválido.')
   if (empresa.email && !emailValido(empresa.email)) erros.push('E-mail da empresa inválido.')
   const textos = Object.fromEntries(
-    (Object.keys(TEXTOS_PADRAO) as Array<keyof TextosCertificado>).map((k) => [
-      k,
-      multilinha(t[k] ?? atual.textos[k], 3000),
-    ]),
+    (Object.keys(TEXTOS_PADRAO) as Array<keyof TextosCertificado>).map((k) => [k, multilinha(t[k] ?? atual.textos[k], 3000)]),
   ) as unknown as TextosCertificado
   const formato = texto(n.formato ?? atual.numeracao.formato, 40)
   if (!formato.includes('{seq}')) erros.push('O formato do número precisa ter {seq} (a sequência).')
   const urlVerificacao = texto(r.urlVerificacao ?? atual.urlVerificacao, 200)
-  if (urlVerificacao && !/^https?:\/\//i.test(urlVerificacao)) erros.push('O endereço de verificação precisa começar com http:// ou https://.')
+  if (urlVerificacao && !/^https?:\/\//i.test(urlVerificacao))
+    erros.push('O endereço de verificação precisa começar com http:// ou https://.')
   return {
     valor: {
       empresa,

@@ -45,12 +45,19 @@ export function EtapaRevisao({
         <CardHeader
           icone={pronto ? <CircleCheck className="h-4 w-4 text-success" /> : <CircleAlert className="h-4 w-4 text-warning" />}
           titulo={pronto ? 'Tudo pronto para emitir' : 'Falta completar'}
-          descricao={pronto ? 'Confira a prévia do certificado antes de emitir.' : 'Resolva os itens abaixo para poder emitir o certificado.'}
+          descricao={
+            pronto
+              ? 'Confira a prévia do certificado antes de emitir.'
+              : 'Resolva os itens abaixo para poder emitir o certificado.'
+          }
         />
         {!pronto && (
           <ul className="flex flex-col gap-2 px-5 pb-5">
             {pendencias.map((p) => (
-              <li key={p} className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] font-medium text-warning">
+              <li
+                key={p}
+                className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] font-medium text-warning"
+              >
                 <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
                 {p}
               </li>
@@ -130,7 +137,12 @@ export function EtapaRevisao({
               Ver prévia do PDF
             </Button>
             {status === 'RASCUNHO' && (!signatario || bloqueadoRevisor) && (
-              <Button variante="primary" icone={<Hourglass className="h-4 w-4" />} onClick={aoEnviarRevisao} disabled={!pronto || salvando}>
+              <Button
+                variante="primary"
+                icone={<Hourglass className="h-4 w-4" />}
+                onClick={aoEnviarRevisao}
+                disabled={!pronto || salvando}
+              >
                 Enviar para revisão
               </Button>
             )}
@@ -169,7 +181,9 @@ export function EtapaRevisao({
             </p>
           )}
           {!signatario && status === 'RASCUNHO' && (
-            <p className="text-[13px] text-muted">Quem autoriza a emissão é um signatário (marcado pelo administrador em Usuários).</p>
+            <p className="text-[13px] text-muted">
+              Quem autoriza a emissão é um signatário (marcado pelo administrador em Usuários).
+            </p>
           )}
         </div>
       </Card>

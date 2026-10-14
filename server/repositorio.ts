@@ -166,7 +166,8 @@ export class Repositorio {
   clientePorDocumento(documento: string, exceto = ''): Cliente | undefined {
     const chave = chaveDocumento(documento)
     if (!chave) return undefined
-    const l = this.db.prepare('SELECT dados FROM clientes WHERE documento = ? AND id <> ?').get(chave, exceto) as Linha | undefined
+    const l = this.db.prepare('SELECT dados FROM clientes WHERE documento = ? AND id <> ?').get(chave, exceto) as
+      Linha | undefined
     return l ? (JSON.parse(l.dados) as Cliente) : undefined
   }
 
@@ -218,7 +219,10 @@ export class Repositorio {
         )
         .get(id, id) as { b: number; c: number }
       if (usos.c > 0)
-        throw new ErroApi(409, 'Este cliente tem calibrações registradas e não pode ser excluído. Desative o cliente para tirá-lo da lista.')
+        throw new ErroApi(
+          409,
+          'Este cliente tem calibrações registradas e não pode ser excluído. Desative o cliente para tirá-lo da lista.',
+        )
       if (usos.b > 0) throw new ErroApi(409, 'Exclua ou transfira as balanças deste cliente antes de excluí-lo.')
       this.db.prepare('DELETE FROM clientes WHERE id = ?').run(id)
       this.mudou('cliente', id)
@@ -227,7 +231,16 @@ export class Repositorio {
 
   private gravarCliente(c: Cliente, novo: boolean) {
     const busca = textoBusca(c.nome, c.razaoSocial, c.documento, c.cidade, c.contato, c.email)
-    const params = [c.tipo, chaveDocumento(c.documento), c.nome, busca, c.ativo ? 1 : 0, JSON.stringify(c), c.versao, c.atualizadoEm]
+    const params = [
+      c.tipo,
+      chaveDocumento(c.documento),
+      c.nome,
+      busca,
+      c.ativo ? 1 : 0,
+      JSON.stringify(c),
+      c.versao,
+      c.atualizadoEm,
+    ]
     if (novo)
       this.db
         .prepare(
@@ -337,7 +350,10 @@ export class Repositorio {
       if (!this.obterBalanca(id)) throw new ErroApi(404, 'Balança não encontrada.')
       const n = (this.db.prepare('SELECT COUNT(*) AS n FROM calibracoes WHERE balanca_id = ?').get(id) as { n: number }).n
       if (n > 0)
-        throw new ErroApi(409, 'Esta balança tem calibrações registradas e não pode ser excluída. Desative a balança para tirá-la da lista.')
+        throw new ErroApi(
+          409,
+          'Esta balança tem calibrações registradas e não pode ser excluída. Desative a balança para tirá-la da lista.',
+        )
       this.db.prepare('DELETE FROM balancas WHERE id = ?').run(id)
       this.mudou('balanca', id)
     })
@@ -370,7 +386,9 @@ export class Repositorio {
 
   listarPadroes(filtro: { inativos?: boolean } = {}): Padrao[] {
     const linhas = this.db
-      .prepare(`SELECT dados FROM padroes ${filtro.inativos ? '' : 'WHERE ativo = 1'} ORDER BY tipo, identificacao COLLATE NOCASE`)
+      .prepare(
+        `SELECT dados FROM padroes ${filtro.inativos ? '' : 'WHERE ativo = 1'} ORDER BY tipo, identificacao COLLATE NOCASE`,
+      )
       .all() as Linha[]
     return linhas.map((l) => JSON.parse(l.dados) as Padrao)
   }
@@ -407,7 +425,10 @@ export class Repositorio {
       if (!this.obterPadrao(id)) throw new ErroApi(404, 'Padrão não encontrado.')
       const usado = this.db.prepare('SELECT 1 FROM calibracoes WHERE dados LIKE ? LIMIT 1').get(`%"${id}"%`)
       if (usado)
-        throw new ErroApi(409, 'Este padrão foi usado em calibrações e não pode ser excluído. Desative o padrão para tirá-lo de uso.')
+        throw new ErroApi(
+          409,
+          'Este padrão foi usado em calibrações e não pode ser excluído. Desative o padrão para tirá-lo de uso.',
+        )
       this.db.prepare('DELETE FROM padroes WHERE id = ?').run(id)
       this.mudou('padrao', id)
     })
@@ -498,11 +519,15 @@ export class Repositorio {
                   COALESCE(NULLIF(k.data_emissao, ''), k.atualizado_em) DESC, k.sequencia DESC, k.revisao DESC
          LIMIT ? OFFSET ?`,
       )
-      .all(...params, limite, (pagina - 1) * limite) as Array<Linha & { cliente_nome: string; balanca_dados: string; envios: number }>
+      .all(...params, limite, (pagina - 1) * limite) as Array<
+      Linha & { cliente_nome: string; balanca_dados: string; envios: number }
+    >
     const nomes = this.nomesUsuarios()
     return {
       total,
-      itens: linhas.map((l) => this.resumo(JSON.parse(l.dados) as Calibracao, l.cliente_nome, JSON.parse(l.balanca_dados), l.envios, nomes)),
+      itens: linhas.map((l) =>
+        this.resumo(JSON.parse(l.dados) as Calibracao, l.cliente_nome, JSON.parse(l.balanca_dados), l.envios, nomes),
+      ),
     }
   }
 
@@ -614,8 +639,7 @@ export class Repositorio {
     return transacao(this.db, () => {
       const atual = this.obterCalibracao(id)
       if (!atual) throw new ErroApi(404, 'Calibração não encontrada.')
-      if (atual.status !== 'RASCUNHO' && atual.status !== 'REVISAO')
-        throw new ErroApi(409, 'Este certificado já foi emitido.')
+      if (atual.status !== 'RASCUNHO' && atual.status !== 'REVISAO') throw new ErroApi(409, 'Este certificado já foi emitido.')
       if (versao !== undefined && versao !== atual.versao) throw conflito('esta calibração')
       const k: Calibracao = { ...atual, status, versao: atual.versao + 1, atualizadoEm: this.agora().toISOString() }
       this.gravarCalibracao(k, false)
@@ -771,7 +795,17 @@ export class Repositorio {
           `INSERT INTO envios (id, calibracao_id, cliente_id, tipo, para, assunto, usuario_id, usuario_nome, em)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(novoId(), e.calibracaoId, e.clienteId, e.tipo, e.para, e.assunto, e.usuarioId, e.usuarioNome, this.agora().toISOString())
+        .run(
+          novoId(),
+          e.calibracaoId,
+          e.clienteId,
+          e.tipo,
+          e.para,
+          e.assunto,
+          e.usuarioId,
+          e.usuarioNome,
+          this.agora().toISOString(),
+        )
       this.mudou('calibracao', e.calibracaoId || undefined)
     })
   }
@@ -784,7 +818,9 @@ export class Repositorio {
   }
 
   listarEnvios(filtro: { calibracaoId?: string; clienteId?: string }): Envio[] {
-    const [cond, valor] = filtro.calibracaoId ? ['calibracao_id = ?', filtro.calibracaoId] : ['cliente_id = ?', filtro.clienteId ?? '']
+    const [cond, valor] = filtro.calibracaoId
+      ? ['calibracao_id = ?', filtro.calibracaoId]
+      : ['cliente_id = ?', filtro.clienteId ?? '']
     const linhas = this.db.prepare(`SELECT * FROM envios WHERE ${cond} ORDER BY em DESC LIMIT 100`).all(valor) as Array<
       Record<string, string>
     >

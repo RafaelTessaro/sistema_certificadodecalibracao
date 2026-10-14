@@ -40,7 +40,10 @@ export function Clientes() {
     if (params.has('novo')) setParams({}, { replace: true })
   }
 
-  const contagem = useMemo(() => ({ PJ: clientes.filter((c) => c.tipo === 'PJ').length, PF: clientes.filter((c) => c.tipo === 'PF').length }), [clientes])
+  const contagem = useMemo(
+    () => ({ PJ: clientes.filter((c) => c.tipo === 'PJ').length, PF: clientes.filter((c) => c.tipo === 'PF').length }),
+    [clientes],
+  )
 
   const lista = useMemo(() => {
     const q = normalizar(busca)
@@ -51,7 +54,12 @@ export function Clientes() {
         (c) =>
           !q ||
           normalizar(`${c.nome} ${c.razaoSocial} ${c.documento} ${c.contato} ${c.cidade} ${c.telefone} ${c.email}`).includes(q) ||
-          (digitos.length >= 3 && /\d/.test(digitos) && c.documento.replace(/[^\dA-Za-z]/g, '').toLowerCase().includes(digitos)),
+          (digitos.length >= 3 &&
+            /\d/.test(digitos) &&
+            c.documento
+              .replace(/[^\dA-Za-z]/g, '')
+              .toLowerCase()
+              .includes(digitos)),
       )
   }, [clientes, busca, tipo])
 
@@ -75,7 +83,23 @@ export function Clientes() {
   const exportar = () =>
     exportarCSV(
       'clientes.csv',
-      ['Nome', 'Razão social', 'CPF/CNPJ', 'Inscrição estadual', 'Contato', 'Telefone', 'Celular', 'E-mail', 'E-mails dos certificados', 'Endereço', 'Cidade', 'UF', 'Balanças', 'Certificados', 'Última calibração'],
+      [
+        'Nome',
+        'Razão social',
+        'CPF/CNPJ',
+        'Inscrição estadual',
+        'Contato',
+        'Telefone',
+        'Celular',
+        'E-mail',
+        'E-mails dos certificados',
+        'Endereço',
+        'Cidade',
+        'UF',
+        'Balanças',
+        'Certificados',
+        'Última calibração',
+      ],
       lista.map((c) => [
         c.nome,
         c.razaoSocial,
@@ -102,7 +126,12 @@ export function Clientes() {
         descricao={`${numero(clientes.length)} ${clientes.length === 1 ? 'cliente' : 'clientes'}${inativos ? ' (incluindo desativados)' : ''}`}
         acoes={
           <>
-            <Button icone={<Download className="h-4 w-4" />} onClick={exportar} disabled={!lista.length} title="Planilha (CSV) que abre no Excel">
+            <Button
+              icone={<Download className="h-4 w-4" />}
+              onClick={exportar}
+              disabled={!lista.length}
+              title="Planilha (CSV) que abre no Excel"
+            >
               Exportar
             </Button>
             <Button variante="primary" icone={<Plus className="h-4 w-4" />} onClick={() => setModal({ aberto: true })}>
@@ -125,7 +154,12 @@ export function Clientes() {
             ]}
           />
           <label className="flex cursor-pointer items-center gap-2 text-[13px] text-ink-2 md:ml-auto">
-            <input type="checkbox" checked={inativos} onChange={(e) => setInativos(e.target.checked)} className="h-4 w-4 accent-[var(--brand)]" />
+            <input
+              type="checkbox"
+              checked={inativos}
+              onChange={(e) => setInativos(e.target.checked)}
+              className="h-4 w-4 accent-[var(--brand)]"
+            />
             Mostrar desativados
           </label>
         </div>
@@ -176,7 +210,9 @@ export function Clientes() {
                         <p className="flex items-center gap-2 truncate font-medium text-ink">
                           <span className="truncate">{c.nome}</span>
                           {!c.ativo && <Badge tom="neutral">Desativado</Badge>}
-                          {situacaoPedeAtencao(c) && <Badge tom={tomSituacao(c.situacaoCadastral)}>{rotuloSituacao(c.situacaoCadastral)}</Badge>}
+                          {situacaoPedeAtencao(c) && (
+                            <Badge tom={tomSituacao(c.situacaoCadastral)}>{rotuloSituacao(c.situacaoCadastral)}</Badge>
+                          )}
                         </p>
                         <p className="flex items-center gap-1.5 truncate text-xs text-muted">
                           {c.tipo === 'PJ' ? <Building2 className="h-3 w-3 shrink-0" /> : <User className="h-3 w-3 shrink-0" />}
@@ -185,7 +221,9 @@ export function Clientes() {
                       </div>
                     </div>
                   </Td>
-                  <Td className="max-lg:hidden">{[c.cidade, c.uf].filter(Boolean).join('/') || <span className="text-muted">—</span>}</Td>
+                  <Td className="max-lg:hidden">
+                    {[c.cidade, c.uf].filter(Boolean).join('/') || <span className="text-muted">—</span>}
+                  </Td>
                   <Td className="max-md:hidden">
                     <p className="truncate text-ink-2">{c.contato || c.telefone || c.celular || '—'}</p>
                     {c.email && <p className="truncate text-xs text-muted">{c.email}</p>}
@@ -199,7 +237,9 @@ export function Clientes() {
                   <Td alinhar="right" className="max-sm:hidden">
                     {c.certificados}
                   </Td>
-                  <Td className="tnum max-md:hidden">{c.ultimaCalibracao ? dataCurta(c.ultimaCalibracao) : <span className="text-muted">—</span>}</Td>
+                  <Td className="tnum max-md:hidden">
+                    {c.ultimaCalibracao ? dataCurta(c.ultimaCalibracao) : <span className="text-muted">—</span>}
+                  </Td>
                   <Td onClick={(e) => e.stopPropagation()}>
                     <Menu
                       gatilho={(abrir) => (
@@ -208,7 +248,11 @@ export function Clientes() {
                         </Button>
                       )}
                       itens={[
-                        { label: 'Editar', icone: <Pencil className="h-4 w-4" />, aoClicar: () => setModal({ aberto: true, cliente: c }) },
+                        {
+                          label: 'Editar',
+                          icone: <Pencil className="h-4 w-4" />,
+                          aoClicar: () => setModal({ aberto: true, cliente: c }),
+                        },
                         {
                           label: 'Nova balança',
                           icone: <Scale className="h-4 w-4" />,
@@ -217,7 +261,12 @@ export function Clientes() {
                         ...(podeExcluir
                           ? ([
                               'sep',
-                              { label: 'Excluir', icone: <Trash2 className="h-4 w-4" />, aoClicar: () => void excluir(c), perigo: true },
+                              {
+                                label: 'Excluir',
+                                icone: <Trash2 className="h-4 w-4" />,
+                                aoClicar: () => void excluir(c),
+                                perigo: true,
+                              },
                             ] as const)
                           : []),
                       ]}

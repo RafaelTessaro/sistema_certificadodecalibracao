@@ -372,7 +372,9 @@ export function StatCard({
       >
         <AnimatedNumber valor={valor} formatar={formatar} />
       </p>
-      {detalhe && <div className={cn('relative mt-2 text-[12.5px]', destaque ? 'text-on-brand/80' : 'text-muted')}>{detalhe}</div>}
+      {detalhe && (
+        <div className={cn('relative mt-2 text-[12.5px]', destaque ? 'text-on-brand/80' : 'text-muted')}>{detalhe}</div>
+      )}
     </motion.div>
   )
 }

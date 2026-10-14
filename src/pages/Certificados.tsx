@@ -47,7 +47,18 @@ export function Certificados() {
   const exportar = () =>
     exportarCSV(
       'certificados.csv',
-      ['Número', 'Situação', 'Cliente', 'Balança', 'Nº de série', 'OS', 'Data da calibração', 'Data de emissão', 'Técnico', 'Próxima calibração'],
+      [
+        'Número',
+        'Situação',
+        'Cliente',
+        'Balança',
+        'Nº de série',
+        'OS',
+        'Data da calibração',
+        'Data de emissão',
+        'Técnico',
+        'Próxima calibração',
+      ],
       itens.map((k) => [
         k.numero,
         STATUS_CALIBRACAO[k.status].label,
@@ -86,7 +97,12 @@ export function Certificados() {
 
       <Card className="overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-line p-4 xl:flex-row xl:items-center">
-          <SearchInput valor={busca} aoMudar={setBusca} placeholder="Nº do certificado, cliente, série, OS…" className="xl:w-80" />
+          <SearchInput
+            valor={busca}
+            aoMudar={setBusca}
+            placeholder="Nº do certificado, cliente, série, OS…"
+            className="xl:w-80"
+          />
           <Segmented
             valor={filtro}
             aoMudar={mudarFiltro}

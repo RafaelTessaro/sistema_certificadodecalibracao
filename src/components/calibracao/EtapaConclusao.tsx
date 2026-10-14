@@ -56,7 +56,12 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
             ) : (
               <div />
             )}
-            <Field label="Regra de decisão" htmlFor="conf-regra" className="sm:col-span-2" hint={REGRAS_DECISAO[conf.regra].descricao}>
+            <Field
+              label="Regra de decisão"
+              htmlFor="conf-regra"
+              className="sm:col-span-2"
+              hint={REGRAS_DECISAO[conf.regra].descricao}
+            >
               <Select id="conf-regra" value={conf.regra} onChange={(e) => setConf('regra', e.target.value as RegraDecisao)}>
                 {(Object.keys(REGRAS_DECISAO) as RegraDecisao[]).map((r) => (
                   <option key={r} value={r}>
@@ -67,8 +72,8 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
             </Field>
             {semClasse && (
               <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning sm:col-span-2">
-                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-                A balança está sem classe de exatidão no cadastro. Corrija o cadastro ou use a tolerância do cliente.
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />A balança está sem classe de exatidão no cadastro. Corrija o
+                cadastro ou use a tolerância do cliente.
               </p>
             )}
             <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[13px] text-ink-2 sm:col-span-2">
@@ -87,7 +92,12 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
         <div className="flex flex-col gap-4 px-5 pb-5">
           <div className="flex flex-wrap items-end gap-3">
             <Field label="Data" htmlFor="k-prox" className="w-48">
-              <Input id="k-prox" type="date" value={f.proximaCalibracao} onChange={(e) => alterar((s) => ({ ...s, proximaCalibracao: e.target.value }))} />
+              <Input
+                id="k-prox"
+                type="date"
+                value={f.proximaCalibracao}
+                onChange={(e) => alterar((s) => ({ ...s, proximaCalibracao: e.target.value }))}
+              />
             </Field>
             {[6, 12, 24].map((m) => (
               <button
@@ -217,7 +227,11 @@ function OpcoesAvancadas({ opcoes, aoMudar }: { opcoes: OpcoesCalculo; aoMudar: 
             </Select>
           </Field>
           <Field label="Subida e descida" htmlFor="op-hist">
-            <Select id="op-hist" value={opcoes.histerese} onChange={(e) => set('histerese', e.target.value as OpcoesCalculo['histerese'])}>
+            <Select
+              id="op-hist"
+              value={opcoes.histerese}
+              onChange={(e) => set('histerese', e.target.value as OpcoesCalculo['histerese'])}
+            >
               <option value="SEPARADO">Erros separados (recomendado)</option>
               <option value="MEDIA">Um erro pela média, com a histerese na incerteza</option>
             </Select>

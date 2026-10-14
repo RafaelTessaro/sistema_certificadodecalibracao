@@ -62,7 +62,11 @@ export function PrazoBadge({
           sit === 'VENCIDO' ? 'bg-danger' : sit === 'VENCENDO' ? 'bg-warning-dot' : 'bg-success',
         )}
       />
-      <span className={cn(sit === 'VENCIDO' ? 'font-medium text-danger' : sit === 'VENCENDO' ? 'font-medium text-warning' : 'text-ink-2')}>
+      <span
+        className={cn(
+          sit === 'VENCIDO' ? 'font-medium text-danger' : sit === 'VENCENDO' ? 'font-medium text-warning' : 'text-ink-2',
+        )}
+      >
         {texto}
       </span>
     </span>

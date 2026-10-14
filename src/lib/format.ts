@@ -52,11 +52,7 @@ export { mascaraCep, mascaraDocumento, mascaraTelefone } from '#shared/documento
 
 /** Remove acentos e caixa para buscas tolerantes ("joão" encontra "JOAO"). */
 export function normalizar(s: string) {
-  return s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .trim()
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
 }
 
 export function iniciais(nome: string) {

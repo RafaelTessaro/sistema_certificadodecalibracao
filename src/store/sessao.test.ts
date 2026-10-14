@@ -17,7 +17,14 @@ vi.mock('zustand', async (original) => {
   return { ...real, create: <T>(f?: StateCreator<T>) => (f ? criar(f) : criar) }
 })
 
-const maria: UsuarioSessao = { id: 'u1', login: 'maria', nome: 'Maria Souza', nivel: 'COMUM', trocarSenha: false, signatario: false }
+const maria: UsuarioSessao = {
+  id: 'u1',
+  login: 'maria',
+  nome: 'Maria Souza',
+  nivel: 'COMUM',
+  trocarSenha: false,
+  signatario: false,
+}
 const joao: UsuarioSessao = { id: 'u2', login: 'joao', nome: 'João Lima', nivel: 'ADMIN', trocarSenha: false, signatario: true }
 
 function Sonda() {

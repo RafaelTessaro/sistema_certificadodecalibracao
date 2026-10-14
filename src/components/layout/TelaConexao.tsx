@@ -45,10 +45,7 @@ export function TelaConexao({ modo, erro, aoTentar }: { modo: 'carregando' | 'er
             exit={{ opacity: 0 }}
             className="flex flex-col items-center gap-4"
           >
-            <motion.div
-              animate={{ scale: [1, 1.06, 1] }}
-              transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
-            >
+            <motion.div animate={{ scale: [1, 1.06, 1] }} transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}>
               <Logo className="h-14 w-14" />
             </motion.div>
             <p className="text-sm text-muted">Conectando ao servidor…</p>

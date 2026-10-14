@@ -160,7 +160,13 @@ describe('trocarTipoCliente', () => {
 
   it('para pessoa física, limpa os dados de empresa e ajusta a máscara', () => {
     const pf = trocarTipoCliente(empresa, 'PF')
-    expect(pf).toMatchObject({ tipo: 'PF', razaoSocial: '', inscricaoEstadual: '', situacaoCadastral: '', documento: '124.038.430-00' })
+    expect(pf).toMatchObject({
+      tipo: 'PF',
+      razaoSocial: '',
+      inscricaoEstadual: '',
+      situacaoCadastral: '',
+      documento: '124.038.430-00',
+    })
     expect(pf).toMatchObject({ email: 'joao@x.com', cidade: 'Rio Claro', nome: 'Padaria X' })
     expect(normalizarCliente({ ...pf, documento: '' }).erros).toEqual([])
   })

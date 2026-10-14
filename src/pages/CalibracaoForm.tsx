@@ -108,7 +108,11 @@ function NovaCalibracao() {
           <CardHeader icone={<Building2 className="h-4 w-4" />} titulo="1. Cliente" />
           <div className="px-5 pb-5">
             <Combobox
-              opcoes={(clientes ?? []).map((c) => ({ valor: c.id, label: c.nome, detalhe: [c.documento, c.cidade].filter(Boolean).join(' · ') }))}
+              opcoes={(clientes ?? []).map((c) => ({
+                valor: c.id,
+                label: c.nome,
+                detalhe: [c.documento, c.cidade].filter(Boolean).join(' · '),
+              }))}
               valor={clienteId}
               aoMudar={(v) => {
                 setClienteId(v)
@@ -145,7 +149,9 @@ function NovaCalibracao() {
                 aria-pressed={balancaId === b.id}
                 className={cn(
                   'flex cursor-pointer items-start gap-3 rounded-2xl border p-4 text-left transition-all',
-                  balancaId === b.id ? 'border-brand bg-brand-soft/60 ring-1 ring-brand/30' : 'border-line hover:border-line-strong hover:bg-surface-2/50',
+                  balancaId === b.id
+                    ? 'border-brand bg-brand-soft/60 ring-1 ring-brand/30'
+                    : 'border-line hover:border-line-strong hover:bg-surface-2/50',
                 )}
               >
                 <span
@@ -157,13 +163,17 @@ function NovaCalibracao() {
                   {balancaId === b.id ? <Check className="h-5 w-5" /> : <Scale className="h-5 w-5" />}
                 </span>
                 <span className="min-w-0">
-                  <span className="block truncate font-semibold text-ink">{[b.fabricante, b.modelo].filter(Boolean).join(' ') || TIPOS_BALANCA[b.tipo]}</span>
+                  <span className="block truncate font-semibold text-ink">
+                    {[b.fabricante, b.modelo].filter(Boolean).join(' ') || TIPOS_BALANCA[b.tipo]}
+                  </span>
                   <span className="block truncate text-[13px] text-ink-2">{capacidadeTexto(b)}</span>
                   <span className="block truncate text-xs text-muted">
                     {b.numeroSerie ? `Série ${b.numeroSerie}` : 'Sem nº de série'}
                     {b.identificacao && ` · ${b.identificacao}`}
                   </span>
-                  {b.ultimaCalibracao && <span className="mt-1 block text-xs text-muted">Última calibração: {dataCurta(b.ultimaCalibracao)}</span>}
+                  {b.ultimaCalibracao && (
+                    <span className="mt-1 block text-xs text-muted">Última calibração: {dataCurta(b.ultimaCalibracao)}</span>
+                  )}
                 </span>
               </button>
             ))}
@@ -173,7 +183,12 @@ function NovaCalibracao() {
         <Card className={cn(!balancaId && 'pointer-events-none opacity-50')}>
           <CardHeader icone={<ClipboardList className="h-4 w-4" />} titulo="3. Ordem de serviço" />
           <div className="flex flex-col gap-4 px-5 pb-5 sm:flex-row sm:items-end">
-            <Field label="Nº da OS no sistema da empresa" htmlFor="nova-os" className="sm:w-64" hint="Para saber a qual OS este certificado pertence.">
+            <Field
+              label="Nº da OS no sistema da empresa"
+              htmlFor="nova-os"
+              className="sm:w-64"
+              hint="Para saber a qual OS este certificado pertence."
+            >
               <Input id="nova-os" value={os} onChange={(e) => setOs(e.target.value)} placeholder="Opcional" />
             </Field>
             <Button
@@ -294,7 +309,14 @@ function EditorCalibracao({ id }: { id: string }) {
         }
         if (!d.cliente || !d.balanca) throw new Error('O cliente ou a balança desta calibração não existe mais.')
         versao.current = k.versao
-        setDados({ calibracao: k, cliente: d.cliente, balanca: d.balanca, padroes: p.padroes, config: c.config, equipe: e.equipe })
+        setDados({
+          calibracao: k,
+          cliente: d.cliente,
+          balanca: d.balanca,
+          padroes: p.padroes,
+          config: c.config,
+          equipe: e.equipe,
+        })
         setF(entradaDe(k))
         setPendenciasServidor(d.pendencias)
         // Retoma na primeira etapa ainda sem dados
@@ -329,7 +351,13 @@ function EditorCalibracao({ id }: { id: string }) {
   const chavePadroes = f?.padroesIds.join(',') ?? ''
   useEffect(() => {
     if (!balanca) return
-    alterar((atual) => recomporCargas(atual, balanca, selecionados.filter((p) => p.tipo === 'PESOS')))
+    alterar((atual) =>
+      recomporCargas(
+        atual,
+        balanca,
+        selecionados.filter((p) => p.tipo === 'PESOS'),
+      ),
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chavePadroes, balanca])
 
@@ -391,12 +419,29 @@ function EditorCalibracao({ id }: { id: string }) {
   // Pendências calculadas aqui na hora (o servidor confere de novo ao emitir)
   const pendencias = useMemo(() => {
     if (!f || !dados) return pendenciasServidor
-    const locais = pendenciasEmissao(f, { padroes: selecionados, hoje: hojeISO(), temPesos: selecionados.some((p) => p.tipo === 'PESOS') })
-    return [...new Set([...locais, ...(calc?.resultado.pendencias ?? []), ...(calc?.comoEncontrado?.pendencias.map((p) => `Como encontrado: ${p}`) ?? [])])]
+    const locais = pendenciasEmissao(f, {
+      padroes: selecionados,
+      hoje: hojeISO(),
+      temPesos: selecionados.some((p) => p.tipo === 'PESOS'),
+    })
+    return [
+      ...new Set([
+        ...locais,
+        ...(calc?.resultado.pendencias ?? []),
+        ...(calc?.comoEncontrado?.pendencias.map((p) => `Como encontrado: ${p}`) ?? []),
+      ]),
+    ]
   }, [f, dados, selecionados, calc, pendenciasServidor])
 
   if (erro)
-    return <EmptyState icone={<CircleAlert className="h-6 w-6" />} titulo="Não foi possível abrir a calibração" descricao={erro} acao={<Button onClick={() => navegar('/certificados')}>Voltar</Button>} />
+    return (
+      <EmptyState
+        icone={<CircleAlert className="h-6 w-6" />}
+        titulo="Não foi possível abrir a calibração"
+        descricao={erro}
+        acao={<Button onClick={() => navegar('/certificados')}>Voltar</Button>}
+      />
+    )
   if (!dados || !f || !balanca) return <CarregandoEditor />
 
   const ctx: ContextoEtapa = {
@@ -495,7 +540,8 @@ function EditorCalibracao({ id }: { id: string }) {
         }
         descricao={
           <span>
-            {dados.cliente.nome} · {[balanca.fabricante, balanca.modelo].filter(Boolean).join(' ') || TIPOS_BALANCA[balanca.tipo]} {capacidadeTexto(balanca)}
+            {dados.cliente.nome} · {[balanca.fabricante, balanca.modelo].filter(Boolean).join(' ') || TIPOS_BALANCA[balanca.tipo]}{' '}
+            {capacidadeTexto(balanca)}
             {f.ordemServico && ` · OS ${f.ordemServico}`}
           </span>
         }
@@ -524,7 +570,11 @@ function EditorCalibracao({ id }: { id: string }) {
               e.id === etapa ? 'border-brand bg-brand text-on-brand' : 'border-line bg-surface text-ink-2',
             )}
           >
-            {completa(e.id) && e.id !== etapa ? <Check className="h-3.5 w-3.5 text-success" /> : <span className="tnum text-xs">{i + 1}</span>}
+            {completa(e.id) && e.id !== etapa ? (
+              <Check className="h-3.5 w-3.5 text-success" />
+            ) : (
+              <span className="tnum text-xs">{i + 1}</span>
+            )}
             {e.titulo}
           </button>
         ))}
@@ -616,7 +666,9 @@ function EditorCalibracao({ id }: { id: string }) {
 
           {/* Em telas médias o painel ao vivo vem no fim */}
           <div className="mt-6 2xl:hidden">
-            {['repetibilidade', 'excentricidade', 'indicacao', 'conclusao'].includes(etapa) && <PainelResultados calc={calc} balanca={balanca} f={f} />}
+            {['repetibilidade', 'excentricidade', 'indicacao', 'conclusao'].includes(etapa) && (
+              <PainelResultados calc={calc} balanca={balanca} f={f} />
+            )}
           </div>
         </div>
 
@@ -645,7 +697,11 @@ function EditorCalibracao({ id }: { id: string }) {
         descricao="Com marca d'água: só vale depois de emitido."
       >
         {previa && 'url' in previa ? (
-          <iframe title="Prévia do certificado" src={previa.url} className="h-[72vh] w-full rounded-xl border border-line bg-white" />
+          <iframe
+            title="Prévia do certificado"
+            src={previa.url}
+            className="h-[72vh] w-full rounded-xl border border-line bg-white"
+          />
         ) : (
           <div className="flex h-[40vh] items-center justify-center gap-3 text-sm text-muted">
             <Loader2 className="h-5 w-5 animate-spin" /> Gerando o PDF…
@@ -663,11 +719,17 @@ function etapaCompleta(e: IdEtapa, { f, calc, selecionados }: ContextoEtapa): bo
     case 'instrumento':
       return f.ajuste.realizado !== 'EXTERNO' || !!f.ajuste.descricao.trim()
     case 'padroes':
-      return selecionados.some((p) => p.tipo === 'PESOS') && f.ambiente.temperaturaInicial !== null && f.ambiente.temperaturaFinal !== null
+      return (
+        selecionados.some((p) => p.tipo === 'PESOS') &&
+        f.ambiente.temperaturaInicial !== null &&
+        f.ambiente.temperaturaFinal !== null
+      )
     case 'repetibilidade':
       return !!calc?.resultado.repetibilidade.some((r) => r.n >= 2)
     case 'excentricidade':
-      return !f.excentricidade.aplicavel ? !!f.excentricidade.motivo.trim() : !!calc?.resultado.excentricidade.aplicavel
+      return !f.excentricidade.aplicavel
+        ? !!f.excentricidade.motivo.trim()
+        : !!calc && !calc.resultado.pendencias.some((p) => p.startsWith('Excentricidade'))
     case 'indicacao':
       return f.indicacao.pontos.length > 0 && f.indicacao.pontos.every((p) => p.crescente !== null || p.decrescente !== null)
     case 'conclusao':
@@ -688,7 +750,11 @@ function IndicadorSalvo({ estado, aoTentar }: { estado: EstadoSalvo; aoTentar: (
     <button
       type="button"
       onClick={estado === 'erro' ? aoTentar : undefined}
-      className={cn('inline-flex h-10 items-center gap-1.5 px-2 text-[13px] font-medium', mapa.cor, estado === 'erro' && 'cursor-pointer')}
+      className={cn(
+        'inline-flex h-10 items-center gap-1.5 px-2 text-[13px] font-medium',
+        mapa.cor,
+        estado === 'erro' && 'cursor-pointer',
+      )}
       aria-live="polite"
     >
       {mapa.icone}
@@ -712,4 +778,3 @@ function CarregandoEditor() {
     </div>
   )
 }
-

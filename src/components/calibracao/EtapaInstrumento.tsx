@@ -70,8 +70,8 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
         </div>
         {balanca.finalidade === 'COMERCIAL' || balanca.finalidade === 'SAUDE' ? (
           <p className="mx-5 mb-5 rounded-xl bg-info-soft px-3.5 py-2.5 text-[13px] text-info">
-            Balança de uso {balanca.finalidade === 'COMERCIAL' ? 'comercial' : 'na saúde'}: a calibração não substitui a verificação do
-            Inmetro/IPEM. O certificado já traz essa ressalva.
+            Balança de uso {balanca.finalidade === 'COMERCIAL' ? 'comercial' : 'na saúde'}: a calibração não substitui a
+            verificação do Inmetro/IPEM. O certificado já traz essa ressalva.
           </p>
         ) : null}
       </Card>
@@ -136,19 +136,25 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
               <Field
                 label="Como foi o ajuste"
                 htmlFor="k-ajuste"
-                hint={f.ajuste.realizado === 'EXTERNO' ? 'Informe o peso usado. Ex.: “Ajuste de span com peso padrão de 20 kg”.' : undefined}
+                hint={
+                  f.ajuste.realizado === 'EXTERNO'
+                    ? 'Informe o peso usado. Ex.: “Ajuste de span com peso padrão de 20 kg”.'
+                    : undefined
+                }
               >
                 <Input
                   id="k-ajuste"
                   value={f.ajuste.descricao}
                   onChange={(e) => alterar((s) => ({ ...s, ajuste: { ...s.ajuste, descricao: e.target.value } }))}
-                  placeholder={f.ajuste.realizado === 'EXTERNO' ? 'Ajuste de span com peso de 20 kg' : 'Ajuste interno pelo menu da balança'}
+                  placeholder={
+                    f.ajuste.realizado === 'EXTERNO' ? 'Ajuste de span com peso de 20 kg' : 'Ajuste interno pelo menu da balança'
+                  }
                 />
               </Field>
               <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[13px] text-ink-2">
                 Na etapa <b className="font-medium text-ink">Erro de indicação</b> aparece a aba{' '}
-                <b className="font-medium text-ink">Antes do ajuste</b>, para as leituras “como encontrado”. É recomendado: o cliente usa esses
-                valores para avaliar as pesagens feitas antes.
+                <b className="font-medium text-ink">Antes do ajuste</b>, para as leituras “como encontrado”. É recomendado: o
+                cliente usa esses valores para avaliar as pesagens feitas antes.
               </p>
             </>
           )}
@@ -174,7 +180,12 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
         />
         <div className={cn('grid grid-cols-1 gap-4 px-5 pb-5 sm:grid-cols-2', !f.reparo.houve && 'hidden')}>
           <Field label="Serviço realizado" htmlFor="k-rep" className="sm:col-span-2">
-            <Input id="k-rep" value={f.reparo.descricao} onChange={(e) => setReparo('descricao', e.target.value)} placeholder="Ex.: troca da célula de carga" />
+            <Input
+              id="k-rep"
+              value={f.reparo.descricao}
+              onChange={(e) => setReparo('descricao', e.target.value)}
+              placeholder="Ex.: troca da célula de carga"
+            />
           </Field>
           <Field label="Marca de reparo nº" htmlFor="k-marca">
             <Input id="k-marca" value={f.reparo.marcaReparo} onChange={(e) => setReparo('marcaReparo', e.target.value)} />
