@@ -18,9 +18,15 @@ const existe = (programa: string) => !spawnSync(programa, ['-v'], { stdio: 'igno
 const temPdftotext = existe('pdftotext')
 const temPdftoppm = existe('pdftoppm')
 
-/** Texto do PDF (layout preservado), com espaços não separáveis normalizados. */
+/**
+ * Texto do PDF (layout preservado), com espaços não separáveis normalizados. Sem o texto diagonal (-nodiag):
+ * as letras da marca d'água (PRÉVIA/CANCELADO) cairiam no meio das frases, conforme a altura das linhas.
+ */
 function textoDoPdf(pdf: Buffer): string {
-  const r = spawnSync('pdftotext', ['-layout', '-enc', 'UTF-8', '-', '-'], { input: pdf, maxBuffer: 50 * 1024 * 1024 })
+  const r = spawnSync('pdftotext', ['-layout', '-nodiag', '-enc', 'UTF-8', '-', '-'], {
+    input: pdf,
+    maxBuffer: 50 * 1024 * 1024,
+  })
   if (r.status !== 0) throw new Error(`pdftotext falhou: ${r.stderr?.toString()}`)
   return r.stdout.toString('utf8').replace(/[\u00A0\u2009\u202F]/g, ' ')
 }
@@ -76,10 +82,24 @@ function conferirComum(texto: string, d: DadosCertificadoPdf) {
   expect(t).not.toMatch(/aferi[çc][aã]o|aferid[oa]/i)
   expect(t).not.toMatch(/\bRBC\b|Rede Brasileira de Calibra/i)
   expect(t).not.toMatch(/acreditad[oa] pela Cgcre(?! para)/i)
-  // Todas as páginas numeradas, de 1 a N, no cabeçalho e no rodapé
+  // Todas as páginas numeradas, de 1 a N
   const { total, numeros } = paginas(texto)
   expect(total).toBeGreaterThanOrEqual(2)
   expect(numeros).toEqual(Array.from({ length: total }, (_, i) => i + 1))
+  // Papel timbrado em toda página (ISO/IEC 17025, 7.8.2.1): marca, título e nº no cabeçalho (na página 1, o
+  // timbrado completo com o título); razão social, CNPJ, a cláusula de reprodução e "Página i de N" no
+  // rodapé. A marca só sai no cabeçalho: se ele deixar de ser desenhado em alguma página, este teste pega.
+  const folhas = texto.split('\f').filter((p) => p.trim())
+  expect(folhas).toHaveLength(total)
+  folhas.forEach((folha, i) => {
+    const f = corrido(folha)
+    expect(f).toContain(d.emissao.empresa.nomeFantasia.toUpperCase())
+    expect(f).toContain('CERTIFICADO DE CALIBRAÇÃO')
+    expect(f).toContain(`Nº ${numero}`)
+    expect(f).toContain(`Página ${i + 1} de ${total}`)
+    expect(f).toContain('FABIO DE GODOY LIMA LTDA · CNPJ 12.403.843/0001-18')
+    expect(f).toContain('Este certificado somente pode ser reproduzido na íntegra.')
+  })
   // O fim do certificado está na última página
   const ultima =
     texto
@@ -234,7 +254,7 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', () => {
     expect(t).toContain(
       'Este certificado substitui integralmente o Certificado nº CC-2026-00098, emitido em 30/09/2026, que fica cancelado. Motivo: correção do número de série do indicador',
     )
-    // A marca d'água diagonal sai letra a letra no pdftotext; a presença dela é conferida na definição
+    // A marca d'água diagonal fica fora do texto extraído (-nodiag); a presença dela é conferida na definição
     expect(t).toContain('Balança rodoviária')
     expect(t).toContain('80 000 kg')
     expect(t).toContain('Cargas de substituição')
@@ -242,6 +262,124 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', () => {
     expect(t).toContain('Tolerância do cliente: EMA de ±60 kg')
     expect(t).toContain('Aceitação simples')
     expect(t).toContain('TH-01, BR-01')
+  })
+})
+
+/** Empresa com todos os campos no limite (120 caracteres), para o papel timbrado. */
+function comEmpresaExtrema(d: DadosCertificadoPdf): DadosCertificadoPdf {
+  d.emissao = {
+    ...d.emissao,
+    empresa: {
+      ...d.emissao.empresa,
+      nomeFantasia:
+        'Comércio Manutenção e Montagem de Balanças Mecânicas Eletrônicas Rodoviárias Ferroviárias e Industriais de Médio Porte',
+      razaoSocial:
+        'Mecânica Metalúrgica Comércio Manutenção Montagem Importação e Exportação de Máquinas e Equipamentos de Pesagem Ltda ME',
+      endereco:
+        'Rodovia Washington Luís (SP-310), km 173,5, Pista Sul, Galpão 12, Módulo 4, Condomínio Empresarial Rio Claro Business Park',
+      bairro: 'Jardim das Palmeiras do Distrito Industrial Norte',
+      telefone: '(17) 99999-0000 / (17) 3333-4444',
+      email: 'laboratorio.de.metrologia.e.calibracao@balancasrodoviariaseindustriais.com.br',
+      site: 'www.balancasindustriaisdointeriorpaulista.com.br',
+    },
+  }
+  d.calibracao = { ...d.calibracao, numero: 'CC-2026-000123-R12', emissao: d.emissao }
+  d.marcaDagua = 'CANCELADO'
+  return d
+}
+
+/** Palavras do PDF com a caixa de cada uma (pdftotext -bbox), por página. */
+function palavrasDoPdf(pdf: Buffer): Array<Array<{ x0: number; y0: number; x1: number; y1: number; texto: string }>> {
+  const r = spawnSync('pdftotext', ['-bbox', '-nodiag', '-enc', 'UTF-8', '-', '-'], { input: pdf, maxBuffer: 50 * 1024 * 1024 })
+  if (r.status !== 0) throw new Error(`pdftotext falhou: ${r.stderr?.toString()}`)
+  return r.stdout
+    .toString('utf8')
+    .split('<page ')
+    .slice(1)
+    .map((pagina) =>
+      [...pagina.matchAll(/xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]*)</g)].map((m) => ({
+        x0: Number(m[1]),
+        y0: Number(m[2]),
+        x1: Number(m[3]),
+        y1: Number(m[4]),
+        texto: m[5],
+      })),
+    )
+}
+
+describe('papel timbrado', () => {
+  it('a margem de baixo cresce com o rodapé (endereço longo), sem cortar nada', () => {
+    const normal = definicaoCertificado(exemploPlataforma()) as { pageMargins: number[] }
+    const extremo = definicaoCertificado(comEmpresaExtrema(exemploPlataforma())) as { pageMargins: number[] }
+    expect(extremo.pageMargins[3]).toBeGreaterThan(normal.pageMargins[3])
+    expect(normal.pageMargins[1]).toBe(extremo.pageMargins[1])
+  })
+
+  it.runIf(temPdftotext)(
+    'com dados no limite: título, nº inteiro, página e CNPJ em toda página, e nada fora da folha',
+    async () => {
+      const d = comEmpresaExtrema(exemploPlataforma())
+      const pdf = await gerarCertificadoPdf(d)
+      const folhas = textoDoPdf(pdf)
+        .split('\f')
+        .filter((p) => p.trim())
+      folhas.forEach((folha, i) => {
+        const f = corrido(folha)
+        expect(f).toContain('CERTIFICADO DE CALIBRAÇÃO')
+        expect(f).toContain('Nº CC-2026-000123-R12') // o nº nunca quebra de linha
+        expect(f).toContain(`Página ${i + 1} de ${folhas.length}`)
+        expect(f).toContain('CNPJ 12.403.843/0001-18')
+        expect(f).toContain('Este certificado somente pode ser reproduzido na íntegra.')
+        // A marca (cabeçalho) não é descartada pelo pdfmake: a primeira palavra dela está em toda página
+        expect(f).toContain('COMÉRCIO MANUTENÇÃO')
+      })
+      // No rodapé, o endereço quebra entre as partes: o separador "·" nunca fica pendurado no fim (nem no
+      // começo) de uma linha
+      const topoRodape = 842 - (definicaoCertificado(d) as { pageMargins: number[] }).pageMargins[3]
+      for (const pagina of palavrasDoPdf(pdf)) {
+        const rodape = pagina.filter((p) => p.y0 > topoRodape)
+        for (const sep of rodape.filter((p) => p.texto === '·')) {
+          const linha = rodape.filter((p) => p !== sep && Math.abs(p.y1 - sep.y1) < 1)
+          expect(linha.some((p) => p.x0 > sep.x1 && p.x0 - sep.x1 < 6)).toBe(true)
+          expect(linha.some((p) => p.x1 < sep.x0 && sep.x0 - p.x1 < 6)).toBe(true)
+        }
+      }
+      // Todo texto fica na área que a impressora imprime (A4 = 595 × 842 pt; caixas do pdftotext, que
+      // incluem o espaço dos acentos acima das versais)
+      for (const pagina of palavrasDoPdf(pdf))
+        for (const p of pagina) {
+          expect(p.x0, p.texto).toBeGreaterThanOrEqual(44)
+          expect(p.x1, p.texto).toBeLessThanOrEqual(551)
+          expect(p.y0, p.texto).toBeGreaterThanOrEqual(18)
+          expect(p.y1, p.texto).toBeLessThanOrEqual(842 - 22)
+        }
+    },
+  )
+})
+
+describe.runIf(temPdftotext)('papel timbrado: alinhamentos', () => {
+  it.each(EXEMPLOS)('nº do certificado e "Página X de Y" terminam na margem direita: $arquivo', async ({ arquivo, dados }) => {
+    const numero = dados().calibracao.numero
+    const direita = 595.28 - 45
+    for (const [i, pagina] of palavrasDoPdf(await pdfDe(arquivo)).entries()) {
+      // nº no cabeçalho (o primeiro da página: o do título, na capa)
+      const n = pagina.find((p) => p.texto === numero)
+      expect(n, `nº na página ${i + 1}`).toBeDefined()
+      expect(Math.abs(n!.x1 - direita), `nº na página ${i + 1}`).toBeLessThan(1)
+      // "Página X de Y": a última palavra (Y) na margem direita, abaixo de todo o resto da página
+      const k = pagina.findIndex((p, j) => p.texto === 'Página' && pagina[j + 2]?.texto === 'de')
+      expect(k, `paginação na página ${i + 1}`).toBeGreaterThanOrEqual(0)
+      const total = pagina[k + 3]
+      expect(Math.abs(total.x1 - direita), `paginação na página ${i + 1}`).toBeLessThan(1)
+      expect(Math.max(...pagina.map((p) => p.y1))).toBeCloseTo(total.y1, 0)
+    }
+  })
+
+  it("marca d'água com corpo fixo, menor que a área do corpo da página", () => {
+    const doc = definicaoCertificado(exemploRodoviaria()) as { watermark?: { fontSize?: number; angle?: number } }
+    expect(doc.watermark?.fontSize).toBeGreaterThan(40)
+    expect(doc.watermark?.fontSize).toBeLessThanOrEqual(84)
+    expect(doc.watermark?.angle).toBe(-50)
   })
 })
 

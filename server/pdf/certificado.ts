@@ -22,7 +22,6 @@ import {
   CRITERIOS_EMA,
   divisaoLegivel,
   enderecoCliente,
-  enderecoEmpresa,
   FINALIDADES,
   formatarDataBr,
   LOCAIS,
@@ -48,7 +47,8 @@ import type {
   Verificacao,
 } from '#shared/tipos.ts'
 import { diagramaExcentricidade, graficoErros, qrSvg, type PontoGrafico, type TrechoEma, type ValorGrafico } from './graficos.ts'
-import { COR, faixaRodapeSvg, LOGO_SVG } from './marca.ts'
+import { COR, ROTULO } from './marca.ts'
+import { FONTES_TIMBRADO, LARGURA, timbrado } from './timbrado.ts'
 import type { DadosCertificadoPdf } from './tipos.ts'
 
 // ---- pdfmake (servidor) --------------------------------------------------------------------------
@@ -70,8 +70,13 @@ const requerer = createRequire(import.meta.url)
 const PASTA_FONTES = fileURLToPath(new URL('./fontes/', import.meta.url))
 const fonte = (arquivo: string) => resolve(PASTA_FONTES, arquivo)
 
-/** Inter estática: Regular/SemiBold no texto; Medium/Bold nos rótulos e números. */
+/**
+ * Inter estática no documento: Regular/SemiBold no texto; Medium/Bold nos rótulos e números. No papel
+ * timbrado (timbrado.ts), o rodapé também é em Inter; o cabeçalho (palavra-marca, razão social, contatos,
+ * título e nº) usa a Poppins, a geométrica do logotipo oficial.
+ */
 const FONTES = {
+  ...FONTES_TIMBRADO,
   Inter: {
     normal: fonte('Inter-Regular.ttf'),
     bold: fonte('Inter-SemiBold.ttf'),
@@ -100,19 +105,13 @@ function pdfmake(): PdfMakeServidor {
 
 // ---- Página e tipografia -------------------------------------------------------------------------
 
-const A4 = { largura: 595.28, altura: 841.89 }
-const MARGEM_X = 45
-const MARGEM_TOPO = 88
-const MARGEM_BASE = 84
-/** Largura útil (≈ 178 mm). */
-const LARGURA = A4.largura - 2 * MARGEM_X
-const FAIXA_RODAPE = 30
+// Página A4 com 45 pt de margem lateral; margens de cima e de baixo vêm do papel timbrado (timbrado.ts)
 const NUM: NoObjeto = { fontFeatures: ['tnum'] }
 
 const ESTILOS: Record<string, NoObjeto> = {
   secao: { font: 'InterMedio', bold: true, fontSize: 8.6, color: COR.marcaTexto, characterSpacing: 0.45 },
   subsecao: { bold: true, fontSize: 8.8, color: COR.texto },
-  rotulo: { font: 'InterMedio', fontSize: 6.1, color: COR.rotulo, characterSpacing: 0.3, lineHeight: 1.1 },
+  rotulo: { ...ROTULO, lineHeight: 1.1 },
   valor: { fontSize: 8.6, lineHeight: 1.22 },
   paragrafo: { fontSize: 8.2, lineHeight: 1.34, color: COR.texto },
   th: { font: 'InterMedio', fontSize: 6.8, color: COR.textoSecundario, lineHeight: 1.12 },
@@ -194,36 +193,55 @@ function semDicaDeQuebra(no: unknown): void {
   for (const v of Object.values(no)) if (v && typeof v === 'object') semDicaDeQuebra(v)
 }
 
-/** Bloco que não se divide entre páginas (precisa caber numa página). */
+/**
+ * Espaço antes de um título ou bloco, num nó à parte (e não como margem do título): quando o título abre
+ * uma página, o espaço fica no pé da anterior, e o corpo começa sempre à mesma distância do cabeçalho.
+ */
+function espaco(pt: number): NoObjeto {
+  return { canvas: [], margin: [0, pt, 0, 0], espacoAntes: true }
+}
+const ehEspaco = (no: No | undefined): no is NoObjeto =>
+  !!no && typeof no === 'object' && !Array.isArray(no) && no.espacoAntes === true
+
+/**
+ * Bloco que não se divide entre páginas (precisa caber numa página). O espaço do começo vira margem do
+ * bloco: o pdfmake aplica a margem antes de decidir se o bloco cabe, então ela fica na página de antes.
+ */
 function inteiro(conteudo: No[]): NoObjeto {
   semDicaDeQuebra(conteudo)
+  const [primeiro, ...resto] = conteudo
+  if (ehEspaco(primeiro)) return { stack: resto, unbreakable: true, margin: primeiro.margin }
   return { stack: conteudo, unbreakable: true }
 }
 
 /** Bloco inteiro quando pequeno; senão, divisível (com o cabeçalho das tabelas repetido). */
 const bloco = (conteudo: No[], pequeno: boolean): NoObjeto => (pequeno ? inteiro(conteudo) : { stack: conteudo })
 
-/** Título de seção numerado: número e título em verde escuro, caixa alta, com um fio fino abaixo. */
-function secao(numero: number | string, titulo: string, espaco = ESPACO_TITULO): No[] {
+/**
+ * Título de seção numerado: número e título em verde escuro, caixa alta, com um fio fino abaixo. `antes` é o
+ * espaço acima dele (0 na primeira seção, que já começa à distância certa do timbrado).
+ */
+function secao(numero: number | string, titulo: string, minimoAbaixo = ESPACO_TITULO, antes = 17): No[] {
   return [
+    ...(antes ? [espaco(antes)] : []),
     {
       text: [{ text: `${numero}`, color: COR.marca }, { text: `\u2003${titulo.toUpperCase()}` }],
       style: 'secao',
-      headlineLevel: espaco,
-      margin: [0, 17, 0, 0],
+      headlineLevel: minimoAbaixo,
     },
     fio(COR.fio, 0.5, [0, 4, 0, 7]),
   ]
 }
 
 /** Título de subseção ("6.3 Erro de indicação"), com uma linha de complemento opcional logo abaixo. */
-function subsecao(numero: string, titulo: string, complemento = '', espaco = ESPACO_TITULO - 20): No[] {
+function subsecao(numero: string, titulo: string, complemento = '', minimoAbaixo = ESPACO_TITULO - 20): No[] {
   return [
+    espaco(12),
     {
       text: [{ text: `${numero}\u2002`, color: COR.marcaTexto }, { text: titulo }],
       style: 'subsecao',
-      headlineLevel: espaco,
-      margin: [0, 12, 0, complemento ? 1 : 5],
+      headlineLevel: minimoAbaixo,
+      margin: [0, 0, 0, complemento ? 1 : 5],
     },
     ...(complemento ? [{ text: complemento, style: 'nota', fontSize: 7.4, margin: [0, 0, 0, 5] }] : []),
   ]
@@ -454,7 +472,7 @@ function secaoDadosCalibracao(ctx: Contexto, n: number): No[] {
     ...(vazio(e.textos.procedimentoDescricao) ? [] : [{ text: ` — ${e.textos.procedimentoDescricao.trim()}`, color: COR.texto }]),
   ]
   const blocos: No[] = [
-    inteiro([...secao(n, 'Dados da calibração'), grade(linhas)]),
+    inteiro([...secao(n, 'Dados da calibração', ESPACO_TITULO, 0), grade(linhas)]),
     inteiro([
       { text: 'PROCEDIMENTO', style: 'rotulo', margin: [0, 3, 0, 1.5] },
       { text: procedimento, style: 'paragrafo' },
@@ -1167,12 +1185,13 @@ function erroIndicacao(ctx: Contexto): No[] {
     const ema = conformidade ? trechosEma(ctx, maxCarga) : []
     blocos.push(
       inteiro([
+        espaco(12),
         {
           svg: graficoErros(pg, { largura: LARGURA, altura: 158, unidade: u, ema }),
           width: LARGURA,
           height: 158,
           font: 'Inter',
-          margin: [0, 12, 0, 3],
+          margin: [0, 0, 0, 3],
         },
         {
           text: `Erro de indicação em função da carga${media ? ' (média das cargas crescente e decrescente)' : ''}. As barras verticais representam a incerteza expandida U${ema.length ? '; as linhas tracejadas, os limites ±EMA da declaração de conformidade' : ''}.`,
@@ -1489,7 +1508,8 @@ function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
   }
   return [
     inteiro([
-      fio(COR.fio, 0.5, [0, 18, 0, 12]),
+      espaco(18),
+      fio(COR.fio, 0.5, [0, 0, 0, 12]),
       assinaturas,
       ...quando,
       autenticidade,
@@ -1503,118 +1523,6 @@ function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
       },
     ]),
   ]
-}
-
-// ---- Cabeçalho, rodapé, marca d'água ------------------------------------------------------------
-
-function cabecalho(ctx: Contexto) {
-  const { e } = ctx
-  const marca = marcaNome(e).toUpperCase()
-  const razao = e.empresa.razaoSocial && e.empresa.razaoSocial !== e.empresa.nomeFantasia ? e.empresa.razaoSocial : ''
-  return (pagina: number, total: number): NoObjeto => ({
-    margin: [MARGEM_X, 26, MARGEM_X, 0],
-    stack: [
-      {
-        columns: [
-          { svg: LOGO_SVG, width: 32, height: 32, font: 'Inter' },
-          {
-            width: '*',
-            margin: [9, 3.5, 0, 0],
-            stack: [
-              { text: marca, font: 'InterMedio', bold: true, fontSize: 12, color: COR.grafite, characterSpacing: 0.25 },
-              ...(razao
-                ? [{ text: razao, fontSize: 6.9, color: COR.rotulo, margin: [0, 1.5, 0, 0], characterSpacing: 0.2 }]
-                : []),
-            ],
-          },
-          {
-            width: 'auto',
-            alignment: 'right',
-            stack: [
-              {
-                text: 'CERTIFICADO DE CALIBRAÇÃO',
-                font: 'InterMedio',
-                bold: true,
-                fontSize: 7.4,
-                color: COR.marcaTexto,
-                characterSpacing: 0.4,
-              },
-              {
-                text: [{ text: 'Nº ', fontSize: 9, color: COR.textoSecundario }, { text: ctx.numero }],
-                bold: true,
-                fontSize: 13,
-                color: COR.texto,
-                margin: [0, 1, 0, 0],
-              },
-              { text: `Página ${pagina} de ${total}`, fontSize: 7.2, color: COR.rotulo, margin: [0, 1, 0, 0] },
-            ],
-          },
-        ],
-      },
-      {
-        canvas: [
-          { type: 'line', x1: 0, y1: 0, x2: LARGURA, y2: 0, lineWidth: 0.5, lineColor: COR.fio },
-          { type: 'line', x1: 0, y1: 0, x2: 52, y2: 0, lineWidth: 2.2, lineColor: COR.marca },
-        ],
-        margin: [0, 9, 0, 0],
-      },
-    ],
-  })
-}
-
-function rodape(ctx: Contexto) {
-  const emp = ctx.e.empresa
-  const linha1 = [emp.razaoSocial || emp.nomeFantasia, emp.cnpj ? `CNPJ ${emp.cnpj}` : ''].filter(Boolean).join(' · ')
-  const linha2 = enderecoEmpresa(emp)
-  const linha3 = [emp.telefone, emp.email, emp.site].filter((x) => !vazio(x)).join(' · ')
-  return (pagina: number, total: number): NoObjeto => ({
-    margin: [MARGEM_X, 12, MARGEM_X, 0],
-    stack: [
-      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: LARGURA, y2: 0, lineWidth: 0.5, lineColor: COR.fio }], margin: [0, 0, 0, 5] },
-      {
-        columns: [
-          {
-            width: '*',
-            stack: [
-              { text: linha1, bold: true, color: COR.textoSecundario },
-              { text: linha2 },
-              { text: linha3 },
-              { text: 'Este certificado somente pode ser reproduzido na íntegra.', italics: true, margin: [0, 1.5, 0, 0] },
-            ],
-            fontSize: 7,
-            lineHeight: 1.16,
-            color: COR.rotulo,
-          },
-          {
-            width: 'auto',
-            alignment: 'right',
-            stack: [
-              { text: `Certificado nº ${ctx.numero}`, bold: true, color: COR.textoSecundario },
-              { text: `Página ${pagina} de ${total}` },
-            ],
-            fontSize: 7,
-            lineHeight: 1.16,
-            color: COR.rotulo,
-          },
-        ],
-        columnGap: 16,
-      },
-    ],
-  })
-}
-
-function marcaDagua(texto: string): NoObjeto | undefined {
-  const t = texto.trim()
-  if (!t) return undefined
-  const cancelado = /cancel/i.test(t)
-  return {
-    text: t,
-    color: cancelado ? '#B42318' : '#7A817C',
-    opacity: cancelado ? 0.13 : 0.1,
-    bold: true,
-    font: 'InterMedio',
-    angle: -50,
-  }
 }
 
 /** Título sozinho no pé da página vai para a próxima (headlineLevel = espaço mínimo, em pt, abaixo dele). */
@@ -1664,6 +1572,7 @@ export function definicaoCertificado(d: DadosCertificadoPdf, opcoes: { assinatur
   conteudo.push(...blocoFinal(ctx, opcoes.assinaturas !== false))
 
   const e = d.emissao
+  const papel = timbrado(e.empresa, ctx.numero)
   const data = dataDoDocumento(d)
   const titulo = `Certificado de calibração nº ${ctx.numero}`
   const instrumento = [
@@ -1677,7 +1586,7 @@ export function definicaoCertificado(d: DadosCertificadoPdf, opcoes: { assinatur
   return {
     pageSize: 'A4',
     pageOrientation: 'portrait',
-    pageMargins: [MARGEM_X, MARGEM_TOPO, MARGEM_X, MARGEM_BASE],
+    pageMargins: papel.margens,
     language: 'pt-BR',
     displayTitle: true,
     info: {
@@ -1690,16 +1599,12 @@ export function definicaoCertificado(d: DadosCertificadoPdf, opcoes: { assinatur
       creationDate: data,
       modDate: data,
     },
-    header: cabecalho(ctx),
-    footer: rodape(ctx),
-    background: () => ({
-      svg: faixaRodapeSvg(A4.largura, FAIXA_RODAPE),
-      width: A4.largura,
-      height: FAIXA_RODAPE,
-      absolutePosition: { x: 0, y: A4.altura - FAIXA_RODAPE },
-    }),
-    ...(marcaDagua(d.marcaDagua) ? { watermark: marcaDagua(d.marcaDagua) } : {}),
-    content: conteudo,
+    // O timbrado (capa e cabeçalho corrido) é desenhado no fundo da página; o rodapé tem a paginação
+    background: papel.fundo,
+    footer: papel.rodape,
+    ...(papel.marcaDagua(d.marcaDagua) ? { watermark: papel.marcaDagua(d.marcaDagua) } : {}),
+    // Na página 1, o corpo começa abaixo do timbrado completo e do título
+    content: [papel.aberturaCapa, ...conteudo],
     defaultStyle: { font: 'Inter', fontSize: 8.5, lineHeight: 1.2, color: COR.texto },
     styles: ESTILOS,
     pageBreakBefore: quebraAntes,
