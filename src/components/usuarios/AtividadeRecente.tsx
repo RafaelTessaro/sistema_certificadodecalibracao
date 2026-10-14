@@ -1,9 +1,11 @@
-import { format, isToday, isYesterday, parseISO } from 'date-fns'
-import { ptBR } from 'date-fns/locale'
 import {
   ArrowUpRight,
   Ban,
+  BellRing,
   DatabaseBackup,
+  Download,
+  FileCheck2,
+  FileX2,
   History,
   KeyRound,
   LogIn,
@@ -12,6 +14,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Send,
   ShieldAlert,
   ShieldX,
   Terminal,
@@ -23,17 +26,17 @@ import {
 } from 'lucide-react'
 import { createElement, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { hojeLocalIso } from '#shared/dominio.ts'
 import type { AcaoAuditoria, GrupoAuditoria, RegistroAuditoria, Usuario } from '#shared/tipos.ts'
 import { ROTULO_GRUPO_AUDITORIA } from '#shared/usuarios.ts'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { cap } from '../../lib/format'
-import { useDados } from '../../store/dados'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Select } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
-import { autorDoRegistro, descreverRegistro, enderecoDoLink, grupoDaAcao, metodoDoRegistro, type TipoLink } from './auditoria'
+import { autorDoRegistro, descreverRegistro, enderecoDoLink, grupoDaAcao, metodoDoRegistro } from './auditoria'
 
 const POR_PAGINA = 50
 const NENHUM: RegistroAuditoria[] = []
@@ -51,15 +54,21 @@ const ICONE_ACAO: Partial<Record<AcaoAuditoria, LucideIcon>> = {
   USUARIO_EXCLUIDO: UserX,
   SESSOES_ENCERRADAS: MonitorOff,
   FERRAMENTA_LOCAL: Terminal,
+  COPIA_RESTAURADA: DatabaseBackup,
+  BACKUP_BAIXADO: Download,
+  CERTIFICADO_EMITIDO: FileCheck2,
+  CERTIFICADO_CANCELADO: FileX2,
+  CERTIFICADO_ENVIADO: Send,
 }
 
 /** Cor do ícone: alertas em vermelho/amarelo; o resto pelo grupo. */
 function tomDoRegistro(r: RegistroAuditoria): string {
-  if (r.acao === 'BLOQUEIO' || r.acao === 'ACESSO_NEGADO' || r.acao === 'DADOS_APAGADOS') return 'bg-danger-soft text-danger'
+  if (r.acao === 'BLOQUEIO' || r.acao === 'ACESSO_NEGADO' || r.acao === 'CERTIFICADO_CANCELADO')
+    return 'bg-danger-soft text-danger'
   if (r.acao === 'LOGIN_FALHOU') return 'bg-warning-soft text-warning'
   const grupo = grupoDaAcao(r.acao)
   if (grupo === 'acessos') return 'bg-success-soft text-success'
-  if (grupo === 'usuarios') return 'bg-brand-soft text-brand-ink'
+  if (grupo === 'usuarios' || grupo === 'certificados') return 'bg-brand-soft text-brand-ink'
   if (grupo === 'dados') return 'bg-warning-soft text-warning'
   return 'bg-info-soft text-info'
 }
@@ -67,16 +76,25 @@ function tomDoRegistro(r: RegistroAuditoria): string {
 function iconeDoRegistro(r: RegistroAuditoria): LucideIcon {
   const icone = ICONE_ACAO[r.acao]
   if (icone) return icone
-  if (grupoDaAcao(r.acao) === 'dados') return r.acao === 'DADOS_APAGADOS' ? Trash2 : DatabaseBackup
+  if (r.detalhe.startsWith('POST /api/lembretes')) return BellRing
+  if (r.detalhe.startsWith('POST /api/email/teste')) return Send
   const metodo = metodoDoRegistro(r)
   return metodo === 'DELETE' ? Trash2 : metodo === 'POST' ? Plus : Pencil
 }
 
+const formatoDia = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+const formatoHora = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' })
+const formatoCompleto = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'medium' })
+
+/** Dia do registro no fuso deste computador ("2026-10-14"). */
+const diaLocal = (iso: string) => hojeLocalIso(new Date(iso))
+
 function rotuloDia(iso: string) {
-  const d = parseISO(iso)
-  if (isToday(d)) return 'Hoje'
-  if (isYesterday(d)) return 'Ontem'
-  return cap(format(d, "EEEE, d 'de' MMMM 'de' yyyy", { locale: ptBR }))
+  const dia = diaLocal(iso)
+  const hoje = new Date()
+  if (dia === hojeLocalIso(hoje)) return 'Hoje'
+  if (dia === hojeLocalIso(new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 1))) return 'Ontem'
+  return cap(formatoDia.format(new Date(iso)))
 }
 
 /**
@@ -110,19 +128,6 @@ export function AtividadeRecente({ usuarios, atualizar }: { usuarios: Usuario[];
     [grupo, usuarioId],
   )
 
-  const eventos = useDados((s) => s.eventos)
-  const clientes = useDados((s) => s.clientes)
-  const maquinas = useDados((s) => s.maquinas)
-  const contratos = useDados((s) => s.contratos)
-  const existe = useMemo(() => {
-    const ids: Record<TipoLink, Set<string>> = {
-      evento: new Set(eventos.map((e) => e.id)),
-      cliente: new Set(clientes.map((c) => c.id)),
-      maquina: new Set(maquinas.map((m) => m.id)),
-      contrato: new Set(contratos.map((c) => c.id)),
-    }
-    return (tipo: TipoLink, id: string) => ids[tipo].has(id)
-  }, [eventos, clientes, maquinas, contratos])
   const nomes = useMemo(() => new Map(usuarios.map((u) => [u.id, u.nome])), [usuarios])
 
   // Primeira página: ao abrir, ao trocar o filtro, depois de cada ação na página e a cada rodada
@@ -188,7 +193,7 @@ export function AtividadeRecente({ usuarios, atualizar }: { usuarios: Usuario[];
   const dias = useMemo(() => {
     const out: Array<{ dia: string; itens: RegistroAuditoria[] }> = []
     for (const r of registros) {
-      const dia = format(parseISO(r.em), 'yyyy-MM-dd')
+      const dia = diaLocal(r.em)
       const ultimo = out[out.length - 1]
       if (ultimo?.dia === dia) ultimo.itens.push(r)
       else out.push({ dia, itens: [r] })
@@ -203,7 +208,7 @@ export function AtividadeRecente({ usuarios, atualizar }: { usuarios: Usuario[];
       <CardHeader
         icone={<History className="h-4 w-4" />}
         titulo="Atividade recente"
-        descricao="Entradas no sistema, mudanças de usuários, cópias de segurança e cada gravação, com quem fez. Guardado por 12 meses."
+        descricao="Entradas no sistema, mudanças de usuários, certificados emitidos, cópias de segurança e cada gravação, com quem fez. Guardado por 12 meses."
         acoes={
           <Button
             variante="ghost"
@@ -262,7 +267,7 @@ export function AtividadeRecente({ usuarios, atualizar }: { usuarios: Usuario[];
               </h4>
               <ul>
                 {itens.map((r) => (
-                  <ItemRegistro key={r.id} r={r} nomes={nomes} existe={existe} />
+                  <ItemRegistro key={r.id} r={r} nomes={nomes} />
                 ))}
               </ul>
             </section>
@@ -294,18 +299,11 @@ export function AtividadeRecente({ usuarios, atualizar }: { usuarios: Usuario[];
   )
 }
 
-function ItemRegistro({
-  r,
-  nomes,
-  existe,
-}: {
-  r: RegistroAuditoria
-  nomes: ReadonlyMap<string, string>
-  existe: (tipo: TipoLink, id: string) => boolean
-}) {
+function ItemRegistro({ r, nomes }: { r: RegistroAuditoria; nomes: ReadonlyMap<string, string> }) {
   const d = descreverRegistro(r, nomes)
   const autor = autorDoRegistro(r, nomes)
-  const link = d.link && existe(d.link.tipo, d.link.id) ? enderecoDoLink(d.link) : null
+  const link = d.link ? enderecoDoLink(d.link) : null
+  const em = new Date(r.em)
   return (
     <li className="flex items-start gap-3 border-b border-line px-5 py-3 last:border-b-0">
       <span className={cn('mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', tomDoRegistro(r))}>
@@ -334,12 +332,8 @@ function ItemRegistro({
           {r.ip && <> · {r.ip}</>}
         </p>
       </div>
-      <time
-        dateTime={r.em}
-        className="tnum shrink-0 pt-0.5 text-xs text-muted"
-        title={format(parseISO(r.em), 'dd/MM/yyyy HH:mm:ss')}
-      >
-        {format(parseISO(r.em), 'HH:mm')}
+      <time dateTime={r.em} className="tnum shrink-0 pt-0.5 text-xs text-muted" title={formatoCompleto.format(em)}>
+        {formatoHora.format(em)}
       </time>
     </li>
   )

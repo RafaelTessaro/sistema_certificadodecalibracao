@@ -1,12 +1,10 @@
-import { ShieldCheck, UserRound } from 'lucide-react'
 import { NOME_NIVEL, RESUMO_NIVEL } from '#shared/permissoes.ts'
 import type { NivelUsuario } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
+import { ICONE_NIVEL } from './niveis'
 
-const NIVEIS: Array<{ nivel: NivelUsuario; icone: typeof UserRound }> = [
-  { nivel: 'COMUM', icone: UserRound },
-  { nivel: 'ADMIN', icone: ShieldCheck },
-]
+/** O técnico primeiro: é o nível da maioria das pessoas. */
+const NIVEIS: NivelUsuario[] = ['COMUM', 'ADMIN']
 
 /** Os dois níveis lado a lado, cada um com o resumo do que pode. */
 export function EscolhaNivel({
@@ -27,7 +25,8 @@ export function EscolhaNivel({
     <fieldset className="flex flex-col gap-1.5" disabled={desabilitado}>
       <legend className="mb-1.5 text-[13px] font-medium text-ink-2">Nível</legend>
       <div className="grid gap-2 sm:grid-cols-2" title={desabilitado ? motivo : undefined}>
-        {NIVEIS.map(({ nivel, icone: Icone }) => {
+        {NIVEIS.map((nivel) => {
+          const Icone = ICONE_NIVEL[nivel]
           const ativo = valor === nivel
           return (
             <label

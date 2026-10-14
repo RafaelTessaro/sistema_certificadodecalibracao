@@ -3,14 +3,18 @@ import { useState, type FormEvent } from 'react'
 import type { NivelUsuario, ResultadoSenha, Usuario } from '#shared/tipos.ts'
 import { NOME_USUARIO_MAX, normalizarLogin, sugerirLogin, validarLogin, validarSenhaNova } from '#shared/usuarios.ts'
 import { api, ErroApi } from '../../lib/api'
-import { avisarErro } from '../../store/ui'
+import { avisarErro, toast } from '../../store/ui'
 import { Button } from '../ui/Button'
 import { Field, Input } from '../ui/Form'
 import { Modal } from '../ui/Modal'
+import { DadosCertificado, type DadosNoCertificado } from './DadosCertificado'
 import { EscolhaNivel } from './EscolhaNivel'
 import { SenhaInicial, type ModoSenha } from './SenhaInicial'
 
-/** Cadastro de um usuário: nome, login (sugerido pelo nome), nível e a senha inicial (temporária). */
+/**
+ * Cadastro de um usuário: nome, login (sugerido pelo nome), nível, os dados que saem no certificado
+ * (cargo, registro, signatário e assinatura) e a senha inicial (temporária).
+ */
 export function NovoUsuarioModal({
   aberto,
   aoFechar,
@@ -28,7 +32,7 @@ export function NovoUsuarioModal({
     <Modal
       aberto={aberto}
       aoFechar={aoFechar}
-      largura="max-w-xl"
+      largura="max-w-2xl"
       icone={<UserPlus className="h-5 w-5" />}
       titulo="Novo usuário"
       descricao="Cada pessoa tem o seu próprio usuário: assim o registro de atividades mostra quem fez cada coisa."
@@ -60,6 +64,12 @@ function FormNovoUsuario({
   /** O login acompanha o nome até a pessoa digitar outro. */
   const [loginEditado, setLoginEditado] = useState(false)
   const [nivel, setNivel] = useState<NivelUsuario>('COMUM')
+  const [certificado, setCertificado] = useState<DadosNoCertificado>({
+    signatario: false,
+    cargo: '',
+    registro: '',
+    assinatura: '',
+  })
   const [modo, setModo] = useState<ModoSenha>('gerar')
   const [senha, setSenha] = useState('')
   const [tentou, setTentou] = useState(false)
@@ -88,7 +98,20 @@ function FormNovoUsuario({
     setEnviando(true)
     setSalvando(true)
     try {
-      const r = await api.criarUsuario({ nome, login: loginFinal, nivel, senha: modo === 'digitar' ? senha : '' })
+      const { assinatura, ...dados } = certificado
+      let r = await api.criarUsuario({ nome, login: loginFinal, nivel, senha: modo === 'digitar' ? senha : '', ...dados })
+      // A imagem da assinatura vai numa segunda gravação (o cadastro não a recebe)
+      if (assinatura) {
+        try {
+          const a = await api.alterarUsuario(r.usuario.id, { assinatura, versao: r.usuario.versao })
+          r = { ...r, usuario: a.usuario }
+        } catch (e) {
+          toast.erro(
+            'A assinatura não foi salva',
+            `${e instanceof Error ? e.message : 'Erro inesperado.'} O usuário foi cadastrado: edite-o para enviar a imagem de novo.`,
+          )
+        }
+      }
       aoCriar(r)
     } catch (err) {
       if (err instanceof ErroApi && err.dados.codigo === 'LOGIN_EXISTENTE') setLoginRecusado(loginFinal)
@@ -102,7 +125,7 @@ function FormNovoUsuario({
   return (
     <form id="form-novo-usuario" onSubmit={enviar} className="flex flex-col gap-5" noValidate>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Nome" htmlFor="novo-nome" erro={tentou ? erroNome : null} hint="Como aparece nas telas.">
+        <Field label="Nome" htmlFor="novo-nome" erro={tentou ? erroNome : null} hint="Como aparece nas telas e no certificado.">
           <Input
             id="novo-nome"
             autoFocus
@@ -138,6 +161,7 @@ function FormNovoUsuario({
         </Field>
       </div>
       <EscolhaNivel valor={nivel} aoMudar={setNivel} />
+      <DadosCertificado prefixo="novo" nome={nome} valor={certificado} aoMudar={(v) => setCertificado((c) => ({ ...c, ...v }))} />
       <SenhaInicial
         modo={modo}
         aoMudarModo={setModo}

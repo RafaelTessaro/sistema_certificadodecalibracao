@@ -1,15 +1,17 @@
-// Página Usuários (o "painel de administração"): quem acessa o sistema, o nível de cada um, as
-// ações sobre as contas, o que cada nível pode e o registro de atividades. Só o administrador chega
-// aqui (a rota e o menu conferem a permissão `usuarios`; o servidor também recusa).
+// Página Usuários (o "painel de administração"): quem acessa o sistema, o nível de cada um, quem é
+// signatário (autoriza a emissão dos certificados), as ações sobre as contas, o que cada nível pode e
+// o registro de atividades. Só o administrador chega aqui (a rota e o menu conferem a permissão
+// `usuarios`; o servidor também recusa).
 
-import { format, parseISO } from 'date-fns'
 import {
   Info,
   KeyRound,
   MonitorOff,
+  PenLine,
   Pencil,
   RefreshCw,
   Trash2,
+  TriangleAlert,
   UserCheck,
   UserPlus,
   Users as IconeUsuarios,
@@ -35,6 +37,7 @@ import { RedefinirSenhaModal } from '../components/usuarios/RedefinirSenhaModal'
 import { SenhaTemporariaModal } from '../components/usuarios/SenhaTemporariaModal'
 import { api, ErroApi } from '../lib/api'
 import { cn } from '../lib/cn'
+import { dataHora } from '../lib/format'
 import { useSessao, useUsuarioAtual } from '../store/sessao'
 import { avisarErro, toast } from '../store/ui'
 
@@ -106,6 +109,7 @@ export function Usuarios() {
   const adminsAtivos = lista.filter((u) => u.nivel === 'ADMIN' && u.ativo).length
   const ehUltimoAdmin = (u: Usuario) => u.nivel === 'ADMIN' && u.ativo && adminsAtivos <= 1
   const conectados = lista.filter((u) => u.sessoesAtivas > 0).length
+  const signatariosAtivos = lista.filter((u) => u.signatario && u.ativo).length
 
   const registrarAcao = () => setVersaoAtividade((v) => v + 1)
 
@@ -254,7 +258,7 @@ export function Usuarios() {
     <>
       <PageHeader
         titulo="Usuários"
-        descricao="Quem acessa o sistema e o que cada um pode fazer"
+        descricao="Quem acessa o sistema, quem autoriza os certificados e o que cada um pode fazer"
         acoes={
           <Button
             variante="primary"
@@ -269,6 +273,15 @@ export function Usuarios() {
       />
 
       <div className="flex flex-col gap-6">
+        {usuarios && signatariosAtivos === 0 && (
+          <p className="flex items-start gap-2.5 rounded-2xl border border-warning/25 bg-warning-soft px-4 py-3 text-[13px] text-warning">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              <b className="font-semibold">Ninguém pode emitir certificados ainda.</b> Edite o usuário do responsável técnico e
+              marque <b className="font-semibold">Signatário</b>: só os signatários autorizam a emissão.
+            </span>
+          </p>
+        )}
         {usuarios && adminsAtivos === 1 && lista.length > 1 && (
           <p className="flex items-start gap-2.5 rounded-2xl border border-info/20 bg-info-soft px-4 py-3 text-[13px] text-info">
             <Info className="mt-0.5 h-4 w-4 shrink-0" />
@@ -288,6 +301,7 @@ export function Usuarios() {
                 ? [
                     plural(lista.length, 'usuário', 'usuários'),
                     plural(adminsAtivos, 'administrador ativo', 'administradores ativos'),
+                    plural(signatariosAtivos, 'signatário', 'signatários'),
                     plural(conectados, 'com sessão aberta agora', 'com sessão aberta agora'),
                   ].join(' · ')
                 : 'Carregando…'
@@ -350,12 +364,14 @@ export function Usuarios() {
                                 </Badge>
                               )}
                             </div>
+                            {u.cargo && <p className="truncate text-xs text-ink-2">{u.cargo}</p>}
                             {/* Colunas que somem em telas menores: o que elas mostram vem para cá */}
                             <p className="truncate text-xs text-muted md:hidden">
                               <span className="font-mono">{u.login}</span>
                               <span className="sm:hidden">
                                 {' '}
                                 · {NOME_NIVEL[u.nivel]}
+                                {u.signatario && <> · Signatário</>}
                                 {sit.tom !== 'success' && <> · {sit.rotulo}</>}
                               </span>
                             </p>
@@ -367,7 +383,15 @@ export function Usuarios() {
                       </Td>
                       <Td className="font-mono text-[13px] max-md:hidden">{u.login}</Td>
                       <Td className="max-sm:hidden">
-                        <Badge tom={u.nivel === 'ADMIN' ? 'brand' : 'neutral'}>{NOME_NIVEL[u.nivel]}</Badge>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge tom={u.nivel === 'ADMIN' ? 'brand' : 'neutral'}>{NOME_NIVEL[u.nivel]}</Badge>
+                          {u.signatario && (
+                            <Badge tom="info" ponto={false} className="gap-1">
+                              <PenLine className="h-3 w-3" />
+                              Signatário
+                            </Badge>
+                          )}
+                        </div>
                       </Td>
                       <Td className="max-sm:hidden">
                         <Badge tom={sit.tom}>{sit.rotulo}</Badge>
@@ -439,8 +463,6 @@ export function Usuarios() {
     </>
   )
 }
-
-const dataHora = (iso: string) => format(parseISO(iso), "dd/MM/yyyy 'às' HH:mm")
 
 function EsqueletoLinhas() {
   return (

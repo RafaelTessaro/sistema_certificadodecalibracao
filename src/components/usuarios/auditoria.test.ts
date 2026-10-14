@@ -15,30 +15,36 @@ const registro = (r: Partial<RegistroAuditoria>): RegistroAuditoria => ({
 })
 
 describe('descreverRegistro', () => {
-  it('gravação vira frase, com os campos do pagamento e o link do evento', () => {
-    const d = descreverRegistro(registro({ alvo: 'e81', detalhe: 'PATCH /api/eventos/:id | pago,dataPagamento' }))
-    expect(d.titulo).toBe('Alterou o evento (pagamento)')
-    expect(d.link).toEqual({ tipo: 'evento', id: 'e81' })
-    expect(enderecoDoLink(d.link!)).toBe('/eventos/e81')
+  it('gravação vira frase, com o link da ficha', () => {
+    const d = descreverRegistro(registro({ alvo: 'c81', detalhe: 'PUT /api/clientes/:id' }))
+    expect(d.titulo).toBe('Alterou o cadastro do cliente')
+    expect(d.link).toEqual({ tipo: 'cliente', id: 'c81' })
+    expect(enderecoDoLink(d.link!)).toBe('/clientes/c81')
   })
 
-  it('PATCH sem campos usa o texto geral', () => {
-    expect(descreverRegistro(registro({ alvo: 'e1', detalhe: 'PATCH /api/eventos/:id' })).titulo).toBe(
-      'Alterou o evento (pagamento, devolução ou situação)',
-    )
-  })
-
-  it('cliente, máquina e contrato têm link; exclusão e cadastro sem alvo, não', () => {
-    expect(descreverRegistro(registro({ alvo: 'c1', detalhe: 'PUT /api/clientes/:id' })).link).toEqual({
-      tipo: 'cliente',
-      id: 'c1',
+  it('cliente, balança e calibração têm link; exclusão e cadastro sem alvo, não', () => {
+    expect(descreverRegistro(registro({ alvo: 'b1', detalhe: 'PUT /api/balancas/:id' })).link).toEqual({
+      tipo: 'balanca',
+      id: 'b1',
     })
-    expect(enderecoDoLink({ tipo: 'contrato', id: 'k 1' })).toBe('/contratos?contrato=k%201')
-    expect(descreverRegistro(registro({ alvo: 'e1', detalhe: 'DELETE /api/eventos/:id' }))).toEqual({
-      titulo: 'Excluiu um evento',
+    expect(enderecoDoLink({ tipo: 'balanca', id: 'b 1' })).toBe('/balancas/b%201')
+    expect(enderecoDoLink({ tipo: 'calibracao', id: 'k1' })).toBe('/calibracoes/k1')
+    expect(descreverRegistro(registro({ alvo: 'b1', detalhe: 'DELETE /api/balancas/:id' }))).toEqual({
+      titulo: 'Excluiu uma balança',
       detalhe: '',
     })
     expect(descreverRegistro(registro({ detalhe: 'POST /api/clientes' })).link).toBeUndefined()
+  })
+
+  it('emissão, cancelamento e envio do certificado levam à calibração', () => {
+    const d = descreverRegistro(
+      registro({ acao: 'CERTIFICADO_EMITIDO', alvo: 'k7', detalhe: 'POST /api/calibracoes/:id/emitir' }),
+    )
+    expect(d).toEqual({ titulo: 'Emitiu um certificado', detalhe: '', link: { tipo: 'calibracao', id: 'k7' } })
+    expect(descreverRegistro(registro({ acao: 'BACKUP_BAIXADO', detalhe: 'GET /api/backups/:arquivo' }))).toEqual({
+      titulo: 'Baixou uma cópia de segurança',
+      detalhe: '',
+    })
   })
 
   it('rota desconhecida aparece como a chave', () => {
@@ -46,18 +52,18 @@ describe('descreverRegistro', () => {
   })
 
   it('acesso negado diz o que a pessoa tentou', () => {
-    const d = descreverRegistro(registro({ acao: 'ACESSO_NEGADO', detalhe: 'DELETE /api/eventos/:id' }))
+    const d = descreverRegistro(registro({ acao: 'ACESSO_NEGADO', detalhe: 'DELETE /api/clientes/:id' }))
     expect(d.titulo).toBe('Ação recusada por falta de permissão')
-    expect(d.detalhe).toBe('Tentou excluir um evento.')
+    expect(d.detalhe).toBe('Tentou excluir um cliente.')
   })
 
   it('ações sobre usuários mostram quem foi afetado', () => {
     const nomes = new Map([['u2', 'João Lima']])
     const d = descreverRegistro(
-      registro({ acao: 'USUARIO_ALTERADO', alvo: 'u2', detalhe: 'joao: nível: Comum → Administrador' }),
+      registro({ acao: 'USUARIO_ALTERADO', alvo: 'u2', detalhe: 'joao: nível: Técnico → Administrador' }),
       nomes,
     )
-    expect(d).toEqual({ titulo: 'Alterou um usuário', detalhe: 'João Lima · joao: nível: Comum → Administrador' })
+    expect(d).toEqual({ titulo: 'Alterou um usuário', detalhe: 'João Lima · joao: nível: Técnico → Administrador' })
     expect(descreverRegistro(registro({ acao: 'LOGIN' }))).toEqual({ titulo: 'Entrou no sistema', detalhe: '' })
   })
 
@@ -79,13 +85,13 @@ describe('descreverRegistro', () => {
         login: 'maria',
         alvo: 'u2',
         ip: 'local',
-        detalhe: 'senha redefinida; nível: Comum → Administrador',
+        detalhe: 'senha redefinida; nível: Técnico → Administrador',
       }),
       nomes,
     )
     expect(d).toEqual({
       titulo: 'Ajuste de usuário no computador do servidor',
-      detalhe: 'Maria Souza · senha redefinida; nível: Comum → Administrador',
+      detalhe: 'Maria Souza · senha redefinida; nível: Técnico → Administrador',
     })
   })
 

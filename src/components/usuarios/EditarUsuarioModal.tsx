@@ -1,5 +1,6 @@
 import { UserPen } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
+import { NOME_NIVEL } from '#shared/permissoes.ts'
 import type { AlteracaoUsuario, NivelUsuario, Usuario } from '#shared/tipos.ts'
 import { NOME_USUARIO_MAX } from '#shared/usuarios.ts'
 import { api, ErroApi } from '../../lib/api'
@@ -7,9 +8,13 @@ import { avisarErro } from '../../store/ui'
 import { Button } from '../ui/Button'
 import { Field, Input } from '../ui/Form'
 import { Modal } from '../ui/Modal'
+import { DadosCertificado, type DadosNoCertificado } from './DadosCertificado'
 import { EscolhaNivel } from './EscolhaNivel'
 
-/** Editar o nome e o nível. Mudar o nível encerra as sessões da pessoa (ela entra de novo com o nível novo). */
+/**
+ * Editar o nome, o nível e os dados que saem no certificado (cargo, registro, signatário e assinatura).
+ * Mudar o nível encerra as sessões da pessoa (ela entra de novo com o nível novo).
+ */
 export function EditarUsuarioModal({
   usuario,
   motivoNivel,
@@ -34,7 +39,7 @@ export function EditarUsuarioModal({
     <Modal
       aberto={!!usuario}
       aoFechar={aoFechar}
-      largura="max-w-xl"
+      largura="max-w-2xl"
       icone={<UserPen className="h-5 w-5" />}
       titulo={u ? `Editar ${u.nome}` : 'Editar usuário'}
       descricao={
@@ -82,6 +87,12 @@ function FormEditar({
 }) {
   const [nome, setNome] = useState(usuario.nome)
   const [nivel, setNivel] = useState<NivelUsuario>(usuario.nivel)
+  const [certificado, setCertificado] = useState<DadosNoCertificado>({
+    signatario: usuario.signatario,
+    cargo: usuario.cargo,
+    registro: usuario.registro,
+    assinatura: usuario.assinatura,
+  })
   const [tentou, setTentou] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const erroNome = !nome.trim() ? 'Informe o nome da pessoa.' : null
@@ -94,7 +105,12 @@ function FormEditar({
     const alteracao: AlteracaoUsuario = { versao: usuario.versao }
     if (nome.trim() !== usuario.nome) alteracao.nome = nome
     if (mudouNivel) alteracao.nivel = nivel
-    if (alteracao.nome === undefined && alteracao.nivel === undefined) return aoSalvar(usuario)
+    if (certificado.signatario !== usuario.signatario) alteracao.signatario = certificado.signatario
+    if (certificado.cargo.trim() !== usuario.cargo) alteracao.cargo = certificado.cargo
+    if (certificado.registro.trim() !== usuario.registro) alteracao.registro = certificado.registro
+    if (certificado.assinatura !== usuario.assinatura) alteracao.assinatura = certificado.assinatura
+    // Só a versão: nada mudou
+    if (Object.keys(alteracao).length === 1) return aoSalvar(usuario)
     setEnviando(true)
     setSalvando(true)
     try {
@@ -111,7 +127,7 @@ function FormEditar({
 
   return (
     <form id="form-editar-usuario" onSubmit={enviar} className="flex flex-col gap-5" noValidate>
-      <Field label="Nome" htmlFor="editar-nome" erro={tentou ? erroNome : null} hint="Como aparece nas telas.">
+      <Field label="Nome" htmlFor="editar-nome" erro={tentou ? erroNome : null} hint="Como aparece nas telas e no certificado.">
         <Input
           id="editar-nome"
           autoFocus
@@ -125,9 +141,15 @@ function FormEditar({
       {mudouNivel && (
         <p className="rounded-xl bg-info-soft px-3.5 py-2.5 text-[13px] text-info">
           Ao salvar, {usuario.nome.split(' ')[0]} sai do sistema em todos os computadores e entra de novo já com o nível{' '}
-          {nivel === 'ADMIN' ? 'Administrador' : 'Comum'}.
+          {NOME_NIVEL[nivel]}.
         </p>
       )}
+      <DadosCertificado
+        prefixo="editar"
+        nome={nome}
+        valor={certificado}
+        aoMudar={(v) => setCertificado((c) => ({ ...c, ...v }))}
+      />
     </form>
   )
 }
