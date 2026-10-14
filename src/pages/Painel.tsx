@@ -1,4 +1,4 @@
-import { ArrowRight, BellRing, Building2, FileBadge2, FilePen, FilePlus2, Scale, ShieldAlert, Weight } from 'lucide-react'
+import { ArrowRight, BellRing, Building2, FileBadge2, FilePen, Scale, ShieldAlert, Weight } from 'lucide-react'
 import { motion } from 'motion/react'
 import type { ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
@@ -7,7 +7,6 @@ import { diasEntre } from '#shared/dominio.ts'
 import type { CalibracaoResumo } from '#shared/tipos.ts'
 import { rotaCalibracao } from '../components/CertificadosTabela'
 import { StatusCalibracaoBadge, ValidadePadraoBadge } from '../components/Selos'
-import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { PageHeader, StatCard } from '../components/ui/Misc'
 import { api } from '../lib/api'
@@ -22,7 +21,6 @@ function saudacao() {
 }
 
 export function Painel() {
-  const navegar = useNavigate()
   const usuario = useSessao((s) => s.usuario)
   const { dados: p, carregando } = useConsulta('painel', () => api.painel().then((r) => r.painel), [
     'calibracao',
@@ -43,11 +41,6 @@ export function Painel() {
       <PageHeader
         titulo={`${saudacao()}${primeiroNome ? `, ${primeiroNome}` : ''}`}
         descricao={dataExtensa(hojeISO())}
-        acoes={
-          <Button variante="primary" icone={<FilePlus2 className="h-4 w-4" />} onClick={() => navegar('/calibracoes/nova')}>
-            Nova calibração
-          </Button>
-        }
       />
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -105,7 +98,7 @@ export function Painel() {
               descricao="Últimos 12 meses"
               acoes={
                 <span className="text-[13px] text-muted">
-                  {numero(p?.emitidosAno ?? 0)} em {new Date().getFullYear()}
+                  {numero(p?.emitidosAno ?? 0)} em {hojeISO().slice(0, 4)}
                 </span>
               }
             />

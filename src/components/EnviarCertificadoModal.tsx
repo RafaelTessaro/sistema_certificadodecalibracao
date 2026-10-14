@@ -25,9 +25,8 @@ export function EnviarCertificadoModal({
   cliente: Cliente | undefined
   balanca: Balanca | undefined
 }) {
-  const { dados: dadosConfig } = useConsulta(aberto ? 'config' : null, api.config, ['config'])
-  const { dados: email } = useConsulta(aberto ? 'config-email' : null, api.configEmail, ['config'])
-  const config = dadosConfig?.config
+  const { dados: config } = useConsulta(aberto ? 'config' : null, () => api.config().then((r) => r.config), ['config'])
+  const { dados: email } = useConsulta(aberto ? 'config:email' : null, () => api.configEmail(), ['config'])
   const [para, setPara] = useState('')
   const [assunto, setAssunto] = useState('')
   const [texto, setTexto] = useState('')

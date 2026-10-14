@@ -2,6 +2,7 @@ import { CircleAlert, CircleCheck, Eye, FileBadge2, Hourglass, Loader2, ShieldCh
 import { useState } from 'react'
 import { formatarNumeroCertificado } from '#shared/dominio.ts'
 import { podeEmitir } from '#shared/permissoes.ts'
+import { hojeISO } from '../../lib/format'
 import { useSessao } from '../../store/sessao'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
@@ -33,8 +34,8 @@ export function EtapaRevisao({
   const bloqueadoRevisor = config.exigirRevisor && proprio
   const tecnico = equipe.find((u) => u.id === f.tecnicoId)
   const [emitindo, setEmitindo] = useState(false)
-  const ano = Number((f.dataCalibracao || new Date().toISOString()).slice(0, 4))
-  const exemplo = formatarNumeroCertificado(config.numeracao, 1, new Date().getFullYear() || ano, 0)
+  // A numeração segue o ano da emissão (hoje)
+  const exemplo = formatarNumeroCertificado(config.numeracao, 1, Number(hojeISO().slice(0, 4)), f.substituiId ? 1 : 0)
   const avisos = [...(r?.avisos ?? []), ...(calc?.comoEncontrado?.avisos ?? [])].filter((a) => a.nivel !== 'info')
   const pronto = pendencias.length === 0
 

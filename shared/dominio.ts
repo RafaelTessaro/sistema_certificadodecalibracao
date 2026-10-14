@@ -507,7 +507,7 @@ export function enderecoEmpresa(e: DadosEmpresa) {
  */
 const TERMOS_SENSIVEIS: Array<{ padrao: RegExp; motivo: string }> = [
   { padrao: /\bafer(i|e)/i, motivo: '"Aferição" é termo antigo e impreciso: use "calibração".' },
-  { padrao: /\bvalidade\b|\bv[aá]lid[oa] at[eé]\b/i, motivo: 'Certificado de calibração não tem validade (ISO/IEC 17025, 7.8.4.3).' },
+  { padrao: /\bvalidade\b|\bv[aá]lid[oa]s? at[eé](?![\p{L}\p{N}])/iu, motivo: 'Certificado de calibração não tem validade (ISO/IEC 17025, 7.8.4.3).' },
   { padrao: /\brbc\b|rastre[aá]vel [aà] rbc/i, motivo: 'A empresa não é acreditada: não cite a RBC como se fosse dela.' },
   { padrao: /\bacreditad[oa]\b|\bcredenciad[oa]\b/i, motivo: 'Evite "acreditado" ou "credenciado": a empresa não é acreditada pela Cgcre.' },
   { padrao: /aprovad[oa] pelo inmetro|liberad[oa] para (o )?com[eé]rcio/i, motivo: 'Só o Inmetro/IPEM aprova ou libera o instrumento (verificação legal).' },

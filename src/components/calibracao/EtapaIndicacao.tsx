@@ -193,7 +193,7 @@ function TabelaPontos({
                 {!soDecrescente && <th className="px-3 py-2.5 text-right">Indicação ↑</th>}
                 {(decrescente || soDecrescente) && <th className="px-3 py-2.5 text-right">Indicação ↓</th>}
                 <th className="px-3 py-2.5 text-right">Erro</th>
-                <th className="px-3 py-2.5 text-right">U (k)</th>
+                <th className="px-3 py-2.5 text-right">U</th>
                 {comConformidade && <th className="px-3 py-2.5 text-center">EMA</th>}
                 <th className="w-10 pr-5" />
               </tr>
@@ -209,7 +209,7 @@ function TabelaPontos({
                     <td className="px-3 py-2">
                       <CampoNumero
                         compacto
-                        className="w-32"
+                        className="w-24"
                         valor={p.carga}
                         aoMudar={(v) => mudarCarga(p, v)}
                         aria-label={`Carga do ponto ${i + 1}`}
@@ -222,10 +222,10 @@ function TabelaPontos({
                         onClick={() => setEditandoPecas(p)}
                         disabled={!pesos.length || p.carga === 0}
                         className={cn(
-                          'flex min-h-9 max-w-[240px] cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-left text-xs transition-colors hover:bg-surface-2 disabled:cursor-default disabled:hover:bg-transparent',
+                          'flex min-h-9 max-w-[190px] cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-left text-xs transition-colors hover:bg-surface-2 disabled:cursor-default disabled:hover:bg-transparent',
                           falta ? 'text-warning' : 'text-ink-2',
                         )}
-                        title="Ver ou trocar os pesos usados nesta carga"
+                        title={`Ver ou trocar os pesos usados nesta carga${p.pecasManuais ? ' (escolhidos à mão)' : ''}`}
                       >
                         <Layers className="h-3.5 w-3.5 shrink-0 text-muted" />
                         <span className="line-clamp-2">
@@ -237,7 +237,7 @@ function TabelaPontos({
                                 ? 'Nenhum peso'
                                 : '—'}
                           {falta && ` · faltam ${formatarNumero(montagem!.falta, casas)} ${u}`}
-                          {p.pecasManuais && ' · escolhidos à mão'}
+                          {p.pecasManuais && <span className="text-muted"> · à mão</span>}
                         </span>
                       </button>
                     </td>
@@ -261,7 +261,7 @@ function TabelaPontos({
                       <td className="px-3 py-2">
                         <CampoNumero
                           compacto
-                          className="ml-auto w-36"
+                          className="ml-auto w-32"
                           valor={p.crescente}
                           aoMudar={(v) => setPonto(p.id, (x) => ({ ...x, crescente: v }))}
                           aria-label={`Indicação crescente do ponto ${i + 1}`}
@@ -275,7 +275,7 @@ function TabelaPontos({
                       <td className="px-3 py-2">
                         <CampoNumero
                           compacto
-                          className="ml-auto w-36"
+                          className="ml-auto w-32"
                           valor={p.decrescente}
                           aoMudar={(v) => setPonto(p.id, (x) => ({ ...x, decrescente: v }))}
                           aria-label={`Indicação decrescente do ponto ${i + 1}`}
@@ -286,14 +286,15 @@ function TabelaPontos({
                         />
                       </td>
                     )}
-                    <td className="tnum px-3 py-2.5 text-right whitespace-nowrap text-ink">
-                      {r ? textoErro(r, ensaio.metodo, f.opcoes.histerese) : '—'}
+                    <td className="tnum px-3 py-2 text-right whitespace-nowrap text-ink">
+                      {r ? <ErroPonto r={r} metodo={ensaio.metodo} histerese={f.opcoes.histerese} /> : '—'}
                     </td>
-                    <td className="tnum px-3 py-2.5 text-right whitespace-nowrap text-ink-2">
+                    <td className="tnum px-3 py-2 text-right whitespace-nowrap text-ink-2">
                       {r?.texto.U ? (
-                        <>
-                          {r.texto.U} <span className="text-xs text-muted">({r.texto.k})</span>
-                        </>
+                        <div className="flex flex-col items-end leading-tight">
+                          <span className="pt-0.5">{r.texto.U}</span>
+                          <span className="text-[11px] text-muted">k = {r.texto.k}</span>
+                        </div>
                       ) : (
                         '—'
                       )}
@@ -362,12 +363,23 @@ function TabelaPontos({
 }
 
 /** Erro da linha: subida e descida separados ("↑ 5,0 · ↓ 10") ou o da média. */
-function textoErro(r: ResultadoPonto, metodo: MetodoCarregamento, histerese: 'SEPARADO' | 'MEDIA') {
-  if (histerese === 'MEDIA' && r.media) return r.texto.erroMedio
+/** Erro do ponto: a média, ou o da subida e o da descida um embaixo do outro. */
+function ErroPonto({ r, metodo, histerese }: { r: ResultadoPonto; metodo: MetodoCarregamento; histerese: 'SEPARADO' | 'MEDIA' }) {
+  if (histerese === 'MEDIA' && r.media) return <span className="pt-0.5">{r.texto.erroMedio}</span>
   const sobe = r.crescente ? r.texto.erroCrescente : ''
   const desce = r.decrescente ? r.texto.erroDecrescente : ''
-  if (metodo === 'CRESCENTE_DECRESCENTE' && sobe && desce) return `${sobe} / ${desce}`
-  return sobe || desce || '—'
+  if (metodo === 'CRESCENTE_DECRESCENTE' && sobe && desce)
+    return (
+      <div className="flex flex-col items-end leading-tight">
+        <span className="pt-0.5">
+          {sobe} <span className="text-[11px] text-muted">↑</span>
+        </span>
+        <span>
+          {desce} <span className="text-[11px] text-muted">↓</span>
+        </span>
+      </div>
+    )
+  return <span className="pt-0.5">{sobe || desce || '—'}</span>
 }
 
 function tomLeitura(r: ResultadoPonto | undefined, lado: 'crescente' | 'decrescente'): 'normal' | 'erro' | 'atencao' {

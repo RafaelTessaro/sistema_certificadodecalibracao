@@ -1,0 +1,124 @@
+name: Instalador Windows
+
+# Roda os testes, gera o instalador único do Windows (BC-Calibracao-Setup-<versão>.exe, ver
+# scripts/empacotar-windows.sh e instalador/LEIA-ME.md) e publica na página de versões (Releases).
+#   - tag v* (ex.: v1.2.0, igual à versão do package.json): gera e publica no Release da tag;
+#   - "Run workflow" na aba Actions: gera e deixa o .exe nos artefatos da execução; marcando
+#     "publicar", publica também no Release v<versão do package.json>.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publicar:
+        description: 'Publicar no Release v<versão do package.json>'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: instalador-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  testes:
+    name: Testes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: npm ci e npm test
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+
+  instalador:
+    name: Gera o setup.exe
+    needs: testes
+    runs-on: ubuntu-latest
+    # O apt do Ubuntu traz o NSIS 3.09, que tem falhas de elevação de privilégio (CVE-2025-43715,
+    # CVE-2026-42171). O Debian testing traz o 3.12 ou mais novo; o script recusa versões anteriores.
+    container: debian:testing
+    steps:
+      - name: Ferramentas (NSIS, curl, unzip, git)
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends nsis curl unzip ca-certificates git
+          makensis -VERSION
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: A tag precisa ser a versão do package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          versao="$(node -p "require('./package.json').version")"
+          if [ "v$versao" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::A tag $GITHUB_REF_NAME não corresponde à versão do package.json ($versao)."
+            exit 1
+          fi
+
+      - name: Gera o instalador
+        run: scripts/empacotar-windows.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: instalador-windows
+          path: |
+            pacotes/BC-Calibracao-Setup-*.exe
+            pacotes/BC-Calibracao-Setup-*.exe.sha256
+          if-no-files-found: error
+
+  publicar:
+    name: Publica no Release
+    needs: instalador
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publicar)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: instalador-windows
+          path: pacotes
+
+      - name: Publica o .exe com o GITHUB_TOKEN
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          versao="$(node -p "require('./package.json').version")"
+          tag="v$versao"
+          arquivo="pacotes/BC-Calibracao-Setup-$versao.exe"
+          test -f "$arquivo" || { echo "::error::$arquivo não foi gerado."; exit 1; }
+          sha="$(cut -d' ' -f1 "$arquivo.sha256")"
+          notas="$(cat <<EOF
+          Instalador único para o servidor Windows (Windows 10/11 ou Windows Server 2016 em diante, 64 bits). Já traz tudo: não precisa instalar o Node.js nem outro programa.
+
+          **Instalar ou atualizar:** baixe o BC-Calibracao-Setup-$versao.exe no servidor e dê dois cliques (responda "Sim" ao pedido de permissão). Numa atualização, os dados e a porta são mantidos e o banco é copiado antes para dados\\backups.
+
+          **Primeiro acesso:** abra http://localhost:PORTA no próprio servidor para criar o administrador.
+
+          Linha de comando, instalação silenciosa: \`BC-Calibracao-Setup-$versao.exe /S /PORTA=4850 /REDES=192.168.20.0/24\`. Detalhes em instalador/LEIA-ME.md.
+
+          SHA-256: \`$sha\`
+          Gerado a partir do commit ${GITHUB_SHA::7}.
+          EOF
+          )"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$arquivo" "$arquivo.sha256" --clobber
+            gh release edit "$tag" --notes "$notas"
+          else
+            gh release create "$tag" "$arquivo" "$arquivo.sha256" --target "$GITHUB_SHA" --title "BC Calibração $versao" --notes "$notas"
+          fi

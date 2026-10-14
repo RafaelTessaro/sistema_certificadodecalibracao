@@ -36,7 +36,7 @@ describe('cargas', () => {
 
   it('ponto com cargas de substituição: a carga é nível × etapa + os pesos por cima', () => {
     const indicacao: EnsaioIndicacao = {
-      metodo: 'CRESCENTE',
+      metodo: 'CONTINUO',
       retornoZero: null,
       substituicao: {
         ativa: true,

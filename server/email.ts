@@ -263,12 +263,14 @@ export function criarModuloEmail(ctx: Contexto, criarTransporte: CriarTransporte
     app.put('/api/email/config', async (req) => {
       const c = normalizarConfigEmail(req.body, lerConfigEmail(ctx))
       gravarConfigEmail(ctx, c)
+      ctx.repo.avisar('config')
       return configPublica(c)
     })
 
     // Esquecer a configuração (inclusive a senha)
     app.delete('/api/email/config', async (_req, reply) => {
       apagarConfigEmail(ctx)
+      ctx.repo.avisar('config')
       return reply.code(204).send()
     })
 

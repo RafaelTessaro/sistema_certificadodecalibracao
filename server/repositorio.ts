@@ -93,6 +93,11 @@ export class Repositorio {
     queueMicrotask(() => this.publicar({ revisao, tipo, id }))
   }
 
+  /** Avisa as telas de uma mudança gravada fora do banco (ex.: a configuração do e-mail, num arquivo). */
+  avisar(tipo: MensagemTempoReal['tipo']) {
+    this.mudou(tipo)
+  }
+
   private hoje() {
     return hojeLocalIso(this.agora())
   }

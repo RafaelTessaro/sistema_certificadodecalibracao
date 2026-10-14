@@ -1,5 +1,5 @@
 import { MotionConfig } from 'motion/react'
-import { lazy, Suspense, useEffect, useRef } from 'react'
+import { lazy, Suspense, useEffect, useRef, useSyncExternalStore } from 'react'
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Layout } from './components/layout/Layout'
 import { TelaConexao } from './components/layout/TelaConexao'
@@ -87,6 +87,12 @@ function codigoVerificacao(): string | null {
   return m ? m[1] : null
 }
 
+/** Acompanha o endereço: entrar e sair da conferência troca a tela sem recarregar. */
+function assinarEndereco(avisar: () => void) {
+  window.addEventListener('hashchange', avisar)
+  return () => window.removeEventListener('hashchange', avisar)
+}
+
 export default function App() {
   const tema = useUI((s) => s.tema)
   const estado = useSessao((s) => s.estado)
@@ -95,7 +101,7 @@ export default function App() {
   const primeiroAcessoLocal = useSessao((s) => s.primeiroAcessoLocal)
   const erroSessao = useSessao((s) => s.erro)
   const expirou = useSessao((s) => s.expirou)
-  const verificar = codigoVerificacao()
+  const verificar = useSyncExternalStore(assinarEndereco, codigoVerificacao)
 
   // Quem está usando este navegador; 401 e "crie sua senha" vindos de qualquer requisição
   useEffect(() => {

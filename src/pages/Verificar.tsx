@@ -43,8 +43,6 @@ function normalizarCodigo(v: string) {
   return s.length > 4 ? `${s.slice(0, 4)}-${s.slice(4)}` : s
 }
 
-const codigoDoEndereco = () => location.hash.match(/^#\/verificar\/([A-Za-z0-9-]{4,40})/)?.[1] ?? null
-
 type Estado =
   | { tipo: 'carregando' }
   | { tipo: 'ok'; dados: VerificacaoCertificado }
@@ -71,18 +69,6 @@ export function Verificar({ codigo }: { codigo: string }) {
     return () => {
       document.title = anterior
     }
-  }, [])
-
-  // Outro código digitado (ou o Voltar do navegador): o endereço muda e a página acompanha. Fora da
-  // conferência, recarrega para o sistema abrir a tela certa
-  useEffect(() => {
-    const aoMudar = () => {
-      const c = codigoDoEndereco()
-      if (c) setAtual(normalizarCodigo(c))
-      else location.reload()
-    }
-    window.addEventListener('hashchange', aoMudar)
-    return () => window.removeEventListener('hashchange', aoMudar)
   }, [])
 
   useEffect(() => {
