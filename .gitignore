@@ -1,0 +1,38 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Dados do servidor (banco, backups, credenciais)
+dados/
+dados-dev/
+.env
+
+# Worktrees temporários de ferramentas
+.claude/worktrees/
+__pycache__/
+
+# Pacotes gerados por scripts/empacotar-windows.sh (e o que só existe dentro deles)
+pacotes/
+/node/
+/pacote.json

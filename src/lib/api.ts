@@ -1,0 +1,422 @@
+import type {
+  AlteracaoUsuario,
+  Anexo,
+  Backup,
+  Cliente,
+  ClienteInput,
+  Configuracoes,
+  Contrato,
+  DadosCompletos,
+  EntradaLogin,
+  EstadoSessao,
+  Evento,
+  EventoInput,
+  EventoPatch,
+  GrupoAuditoria,
+  Maquina,
+  MaquinaInput,
+  MensagemTempoReal,
+  NovoContrato,
+  NovoUsuario,
+  OrdemServico,
+  OrdemServicoInput,
+  Reclamacao,
+  ReclamacaoInput,
+  RegistroAuditoria,
+  RespostaLogin,
+  ResultadoSenha,
+  StatusMaquina,
+  TipoMaquina,
+  TrocaSenha,
+  Usuario,
+  UsuarioSessao,
+} from '#shared/tipos.ts'
+
+/** Configuração do envio de e-mail como a tela recebe (sem a senha). */
+export interface ConfigEmail {
+  servidor: string
+  porta: number
+  seguranca: 'SSL' | 'STARTTLS' | 'NENHUMA'
+  usuario: string
+  remetenteNome: string
+  remetenteEmail: string
+  senhaDefinida: boolean
+  configurado: boolean
+}
+
+/** Para gravar: a senha em branco mantém a que já está no servidor. */
+export type ConfigEmailEntrada = Omit<ConfigEmail, 'senhaDefinida' | 'configurado'> & { senha: string }
+
+export interface EmailParaEnviar {
+  /** Um ou mais e-mails separados por vírgula ou ponto e vírgula. */
+  para: string
+  assunto: string
+  texto: string
+  anexos?: Array<{ nome: string; tipo: string; /** base64 */ conteudo: string }>
+}
+
+/** Resultado do ajuste da quantidade de máquinas de um tipo. */
+export interface ResultadoAjuste {
+  criadas: Maquina[]
+  /** Ids das máquinas apagadas (não tinham histórico). */
+  excluidas: string[]
+  desativadas: Maquina[]
+}
+
+/** Erro devolvido pelo servidor (ou falta de conexão, com `status` 0). */
+export class ErroApi extends Error {
+  readonly status: number
+  readonly dados: Record<string, unknown>
+
+  constructor(status: number, mensagem: string, dados: Record<string, unknown> = {}) {
+    super(mensagem)
+    this.status = status
+    this.dados = dados
+  }
+
+  get semConexao() {
+    return this.status === 0
+  }
+}
+
+const enc = encodeURIComponent
+
+const SEM_CONEXAO = 'Sem conexão com o servidor. Verifique a rede e se o servidor está ligado.'
+const SESSAO_TERMINOU = 'Sua sessão terminou. Entre de novo e repita a ação.'
+
+/** O que a tela da sessão precisa saber de uma resposta: a sessão terminou ou falta criar a senha. */
+export type ErroSessao = 'SEM_SESSAO' | 'TROCAR_SENHA'
+
+let aoErroSessao: ((codigo: ErroSessao) => void) | null = null
+
+/**
+ * Quem é avisado quando uma requisição volta sem sessão (401) ou pedindo a troca da senha
+ * temporária (403 TROCAR_SENHA). O store da sessão se registra aqui (assim não há import circular).
+ */
+export function definirAoErroSessao(fn: ((codigo: ErroSessao) => void) | null) {
+  aoErroSessao = fn
+}
+
+/**
+ * Erro de uma resposta do servidor. Antes, avisa a sessão quando é o caso: 401 fora de `/api/sessao`
+ * (lá o 401 é "usuário ou senha incorretos") e 403 com o código TROCAR_SENHA.
+ */
+function erroDaResposta(status: number, caminho: string, json: Record<string, unknown>): ErroApi {
+  if (status === 401 && !caminho.startsWith('/api/sessao')) {
+    aoErroSessao?.('SEM_SESSAO')
+    return new ErroApi(401, SESSAO_TERMINOU, json)
+  }
+  if (status === 403 && json.codigo === 'TROCAR_SENHA') aoErroSessao?.('TROCAR_SENHA')
+  return new ErroApi(status, typeof json.erro === 'string' ? json.erro : `Erro ${status} no servidor.`, json)
+}
+
+async function requisitar<T>(metodo: string, caminho: string, corpo?: unknown, timeoutMs = 20_000): Promise<T> {
+  const ctrl = new AbortController()
+  // O tempo limite cobre a requisição inteira, inclusive a leitura da resposta
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    let resp: Response
+    try {
+      resp = await fetch(caminho, {
+        method: metodo,
+        // O servidor só aceita gravações com este cabeçalho (proteção contra sites externos)
+        headers: { 'x-bc-calibracao': '1', ...(corpo !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+        body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
+        signal: ctrl.signal,
+        cache: 'no-store',
+      })
+    } catch {
+      throw new ErroApi(0, SEM_CONEXAO)
+    }
+    if (resp.status === 204) return undefined as T
+    let json: Record<string, unknown> = {}
+    try {
+      json = await resp.json()
+    } catch {
+      if (ctrl.signal.aborted) throw new ErroApi(0, SEM_CONEXAO)
+      if (resp.ok) throw new ErroApi(resp.status, 'Resposta inválida do servidor.')
+    }
+    if (!resp.ok) throw erroDaResposta(resp.status, caminho, json)
+    return json as T
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export const api = {
+  dados: () => requisitar<DadosCompletos>('GET', '/api/dados'),
+
+  criarCliente: (dados: ClienteInput) => requisitar<Cliente>('POST', '/api/clientes', dados),
+  atualizarCliente: (id: string, dados: ClienteInput, versao?: number) =>
+    requisitar<Cliente>('PUT', `/api/clientes/${encodeURIComponent(id)}`, { ...dados, versao }),
+  excluirCliente: (id: string) => requisitar<void>('DELETE', `/api/clientes/${encodeURIComponent(id)}`),
+
+  criarEvento: (dados: EventoInput) => requisitar<Evento>('POST', '/api/eventos', dados),
+  atualizarEvento: (id: string, dados: EventoInput, versao?: number) =>
+    requisitar<Evento>('PUT', `/api/eventos/${encodeURIComponent(id)}`, { ...dados, versao }),
+  alterarEvento: (id: string, patch: EventoPatch) => requisitar<Evento>('PATCH', `/api/eventos/${encodeURIComponent(id)}`, patch),
+  duplicarEvento: (id: string) => requisitar<Evento>('POST', `/api/eventos/${encodeURIComponent(id)}/duplicar`),
+  /** Cria uma cópia do evento para cada data de início (ver Repositorio.repetirEvento). */
+  repetirEvento: (id: string, datas: string[]) =>
+    requisitar<{ original: Evento; criados: Evento[] }>('POST', `/api/eventos/${encodeURIComponent(id)}/repetir`, { datas }),
+  excluirEvento: (id: string) => requisitar<void>('DELETE', `/api/eventos/${encodeURIComponent(id)}`),
+
+  criarMaquina: (dados: MaquinaInput) => requisitar<Maquina>('POST', '/api/maquinas', dados),
+  atualizarMaquina: (id: string, dados: MaquinaInput, versao?: number) =>
+    requisitar<Maquina>('PUT', `/api/maquinas/${encodeURIComponent(id)}`, { ...dados, versao }),
+  excluirMaquina: (id: string) => requisitar<void>('DELETE', `/api/maquinas/${encodeURIComponent(id)}`),
+  ajustarQuantidade: (tipo: TipoMaquina, quantidade: number) =>
+    requisitar<ResultadoAjuste>('POST', '/api/maquinas/quantidade', { tipo, quantidade }),
+
+  /** `statusMaquina` muda a situação da máquina junto (ex.: "Em manutenção" ao abrir a O.S.). */
+  criarOrdem: (dados: OrdemServicoInput, statusMaquina?: StatusMaquina) =>
+    requisitar<OrdemServico>('POST', '/api/ordens', { ...dados, statusMaquina }),
+  atualizarOrdem: (id: string, dados: OrdemServicoInput, versao?: number, statusMaquina?: StatusMaquina) =>
+    requisitar<OrdemServico>('PUT', `/api/ordens/${encodeURIComponent(id)}`, { ...dados, versao, statusMaquina }),
+  excluirOrdem: (id: string) => requisitar<void>('DELETE', `/api/ordens/${encodeURIComponent(id)}`),
+
+  salvarConfig: (config: Configuracoes) => requisitar<Configuracoes>('PUT', '/api/config', config),
+  /** Lista de serviços de manutenção cadastrados (gravada à parte das outras configurações). */
+  salvarServicos: (servicos: string[]) => requisitar<Configuracoes>('PUT', '/api/config/servicos', { servicos }),
+
+  criarReclamacao: (dados: ReclamacaoInput) => requisitar<Reclamacao>('POST', '/api/reclamacoes', dados),
+  atualizarReclamacao: (id: string, dados: ReclamacaoInput, versao?: number) =>
+    requisitar<Reclamacao>('PUT', `/api/reclamacoes/${encodeURIComponent(id)}`, { ...dados, versao }),
+  excluirReclamacao: (id: string) => requisitar<void>('DELETE', `/api/reclamacoes/${encodeURIComponent(id)}`),
+
+  /** Endereço do arquivo anexado: mostra na tela (imagens, PDF, texto) ou, com `baixar`, salva no computador. */
+  urlAnexo: (id: string, baixar = false) => `/api/anexos/${encodeURIComponent(id)}${baixar ? '?baixar=1' : ''}`,
+  enviarAnexo,
+  excluirAnexo: (id: string) => requisitar<void>('DELETE', `/api/anexos/${encodeURIComponent(id)}`),
+
+  /** Gera o contrato de locação do evento (os dados ficam congelados no servidor). */
+  criarContrato: (dados: NovoContrato) => requisitar<Contrato>('POST', '/api/contratos', dados),
+  /** Assinar (com a data), cancelar (com o motivo) ou reabrir o contrato. */
+  alterarContrato: (
+    id: string,
+    mudanca: { acao: 'assinar'; data?: string } | { acao: 'cancelar'; motivo?: string } | { acao: 'reabrir' },
+    versao?: number,
+  ) => requisitar<Contrato>('PATCH', `/api/contratos/${encodeURIComponent(id)}`, { ...mudanca, versao }),
+  /** Endereço do contrato assinado: mostra na tela ou, com `baixar`, salva no computador. */
+  urlContratoAssinado: (id: string, baixar = false) =>
+    `/api/contratos/${encodeURIComponent(id)}/arquivo${baixar ? '?baixar=1' : ''}`,
+  enviarContratoAssinado,
+  removerContratoAssinado: (id: string) => requisitar<Contrato>('DELETE', `/api/contratos/${encodeURIComponent(id)}/arquivo`),
+  excluirContrato: (id: string) => requisitar<void>('DELETE', `/api/contratos/${encodeURIComponent(id)}`),
+
+  configEmail: () => requisitar<ConfigEmail>('GET', '/api/email/config'),
+  salvarConfigEmail: (c: ConfigEmailEntrada) => requisitar<ConfigEmail>('PUT', '/api/email/config', c),
+  esquecerConfigEmail: () => requisitar<void>('DELETE', '/api/email/config'),
+  testarEmail: (para: string) => requisitar<{ ok: true }>('POST', '/api/email/teste', { para }, 60_000),
+  /** Envia pelo servidor SMTP configurado (PDF em base64 nos anexos). */
+  enviarEmail: (email: EmailParaEnviar) => requisitar<{ ok: true; para: string[] }>('POST', '/api/email/enviar', email, 120_000),
+
+  backup: () => requisitar<Backup>('GET', '/api/backup'),
+  restaurar: (dados: unknown) =>
+    requisitar<{ clientes: number; eventos: number; maquinas: number }>('POST', '/api/backup/restaurar', dados, 120_000),
+  backupsAutomaticos: () =>
+    requisitar<{ backups: Array<{ arquivo: string; tamanho: number; criadoEm: string }> }>('GET', '/api/backups'),
+  copiaAgora: () =>
+    requisitar<{ backups: Array<{ arquivo: string; tamanho: number; criadoEm: string }> }>('POST', '/api/backups'),
+  /** Acrescenta os dados de um backup sem apagar os do servidor. */
+  mesclar: (dados: unknown) =>
+    requisitar<{ clientes: number; eventos: number; maquinas: number; ordens: number; ignorados: number }>(
+      'POST',
+      '/api/backup/mesclar',
+      dados,
+      120_000,
+    ),
+  carregarExemplo: () => requisitar<{ ok: true }>('POST', '/api/exemplo'),
+  limparTudo: () => requisitar<{ ok: true }>('POST', '/api/limpar', { confirmacao: 'APAGAR' }),
+
+  // ---- Sessão e usuários ----
+  /** Quem está usando este navegador. `uso` conta como atividade (renova o prazo da sessão). */
+  sessao: (uso = false) => requisitar<EstadoSessao>('GET', uso ? '/api/sessao?uso=1' : '/api/sessao'),
+  entrar: (e: EntradaLogin) => requisitar<RespostaLogin>('POST', '/api/sessao', e),
+  sair: () => requisitar<void>('DELETE', '/api/sessao'),
+  trocarMinhaSenha: (e: TrocaSenha) => requisitar<{ usuario: UsuarioSessao }>('PUT', '/api/minha-senha', e),
+  usuarios: () => requisitar<{ usuarios: Usuario[] }>('GET', '/api/usuarios'),
+  /** `senha` vazia: o servidor gera uma temporária (volta em `senhaTemporaria`, uma única vez). */
+  criarUsuario: (e: NovoUsuario) => requisitar<ResultadoSenha>('POST', '/api/usuarios', e),
+  alterarUsuario: (id: string, e: AlteracaoUsuario) => requisitar<{ usuario: Usuario }>('PUT', `/api/usuarios/${enc(id)}`, e),
+  /** Sem `senha`, o servidor gera uma temporária; com ela, a senha digitada também é temporária. */
+  redefinirSenha: (id: string, senha?: string) =>
+    requisitar<ResultadoSenha>('POST', `/api/usuarios/${enc(id)}/senha`, senha ? { senha } : {}),
+  encerrarSessoes: (id: string) => requisitar<{ usuario: Usuario }>('DELETE', `/api/usuarios/${enc(id)}/sessoes`),
+  excluirUsuario: (id: string) => requisitar<void>('DELETE', `/api/usuarios/${enc(id)}`),
+  /** Registro de atividades, do mais novo para o mais antigo; `antes` é o id do último registro já mostrado. */
+  auditoria: (f: FiltroAuditoria) =>
+    requisitar<{ registros: RegistroAuditoria[] }>('GET', `/api/auditoria?${consultaAuditoria(f)}`),
+
+  /** Requisição genérica para módulos opcionais (consultas, Google Agenda). */
+  get: <T>(caminho: string, timeoutMs?: number) => requisitar<T>('GET', caminho, undefined, timeoutMs),
+  enviar: <T>(metodo: 'POST' | 'PUT' | 'DELETE', caminho: string, corpo?: unknown, timeoutMs?: number) =>
+    requisitar<T>(metodo, caminho, corpo, timeoutMs),
+}
+
+export interface FiltroAuditoria {
+  antes?: number
+  limite?: number
+  grupo?: GrupoAuditoria
+  usuarioId?: string
+}
+
+/** Parâmetros da consulta do registro de atividades: só os informados. */
+export function consultaAuditoria(f: FiltroAuditoria): string {
+  const p = new URLSearchParams()
+  for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== '') p.set(k, String(v))
+  return p.toString()
+}
+
+/** Tamanho máximo de cada arquivo anexado (o mesmo do servidor). */
+export const LIMITE_ANEXO = 25 * 1024 * 1024
+
+/**
+ * Envia um arquivo para o evento. Usa XMLHttpRequest para informar o progresso do envio
+ * (`aoProgresso` recebe de 0 a 1).
+ */
+function enviarAnexo(eventoId: string, arquivo: File | Blob, nome: string, aoProgresso?: (fracao: number) => void) {
+  return enviarArquivo<Anexo>(`/api/eventos/${encodeURIComponent(eventoId)}/anexos`, arquivo, nome, aoProgresso)
+}
+
+/** Envia o contrato assinado (foto ou PDF); o contrato que esperava a assinatura passa a assinado. */
+function enviarContratoAssinado(id: string, arquivo: File | Blob, nome: string, aoProgresso?: (fracao: number) => void) {
+  return enviarArquivo<Contrato>(`/api/contratos/${encodeURIComponent(id)}/arquivo`, arquivo, nome, aoProgresso)
+}
+
+/** Envia um arquivo cru (sem multipart), com nome e tipo nos cabeçalhos e o progresso do envio. */
+function enviarArquivo<T>(url: string, arquivo: File | Blob, nome: string, aoProgresso?: (fracao: number) => void) {
+  return new Promise<T>((ok, falha) => {
+    if (arquivo.size > LIMITE_ANEXO) {
+      falha(new ErroApi(413, 'Arquivo muito grande (o limite é 25 MB).'))
+      return
+    }
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', url)
+    xhr.setRequestHeader('x-bc-calibracao', '1')
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.setRequestHeader('x-nome', encodeURIComponent(nome))
+    xhr.setRequestHeader('x-tipo', arquivo.type || 'application/octet-stream')
+    xhr.timeout = 10 * 60_000
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) aoProgresso?.(e.loaded / e.total)
+    }
+    xhr.onload = () => {
+      let json: Record<string, unknown> = {}
+      try {
+        json = JSON.parse(xhr.responseText)
+      } catch {
+        /* resposta sem JSON */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) ok(json as unknown as T)
+      else falha(erroDaResposta(xhr.status, url, json))
+    }
+    xhr.onerror = xhr.ontimeout = () => falha(new ErroApi(0, SEM_CONEXAO))
+    xhr.send(arquivo)
+  })
+}
+
+/** Mensagem de boas-vindas da conexão em tempo real. */
+export interface Ola {
+  revisao: number
+  /** Versão da interface servida agora (muda quando o servidor é atualizado). */
+  build: string
+  /** A conexão foi recusada: sem sessão válida (ou com a troca de senha pendente). O servidor já encerrou. */
+  semSessao?: boolean
+}
+
+/** Conexão de tempo real aberta por `conectarTempoReal`. */
+export interface ConexaoTempoReal {
+  /** Encerra de vez (sai da tela). */
+  fechar(): void
+  /** Volta a conectar depois de uma recusa por falta de sessão (ex.: a pessoa entrou de novo). */
+  reabrir(): void
+}
+
+/**
+ * Recebe as alterações feitas por qualquer computador da rede (Server-Sent Events).
+ * O navegador reconecta sozinho se a conexão cair.
+ *
+ * Cada conexão aberta ocupa uma das ~6 conexões que o navegador permite por servidor; por isso
+ * abas que ficam escondidas por mais de 30 s fecham a sua e reabrem ao voltar (a mensagem de
+ * boas-vindas traz a revisão, e a tela se atualiza se algo mudou enquanto estava escondida).
+ *
+ * Sem sessão, o servidor responde com um `ola` marcado `semSessao` e encerra: a conexão fica parada
+ * (nem a volta da aba reabre) até `reabrir()`, e `aoSemSessao` decide o que fazer.
+ */
+export function conectarTempoReal(handlers: {
+  aoConectar: (ola: Ola) => void
+  aoReceber: (msg: MensagemTempoReal) => void
+  aoDesconectar: () => void
+  aoSemSessao: (ola: Ola) => void
+}): ConexaoTempoReal {
+  let fonte: EventSource | null = null
+  let timerOculta: ReturnType<typeof setTimeout> | undefined
+  /** Recusada por falta de sessão: só volta com `reabrir()`. */
+  let parado = false
+  let fechada = false
+
+  const abrir = () => {
+    clearTimeout(timerOculta)
+    if (fonte || parado) return
+    const f = new EventSource('/api/stream')
+    fonte = f
+    f.addEventListener('ola', (e) => {
+      let ola: Ola
+      try {
+        const d = JSON.parse((e as MessageEvent).data)
+        ola = { revisao: Number(d.revisao), build: String(d.build ?? ''), ...(d.semSessao === true ? { semSessao: true } : {}) }
+      } catch {
+        ola = { revisao: -1, build: '' }
+      }
+      if (ola.semSessao) {
+        // Sem isso o navegador tentaria de novo a cada 3 s, sempre recusado
+        f.close()
+        if (fonte === f) fonte = null
+        parado = true
+        handlers.aoSemSessao(ola)
+        return
+      }
+      handlers.aoConectar(ola)
+    })
+    f.onmessage = (e) => {
+      try {
+        handlers.aoReceber(JSON.parse(e.data))
+      } catch {
+        /* mensagem inválida: ignora */
+      }
+    }
+    f.onerror = () => handlers.aoDesconectar()
+  }
+
+  const encerrar = () => {
+    fonte?.close()
+    fonte = null
+  }
+
+  const aoMudarVisibilidade = () => {
+    if (document.hidden) {
+      clearTimeout(timerOculta)
+      timerOculta = setTimeout(encerrar, 30_000)
+    } else abrir()
+  }
+
+  document.addEventListener('visibilitychange', aoMudarVisibilidade)
+  abrir()
+  // Aba aberta em segundo plano (Ctrl+clique): também libera a conexão se continuar escondida
+  if (document.hidden) timerOculta = setTimeout(encerrar, 30_000)
+  return {
+    fechar() {
+      fechada = true
+      clearTimeout(timerOculta)
+      document.removeEventListener('visibilitychange', aoMudarVisibilidade)
+      encerrar()
+    },
+    reabrir() {
+      if (fechada) return
+      parado = false
+      // Escondida, a aba abre quando voltar a aparecer
+      if (!document.hidden) abrir()
+    },
+  }
+}

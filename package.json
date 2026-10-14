@@ -1,0 +1,52 @@
+{
+  "name": "bc-calibracao",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Certificados de calibração de balanças — clientes, balanças, padrões, calibrações e certificados em PDF",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "imports": {
+    "#shared/*": "./shared/*"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n servidor,web -c green,blue \"npm:dev:servidor\" \"npm:dev:web\"",
+    "dev:web": "vite",
+    "dev:servidor": "node --watch server/iniciar.mjs",
+    "build": "tsc -b && vite build",
+    "start": "node server/iniciar.mjs",
+    "usuarios": "node server/ferramentas/redefinir-senha.mjs",
+    "test": "vitest run",
+    "lint": "oxlint",
+    "format": "prettier --write src server shared"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.6",
+    "fastify": "^5.12.7",
+    "nodemailer": "^10.1.0",
+    "pdfmake": "^0.3.11"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.13.3",
+    "@types/nodemailer": "^8.0.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
+    "lucide-react": "^1.56.0",
+    "motion": "^14.2.0",
+    "oxlint": "^1.88.0",
+    "prettier": "^3.9.9",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^7.18.4",
+    "recharts": "^3.10.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.4",
+    "zustand": "^5.0.15"
+  }
+}
