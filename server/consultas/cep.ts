@@ -54,9 +54,9 @@ function interpretarFormatoViaCep(fonte: string) {
   }
 }
 
-/** Ordem de tentativa: BrasilAPI → ViaCEP → OpenCEP. */
+/** Ordem de tentativa: ViaCEP → OpenCEP → BrasilAPI (a BrasilAPI é a mais lenta e não traz o complemento). */
 export const PROVEDORES_CEP: Provedor<DadosCep>[] = [
-  { nome: 'BrasilAPI', url: (cep) => `https://brasilapi.com.br/api/cep/v2/${cep}`, interpretar: interpretarBrasilApi },
   { nome: 'ViaCEP', url: (cep) => `https://viacep.com.br/ws/${cep}/json/`, interpretar: interpretarFormatoViaCep('ViaCEP') },
   { nome: 'OpenCEP', url: (cep) => `https://opencep.com/v1/${cep}`, interpretar: interpretarFormatoViaCep('OpenCEP') },
+  { nome: 'BrasilAPI', url: (cep) => `https://brasilapi.com.br/api/cep/v2/${cep}`, interpretar: interpretarBrasilApi },
 ]

@@ -59,7 +59,7 @@ const MIGRACOES: string[] = [
   -- Calibração = rascunho enquanto é preenchida; ao ser emitida ganha o número e vira certificado.
   CREATE TABLE calibracoes (
     id              TEXT PRIMARY KEY,
-    status          TEXT NOT NULL CHECK (status IN ('RASCUNHO','EMITIDO','CANCELADO','SUBSTITUIDO')),
+    status          TEXT NOT NULL CHECK (status IN ('RASCUNHO','REVISAO','EMITIDO','CANCELADO','SUBSTITUIDO')),
     ano             INTEGER,                    -- ano da numeração (emissão)
     sequencia       INTEGER,                    -- número no ano (emissão)
     revisao         INTEGER NOT NULL DEFAULT 0, -- 0 = original; 1, 2… = revisões que substituem a anterior
@@ -71,6 +71,7 @@ const MIGRACOES: string[] = [
     data_emissao    TEXT NOT NULL DEFAULT '',   -- yyyy-MM-dd
     proxima         TEXT NOT NULL DEFAULT '',   -- yyyy-MM-dd: próxima calibração combinada com o cliente
     substitui_id    TEXT NOT NULL DEFAULT '',   -- revisão: a calibração emitida que esta substitui
+    codigo          TEXT NOT NULL DEFAULT '',   -- código de autenticidade (QR code), único entre os emitidos
     busca           TEXT NOT NULL DEFAULT '',
     dados           TEXT NOT NULL,
     versao          INTEGER NOT NULL,
@@ -81,6 +82,7 @@ const MIGRACOES: string[] = [
   CREATE INDEX calibracoes_cliente ON calibracoes(cliente_id);
   CREATE INDEX calibracoes_balanca ON calibracoes(balanca_id);
   CREATE INDEX calibracoes_status ON calibracoes(status, data_emissao);
+  CREATE UNIQUE INDEX calibracoes_codigo ON calibracoes(codigo) WHERE codigo <> '';
 
   -- Envios de certificados e lembretes por e-mail (histórico)
   CREATE TABLE envios (
@@ -113,7 +115,11 @@ const MIGRACOES: string[] = [
     atualizado_em     TEXT NOT NULL,
     senha_alterada_em TEXT NOT NULL,
     ultimo_acesso_em  TEXT NOT NULL DEFAULT '',
-    ultimo_acesso_ip  TEXT NOT NULL DEFAULT ''
+    ultimo_acesso_ip  TEXT NOT NULL DEFAULT '',
+    signatario        INTEGER NOT NULL DEFAULT 0,  -- pode autorizar (emitir) certificados
+    cargo             TEXT NOT NULL DEFAULT '',
+    registro          TEXT NOT NULL DEFAULT '',
+    assinatura        TEXT NOT NULL DEFAULT ''     -- imagem da assinatura (data URL)
   );
   CREATE UNIQUE INDEX usuarios_login ON usuarios(login);
   CREATE TABLE sessoes (

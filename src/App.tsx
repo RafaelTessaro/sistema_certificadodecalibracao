@@ -2,31 +2,31 @@ import { MotionConfig } from 'motion/react'
 import { lazy, Suspense, useEffect, useRef } from 'react'
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Layout } from './components/layout/Layout'
+import { TelaConexao } from './components/layout/TelaConexao'
 import { MinhaSenhaModal } from './components/sessao/MinhaSenhaModal'
 import { RotaPermitida } from './components/sessao/RotaPermitida'
 import { SessaoEncerradaModal } from './components/sessao/SessaoEncerradaModal'
 import { ConfirmHost, Toaster } from './components/ui/Feedback'
 import { definirAoErroSessao } from './lib/api'
-import { Agenda } from './pages/Agenda'
+import { BalancaDetalhe } from './pages/BalancaDetalhe'
+import { Balancas } from './pages/Balancas'
+import { CalibracaoDetalhe } from './pages/CalibracaoDetalhe'
+import { CalibracaoForm } from './pages/CalibracaoForm'
+import { Certificados } from './pages/Certificados'
 import { ClienteDetalhe } from './pages/ClienteDetalhe'
 import { Clientes } from './pages/Clientes'
-import { Configuracoes } from './pages/Configuracoes'
-import { Contratos } from './pages/Contratos'
-import { Entrar, SemAdministrador, TrocarSenhaObrigatoria } from './pages/Entrar'
-import { EventoDetalhe } from './pages/EventoDetalhe'
-import { EventoForm } from './pages/EventoForm'
-import { Eventos } from './pages/Eventos'
-import { Manutencao } from './pages/Manutencao'
-import { MaquinaDetalhe } from './pages/MaquinaDetalhe'
+import { Entrar, PrimeiroAcesso, TrocarSenhaObrigatoria } from './pages/Entrar'
+import { Padroes } from './pages/Padroes'
 import { Painel } from './pages/Painel'
-import { Relatorios } from './pages/Relatorios'
-import { TelaConexao } from './components/layout/TelaConexao'
-import { useDados } from './store/dados'
+import { Vencimentos } from './pages/Vencimentos'
+import { Verificar } from './pages/Verificar'
 import { useSessao } from './store/sessao'
+import { useTempoReal } from './store/tempoReal'
 import { aplicarTema, useUI } from './store/ui'
 
-// Só o administrador abre a página Usuários: ela é baixada na primeira visita
+// Só o administrador abre estas páginas: são baixadas na primeira visita
 const Usuarios = lazy(() => import('./pages/Usuarios').then((m) => ({ default: m.Usuarios })))
+const Configuracoes = lazy(() => import('./pages/Configuracoes').then((m) => ({ default: m.Configuracoes })))
 
 function Rotas() {
   const location = useLocation()
@@ -34,29 +34,23 @@ function Rotas() {
     <Layout>
       <Routes location={location}>
         <Route path="/" element={<Painel />} />
-        <Route path="/agenda" element={<Agenda />} />
+        <Route path="/certificados" element={<Certificados />} />
+        <Route path="/calibracoes/nova" element={<CalibracaoForm />} />
+        <Route path="/calibracoes/:id" element={<CalibracaoDetalhe />} />
+        <Route path="/calibracoes/:id/editar" element={<CalibracaoForm />} />
+        <Route path="/vencimentos" element={<Vencimentos />} />
         <Route path="/clientes" element={<Clientes />} />
         <Route path="/clientes/:id" element={<ClienteDetalhe />} />
-        <Route path="/eventos" element={<Eventos />} />
-        <Route path="/eventos/novo" element={<EventoForm />} />
-        <Route path="/eventos/:id" element={<EventoDetalhe />} />
-        <Route path="/eventos/:id/editar" element={<EventoForm />} />
-        <Route path="/contratos" element={<Contratos />} />
-        <Route path="/manutencao" element={<Manutencao />} />
-        <Route path="/manutencao/:id" element={<MaquinaDetalhe />} />
-        <Route
-          path="/relatorios"
-          element={
-            <RotaPermitida permissao="verFaturamento">
-              <Relatorios />
-            </RotaPermitida>
-          }
-        />
+        <Route path="/balancas" element={<Balancas />} />
+        <Route path="/balancas/:id" element={<BalancaDetalhe />} />
+        <Route path="/padroes" element={<Padroes />} />
         <Route
           path="/configuracoes"
           element={
             <RotaPermitida permissao="configuracoes">
-              <Configuracoes />
+              <Suspense fallback={null}>
+                <Configuracoes />
+              </Suspense>
             </RotaPermitida>
           }
         />
@@ -76,23 +70,9 @@ function Rotas() {
   )
 }
 
-/** Já entrou (e a senha não é mais a temporária): os dados e as telas do sistema. */
+/** Já entrou (e a senha não é mais a temporária): as telas do sistema, com o tempo real ligado. */
 function Sistema() {
-  const status = useDados((s) => s.status)
-  const erro = useDados((s) => s.erro)
-
-  // Conecta ao servidor (dados + atualizações em tempo real) só depois de entrar
-  useEffect(() => useDados.getState().iniciar(), [])
-
-  if (status !== 'pronto') {
-    return (
-      <TelaConexao
-        modo={status === 'erro' ? 'erro' : 'carregando'}
-        erro={erro}
-        aoTentar={() => void useDados.getState().recarregar()}
-      />
-    )
-  }
+  useEffect(() => useTempoReal.getState().iniciar(), [])
   return (
     <HashRouter>
       <Rotas />
@@ -101,13 +81,21 @@ function Sistema() {
   )
 }
 
+/** Página pública de conferência do certificado (QR code), aberta sem entrar no sistema. */
+function codigoVerificacao(): string | null {
+  const m = location.hash.match(/^#\/verificar\/([A-Za-z0-9-]{4,40})/)
+  return m ? m[1] : null
+}
+
 export default function App() {
   const tema = useUI((s) => s.tema)
   const estado = useSessao((s) => s.estado)
   const usuario = useSessao((s) => s.usuario)
   const semUsuarios = useSessao((s) => s.semUsuarios)
+  const primeiroAcessoLocal = useSessao((s) => s.primeiroAcessoLocal)
   const erroSessao = useSessao((s) => s.erro)
   const expirou = useSessao((s) => s.expirou)
+  const verificar = codigoVerificacao()
 
   // Quem está usando este navegador; 401 e "crie sua senha" vindos de qualquer requisição
   useEffect(() => {
@@ -129,8 +117,7 @@ export default function App() {
     const voltou = expirouAntes.current && !expirou
     expirouAntes.current = expirou
     const { estado: e, usuario: u } = useSessao.getState()
-    // Com a troca de senha pendente os dados não estão na tela (voltam ao criar a senha)
-    if (voltou && e === 'logado' && u && !u.trocarSenha) useDados.getState().reconectar()
+    if (voltou && e === 'logado' && u && !u.trocarSenha) useTempoReal.getState().reconectar()
   }, [expirou])
 
   useEffect(() => {
@@ -143,10 +130,11 @@ export default function App() {
   }, [tema])
 
   let tela
-  if (estado === 'verificando') tela = <TelaConexao modo="carregando" />
+  if (verificar) tela = <Verificar codigo={verificar} />
+  else if (estado === 'verificando') tela = <TelaConexao modo="carregando" />
   else if (estado === 'erro')
     tela = <TelaConexao modo="erro" erro={erroSessao} aoTentar={() => void useSessao.getState().verificar()} />
-  else if (estado === 'anonimo' || !usuario) tela = semUsuarios ? <SemAdministrador /> : <Entrar />
+  else if (estado === 'anonimo' || !usuario) tela = semUsuarios ? <PrimeiroAcesso local={!!primeiroAcessoLocal} /> : <Entrar />
   else if (usuario.trocarSenha) tela = <TrocarSenhaObrigatoria />
   else tela = <Sistema />
 

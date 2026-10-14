@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Cliente, Evento, RegistroAuditoria, ResultadoSenha, Usuario, UsuarioSessao } from '#shared/tipos.ts'
+import type { Cliente, RegistroAuditoria, ResultadoSenha, Usuario, UsuarioSessao } from '#shared/tipos.ts'
 import { criarAppComLogin, SENHA_ADMIN, SENHA_COMUM, type AppComLogin } from './auxiliaresTeste.ts'
 import { abrirBanco } from './db.ts'
 import { ErroApi } from './erros.ts'
@@ -24,12 +24,19 @@ afterEach(async () => {
   await t.fechar()
 })
 
-const statusDados = async (cookie: string | null) => (await t.chamar('GET', '/api/dados', { cookie })).statusCode
+const statusDados = async (cookie: string | null) => (await t.chamar('GET', '/api/painel', { cookie })).statusCode
 const auditoria = (acao?: string) =>
   (t.ctx.db.prepare('SELECT * FROM auditoria ORDER BY id').all() as unknown as Array<Record<string, string>>).filter(
     (r) => !acao || r.acao === acao,
   )
-const adminFicticio: UsuarioSessao = { id: 'outro-admin', login: 'outro', nome: 'Outro', nivel: 'ADMIN', trocarSenha: false }
+const adminFicticio: UsuarioSessao = {
+  id: 'outro-admin',
+  login: 'outro',
+  nome: 'Outro',
+  nivel: 'ADMIN',
+  trocarSenha: false,
+  signatario: false,
+}
 
 async function erroDe(p: Promise<unknown> | (() => unknown)): Promise<ErroApi> {
   try {
@@ -125,7 +132,7 @@ describe('entrar', () => {
     const normal = await t.entrar('comum', SENHA_COMUM)
     expect(normal.resposta.headers['set-cookie']).toMatch(/^bcc_sessao=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Strict$/)
     expect(normal.resposta.json()).toEqual({
-      usuario: { id: t.comumId, login: 'comum', nome: 'Comum Teste', nivel: 'COMUM', trocarSenha: false },
+      usuario: { id: t.comumId, login: 'comum', nome: 'Comum Teste', nivel: 'COMUM', trocarSenha: false, signatario: false },
       build: '',
     })
     const comum = await t.entrar('comum', SENHA_COMUM, { manterConectado: true })
@@ -145,9 +152,9 @@ describe('entrar', () => {
     try {
       const r = await outro.entrar('admin', SENHA_ADMIN)
       expect(r.resposta.headers['set-cookie']).toMatch(/^bcc_sessao_3000=/)
-      expect((await outro.chamar('GET', '/api/dados', { cookie: outro.cookieAdmin })).statusCode).toBe(200)
+      expect((await outro.chamar('GET', '/api/painel', { cookie: outro.cookieAdmin })).statusCode).toBe(200)
       // O cookie com o nome de outra porta não vale aqui
-      const r2 = await outro.app.inject({ method: 'GET', url: '/api/dados', cookies: { bcc_sessao: outro.cookieAdmin } })
+      const r2 = await outro.app.inject({ method: 'GET', url: '/api/painel', cookies: { bcc_sessao: outro.cookieAdmin } })
       expect(r2.statusCode).toBe(401)
     } finally {
       await outro.fechar()
@@ -207,7 +214,7 @@ describe('sessão', () => {
     agora = t0 + 6 * HORA + 59 * MINUTO
     expect(await statusDados(c)).toBe(200) // renovado às 3 h
     expect(
-      (await t.chamar('POST', '/api/clientes', { cookie: c, payload: { tipo: 'AVULSO', nome: 'Barraca' } })).statusCode,
+      (await t.chamar('POST', '/api/clientes', { cookie: c, payload: { tipo: 'PF', nome: 'Barraca' } })).statusCode,
     ).toBe(201)
     agora = t0 + 10 * HORA
     expect(await statusDados(c)).toBe(200) // renovado pelo POST
@@ -332,7 +339,7 @@ describe('revogação', () => {
     })
     expect(r.statusCode, r.body).toBe(200)
     expect(r.json()).toEqual({
-      usuario: { id: t.comumId, login: 'comum', nome: 'Comum Teste', nivel: 'COMUM', trocarSenha: false },
+      usuario: { id: t.comumId, login: 'comum', nome: 'Comum Teste', nivel: 'COMUM', trocarSenha: false, signatario: false },
     })
     expect(r.headers['set-cookie']).toBeUndefined()
     expect(await statusDados(atual)).toBe(200)
@@ -517,11 +524,11 @@ describe('troca de senha obrigatória', () => {
       login: 'novo',
       trocarSenha: true,
     })
-    const dados = await t.chamar('GET', '/api/dados', { cookie: c })
+    const dados = await t.chamar('GET', '/api/painel', { cookie: c })
     expect(dados.statusCode).toBe(403)
     expect(dados.json()).toEqual({ erro: 'Crie sua senha antes de continuar.', codigo: 'TROCAR_SENHA' })
     expect((await t.chamar('GET', '/api/usuarios', { cookie: c })).json().codigo).toBe('TROCAR_SENHA')
-    expect((await t.chamar('POST', '/api/clientes', { cookie: c, payload: { tipo: 'AVULSO', nome: 'X' } })).statusCode).toBe(403)
+    expect((await t.chamar('POST', '/api/clientes', { cookie: c, payload: { tipo: 'PF', nome: 'X' } })).statusCode).toBe(403)
     const stream = await t.chamar('GET', '/api/stream', { cookie: c })
     expect(stream.statusCode).toBe(200)
     expect(stream.body).toContain('"semSessao":true')
@@ -538,8 +545,13 @@ describe('sem usuários cadastrados', () => {
   it('a sessão avisa; a API de dados e o login dão 401', async () => {
     const vazio = await criarAppComLogin({ semUsuarios: true })
     try {
-      expect((await vazio.chamar('GET', '/api/sessao')).json()).toEqual({ usuario: null, semUsuarios: true, build: '' })
-      expect((await vazio.chamar('GET', '/api/dados')).statusCode).toBe(401)
+      expect((await vazio.chamar('GET', '/api/sessao')).json()).toEqual({
+        usuario: null,
+        semUsuarios: true,
+        primeiroAcessoLocal: true,
+        build: '',
+      })
+      expect((await vazio.chamar('GET', '/api/painel')).statusCode).toBe(401)
       expect((await vazio.entrar('admin', 'qualquer-senha')).status).toBe(401)
       expect(vazio.usuarios.situacao()).toEqual({ usuarios: 0, administradoresAtivos: 0, lista: [] })
     } finally {
@@ -549,19 +561,15 @@ describe('sem usuários cadastrados', () => {
 })
 
 describe('backup e banco', () => {
-  it('o JSON do backup não leva usuários, sessões nem hashes; limpar e restaurar não mexem nas contas', async () => {
-    const backup = await t.chamar('GET', '/api/backup', { cookie: t.cookieAdmin })
-    expect(backup.statusCode).toBe(200)
-    expect(backup.body).not.toMatch(/usuarios|senha_hash|scrypt|sessoes|auditoria/)
-    expect(
-      (await t.chamar('POST', '/api/limpar', { cookie: t.cookieAdmin, payload: { confirmacao: 'APAGAR' } })).statusCode,
-    ).toBe(200)
-    expect(await statusDados(t.cookieAdmin)).toBe(200)
-    expect(await statusDados(t.cookieComum)).toBe(200)
-    const restaurar = await t.chamar('POST', '/api/backup/restaurar', { cookie: t.cookieAdmin, payload: backup.json() })
-    expect(restaurar.statusCode).toBe(200)
-    expect((await t.entrar('comum', SENHA_COMUM)).status).toBe(200)
-    expect(t.usuarios.situacao().usuarios).toBe(2)
+  it('a cópia de segurança é do banco inteiro e só o administrador faz e baixa', async () => {
+    const r = await t.chamar('POST', '/api/backups', { cookie: t.cookieAdmin })
+    expect(r.statusCode, r.body).toBe(200)
+    const lista = (await t.chamar('GET', '/api/backups', { cookie: t.cookieAdmin })).json().backups as Array<{ arquivo: string }>
+    expect(lista.length).toBe(1)
+    expect((await t.chamar('GET', '/api/backups', { cookie: t.cookieComum })).statusCode).toBe(403)
+    const baixar = await t.chamar('GET', `/api/backups/${lista[0].arquivo}`, { cookie: t.cookieAdmin })
+    expect(baixar.statusCode).toBe(200)
+    expect(baixar.rawPayload.subarray(0, 15).toString()).toBe('SQLite format 3')
   })
 
   it('nenhuma tabela guarda senha em texto puro', async () => {
@@ -624,7 +632,7 @@ describe('registro de atividades', () => {
     let agora = Date.now()
     t.usuarios.agora = () => agora
     for (let i = 0; i < 3; i++) {
-      const r = await t.chamar('GET', '/api/backup', { cookie: t.cookieComum })
+      const r = await t.chamar('GET', '/api/backups', { cookie: t.cookieComum })
       expect(r.statusCode).toBe(403)
       expect(r.json()).toEqual({
         erro: 'Só o administrador cuida das cópias de segurança e dos dados.',
@@ -632,48 +640,39 @@ describe('registro de atividades', () => {
         permissao: 'dadosEBackup',
       })
     }
-    await t.chamar('DELETE', '/api/eventos/abc', { cookie: t.cookieComum })
+    await t.chamar('DELETE', '/api/clientes/abc', { cookie: t.cookieComum })
     expect(auditoria('ACESSO_NEGADO').map((r) => [r.login, r.detalhe, r.alvo])).toEqual([
-      ['comum', 'GET /api/backup', ''],
-      ['comum', 'DELETE /api/eventos/:id', 'abc'],
+      ['comum', 'GET /api/backups', ''],
+      ['comum', 'DELETE /api/clientes/:id', 'abc'],
     ])
     agora += 61_000
-    await t.chamar('GET', '/api/backup', { cookie: t.cookieComum })
+    await t.chamar('GET', '/api/backups', { cookie: t.cookieComum })
     expect(auditoria('ACESSO_NEGADO')).toHaveLength(3)
   })
 
-  it('BACKUP_BAIXADO, e ALTERACAO com o alvo e os campos do PATCH (sem valores)', async () => {
-    await t.chamar('GET', '/api/backup', { cookie: t.cookieAdmin })
-    expect(auditoria('BACKUP_BAIXADO').map((r) => r.login)).toEqual(['admin'])
+  it('ALTERACAO com o alvo de cada gravação (sem os valores)', async () => {
     const cli = (
-      await t.chamar('POST', '/api/clientes', { cookie: t.cookieComum, payload: { tipo: 'AVULSO', nome: 'Barraca do Zé' } })
-    ).json() as Cliente
-    const evento = (
-      await t.chamar('POST', '/api/eventos', {
-        cookie: t.cookieComum,
-        payload: { clienteId: cli.id, nome: 'Festa', dias: [{ data: '2026-08-01', maquinas: 1 }], status: 'EM_ABERTO' },
-      })
-    ).json() as Evento
-    const pago = await t.chamar('PATCH', `/api/eventos/${evento.id}`, {
+      await t.chamar('POST', '/api/clientes', { cookie: t.cookieComum, payload: { tipo: 'PF', nome: 'Maria do Açougue' } })
+    ).json().cliente as Cliente
+    const alterado = await t.chamar('PUT', `/api/clientes/${cli.id}`, {
       cookie: t.cookieComum,
-      payload: { formaPagamento: 'PIX', dataPagamento: '2026-08-02', versao: 1 },
+      payload: { ...cli, telefone: '(19) 99999-0000' },
     })
-    expect(pago.statusCode, pago.body).toBe(200)
+    expect(alterado.statusCode, alterado.body).toBe(200)
     // Gravação recusada (404) não entra
     expect((await t.chamar('PUT', '/api/clientes/nao-existe', { cookie: t.cookieComum, payload: cli })).statusCode).toBe(404)
     const alteracoes = auditoria('ALTERACAO')
     expect(alteracoes.map((r) => [r.login, r.alvo, r.detalhe])).toEqual([
       ['comum', '', 'POST /api/clientes'],
-      ['comum', '', 'POST /api/eventos'],
-      ['comum', evento.id, 'PATCH /api/eventos/:id | formaPagamento,dataPagamento'],
+      ['comum', cli.id, 'PUT /api/clientes/:id'],
     ])
-    expect(JSON.stringify(alteracoes)).not.toMatch(/PIX|Barraca|2026-08-02/)
+    expect(JSON.stringify(alteracoes)).not.toMatch(/Maria|99999/)
     // Login, troca de senha e cadastro de usuários têm registro próprio (não viram ALTERACAO)
     expect(alteracoes.some((r) => /sessao|minha-senha|usuarios/.test(r.detalhe))).toBe(false)
   })
 
   it('filtros por grupo e por usuário, do mais novo para o mais antigo, com paginação', async () => {
-    await t.chamar('POST', '/api/clientes', { cookie: t.cookieComum, payload: { tipo: 'AVULSO', nome: 'Barraca' } })
+    await t.chamar('POST', '/api/clientes', { cookie: t.cookieComum, payload: { tipo: 'PF', nome: 'Barraca' } })
     const acessos = await listar('?grupo=acessos')
     expect(acessos.length).toBeGreaterThan(0)
     expect(acessos.every((r) => ['LOGIN', 'LOGIN_FALHOU', 'BLOQUEIO', 'LOGOUT', 'ACESSO_NEGADO'].includes(r.acao))).toBe(true)

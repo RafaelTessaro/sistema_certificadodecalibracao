@@ -1,14 +1,13 @@
-import { osEmAberto } from '#shared/maquinas.ts'
 import { Monitor, Moon, PanelLeftClose, PanelLeftOpen, Sun } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useMemo } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import logo from '../../assets/logo-mark.png'
+import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
-import { aguardandoSemEfeito } from '../../lib/contratos'
-import { useDados } from '../../store/dados'
+import { useConsulta } from '../../lib/consulta'
 import { useSessao } from '../../store/sessao'
 import { useUI, type Tema } from '../../store/ui'
+import { Logo } from '../Logo'
 import { MenuUsuario } from '../sessao/MenuUsuario'
 import { navDoNivel, type ItemNav } from './nav'
 
@@ -167,24 +166,17 @@ export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: (
   const recolhida = !mobile && sidebarRecolhida
   const nivel = useSessao((s) => s.usuario?.nivel)
   const grupos = useMemo(() => navDoNivel(nivel), [nivel])
-  const eventos = useDados((s) => s.eventos)
-  const pendentes = useMemo(() => eventos.filter((e) => e.status === 'PENDENTE').length, [eventos])
-  const ordens = useDados((s) => s.ordens)
-  const osAbertas = useMemo(() => ordens.filter(osEmAberto).length, [ordens])
-  const contratos = useDados((s) => s.contratos)
-  const aAssinar = useMemo(
-    () => contratos.filter((c) => c.status === 'AGUARDANDO' && !aguardandoSemEfeito(c, eventos)).length,
-    [contratos, eventos],
-  )
+  const { dados } = useConsulta('painel', () => api.painel().then((r) => r.painel), ['calibracao', 'balanca', 'padrao', 'config'])
+  const abertas = dados?.rascunhos ?? 0
+  const vencendo = (dados?.vencidas ?? 0) + (dados?.vencendo ?? 0)
   const contadores: Record<string, ContadorNav> = {
-    '/eventos': { valor: pendentes, descricao: `${pendentes} ${pendentes === 1 ? 'evento pendente' : 'eventos pendentes'}` },
-    '/contratos': {
-      valor: aAssinar,
-      descricao: `${aAssinar} ${aAssinar === 1 ? 'contrato esperando assinatura' : 'contratos esperando assinatura'}`,
+    '/certificados': {
+      valor: abertas,
+      descricao: `${abertas} ${abertas === 1 ? 'calibração em andamento' : 'calibrações em andamento'}`,
     },
-    '/manutencao': {
-      valor: osAbertas,
-      descricao: `${osAbertas} ${osAbertas === 1 ? 'manutenção em aberto' : 'manutenções em aberto'}`,
+    '/vencimentos': {
+      valor: vencendo,
+      descricao: `${vencendo} ${vencendo === 1 ? 'balança com calibração vencendo' : 'balanças com calibração vencendo'}`,
     },
   }
 
@@ -195,11 +187,11 @@ export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: (
       className={cn('flex h-full shrink-0 flex-col bg-bg', !mobile && 'border-r border-line')}
     >
       <div className={cn('flex h-16 items-center gap-3 px-5', recolhida && 'justify-center px-0')}>
-        <img src={logo} alt="" className="h-9 w-9 shrink-0 rounded-full shadow-xs ring-1 ring-line" />
+        <Logo className="h-9 w-9" />
         {!recolhida && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-w-0 leading-tight">
             <p className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ink">BC Calibração</p>
-            <p className="truncate text-xs text-muted">Controle de locação</p>
+            <p className="truncate text-xs text-muted">Certificados de calibração</p>
           </motion.div>
         )}
       </div>

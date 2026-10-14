@@ -72,7 +72,7 @@ export function Layout({ children }: { children: ReactNode }) {
             className="group ml-auto flex h-10 w-10 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-surface px-3 text-sm text-muted shadow-xs transition-colors hover:border-line-strong hover:text-ink-2 sm:w-72 lg:mr-auto lg:ml-0"
           >
             <Search className="h-4 w-4 shrink-0" />
-            <span className="hidden min-w-0 flex-1 truncate text-left sm:block">Buscar clientes, eventos…</span>
+            <span className="hidden min-w-0 flex-1 truncate text-left sm:block">Buscar clientes, balanças, certificados…</span>
             <kbd className="hidden rounded-md border border-line bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium sm:block">
               {mac ? '⌘' : 'Ctrl'} K
             </kbd>
@@ -84,11 +84,11 @@ export function Layout({ children }: { children: ReactNode }) {
           <Button
             variante="primary"
             icone={<Plus className="h-4 w-4" />}
-            onClick={() => navegar('/eventos/novo')}
-            aria-label="Novo evento"
+            onClick={() => navegar('/calibracoes/nova')}
+            aria-label="Nova calibração"
             className="max-sm:w-10 max-sm:px-0"
           >
-            <span className="max-sm:hidden">Novo evento</span>
+            <span className="max-sm:hidden">Nova calibração</span>
           </Button>
           {/* No celular e no tablet o menu lateral fica escondido: quem está usando aparece aqui */}
           <div className="-mr-1 lg:hidden">

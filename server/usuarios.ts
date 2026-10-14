@@ -78,6 +78,10 @@ interface LinhaUsuario {
   senha_alterada_em: string
   ultimo_acesso_em: string
   ultimo_acesso_ip: string
+  signatario: number
+  cargo: string
+  registro: string
+  assinatura: string
 }
 
 interface LinhaAuditoria {
@@ -101,6 +105,7 @@ const paraSessao = (l: LinhaUsuario): UsuarioSessao => ({
   nome: l.nome,
   nivel: l.nivel,
   trocarSenha: !!l.trocar_senha,
+  signatario: !!l.signatario,
 })
 
 const paraUsuario = (l: LinhaUsuario, sessoesAtivas: number): Usuario => ({
@@ -116,6 +121,10 @@ const paraUsuario = (l: LinhaUsuario, sessoesAtivas: number): Usuario => ({
   senhaAlteradaEm: l.senha_alterada_em,
   ultimoAcessoEm: l.ultimo_acesso_em,
   ultimoAcessoIp: l.ultimo_acesso_ip,
+  signatario: !!l.signatario,
+  cargo: l.cargo,
+  registro: l.registro,
+  assinatura: l.assinatura,
   sessoesAtivas,
 })
 
@@ -436,10 +445,11 @@ export class ServicoUsuarios {
         const em = new Date(this.agora()).toISOString()
         this.db
           .prepare(
-            `INSERT INTO usuarios (id, login, nome, nivel, senha_hash, ativo, trocar_senha, versao, criado_em, atualizado_em, senha_alterada_em)
-             VALUES (?, ?, ?, ?, ?, 1, 1, 1, ?, ?, ?)`,
+            `INSERT INTO usuarios (id, login, nome, nivel, senha_hash, ativo, trocar_senha, versao, criado_em, atualizado_em,
+                                   senha_alterada_em, signatario, cargo, registro)
+             VALUES (?, ?, ?, ?, ?, 1, 1, 1, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(id, dados.login, dados.nome, dados.nivel, hash, em, em, em)
+          .run(id, dados.login, dados.nome, dados.nivel, hash, em, em, em, dados.signatario ? 1 : 0, dados.cargo, dados.registro)
         this.registrar('USUARIO_CRIADO', {
           usuario: autor,
           ip,
@@ -468,18 +478,29 @@ export class ServicoUsuarios {
       const mudouNivel = nivel !== atual.nivel
       const mudouAtivo = ativo !== !!atual.ativo
       const mudouNome = nome !== atual.nome
-      if (!mudouNivel && !mudouAtivo && !mudouNome) return []
+      const signatario = dados.signatario ?? !!atual.signatario
+      const cargo = dados.cargo ?? atual.cargo
+      const registro = dados.registro ?? atual.registro
+      const assinatura = dados.assinatura ?? atual.assinatura
+      const mudouSignatario = signatario !== !!atual.signatario
+      const mudouDadosAssinatura = cargo !== atual.cargo || registro !== atual.registro || assinatura !== atual.assinatura
+      if (!mudouNivel && !mudouAtivo && !mudouNome && !mudouSignatario && !mudouDadosAssinatura) return []
       if (id === autor.id && (mudouNivel || mudouAtivo))
         throw new ErroApi(409, MENSAGENS.propriaConta, { codigo: 'PROPRIA_CONTA' })
       this.verificarUltimoAdmin(atual, nivel === 'ADMIN' && ativo)
       this.db
-        .prepare('UPDATE usuarios SET nome = ?, nivel = ?, ativo = ?, versao = versao + 1, atualizado_em = ? WHERE id = ?')
-        .run(nome, nivel, ativo ? 1 : 0, new Date(this.agora()).toISOString(), id)
+        .prepare(
+          `UPDATE usuarios SET nome = ?, nivel = ?, ativo = ?, signatario = ?, cargo = ?, registro = ?, assinatura = ?,
+                  versao = versao + 1, atualizado_em = ? WHERE id = ?`,
+        )
+        .run(nome, nivel, ativo ? 1 : 0, signatario ? 1 : 0, cargo, registro, assinatura, new Date(this.agora()).toISOString(), id)
       const encerradas = mudouNivel || (mudouAtivo && !ativo) ? this.apagarSessoes(id) : []
       const detalhe = [
         mudouNome ? `nome: ${atual.nome} → ${nome}` : '',
         mudouNivel ? `nível: ${NOME_NIVEL[atual.nivel]} → ${NOME_NIVEL[nivel]}` : '',
         mudouAtivo ? (ativo ? 'reativado' : 'desativado') : '',
+        mudouSignatario ? (signatario ? 'passou a ser signatário' : 'deixou de ser signatário') : '',
+        mudouDadosAssinatura ? 'cargo, registro ou assinatura' : '',
       ]
         .filter(Boolean)
         .join('; ')
@@ -735,6 +756,39 @@ export class ServicoUsuarios {
       return { id, criado: !atual }
     })
     return { usuario: this.obter(id)!, criado, ...(senhaTemporaria ? { senhaTemporaria } : {}) }
+  }
+
+  /**
+   * Primeiro acesso: com o banco sem nenhum usuário, cria o administrador (signatário) pela tela.
+   * A rota só aceita pedidos do próprio servidor (localhost). Já entra com a conta criada.
+   */
+  async criarPrimeiroAdministrador(e: unknown, ip: string): Promise<ResultadoEntrada> {
+    if (this.quantos() > 0) throw new ErroApi(409, 'O administrador já foi criado. Entre com o usuário e a senha.')
+    const r = obj(e)
+    const dados = validar(normalizarNovoUsuario({ ...r, nivel: 'ADMIN', signatario: true }))
+    if (!dados.senha) throw new ErroApi(400, 'Crie uma senha para o administrador.')
+    erroSenha(validarSenhaNova(dados.senha, { login: dados.login, nome: dados.nome }))
+    const hash = await gerarHashSenha(dados.senha, this.params)
+    transacao(this.db, () => {
+      // De novo dentro da transação: dois navegadores no servidor ao mesmo tempo
+      if (this.quantos() > 0) throw new ErroApi(409, 'O administrador já foi criado. Entre com o usuário e a senha.')
+      const em = new Date(this.agora()).toISOString()
+      const id = novoId()
+      this.db
+        .prepare(
+          `INSERT INTO usuarios (id, login, nome, nivel, senha_hash, ativo, trocar_senha, versao, criado_em, atualizado_em,
+                                 senha_alterada_em, signatario, cargo, registro)
+           VALUES (?, ?, ?, 'ADMIN', ?, 1, 0, 1, ?, ?, ?, 1, ?, ?)`,
+        )
+        .run(id, dados.login, dados.nome, hash, em, em, em, dados.cargo, dados.registro)
+      this.registrar('USUARIO_CRIADO', {
+        usuario: { id, login: dados.login },
+        ip,
+        alvo: id,
+        detalhe: `${dados.login} (Administrador, signatário); primeiro acesso pelo servidor`,
+      })
+    })
+    return this.entrar({ login: dados.login, senha: dados.senha }, ip, null)
   }
 
   /** Apaga todas as sessões (restauração de cópia, emergência); devolve quantas. */

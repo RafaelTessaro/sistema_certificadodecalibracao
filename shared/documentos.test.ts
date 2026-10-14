@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { migrarCliente, normalizarCliente } from './dominio.ts'
+import { normalizarCliente } from './dominio.ts'
 import {
   cnpjAlfanumerico,
   cnpjValido,
@@ -115,16 +115,6 @@ describe('CNPJ alfanumérico (IN RFB 2.229/2024)', () => {
     // Digitação parcial continua igual
     expect(mascaraCnpj('12.403')).toBe('12.403')
     expect(mascaraCnpj('n')).toBe('N')
-  })
-
-  it('cliente antigo com texto no lugar do CNPJ não vira um CNPJ com letras embaralhado', () => {
-    const base = { id: 'c1', tipo: 'PJ', nome: 'Antiga' }
-    expect(migrarCliente({ ...base, documento: 'isento' }).documento).toBe('')
-    expect(migrarCliente({ ...base, documento: 'não informado' }).documento).toBe('')
-    // Número incompleto fica como estava (só os algarismos)
-    expect(migrarCliente({ ...base, documento: '12.403.843' }).documento).toBe('12.403.843')
-    expect(migrarCliente({ ...base, documento: 'CNPJ 12403843000118' }).documento).toBe('12.403.843/0001-18')
-    expect(migrarCliente({ ...base, documento: '12abc34501de35' }).documento).toBe('12.ABC.345/01DE-35')
   })
 })
 

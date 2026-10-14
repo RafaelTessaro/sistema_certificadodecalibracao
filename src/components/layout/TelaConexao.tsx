@@ -1,6 +1,6 @@
 import { RefreshCw, ServerCrash } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import logo from '../../assets/logo-mark.png'
+import { Logo } from '../Logo'
 import { Button } from '../ui/Button'
 
 /**
@@ -45,13 +45,12 @@ export function TelaConexao({ modo, erro, aoTentar }: { modo: 'carregando' | 'er
             exit={{ opacity: 0 }}
             className="flex flex-col items-center gap-4"
           >
-            <motion.img
-              src={logo}
-              alt=""
-              className="h-14 w-14 rounded-full shadow-card"
+            <motion.div
               animate={{ scale: [1, 1.06, 1] }}
               transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
-            />
+            >
+              <Logo className="h-14 w-14" />
+            </motion.div>
             <p className="text-sm text-muted">Conectando ao servidor…</p>
           </motion.div>
         )}

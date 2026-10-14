@@ -9,6 +9,8 @@ interface SessaoState {
   estado: EstadoTela
   usuario: UsuarioSessao | null
   semUsuarios: boolean
+  /** Sem usuários e o navegador está no próprio servidor: o administrador é criado pela tela. */
+  primeiroAcessoLocal: boolean
   /** Build visto ao abrir a página; vira o buildInicial dos dados. */
   build: string
   /** 401 no meio do uso: a tela continua montada e o login aparece por cima. */
@@ -23,6 +25,8 @@ interface SessaoState {
   senhaTemporaria: string
   verificar(): Promise<void>
   entrar(e: EntradaLogin): Promise<void>
+  /** Cria o primeiro administrador (só no servidor, com o banco vazio) e já entra. */
+  primeiroAcesso(e: { nome: string; login: string; senha: string; cargo: string; registro: string }): Promise<void>
   trocarSenha(e: TrocaSenha): Promise<void>
   sair(): Promise<void>
   sessaoEncerrada(): void
@@ -108,6 +112,7 @@ export const useSessao = create<SessaoState>()((set, get) => {
     estado: 'verificando',
     usuario: null,
     semUsuarios: false,
+    primeiroAcessoLocal: false,
     build: '',
     expirou: false,
     manterConectado: false,
@@ -132,6 +137,7 @@ export const useSessao = create<SessaoState>()((set, get) => {
       set({
         usuario: r.usuario,
         semUsuarios: r.semUsuarios,
+        primeiroAcessoLocal: !!r.primeiroAcessoLocal,
         build: build || r.build,
         estado: r.usuario ? 'logado' : 'anonimo',
         expirou: false,
@@ -163,6 +169,20 @@ export const useSessao = create<SessaoState>()((set, get) => {
         build: s.build || r.build,
         erro: '',
         senhaTemporaria: r.usuario.trocarSenha ? e.senha : '',
+      })
+      avisarAbas('entrou')
+    },
+
+    async primeiroAcesso(e) {
+      const r = await api.primeiroAcesso(e)
+      set({
+        usuario: r.usuario,
+        estado: 'logado',
+        expirou: false,
+        semUsuarios: false,
+        primeiroAcessoLocal: false,
+        build: get().build || r.build,
+        erro: '',
       })
       avisarAbas('entrou')
     },

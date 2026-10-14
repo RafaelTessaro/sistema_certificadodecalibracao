@@ -1,35 +1,31 @@
 import type {
   AlteracaoUsuario,
-  Anexo,
-  Backup,
+  Balanca,
+  BalancaInput,
+  BalancaResumo,
+  Calibracao,
+  CalibracaoInput,
+  CalibracaoResumo,
   Cliente,
   ClienteInput,
+  ClienteResumo,
   Configuracoes,
-  Contrato,
-  DadosCompletos,
   EntradaLogin,
+  Envio,
   EstadoSessao,
-  Evento,
-  EventoInput,
-  EventoPatch,
   GrupoAuditoria,
-  Maquina,
-  MaquinaInput,
   MensagemTempoReal,
-  NovoContrato,
   NovoUsuario,
-  OrdemServico,
-  OrdemServicoInput,
-  Reclamacao,
-  ReclamacaoInput,
+  Padrao,
+  PadraoInput,
   RegistroAuditoria,
   RespostaLogin,
   ResultadoSenha,
-  StatusMaquina,
-  TipoMaquina,
+  ResumoPainel,
   TrocaSenha,
   Usuario,
   UsuarioSessao,
+  Vencimento,
 } from '#shared/tipos.ts'
 
 /** Configuração do envio de e-mail como a tela recebe (sem a senha). */
@@ -47,20 +43,65 @@ export interface ConfigEmail {
 /** Para gravar: a senha em branco mantém a que já está no servidor. */
 export type ConfigEmailEntrada = Omit<ConfigEmail, 'senhaDefinida' | 'configurado'> & { senha: string }
 
-export interface EmailParaEnviar {
-  /** Um ou mais e-mails separados por vírgula ou ponto e vírgula. */
-  para: string
-  assunto: string
-  texto: string
-  anexos?: Array<{ nome: string; tipo: string; /** base64 */ conteudo: string }>
+/** Pessoa da equipe (técnico ou signatário) para os campos da calibração. */
+export interface MembroEquipe {
+  id: string
+  nome: string
+  cargo: string
+  signatario: boolean
+  temAssinatura: boolean
 }
 
-/** Resultado do ajuste da quantidade de máquinas de um tipo. */
-export interface ResultadoAjuste {
-  criadas: Maquina[]
-  /** Ids das máquinas apagadas (não tinham histórico). */
-  excluidas: string[]
-  desativadas: Maquina[]
+export interface DetalheCliente {
+  cliente: Cliente
+  balancas: BalancaResumo[]
+  calibracoes: CalibracaoResumo[]
+  envios: Envio[]
+}
+
+export interface DetalheBalanca {
+  balanca: Balanca
+  cliente: Cliente | undefined
+  calibracoes: CalibracaoResumo[]
+}
+
+export interface DetalheCalibracao {
+  calibracao: Calibracao
+  cliente: Cliente | undefined
+  balanca: Balanca | undefined
+  padroes: Padrao[]
+  envios: Envio[]
+  /** O que falta para emitir (vazio = pode emitir). */
+  pendencias: string[]
+}
+
+export interface FiltroCalibracoesTela {
+  status?: string
+  clienteId?: string
+  balancaId?: string
+  busca?: string
+  de?: string
+  ate?: string
+  pagina?: number
+  limite?: number
+}
+
+export interface InfoBackup {
+  arquivo: string
+  tamanho: number
+  criadoEm: string
+}
+
+/** Resposta pública da verificação de autenticidade (QR code). */
+export interface VerificacaoCertificado {
+  numero: string
+  status: string
+  dataCalibracao: string
+  dataEmissao: string
+  cliente: string
+  balanca: string
+  numeroSerie: string
+  hashPdf: string
 }
 
 /** Erro devolvido pelo servidor (ou falta de conexão, com `status` 0). */
@@ -143,96 +184,106 @@ async function requisitar<T>(metodo: string, caminho: string, corpo?: unknown, t
   }
 }
 
+const consulta = (f: object) => {
+  const p = new URLSearchParams()
+  for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== '' && v !== null) p.set(k, String(v))
+  const t = p.toString()
+  return t ? `?${t}` : ''
+}
+
 export const api = {
-  dados: () => requisitar<DadosCompletos>('GET', '/api/dados'),
-
-  criarCliente: (dados: ClienteInput) => requisitar<Cliente>('POST', '/api/clientes', dados),
+  // ---- Clientes ----
+  clientes: (f: { busca?: string; inativos?: boolean } = {}) =>
+    requisitar<{ clientes: ClienteResumo[] }>('GET', `/api/clientes${consulta({ ...f, inativos: f.inativos ? 1 : '' })}`),
+  cliente: (id: string) => requisitar<DetalheCliente>('GET', `/api/clientes/${enc(id)}`),
+  criarCliente: (dados: ClienteInput) => requisitar<{ cliente: Cliente }>('POST', '/api/clientes', dados),
   atualizarCliente: (id: string, dados: ClienteInput, versao?: number) =>
-    requisitar<Cliente>('PUT', `/api/clientes/${encodeURIComponent(id)}`, { ...dados, versao }),
-  excluirCliente: (id: string) => requisitar<void>('DELETE', `/api/clientes/${encodeURIComponent(id)}`),
+    requisitar<{ cliente: Cliente }>('PUT', `/api/clientes/${enc(id)}`, { ...dados, versao }),
+  excluirCliente: (id: string) => requisitar<void>('DELETE', `/api/clientes/${enc(id)}`),
 
-  criarEvento: (dados: EventoInput) => requisitar<Evento>('POST', '/api/eventos', dados),
-  atualizarEvento: (id: string, dados: EventoInput, versao?: number) =>
-    requisitar<Evento>('PUT', `/api/eventos/${encodeURIComponent(id)}`, { ...dados, versao }),
-  alterarEvento: (id: string, patch: EventoPatch) => requisitar<Evento>('PATCH', `/api/eventos/${encodeURIComponent(id)}`, patch),
-  duplicarEvento: (id: string) => requisitar<Evento>('POST', `/api/eventos/${encodeURIComponent(id)}/duplicar`),
-  /** Cria uma cópia do evento para cada data de início (ver Repositorio.repetirEvento). */
-  repetirEvento: (id: string, datas: string[]) =>
-    requisitar<{ original: Evento; criados: Evento[] }>('POST', `/api/eventos/${encodeURIComponent(id)}/repetir`, { datas }),
-  excluirEvento: (id: string) => requisitar<void>('DELETE', `/api/eventos/${encodeURIComponent(id)}`),
+  // ---- Balanças ----
+  balancas: (f: { clienteId?: string; busca?: string; inativas?: boolean } = {}) =>
+    requisitar<{ balancas: BalancaResumo[] }>('GET', `/api/balancas${consulta({ ...f, inativas: f.inativas ? 1 : '' })}`),
+  balanca: (id: string) => requisitar<DetalheBalanca>('GET', `/api/balancas/${enc(id)}`),
+  criarBalanca: (dados: BalancaInput) => requisitar<{ balanca: Balanca }>('POST', '/api/balancas', dados),
+  atualizarBalanca: (id: string, dados: BalancaInput, versao?: number) =>
+    requisitar<{ balanca: Balanca }>('PUT', `/api/balancas/${enc(id)}`, { ...dados, versao }),
+  excluirBalanca: (id: string) => requisitar<void>('DELETE', `/api/balancas/${enc(id)}`),
 
-  criarMaquina: (dados: MaquinaInput) => requisitar<Maquina>('POST', '/api/maquinas', dados),
-  atualizarMaquina: (id: string, dados: MaquinaInput, versao?: number) =>
-    requisitar<Maquina>('PUT', `/api/maquinas/${encodeURIComponent(id)}`, { ...dados, versao }),
-  excluirMaquina: (id: string) => requisitar<void>('DELETE', `/api/maquinas/${encodeURIComponent(id)}`),
-  ajustarQuantidade: (tipo: TipoMaquina, quantidade: number) =>
-    requisitar<ResultadoAjuste>('POST', '/api/maquinas/quantidade', { tipo, quantidade }),
+  // ---- Padrões ----
+  padroes: (inativos = false) => requisitar<{ padroes: Padrao[] }>('GET', `/api/padroes${inativos ? '?inativos=1' : ''}`),
+  criarPadrao: (dados: PadraoInput) => requisitar<{ padrao: Padrao }>('POST', '/api/padroes', dados),
+  atualizarPadrao: (id: string, dados: PadraoInput, versao?: number) =>
+    requisitar<{ padrao: Padrao }>('PUT', `/api/padroes/${enc(id)}`, { ...dados, versao }),
+  excluirPadrao: (id: string) => requisitar<void>('DELETE', `/api/padroes/${enc(id)}`),
 
-  /** `statusMaquina` muda a situação da máquina junto (ex.: "Em manutenção" ao abrir a O.S.). */
-  criarOrdem: (dados: OrdemServicoInput, statusMaquina?: StatusMaquina) =>
-    requisitar<OrdemServico>('POST', '/api/ordens', { ...dados, statusMaquina }),
-  atualizarOrdem: (id: string, dados: OrdemServicoInput, versao?: number, statusMaquina?: StatusMaquina) =>
-    requisitar<OrdemServico>('PUT', `/api/ordens/${encodeURIComponent(id)}`, { ...dados, versao, statusMaquina }),
-  excluirOrdem: (id: string) => requisitar<void>('DELETE', `/api/ordens/${encodeURIComponent(id)}`),
+  // ---- Calibrações e certificados ----
+  calibracoes: (f: FiltroCalibracoesTela = {}) =>
+    requisitar<{ itens: CalibracaoResumo[]; total: number }>('GET', `/api/calibracoes${consulta(f)}`),
+  calibracao: (id: string) => requisitar<DetalheCalibracao>('GET', `/api/calibracoes/${enc(id)}`),
+  criarCalibracao: (dados: Partial<CalibracaoInput>) => requisitar<{ calibracao: Calibracao }>('POST', '/api/calibracoes', dados),
+  salvarCalibracao: (id: string, dados: CalibracaoInput, versao?: number) =>
+    requisitar<{ calibracao: Calibracao; pendencias: string[] }>('PUT', `/api/calibracoes/${enc(id)}`, { ...dados, versao }),
+  excluirCalibracao: (id: string) => requisitar<void>('DELETE', `/api/calibracoes/${enc(id)}`),
+  mudarSituacao: (id: string, status: 'RASCUNHO' | 'REVISAO', versao?: number) =>
+    requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/situacao`, { status, versao }),
+  emitir: (id: string, dados: { signatarioId?: string; versao?: number }) =>
+    requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/emitir`, dados, 60_000),
+  cancelar: (id: string, motivo: string, versao?: number) =>
+    requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/cancelar`, { motivo, versao }),
+  revisar: (id: string, motivo: string) =>
+    requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/revisar`, { motivo }),
+  /** Nova calibração da mesma balança, com os mesmos pontos e padrões (sem as leituras). */
+  recalibrar: (id: string) => requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/recalibrar`, {}),
+  /** PDF do certificado emitido (ou a prévia de um rascunho, com marca d'água). */
+  urlPdf: (id: string, baixar = false) => `/api/calibracoes/${enc(id)}/pdf${baixar ? '?baixar=1' : ''}`,
+  /** Prévia do certificado com os dados ainda não salvos. */
+  previa: async (id: string, dados: CalibracaoInput): Promise<Blob> => {
+    const resp = await fetch(`/api/calibracoes/${enc(id)}/previa`, {
+      method: 'POST',
+      headers: { 'x-bc-calibracao': '1', 'Content-Type': 'application/json' },
+      body: JSON.stringify(dados),
+    })
+    if (!resp.ok) {
+      let json: Record<string, unknown> = {}
+      try {
+        json = await resp.json()
+      } catch {
+        /* sem JSON */
+      }
+      throw erroDaResposta(resp.status, '/api/calibracoes/previa', json)
+    }
+    return resp.blob()
+  },
+  enviarCertificado: (id: string, dados: { para: string; assunto: string; texto: string }) =>
+    requisitar<{ ok: true; para: string[] }>('POST', `/api/calibracoes/${enc(id)}/email`, dados, 120_000),
+  enviarLembrete: (dados: { clienteId: string; balancas: string[]; para: string; assunto: string; texto: string }) =>
+    requisitar<{ ok: true; para: string[] }>('POST', '/api/lembretes', dados, 120_000),
+  verificar: (codigo: string) => requisitar<VerificacaoCertificado>('GET', `/api/verificar/${enc(codigo)}`),
 
-  salvarConfig: (config: Configuracoes) => requisitar<Configuracoes>('PUT', '/api/config', config),
-  /** Lista de serviços de manutenção cadastrados (gravada à parte das outras configurações). */
-  salvarServicos: (servicos: string[]) => requisitar<Configuracoes>('PUT', '/api/config/servicos', { servicos }),
-
-  criarReclamacao: (dados: ReclamacaoInput) => requisitar<Reclamacao>('POST', '/api/reclamacoes', dados),
-  atualizarReclamacao: (id: string, dados: ReclamacaoInput, versao?: number) =>
-    requisitar<Reclamacao>('PUT', `/api/reclamacoes/${encodeURIComponent(id)}`, { ...dados, versao }),
-  excluirReclamacao: (id: string) => requisitar<void>('DELETE', `/api/reclamacoes/${encodeURIComponent(id)}`),
-
-  /** Endereço do arquivo anexado: mostra na tela (imagens, PDF, texto) ou, com `baixar`, salva no computador. */
-  urlAnexo: (id: string, baixar = false) => `/api/anexos/${encodeURIComponent(id)}${baixar ? '?baixar=1' : ''}`,
-  enviarAnexo,
-  excluirAnexo: (id: string) => requisitar<void>('DELETE', `/api/anexos/${encodeURIComponent(id)}`),
-
-  /** Gera o contrato de locação do evento (os dados ficam congelados no servidor). */
-  criarContrato: (dados: NovoContrato) => requisitar<Contrato>('POST', '/api/contratos', dados),
-  /** Assinar (com a data), cancelar (com o motivo) ou reabrir o contrato. */
-  alterarContrato: (
-    id: string,
-    mudanca: { acao: 'assinar'; data?: string } | { acao: 'cancelar'; motivo?: string } | { acao: 'reabrir' },
-    versao?: number,
-  ) => requisitar<Contrato>('PATCH', `/api/contratos/${encodeURIComponent(id)}`, { ...mudanca, versao }),
-  /** Endereço do contrato assinado: mostra na tela ou, com `baixar`, salva no computador. */
-  urlContratoAssinado: (id: string, baixar = false) =>
-    `/api/contratos/${encodeURIComponent(id)}/arquivo${baixar ? '?baixar=1' : ''}`,
-  enviarContratoAssinado,
-  removerContratoAssinado: (id: string) => requisitar<Contrato>('DELETE', `/api/contratos/${encodeURIComponent(id)}/arquivo`),
-  excluirContrato: (id: string) => requisitar<void>('DELETE', `/api/contratos/${encodeURIComponent(id)}`),
+  // ---- Geral ----
+  config: () => requisitar<{ config: Configuracoes }>('GET', '/api/config'),
+  salvarConfig: (config: Configuracoes) => requisitar<{ config: Configuracoes }>('PUT', '/api/config', config),
+  painel: () => requisitar<{ painel: ResumoPainel }>('GET', '/api/painel'),
+  vencimentos: (dias?: number | 'todos') =>
+    requisitar<{ vencimentos: Vencimento[] }>('GET', `/api/vencimentos${dias !== undefined ? `?dias=${dias}` : ''}`),
+  equipe: () => requisitar<{ equipe: MembroEquipe[] }>('GET', '/api/equipe'),
 
   configEmail: () => requisitar<ConfigEmail>('GET', '/api/email/config'),
   salvarConfigEmail: (c: ConfigEmailEntrada) => requisitar<ConfigEmail>('PUT', '/api/email/config', c),
   esquecerConfigEmail: () => requisitar<void>('DELETE', '/api/email/config'),
   testarEmail: (para: string) => requisitar<{ ok: true }>('POST', '/api/email/teste', { para }, 60_000),
-  /** Envia pelo servidor SMTP configurado (PDF em base64 nos anexos). */
-  enviarEmail: (email: EmailParaEnviar) => requisitar<{ ok: true; para: string[] }>('POST', '/api/email/enviar', email, 120_000),
 
-  backup: () => requisitar<Backup>('GET', '/api/backup'),
-  restaurar: (dados: unknown) =>
-    requisitar<{ clientes: number; eventos: number; maquinas: number }>('POST', '/api/backup/restaurar', dados, 120_000),
-  backupsAutomaticos: () =>
-    requisitar<{ backups: Array<{ arquivo: string; tamanho: number; criadoEm: string }> }>('GET', '/api/backups'),
-  copiaAgora: () =>
-    requisitar<{ backups: Array<{ arquivo: string; tamanho: number; criadoEm: string }> }>('POST', '/api/backups'),
-  /** Acrescenta os dados de um backup sem apagar os do servidor. */
-  mesclar: (dados: unknown) =>
-    requisitar<{ clientes: number; eventos: number; maquinas: number; ordens: number; ignorados: number }>(
-      'POST',
-      '/api/backup/mesclar',
-      dados,
-      120_000,
-    ),
-  carregarExemplo: () => requisitar<{ ok: true }>('POST', '/api/exemplo'),
-  limparTudo: () => requisitar<{ ok: true }>('POST', '/api/limpar', { confirmacao: 'APAGAR' }),
+  backups: () => requisitar<{ backups: InfoBackup[]; pasta: string }>('GET', '/api/backups'),
+  copiaAgora: () => requisitar<{ arquivo: string }>('POST', '/api/backups', undefined, 120_000),
+  urlBackup: (arquivo: string) => `/api/backups/${enc(arquivo)}`,
 
   // ---- Sessão e usuários ----
   /** Quem está usando este navegador. `uso` conta como atividade (renova o prazo da sessão). */
   sessao: (uso = false) => requisitar<EstadoSessao>('GET', uso ? '/api/sessao?uso=1' : '/api/sessao'),
   entrar: (e: EntradaLogin) => requisitar<RespostaLogin>('POST', '/api/sessao', e),
+  primeiroAcesso: (e: { nome: string; login: string; senha: string; cargo: string; registro: string }) =>
+    requisitar<RespostaLogin>('POST', '/api/primeiro-acesso', e),
   sair: () => requisitar<void>('DELETE', '/api/sessao'),
   trocarMinhaSenha: (e: TrocaSenha) => requisitar<{ usuario: UsuarioSessao }>('PUT', '/api/minha-senha', e),
   usuarios: () => requisitar<{ usuarios: Usuario[] }>('GET', '/api/usuarios'),
@@ -248,7 +299,7 @@ export const api = {
   auditoria: (f: FiltroAuditoria) =>
     requisitar<{ registros: RegistroAuditoria[] }>('GET', `/api/auditoria?${consultaAuditoria(f)}`),
 
-  /** Requisição genérica para módulos opcionais (consultas, Google Agenda). */
+  /** Requisição genérica (consultas de CNPJ/CEP). */
   get: <T>(caminho: string, timeoutMs?: number) => requisitar<T>('GET', caminho, undefined, timeoutMs),
   enviar: <T>(metodo: 'POST' | 'PUT' | 'DELETE', caminho: string, corpo?: unknown, timeoutMs?: number) =>
     requisitar<T>(metodo, caminho, corpo, timeoutMs),
@@ -266,54 +317,6 @@ export function consultaAuditoria(f: FiltroAuditoria): string {
   const p = new URLSearchParams()
   for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== '') p.set(k, String(v))
   return p.toString()
-}
-
-/** Tamanho máximo de cada arquivo anexado (o mesmo do servidor). */
-export const LIMITE_ANEXO = 25 * 1024 * 1024
-
-/**
- * Envia um arquivo para o evento. Usa XMLHttpRequest para informar o progresso do envio
- * (`aoProgresso` recebe de 0 a 1).
- */
-function enviarAnexo(eventoId: string, arquivo: File | Blob, nome: string, aoProgresso?: (fracao: number) => void) {
-  return enviarArquivo<Anexo>(`/api/eventos/${encodeURIComponent(eventoId)}/anexos`, arquivo, nome, aoProgresso)
-}
-
-/** Envia o contrato assinado (foto ou PDF); o contrato que esperava a assinatura passa a assinado. */
-function enviarContratoAssinado(id: string, arquivo: File | Blob, nome: string, aoProgresso?: (fracao: number) => void) {
-  return enviarArquivo<Contrato>(`/api/contratos/${encodeURIComponent(id)}/arquivo`, arquivo, nome, aoProgresso)
-}
-
-/** Envia um arquivo cru (sem multipart), com nome e tipo nos cabeçalhos e o progresso do envio. */
-function enviarArquivo<T>(url: string, arquivo: File | Blob, nome: string, aoProgresso?: (fracao: number) => void) {
-  return new Promise<T>((ok, falha) => {
-    if (arquivo.size > LIMITE_ANEXO) {
-      falha(new ErroApi(413, 'Arquivo muito grande (o limite é 25 MB).'))
-      return
-    }
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', url)
-    xhr.setRequestHeader('x-bc-calibracao', '1')
-    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
-    xhr.setRequestHeader('x-nome', encodeURIComponent(nome))
-    xhr.setRequestHeader('x-tipo', arquivo.type || 'application/octet-stream')
-    xhr.timeout = 10 * 60_000
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) aoProgresso?.(e.loaded / e.total)
-    }
-    xhr.onload = () => {
-      let json: Record<string, unknown> = {}
-      try {
-        json = JSON.parse(xhr.responseText)
-      } catch {
-        /* resposta sem JSON */
-      }
-      if (xhr.status >= 200 && xhr.status < 300) ok(json as unknown as T)
-      else falha(erroDaResposta(xhr.status, url, json))
-    }
-    xhr.onerror = xhr.ontimeout = () => falha(new ErroApi(0, SEM_CONEXAO))
-    xhr.send(arquivo)
-  })
 }
 
 /** Mensagem de boas-vindas da conexão em tempo real. */

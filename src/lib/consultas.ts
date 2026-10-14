@@ -110,7 +110,7 @@ export const rotuloSituacao = (situacao: string) =>
 // ---- Preenchimento do formulário -------------------------------------------------
 
 /** Campos do cliente preenchidos pela consulta de CNPJ. */
-export function camposDoCnpj(d: DadosCnpj, agoraIso: string): Partial<ClienteInput> {
+export function camposDoCnpj(d: DadosCnpj): Partial<ClienteInput> {
   return {
     razaoSocial: d.razaoSocial,
     nome: d.nomeSugerido,
@@ -124,7 +124,6 @@ export function camposDoCnpj(d: DadosCnpj, agoraIso: string): Partial<ClienteInp
     cidade: d.cidade,
     uf: d.uf,
     situacaoCadastral: d.situacaoCadastral,
-    consultadoEm: agoraIso,
   }
 }
 
@@ -135,7 +134,7 @@ export function camposDoCnpj(d: DadosCnpj, agoraIso: string): Partial<ClienteInp
  * e ficam de fora (só são preenchidos se estiverem vazios).
  */
 export function valoresDaConsultaAnterior(cliente?: Cliente): Partial<ClienteInput> {
-  if (!cliente || cliente.tipo !== 'PJ' || !cliente.consultadoEm) return {}
+  if (!cliente || cliente.tipo !== 'PJ' || !cliente.situacaoCadastral) return {}
   const campos = ['razaoSocial', 'cep', 'logradouro', 'numero', 'complemento', 'bairro', 'cidade', 'uf'] as const
   return Object.fromEntries(campos.map((k) => [k, cliente[k]]))
 }
@@ -146,7 +145,7 @@ export function camposMantidos(form: ClienteInput, novos: Partial<ClienteInput>)
 }
 
 /** Campos que só a consulta preenche: sempre são atualizados. */
-const SEMPRE: Array<keyof ClienteInput> = ['situacaoCadastral', 'consultadoEm']
+const SEMPRE: Array<keyof ClienteInput> = ['situacaoCadastral']
 
 /**
  * Aplica os dados de uma consulta ao formulário.
@@ -206,24 +205,15 @@ export function mesclarCep<T extends Pick<ClienteInput, 'logradouro' | 'bairro' 
  */
 export function trocarTipoCliente(atual: ClienteInput, tipo: TipoCliente): ClienteInput {
   if (tipo === atual.tipo) return atual
-  const semDadosDeEmpresa = { razaoSocial: '', responsavel: '', situacaoCadastral: '', consultadoEm: '' }
-  if (tipo === 'AVULSO') {
+  if (tipo === 'PF')
     return {
       ...atual,
-      ...semDadosDeEmpresa,
+      razaoSocial: '',
+      inscricaoEstadual: '',
+      situacaoCadastral: '',
       tipo,
-      documento: '',
-      email: '',
-      cep: '',
-      logradouro: '',
-      numero: '',
-      complemento: '',
-      bairro: '',
-      // O avulso não tem campo de UF: sem cidade, a UF que sobrou viraria um endereço "SP" sozinho
-      uf: atual.cidade.trim() ? atual.uf : '',
+      documento: mascaraDocumento(atual.documento, 'PF'),
     }
-  }
-  if (tipo === 'PF') return { ...atual, ...semDadosDeEmpresa, tipo, documento: mascaraDocumento(atual.documento, 'PF') }
   return { ...atual, tipo, documento: mascaraDocumento(atual.documento, 'PJ') }
 }
 
@@ -252,10 +242,9 @@ export function acharDuplicado<C extends Pick<Cliente, 'id' | 'documento'>>(
  * O 409 de conflito de versão (outra pessoa salvou antes) vem com `atual` e devolve `null`.
  */
 export function duplicadoDoErro(e: unknown): { id: string; nome: string } | null {
-  if (!(e instanceof ErroApi) || e.status !== 409) return null
-  const d = e.dados.duplicado as { id?: unknown; nome?: unknown } | undefined
-  if (!d || typeof d.id !== 'string') return null
-  return { id: d.id, nome: typeof d.nome === 'string' ? d.nome : '' }
+  if (!(e instanceof ErroApi) || e.status !== 409 || e.dados.codigo !== 'DOCUMENTO_REPETIDO') return null
+  if (typeof e.dados.id !== 'string') return null
+  return { id: e.dados.id, nome: typeof e.dados.nome === 'string' ? e.dados.nome : '' }
 }
 
 // ---- Rótulos do cadastro -------------------------------------------------------
@@ -263,7 +252,6 @@ export function duplicadoDoErro(e: unknown): { id: string; nome: string } | null
 export const ROTULO_TIPO_CLIENTE: Record<TipoCliente, string> = {
   PJ: 'Empresa',
   PF: 'Pessoa física',
-  AVULSO: 'Avulso',
 }
 
 /** `true` quando a empresa tem situação consultada e ela não é ATIVA. */

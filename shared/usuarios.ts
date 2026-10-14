@@ -101,6 +101,31 @@ function lerNome(v: unknown, erros: string[]): string {
   return nome
 }
 
+/** Cargo, registro profissional: textos curtos de uma linha. */
+const linha = (v: unknown, max: number) =>
+  texto(v)
+    .normalize('NFC')
+    .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max)
+
+/** Assinatura digitalizada: só imagem PNG ou JPEG em data URL, até ~220 KB. */
+export const ASSINATURA_MAX = 300_000
+function lerAssinatura(v: unknown, erros: string[]): string {
+  const s = texto(v)
+  if (!s) return ''
+  if (!/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(s)) {
+    erros.push('A assinatura precisa ser uma imagem PNG ou JPEG.')
+    return ''
+  }
+  if (s.length > ASSINATURA_MAX) {
+    erros.push('A imagem da assinatura é muito grande. Use uma imagem menor (até 200 KB).')
+    return ''
+  }
+  return s
+}
+
 /** POST /api/usuarios (só o administrador: a senha é de outra pessoa). Senha vazia: o servidor gera uma temporária. */
 export function normalizarNovoUsuario(e: unknown): Resultado<NovoUsuario> {
   const r = obj(e)
@@ -115,7 +140,18 @@ export function normalizarNovoUsuario(e: unknown): Resultado<NovoUsuario> {
     const erroSenha = validarSenhaNova(senha, { login, nome }, { deOutraPessoa: true })
     if (erroSenha) erros.push(erroSenha)
   }
-  return { valor: { nome, login, nivel, senha }, erros }
+  return {
+    valor: {
+      nome,
+      login,
+      nivel,
+      senha,
+      signatario: r.signatario === true,
+      cargo: linha(r.cargo, 80),
+      registro: linha(r.registro, 60),
+    },
+    erros,
+  }
 }
 
 /** PUT /api/usuarios/:id: só os campos presentes no corpo. */
@@ -126,12 +162,19 @@ export function normalizarAlteracaoUsuario(e: unknown): Resultado<AlteracaoUsuar
   if ('nome' in r) valor.nome = lerNome(r.nome, erros)
   if ('nivel' in r) {
     if (NIVEIS.includes(r.nivel as NivelUsuario)) valor.nivel = r.nivel as NivelUsuario
-    else erros.push('Nível inválido. Escolha Administrador ou Comum.')
+    else erros.push('Nível inválido. Escolha Administrador ou Técnico.')
   }
   if ('ativo' in r) {
     if (typeof r.ativo === 'boolean') valor.ativo = r.ativo
     else erros.push('Situação inválida: informe se o usuário fica ativo ou desativado.')
   }
+  if ('signatario' in r) {
+    if (typeof r.signatario === 'boolean') valor.signatario = r.signatario
+    else erros.push('Informe se o usuário é signatário.')
+  }
+  if ('cargo' in r) valor.cargo = linha(r.cargo, 80)
+  if ('registro' in r) valor.registro = linha(r.registro, 60)
+  if ('assinatura' in r) valor.assinatura = lerAssinatura(r.assinatura, erros)
   if ('versao' in r) {
     if (Number.isSafeInteger(r.versao) && (r.versao as number) >= 1) valor.versao = r.versao as number
     else erros.push('Versão do usuário inválida. Feche e abra de novo.')
@@ -155,7 +198,8 @@ export const GRUPOS_AUDITORIA: Record<GrupoAuditoria, readonly AcaoAuditoria[]> 
     'SESSOES_ENCERRADAS',
     'FERRAMENTA_LOCAL',
   ],
-  dados: ['COPIA_RESTAURADA', 'BACKUP_BAIXADO', 'BACKUP_RESTAURADO', 'BACKUP_MESCLADO', 'DADOS_APAGADOS'],
+  certificados: ['CERTIFICADO_EMITIDO', 'CERTIFICADO_CANCELADO', 'CERTIFICADO_ENVIADO'],
+  dados: ['COPIA_RESTAURADA', 'BACKUP_BAIXADO'],
   alteracoes: ['ALTERACAO'],
 }
 
@@ -163,6 +207,7 @@ export const GRUPOS_AUDITORIA: Record<GrupoAuditoria, readonly AcaoAuditoria[]> 
 export const ROTULO_GRUPO_AUDITORIA: Record<GrupoAuditoria, string> = {
   acessos: 'Acessos',
   usuarios: 'Usuários',
+  certificados: 'Certificados',
   dados: 'Cópias e dados',
   alteracoes: 'Alterações',
 }
@@ -182,8 +227,8 @@ export const ROTULO_ACAO_AUDITORIA: Record<AcaoAuditoria, string> = {
   FERRAMENTA_LOCAL: 'Ajuste de usuário no computador do servidor',
   COPIA_RESTAURADA: 'Restaurou uma cópia do banco de dados',
   BACKUP_BAIXADO: 'Baixou uma cópia de segurança',
-  BACKUP_RESTAURADO: 'Restaurou uma cópia de segurança',
-  BACKUP_MESCLADO: 'Juntou uma cópia de segurança aos dados',
-  DADOS_APAGADOS: 'Apagou todos os dados',
+  CERTIFICADO_EMITIDO: 'Emitiu um certificado',
+  CERTIFICADO_CANCELADO: 'Cancelou um certificado',
+  CERTIFICADO_ENVIADO: 'Enviou um certificado por e-mail',
   ALTERACAO: 'Alterou os dados',
 }

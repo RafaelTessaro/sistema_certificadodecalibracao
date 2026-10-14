@@ -1,31 +1,15 @@
-import {
-  CalendarPlus,
-  ClipboardPlus,
-  CornerDownLeft,
-  FilePenLine,
-  KeyRound,
-  LogOut,
-  Search,
-  Ticket,
-  UserPlus,
-} from 'lucide-react'
+import { Building2, CornerDownLeft, FileBadge2, FilePlus2, KeyRound, LogOut, Scale, Search, UserPlus, Weight } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { create } from 'zustand'
-import { calcularEvento } from '#shared/calc.ts'
-import { codigoContrato } from '#shared/contrato.ts'
-import { ESTADO_MAQUINA, localDaLocacao, TIPO_MAQUINA } from '#shared/maquinas.ts'
+import { formatarDataBr, STATUS_CALIBRACAO } from '#shared/dominio.ts'
+import type { BalancaResumo, CalibracaoResumo, ClienteResumo } from '#shared/tipos.ts'
+import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
-import { contratoCombina, STATUS_CONTRATO } from '../../lib/contratos'
-import { codigoEvento, normalizar, periodo } from '../../lib/format'
-import { useHoje } from '../../lib/hoje'
-import { maquinaCombina, USO_RESERVA_CURTO, usoDaReserva } from '../../lib/manutencao'
-import { useDados } from '../../store/dados'
-import { usePode, useSessao } from '../../store/sessao'
-import { IconeMaquinaFichas } from '../IconeMaquinaFichas'
-import { TipoMaquinaBadge, useSituacoes } from '../Maquinas'
+import { normalizar } from '../../lib/format'
+import { useSessao } from '../../store/sessao'
 import { abrirMinhaSenha } from '../sessao/minhaSenha'
 import { Avatar } from '../ui/Misc'
 import { paginasDoNivel } from './nav'
@@ -47,7 +31,7 @@ interface Resultado {
   ir: () => void
 }
 
-/** Busca global (Ctrl/⌘ + K): páginas, ações, clientes, eventos, contratos e máquinas. */
+/** Busca global (Ctrl/⌘ + K): páginas, ações, clientes, balanças e certificados. */
 export function CommandPalette() {
   const { aberta, abrir, fechar } = usePaleta()
 
@@ -66,20 +50,51 @@ export function CommandPalette() {
   return createPortal(<AnimatePresence>{aberta && <Paleta fechar={fechar} />}</AnimatePresence>, document.body)
 }
 
+interface Encontrados {
+  clientes: ClienteResumo[]
+  balancas: BalancaResumo[]
+  calibracoes: CalibracaoResumo[]
+}
+
+/** Busca no servidor (com uma pequena espera enquanto a pessoa digita). */
+function useBuscaGlobal(q: string): Encontrados {
+  const [encontrados, setEncontrados] = useState<Encontrados>({ clientes: [], balancas: [], calibracoes: [] })
+  useEffect(() => {
+    const termo = q.trim()
+    if (termo.length < 2) {
+      setEncontrados({ clientes: [], balancas: [], calibracoes: [] })
+      return
+    }
+    let ativo = true
+    const t = setTimeout(() => {
+      Promise.all([
+        api.clientes({ busca: termo }).then((r) => r.clientes.slice(0, 6)),
+        api.balancas({ busca: termo }).then((r) => r.balancas.slice(0, 6)),
+        api.calibracoes({ busca: termo, limite: 8 }).then((r) => r.itens),
+      ])
+        .then(([clientes, balancas, calibracoes]) => {
+          if (ativo) setEncontrados({ clientes, balancas, calibracoes })
+        })
+        .catch(() => {
+          /* sem conexão: a busca só não mostra resultados */
+        })
+    }, 180)
+    return () => {
+      ativo = false
+      clearTimeout(t)
+    }
+  }, [q])
+  return encontrados
+}
+
 function Paleta({ fechar }: { fechar: () => void }) {
   const [q, setQ] = useState('')
   const [ativo, setAtivo] = useState(0)
   const navegar = useNavigate()
-  const clientes = useDados((s) => s.clientes)
-  const eventos = useDados((s) => s.eventos)
-  const maquinas = useDados((s) => s.maquinas)
-  const contratos = useDados((s) => s.contratos)
-  const situacoes = useSituacoes()
-  const hoje = useHoje()
   const lista = useRef<HTMLDivElement>(null)
   const nivel = useSessao((s) => s.usuario?.nivel)
   const sair = useSessao((s) => s.sair)
-  const podeFrota = usePode('gerenciarFrota')
+  const { clientes, balancas, calibracoes } = useBuscaGlobal(q)
 
   const resultados = useMemo<Resultado[]>(() => {
     const termo = normalizar(q)
@@ -92,43 +107,40 @@ function Paleta({ fechar }: { fechar: () => void }) {
 
     const acoes: Resultado[] = [
       {
-        id: 'a-ev',
+        id: 'a-cal',
         grupo: 'Ações rápidas',
-        titulo: 'Novo evento',
-        icone: <CalendarPlus className="h-4 w-4" />,
-        ir: ir('/eventos/novo'),
+        titulo: 'Nova calibração',
+        detalhe: 'Registrar os ensaios e emitir o certificado',
+        chaves: 'certificado calibrar emitir',
+        icone: <FilePlus2 className="h-4 w-4" />,
+        ir: ir('/calibracoes/nova'),
       },
       {
         id: 'a-cl',
         grupo: 'Ações rápidas',
         titulo: 'Novo cliente',
+        chaves: 'cadastrar empresa cnpj cpf',
         icone: <UserPlus className="h-4 w-4" />,
         ir: ir('/clientes?novo=1'),
       },
       {
-        id: 'a-os',
+        id: 'a-bal',
         grupo: 'Ações rápidas',
-        titulo: 'Nova manutenção',
-        detalhe: 'Registrar um serviço feito numa máquina',
-        chaves: 'os o.s. ordem de servico manutencao registrar limpeza higienizacao revisao conserto',
-        icone: <ClipboardPlus className="h-4 w-4" />,
-        ir: ir('/manutencao?nova=os'),
+        titulo: 'Nova balança',
+        chaves: 'cadastrar instrumento equipamento',
+        icone: <Scale className="h-4 w-4" />,
+        ir: ir('/balancas?nova=1'),
       },
-      ...(podeFrota
-        ? [
-            {
-              id: 'a-maq',
-              grupo: 'Ações rápidas',
-              titulo: 'Nova máquina',
-              chaves: 'cadastrar maquina p g',
-              icone: <IconeMaquinaFichas className="h-4 w-4" />,
-              ir: ir('/manutencao?nova=maquina'),
-            },
-          ]
-        : []),
+      {
+        id: 'a-pad',
+        grupo: 'Ações rápidas',
+        titulo: 'Novo padrão',
+        chaves: 'peso pesos padrao jogo termo higrometro',
+        icone: <Weight className="h-4 w-4" />,
+        ir: ir('/padroes?novo=1'),
+      },
     ]
-    // Sem máquinas cadastradas, não dá para registrar manutenção
-    out.push(...acoes.filter((a) => (a.id !== 'a-os' || maquinas.length) && casa(`${a.titulo} ${a.chaves ?? ''}`)))
+    out.push(...acoes.filter((a) => casa(`${a.titulo} ${a.chaves ?? ''}`)))
     out.push(
       ...paginasDoNivel(nivel)
         .filter((p) => casa(`${p.label} ${p.descricao}`))
@@ -168,91 +180,45 @@ function Paleta({ fechar }: { fechar: () => void }) {
       },
     ]
     if (termo) out.push(...conta.filter((a) => casa(`${a.titulo} ${a.chaves ?? ''}`)))
-    if (termo) {
-      const nomeCliente = new Map(clientes.map((c) => [c.id, c.nome]))
-      out.push(
-        ...clientes
-          .filter((c) => casa(`${c.nome} ${c.documento} ${c.responsavel} ${c.cidade}`))
-          .slice(0, 6)
-          .map((c) => ({
-            id: `c-${c.id}`,
-            grupo: 'Clientes',
-            titulo: c.nome,
-            detalhe: [c.cidade, c.telefone].filter(Boolean).join(' • '),
-            icone: <Avatar nome={c.nome} className="h-6 w-6 rounded-md text-[10px]" />,
-            ir: ir(`/clientes/${c.id}`),
-          })),
-      )
-      out.push(
-        ...eventos
-          .filter((e) => casa(`${e.nome} ${codigoEvento(e.codigo)} ${nomeCliente.get(e.clienteId) ?? ''}`))
-          .sort((a, b) => b.codigo - a.codigo)
-          .slice(0, 8)
-          .map((e) => {
-            const r = calcularEvento(e)
-            return {
-              id: `e-${e.id}`,
-              grupo: 'Eventos',
-              titulo: `${e.nome}`,
-              detalhe: `${codigoEvento(e.codigo)} • ${nomeCliente.get(e.clienteId) ?? '—'} • ${periodo(r.dataInicio, r.dataFim)}`,
-              icone: <Ticket className="h-4 w-4" />,
-              ir: ir(`/eventos/${e.id}`),
-            }
-          }),
-      )
-      // Contratos: pelo número ("7", "nº 0007"), pelo cliente ou pelo evento; abre a aba com ele em destaque
-      const eventoPorId = new Map(eventos.map((e) => [e.id, e]))
-      out.push(
-        ...contratos
-          .map((c) => {
-            const evento = eventoPorId.get(c.eventoId)
-            const cliente = nomeCliente.get(c.clienteId) ?? ''
-            return { c, evento, cliente }
-          })
-          .filter(({ c, evento, cliente }) => contratoCombina(c, q, `${cliente} ${evento?.nome ?? ''}`))
-          .slice(0, 6)
-          .map(({ c, evento, cliente }) => ({
-            id: `k-${c.id}`,
-            grupo: 'Contratos',
-            titulo: `Contrato ${codigoContrato(c.numero)}`,
-            detalhe: [
-              cliente || c.dados.cliente.fantasia || c.dados.cliente.nome,
-              evento?.nome ?? `${c.dados.evento.nome} (excluído)`,
-              STATUS_CONTRATO[c.status].label,
-            ]
-              .filter(Boolean)
-              .join(' • '),
-            icone: <FilePenLine className="h-4 w-4" />,
-            ir: ir(`/contratos?contrato=${c.id}`),
-          })),
-      )
-      out.push(
-        ...maquinas
-          // "reserva" acha as máquinas que estão hoje com algum cliente como reserva
-          .filter((m) => maquinaCombina(m, q) || (/^reservas?$/.test(termo) && !!situacoes.get(m.id)?.reserva))
-          .slice(0, 6)
-          .map((m) => {
-            const sit = situacoes.get(m.id)
-            const locada = sit?.evento && sit.estado === 'LOCADA' ? sit.evento : undefined
-            // Como reserva: "Locada · reserva · Festa X (parada com o cliente)"
-            const onde = !locada
-              ? ''
-              : sit?.reserva
-                ? ` · reserva · ${localDaLocacao(locada)} (${USO_RESERVA_CURTO[usoDaReserva(locada, hoje)]})`
-                : ` · ${localDaLocacao(locada)}`
-            return {
-              id: `m-${m.id}`,
-              grupo: 'Máquinas',
-              titulo: m.identificacao,
-              detalhe: [`${ESTADO_MAQUINA[sit?.estado ?? m.status].label}${onde}`, TIPO_MAQUINA[m.tipo].label].join(' • '),
-              icone: <TipoMaquinaBadge tipo={m.tipo} />,
-              ir: ir(`/manutencao/${m.id}`),
-            }
-          }),
-      )
-    }
+    out.push(
+      ...calibracoes.map((k) => ({
+        id: `k-${k.id}`,
+        grupo: 'Certificados',
+        titulo: k.numero ? `Certificado ${k.numero}` : `Calibração em andamento — ${k.clienteNome}`,
+        detalhe: [
+          k.clienteNome,
+          k.balancaDescricao,
+          STATUS_CALIBRACAO[k.status].label,
+          formatarDataBr(k.dataEmissao || k.dataCalibracao),
+        ]
+          .filter(Boolean)
+          .join(' • '),
+        icone: <FileBadge2 className="h-4 w-4" />,
+        ir: ir(k.status === 'RASCUNHO' || k.status === 'REVISAO' ? `/calibracoes/${k.id}/editar` : `/calibracoes/${k.id}`),
+      })),
+    )
+    out.push(
+      ...clientes.map((c) => ({
+        id: `c-${c.id}`,
+        grupo: 'Clientes',
+        titulo: c.nome,
+        detalhe: [c.documento, c.cidade, c.telefone].filter(Boolean).join(' • '),
+        icone: c.tipo === 'PJ' ? <Building2 className="h-4 w-4" /> : <Avatar nome={c.nome} className="h-6 w-6 rounded-md text-[10px]" />,
+        ir: ir(`/clientes/${c.id}`),
+      })),
+    )
+    out.push(
+      ...balancas.map((b) => ({
+        id: `b-${b.id}`,
+        grupo: 'Balanças',
+        titulo: [b.fabricante, b.modelo].filter(Boolean).join(' ') || 'Balança',
+        detalhe: [b.numeroSerie && `Série ${b.numeroSerie}`, b.identificacao, b.clienteNome].filter(Boolean).join(' • '),
+        icone: <Scale className="h-4 w-4" />,
+        ir: ir(`/balancas/${b.id}`),
+      })),
+    )
     return out
-  }, [q, clientes, eventos, contratos, maquinas, situacoes, hoje, navegar, fechar, nivel, sair, podeFrota])
+  }, [q, clientes, balancas, calibracoes, navegar, fechar, nivel, sair])
 
   useEffect(() => {
     lista.current?.querySelector<HTMLElement>(`[data-idx="${ativo}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -300,7 +266,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
                 fechar()
               }
             }}
-            placeholder="Buscar clientes, eventos, contratos, máquinas…"
+            placeholder="Buscar clientes, balanças, nº de série, certificados, OS…"
             className="h-14 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-muted"
           />
           <kbd className="rounded-md border border-line bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted">Esc</kbd>

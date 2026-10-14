@@ -1,15 +1,14 @@
-// Envio de e-mails (recibo e resumo do evento para o cliente) por um servidor SMTP da empresa.
+// Envio de e-mails (certificados e lembretes de calibração para o cliente) por um servidor SMTP da empresa.
 // A configuração fica só no servidor, no arquivo <pasta de dados>/email.json (fora do banco, para
 // a senha não ir nas cópias de backup): a senha nunca vai para os navegadores.
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { FastifyInstance } from 'fastify'
 import nodemailer, { type Transporter } from 'nodemailer'
 import { emailValido } from '#shared/dominio.ts'
 import { pode } from '#shared/permissoes.ts'
 import type { Contexto } from './contexto.ts'
-import { lerMeta } from './db.ts'
 import { ErroApi } from './erros.ts'
 
 export type SegurancaEmail = 'SSL' | 'STARTTLS' | 'NENHUMA'
@@ -47,7 +46,6 @@ export interface MensagemEmail {
 /** Cria o transporte SMTP (substituído nos testes). */
 export type CriarTransporte = (config: ConfigEmail) => Transporter
 
-const CHAVE = 'email'
 const VAZIA: ConfigEmail = {
   servidor: '',
   porta: 587,
@@ -59,15 +57,15 @@ const VAZIA: ConfigEmail = {
 }
 
 /**
- * Limites de segurança do envio: a tela só manda um PDF (recibo ou resumo); o limite por hora
- * impede que o SMTP da empresa seja usado para disparar e-mails em massa.
+ * Limites de segurança do envio: um PDF (o certificado, gerado pelo próprio servidor); o limite por
+ * hora impede que o SMTP da empresa seja usado para disparar e-mails em massa.
  */
 export const LIMITES_EMAIL = {
   destinatarios: 10,
   anexos: 1,
   bytesAnexos: 15 * 1024 * 1024,
   texto: 20_000,
-  enviosPorHora: 30,
+  enviosPorHora: 60,
 }
 
 const texto = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
@@ -99,18 +97,6 @@ export function gravarConfigEmail(ctx: Pick<Contexto, 'pastaDados'>, c: ConfigEm
 
 export function apagarConfigEmail(ctx: Pick<Contexto, 'pastaDados'>) {
   rmSync(arquivoConfig(ctx), { force: true })
-}
-
-/** Versões de teste da 2.3 guardavam a configuração no banco: passa para o arquivo e some do banco. */
-function migrarDoBanco(ctx: Pick<Contexto, 'pastaDados' | 'db'>) {
-  const antiga = lerMeta(ctx.db, CHAVE)
-  if (antiga === undefined) return
-  try {
-    if (!existsSync(arquivoConfig(ctx))) gravarConfigEmail(ctx, { ...VAZIA, ...JSON.parse(antiga) })
-  } catch {
-    /* configuração ilegível: só descarta */
-  }
-  ctx.db.prepare('DELETE FROM meta WHERE chave = ?').run(CHAVE)
 }
 
 export function configPublica(c: ConfigEmail): ConfigEmailPublica {
@@ -182,8 +168,8 @@ export function normalizarMensagem(entrada: unknown): MensagemEmail {
   if (!assunto) throw new ErroApi(400, 'Informe o assunto do e-mail.')
   const anexosBrutos = Array.isArray(r.anexos) ? r.anexos : []
   if (anexosBrutos.length > LIMITES_EMAIL.anexos) throw new ErroApi(400, 'Envie no máximo um PDF por e-mail.')
+  // Só o PDF gerado pelo sistema
   let total = 0
-  // Só o PDF gerado pelo sistema (recibo ou resumo do evento)
   const anexos = anexosBrutos.map((a) => {
     const x = (a && typeof a === 'object' ? a : {}) as Record<string, unknown>
     const conteudo = typeof x.conteudo === 'string' ? x.conteudo.replace(/\s/g, '') : ''
@@ -231,7 +217,6 @@ export function mensagemErroEmail(e: unknown): string {
 }
 
 export function criarModuloEmail(ctx: Contexto, criarTransporte: CriarTransporte = criarTransporteSmtp) {
-  migrarDoBanco(ctx)
   /** Horários (ms) dos envios da última hora. */
   let envios: number[] = []
 
@@ -292,12 +277,10 @@ export function criarModuloEmail(ctx: Contexto, criarTransporte: CriarTransporte
       return enviar({
         para,
         assunto: 'Teste de e-mail — BC Calibração',
-        texto: 'Este é um e-mail de teste do BC Calibração. Se chegou, o envio de recibos por e-mail está funcionando.',
+        texto: 'Este é um e-mail de teste do BC Calibração. Se chegou, o envio de certificados por e-mail está funcionando.',
         anexos: [],
       })
     })
-
-    app.post('/api/email/enviar', async (req) => enviar(normalizarMensagem(req.body)))
   }
 
   return { rotas, enviar }

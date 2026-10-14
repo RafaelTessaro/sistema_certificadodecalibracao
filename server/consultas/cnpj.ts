@@ -148,14 +148,81 @@ function interpretarCnpjWs(status: number, corpo: unknown): Interpretacao<DadosC
   )
 }
 
-/** Ordem de tentativa: BrasilAPI → CNPJ.ws → Minha Receita. */
+/** OpenCNPJ: telefones em lista ({ddd, numero, is_fax}) e e-mail em MAIÚSCULAS. */
+function interpretarOpenCnpj(status: number, corpo: unknown): Interpretacao<DadosCnpj> {
+  if (status === 404) return { tipo: 'naoEncontrado', definitivo: true }
+  if (status !== 200) return { tipo: 'falha', motivo: `HTTP ${status}` }
+  const j = comoObjeto(corpo)
+  const telefones = (Array.isArray(j.telefones) ? j.telefones : []).map(comoObjeto)
+  const fone = telefones.find((t) => !t.is_fax) ?? telefones[0] ?? {}
+  return montar(
+    {
+      cnpj: textoLimpo(j.cnpj),
+      razaoSocial: j.razao_social,
+      nomeFantasia: j.nome_fantasia,
+      situacao: j.situacao_cadastral,
+      dataAbertura: j.data_inicio_atividade,
+      atividade: comoObjeto(Array.isArray(j.cnaes) ? j.cnaes[0] : null).descricao ?? j.cnae_principal,
+      telefone: formatarTelefone(fone.ddd, fone.numero),
+      email: j.email,
+      cep: j.cep,
+      tipoLogradouro: j.tipo_logradouro,
+      logradouro: j.logradouro,
+      numero: j.numero,
+      complemento: j.complemento,
+      bairro: j.bairro,
+      cidade: j.municipio,
+      uf: j.uf,
+    },
+    'OpenCNPJ',
+  )
+}
+
+/** CNPJá (API aberta): empresa em `company`, endereço em `address`, telefones e e-mails em listas. */
+function interpretarCnpja(status: number, corpo: unknown): Interpretacao<DadosCnpj> {
+  if (status === 404) return { tipo: 'naoEncontrado', definitivo: true }
+  if (status !== 200) return { tipo: 'falha', motivo: `HTTP ${status}` }
+  const j = comoObjeto(corpo)
+  const a: Objeto = comoObjeto(j.address)
+  const fone = comoObjeto(Array.isArray(j.phones) ? j.phones[0] : null)
+  const email = comoObjeto(Array.isArray(j.emails) ? j.emails[0] : null)
+  return montar(
+    {
+      cnpj: textoLimpo(j.taxId),
+      razaoSocial: comoObjeto(j.company).name,
+      nomeFantasia: j.alias,
+      situacao: comoObjeto(j.status).text,
+      dataAbertura: j.founded,
+      atividade: comoObjeto(j.mainActivity).text,
+      telefone: formatarTelefone(fone.area, fone.number),
+      email: email.address,
+      cep: a.zip,
+      tipoLogradouro: '',
+      logradouro: a.street,
+      numero: a.number,
+      complemento: a.details,
+      bairro: a.district,
+      cidade: a.city,
+      uf: a.state,
+    },
+    'CNPJá',
+  )
+}
+
+/**
+ * Ordem de tentativa: OpenCNPJ → CNPJá → CNPJ.ws → BrasilAPI → Minha Receita.
+ * As três primeiras trazem telefone e e-mail; BrasilAPI e Minha Receita não trazem o e-mail
+ * (testado em 14/10/2026, docs/pesquisa/06-instalador-rede-apis.md).
+ */
 export const PROVEDORES_CNPJ: Provedor<DadosCnpj>[] = [
+  { nome: 'OpenCNPJ', url: (cnpj) => `https://api.opencnpj.org/${cnpj}`, interpretar: interpretarOpenCnpj },
+  { nome: 'CNPJá', url: (cnpj) => `https://open.cnpja.com/office/${cnpj}`, interpretar: interpretarCnpja },
+  { nome: 'CNPJ.ws', url: (cnpj) => `https://publica.cnpj.ws/cnpj/${cnpj}`, interpretar: interpretarCnpjWs },
   {
     nome: 'BrasilAPI',
     url: (cnpj) => `https://brasilapi.com.br/api/cnpj/v1/${cnpj}`,
     interpretar: interpretarFormatoReceita('BrasilAPI'),
   },
-  { nome: 'CNPJ.ws', url: (cnpj) => `https://publica.cnpj.ws/cnpj/${cnpj}`, interpretar: interpretarCnpjWs },
   {
     nome: 'Minha Receita',
     url: (cnpj) => `https://minhareceita.org/${cnpj}`,

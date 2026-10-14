@@ -1,20 +1,21 @@
-// Telas antes de usar o sistema: entrar, "falta criar o administrador" e a troca obrigatória da
-// senha temporária. Ficam fora do menu e das rotas (o App escolhe pela situação da sessão).
+// Telas antes de usar o sistema: entrar, primeiro acesso (criar o administrador) e a troca obrigatória
+// da senha temporária. Ficam fora do menu e das rotas (o App escolhe pela situação da sessão).
 
-import { KeyRound, LogIn, LogOut, RefreshCw, ShieldCheck, User, UserCog } from 'lucide-react'
+import { BadgeCheck, KeyRound, LogIn, LogOut, Monitor, RefreshCw, ShieldCheck, User, UserCog } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import logo from '../assets/logo-mark.png'
 import { erroAoEntrar, problemasSenhaNova, useEspera } from '../components/sessao/auxiliares'
 import { CampoSenha } from '../components/sessao/CampoSenha'
 import { SenhaNova } from '../components/sessao/SenhaNova'
 import { SeletorTema } from '../components/layout/Sidebar'
+import { Logo } from '../components/Logo'
 import { Button } from '../components/ui/Button'
 import { Field, Input } from '../components/ui/Form'
 import { ErroApi } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useSessao } from '../store/sessao'
 import { toast } from '../store/ui'
+import { normalizarLogin, sugerirLogin, validarLogin } from '#shared/usuarios.ts'
 
 /** Moldura das telas de sessão: logo, cartão central e o seletor de tema no canto. */
 function TelaSessao({
@@ -40,9 +41,9 @@ function TelaSessao({
         className={cn('w-full', largura)}
       >
         <div className="mb-6 flex flex-col items-center text-center">
-          <img src={logo} alt="" className="h-14 w-14 rounded-full shadow-card ring-1 ring-line" />
+          <Logo className="h-14 w-14 drop-shadow-sm" />
           <p className="mt-3 text-[17px] font-semibold tracking-[-0.015em] text-ink">BC Calibração</p>
-          <p className="text-[13px] text-muted">Controle de locação</p>
+          <p className="text-[13px] text-muted">Certificados de calibração · Balanças.com</p>
         </div>
         <div className="rounded-3xl border border-line bg-surface p-6 shadow-card sm:p-8">{children}</div>
         {rodape && <div className="mt-6 space-y-2 px-2 text-center text-xs leading-relaxed text-muted">{rodape}</div>}
@@ -178,13 +179,111 @@ export function Entrar() {
   )
 }
 
-// ---- Sem administrador -----------------------------------------------------------------
+// ---- Primeiro acesso: criar o administrador ------------------------------------------------
 
-/** Nenhum usuário cadastrado: o administrador só é criado no computador do servidor. */
-export function SemAdministrador() {
+/**
+ * Nenhum usuário cadastrado. No próprio servidor (localhost), o administrador é criado aqui mesmo;
+ * nos outros computadores, a tela explica como fazer.
+ */
+export function PrimeiroAcesso({ local }: { local: boolean }) {
+  return local ? <CriarAdministrador /> : <SemAdministrador />
+}
+
+function CriarAdministrador() {
+  const primeiroAcesso = useSessao((s) => s.primeiroAcesso)
+  const [nome, setNome] = useState('')
+  const [login, setLogin] = useState('')
+  const [loginEditado, setLoginEditado] = useState(false)
+  const [cargo, setCargo] = useState('Responsável técnico')
+  const [nova, setNova] = useState('')
+  const [repetir, setRepetir] = useState('')
+  const [tentou, setTentou] = useState(false)
+  const [salvando, setSalvando] = useState(false)
+  const [erro, setErro] = useState('')
+  const [erroNova, setErroNova] = useState('')
+  const loginFinal = loginEditado ? login : sugerirLogin(nome)
+  const dono = { login: loginFinal, nome }
+
+  const enviar = async (e: FormEvent) => {
+    e.preventDefault()
+    setTentou(true)
+    setErro('')
+    if (!nome.trim()) return setErro('Informe o seu nome.')
+    const erroLogin = validarLogin(normalizarLogin(loginFinal))
+    if (erroLogin) return setErro(`Usuário: ${erroLogin}`)
+    const p = problemasSenhaNova(nova, repetir, dono)
+    if (p.nova || p.repetir || salvando) return
+    setSalvando(true)
+    try {
+      await primeiroAcesso({ nome, login: loginFinal, senha: nova, cargo, registro: '' })
+      toast.sucesso('Administrador criado', 'Agora cadastre a sua empresa em Configurações.')
+    } catch (err) {
+      setSalvando(false)
+      if (err instanceof ErroApi && err.status === 400) setErroNova(err.message)
+      else setErro(err instanceof Error ? err.message : 'Erro inesperado.')
+    }
+  }
+
+  return (
+    <TelaSessao
+      largura="max-w-[460px]"
+      rodape={<p>Os outros usuários (técnicos) você cadastra depois, em Usuários. Cada um com a sua senha.</p>}
+    >
+      <Titulo
+        icone={<BadgeCheck className="h-5 w-5" />}
+        titulo="Bem-vindo ao BC Calibração"
+        texto="Este é o primeiro acesso. Crie a conta do administrador, que também assina os certificados."
+      />
+      <form onSubmit={enviar} className="flex flex-col gap-4" noValidate>
+        <Field label="Seu nome completo" htmlFor="pa-nome" hint="Sai nos certificados que você autorizar.">
+          <Input id="pa-nome" autoFocus value={nome} onChange={(e) => setNome(e.target.value)} icone={<User className="h-4 w-4" />} />
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Usuário (para entrar)" htmlFor="pa-login">
+            <Input
+              id="pa-login"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              value={loginFinal}
+              onChange={(e) => {
+                setLogin(e.target.value)
+                setLoginEditado(true)
+              }}
+            />
+          </Field>
+          <Field label="Cargo" htmlFor="pa-cargo">
+            <Input id="pa-cargo" value={cargo} onChange={(e) => setCargo(e.target.value)} />
+          </Field>
+        </div>
+        <SenhaNova
+          idBase="pa"
+          nova={nova}
+          repetir={repetir}
+          aoMudarNova={(v) => {
+            setNova(v)
+            setErroNova('')
+          }}
+          aoMudarRepetir={setRepetir}
+          dono={dono}
+          tentou={tentou}
+          erroNova={erroNova}
+        />
+        {erro && <Alerta>{erro}</Alerta>}
+        <Button variante="primary" type="submit" className="mt-1 w-full" disabled={salvando}>
+          {salvando ? 'Criando…' : 'Criar administrador e entrar'}
+        </Button>
+      </form>
+    </TelaSessao>
+  )
+}
+
+/** Nenhum usuário cadastrado e o navegador não está no servidor: explica onde criar o administrador. */
+function SemAdministrador() {
   const verificar = useSessao((s) => s.verificar)
   const [conferindo, setConferindo] = useState(false)
   const [conferiu, setConferiu] = useState(false)
+  const porta = typeof location !== 'undefined' ? location.port : ''
 
   const tentar = async () => {
     setConferindo(true)
@@ -199,17 +298,22 @@ export function SemAdministrador() {
       <Titulo
         icone={<UserCog className="h-5 w-5" />}
         titulo="Falta criar o administrador"
-        texto="O sistema agora pede usuário e senha, mas o administrador ainda não foi criado."
+        texto="O sistema foi instalado, mas o administrador ainda não foi criado."
       />
       <ol className="flex flex-col gap-3">
         {[
           <>
-            No <b className="font-semibold text-ink">computador do servidor</b>, clique em Iniciar, digite{' '}
-            <b className="font-semibold text-ink">BC Calibração</b> e abra{' '}
-            <b className="font-semibold text-ink">Redefinir senha do BC Calibração</b> (ou procure em Todos os aplicativos › BC Calibração
-            Control). Responda Sim ao pedido de permissão.
+            No <b className="font-semibold text-ink">computador onde o sistema foi instalado (servidor)</b>, abra o atalho{' '}
+            <b className="font-semibold text-ink">BC Calibração</b> da Área de Trabalho
+            {porta ? (
+              <>
+                {' '}
+                (ou o endereço <b className="font-semibold text-ink">http://localhost:{porta}</b>)
+              </>
+            ) : null}
+            .
           </>,
-          'Siga as instruções da janela para criar o administrador e anote a senha.',
+          'Lá aparece a tela para criar o administrador, com o nome e a senha.',
           'Volte aqui e clique em “Tentar de novo”.',
         ].map((passo, i) => (
           <li key={i} className="flex items-start gap-3 text-sm text-ink-2">
@@ -220,6 +324,10 @@ export function SemAdministrador() {
           </li>
         ))}
       </ol>
+      <p className="mt-4 flex items-center gap-2 rounded-xl bg-surface-2 px-3 py-2.5 text-[13px] text-muted">
+        <Monitor className="h-4 w-4 shrink-0" />
+        Por segurança, o administrador só pode ser criado no próprio servidor.
+      </p>
       {conferiu && !conferindo && (
         <p className="mt-4 text-center text-[13px] text-muted" role="status">
           Ainda não há administrador cadastrado.

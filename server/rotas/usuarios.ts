@@ -7,7 +7,7 @@ import { GRUPOS_AUDITORIA } from '#shared/usuarios.ts'
 import { cookieApagar, cookieSessao, ipDe, lerCookie, sessaoIdDoCookie } from '../acesso.ts'
 import { ErroApi } from '../erros.ts'
 import type { TempoReal } from '../tempoReal.ts'
-import type { ServicoUsuarios } from '../usuarios.ts'
+import { ehLoopback, type ServicoUsuarios } from '../usuarios.ts'
 
 type ComId = FastifyRequest<{ Params: { id: string } }>
 
@@ -33,12 +33,24 @@ export async function rotasUsuarios(app: FastifyInstance, { usuarios, tempoReal,
   // `?uso=1` (abrir a página, batimento com interação) conta como atividade; sem ele, só confere
   app.get('/api/sessao', opcoes, async (req, reply): Promise<EstadoSessao> => {
     if (lerCookie(req.headers.cookie, nomeCookie) && !req.sessaoId) reply.header('Set-Cookie', cookieApagar(nomeCookie))
+    const semUsuarios = usuarios.quantos() === 0
     return {
       usuario: req.usuario,
-      semUsuarios: usuarios.quantos() === 0,
+      semUsuarios,
+      // Sem usuários, o administrador é criado pela tela, mas só no próprio servidor
+      ...(semUsuarios ? { primeiroAcessoLocal: ehLoopback(ipDe(req)) } : {}),
       build: tempoReal.build,
       ...(req.sessaoId ? { persistente: req.sessaoPersistente } : {}),
     }
+  })
+
+  // Primeiro acesso: cria o administrador (só com o banco sem usuários e só pelo próprio servidor)
+  app.post('/api/primeiro-acesso', opcoes, async (req, reply): Promise<RespostaLogin> => {
+    if (!ehLoopback(ipDe(req)))
+      throw new ErroApi(403, 'Crie o administrador no próprio servidor: abra http://localhost no computador onde o sistema foi instalado.')
+    const r = await usuarios.criarPrimeiroAdministrador(req.body, ipDe(req))
+    reply.header('Set-Cookie', cookieSessao(nomeCookie, r.token, r.maxAgeSegundos))
+    return { usuario: r.usuario, build: tempoReal.build }
   })
 
   app.post('/api/sessao', opcoes, async (req, reply): Promise<RespostaLogin> => {
@@ -74,7 +86,8 @@ export async function rotasUsuarios(app: FastifyInstance, { usuarios, tempoReal,
     reply.code(201).send(await usuarios.criar(req.body, autor(req), ipDe(req))),
   )
 
-  app.put('/api/usuarios/:id', opcoes, async (req: ComId) => {
+  // A assinatura digitalizada (imagem) vai neste corpo: limite maior
+  app.put('/api/usuarios/:id', { bodyLimit: 400_000 }, async (req: ComId) => {
     const r = usuarios.alterar(req.params.id, req.body, autor(req), ipDe(req))
     tempoReal.encerrarSessoes(r.sessoesEncerradas)
     return { usuario: r.usuario }

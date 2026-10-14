@@ -3,11 +3,9 @@
 // faz o servidor recusar a subida; sem sessão, a API de dados responde 401.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { chaveServico, STATUS_MAQUINA_LISTA } from '#shared/maquinas.ts'
 import { pode, SEM_PERMISSAO, type Permissao } from '#shared/permissoes.ts'
-import type { AcaoAuditoria, StatusMaquina, UsuarioSessao } from '#shared/tipos.ts'
+import type { AcaoAuditoria, UsuarioSessao } from '#shared/tipos.ts'
 import { ErroApi } from './erros.ts'
-import type { Repositorio } from './repositorio.ts'
 import { hashToken } from './senha.ts'
 import type { TempoReal } from './tempoReal.ts'
 import type { ServicoUsuarios } from './usuarios.ts'
@@ -38,12 +36,17 @@ declare module 'fastify' {
 export const TABELA_ACESSO: Record<string, RegraAcesso> = {
   // app.ts
   'GET /api/saude': 'publico',
+  'GET /api/stream': 'logado', // sem sessão: SSE com `semSessao` (responderStreamSemSessao)
+  'GET /api/backups': 'dadosEBackup',
+  'POST /api/backups': 'dadosEBackup',
+  'GET /api/backups/:arquivo': 'dadosEBackup',
   'ALL /api/*': 'publico', // só responde 404
 
   // rotas/usuarios.ts
   'GET /api/sessao': 'publico',
   'POST /api/sessao': 'publico',
   'DELETE /api/sessao': 'publico',
+  'POST /api/primeiro-acesso': 'publico', // só com o banco sem usuários e só pelo próprio servidor
   'PUT /api/minha-senha': 'logado', // aceita com a troca de senha pendente
   'GET /api/usuarios': 'usuarios',
   'POST /api/usuarios': 'usuarios',
@@ -53,73 +56,66 @@ export const TABELA_ACESSO: Record<string, RegraAcesso> = {
   'DELETE /api/usuarios/:id/sessoes': 'usuarios',
   'GET /api/auditoria': 'usuarios',
 
-  // rotas/dados.ts
-  'GET /api/dados': 'logado',
-  'GET /api/stream': 'logado', // sem sessão: SSE com `semSessao` (responderStreamSemSessao)
+  // rotas/cadastros.ts
+  'GET /api/clientes': 'logado',
+  'GET /api/clientes/:id': 'logado',
   'POST /api/clientes': 'logado',
   'PUT /api/clientes/:id': 'logado',
   'DELETE /api/clientes/:id': 'excluirCliente',
-  'POST /api/eventos': 'logado',
-  'PUT /api/eventos/:id': 'logado',
-  'PATCH /api/eventos/:id': 'logado',
-  'POST /api/eventos/:id/duplicar': 'logado',
-  'POST /api/eventos/:id/repetir': 'logado',
-  'DELETE /api/eventos/:id': 'excluirEvento',
-  'POST /api/maquinas': 'gerenciarFrota',
-  'POST /api/maquinas/quantidade': 'gerenciarFrota',
-  'PUT /api/maquinas/:id': 'logado', // + regra fina F1
-  'DELETE /api/maquinas/:id': 'gerenciarFrota',
-  'POST /api/ordens': 'logado', // + regra fina F2
-  'PUT /api/ordens/:id': 'logado', // + regra fina F2
-  'DELETE /api/ordens/:id': 'excluirManutencao',
-  'POST /api/reclamacoes': 'logado',
-  'PUT /api/reclamacoes/:id': 'logado',
-  'DELETE /api/reclamacoes/:id': 'excluirReclamacao',
+  'GET /api/balancas': 'logado',
+  'GET /api/balancas/:id': 'logado',
+  'POST /api/balancas': 'logado',
+  'PUT /api/balancas/:id': 'logado',
+  'DELETE /api/balancas/:id': 'excluirBalanca',
+  'GET /api/padroes': 'logado',
+  'POST /api/padroes': 'logado',
+  'PUT /api/padroes/:id': 'logado',
+  'DELETE /api/padroes/:id': 'excluirPadrao',
+
+  // rotas/geral.ts
+  'GET /api/config': 'logado',
   'PUT /api/config': 'configuracoes',
-  'PUT /api/config/servicos': 'logado', // + regra fina F3
-  'GET /api/backup': 'dadosEBackup',
-  'POST /api/backup/restaurar': 'dadosEBackup',
-  'POST /api/backup/mesclar': 'dadosEBackup',
-  'GET /api/backups': 'dadosEBackup',
-  'POST /api/backups': 'dadosEBackup',
-  'POST /api/exemplo': 'dadosEBackup',
-  'POST /api/limpar': 'dadosEBackup',
+  'GET /api/painel': 'logado',
+  'GET /api/vencimentos': 'logado',
+  'GET /api/equipe': 'logado',
 
-  // rotas/anexos.ts
-  'POST /api/eventos/:id/anexos': 'logado',
-  'GET /api/anexos/:id': 'logado',
-  'DELETE /api/anexos/:id': 'excluirAnexo',
-
-  // rotas/contratos.ts
-  'POST /api/contratos': 'logado',
-  'PATCH /api/contratos/:id': 'logado',
-  'DELETE /api/contratos/:id': 'excluirContrato',
-  'POST /api/contratos/:id/arquivo': 'logado',
-  'GET /api/contratos/:id/arquivo': 'logado',
-  'DELETE /api/contratos/:id/arquivo': 'apagarCopiaAssinada',
+  // rotas/calibracoes.ts
+  'GET /api/calibracoes': 'logado',
+  'GET /api/calibracoes/:id': 'logado',
+  'POST /api/calibracoes': 'logado',
+  'PUT /api/calibracoes/:id': 'logado',
+  'DELETE /api/calibracoes/:id': 'logado', // só rascunho (o repositório recusa o emitido)
+  'POST /api/calibracoes/:id/situacao': 'logado',
+  'POST /api/calibracoes/:id/emitir': 'logado', // + signatário (conferido na rota)
+  'POST /api/calibracoes/:id/cancelar': 'cancelarCertificado',
+  'POST /api/calibracoes/:id/revisar': 'logado',
+  'POST /api/calibracoes/:id/recalibrar': 'logado',
+  'GET /api/calibracoes/:id/pdf': 'logado',
+  'POST /api/calibracoes/:id/previa': 'logado',
+  'POST /api/calibracoes/:id/email': 'logado',
+  'POST /api/lembretes': 'logado',
+  'GET /api/verificar/:codigo': 'publico', // autenticidade (QR code): só o essencial do certificado
 
   // email.ts
   'GET /api/email/config': 'logado', // resposta reduzida para quem não tem `configuracoes`
   'PUT /api/email/config': 'configuracoes',
   'DELETE /api/email/config': 'configuracoes',
   'POST /api/email/teste': 'configuracoes',
-  'POST /api/email/enviar': 'logado',
 
   // rotas/consultas.ts
   'GET /api/consultas/cnpj/:cnpj': 'logado',
   'GET /api/consultas/cep/:cep': 'logado',
-
-  // google/modulo.ts
-  'GET /api/google/status': 'configuracoes',
-  'PUT /api/google/config': 'configuracoes',
-  'POST /api/google/credenciais': 'configuracoes',
-  'DELETE /api/google/credenciais': 'configuracoes',
-  'POST /api/google/testar': 'configuracoes',
-  'POST /api/google/sincronizar': 'configuracoes',
 }
 
 /** Usuário fictício dos testes antigos (`acessoLivreParaTestes`): administrador. */
-export const USUARIO_TESTE: UsuarioSessao = { id: 'teste', login: 'teste', nome: 'Teste', nivel: 'ADMIN', trocarSenha: false }
+export const USUARIO_TESTE: UsuarioSessao = {
+  id: 'teste',
+  login: 'teste',
+  nome: 'Teste',
+  nivel: 'ADMIN',
+  trocarSenha: false,
+  signatario: true,
+}
 
 // ---- Cookie (lido e escrito à mão) --------------------------------------------------
 
@@ -171,8 +167,6 @@ export function ipDe(req: FastifyRequest): string {
 export interface DependenciasAcesso {
   usuarios: ServicoUsuarios
   tempoReal: TempoReal
-  /** Para as regras finas (máquina e lista de serviços atuais). */
-  repo: Repositorio
 }
 
 export interface OpcoesAcesso {
@@ -187,13 +181,14 @@ const foraDaAuditoria = (url: string) =>
 
 /** Ações próprias do registro de atividades, por rota. */
 const ACAO_DA_ROTA: Record<string, AcaoAuditoria> = {
-  'GET /api/backup': 'BACKUP_BAIXADO',
-  'POST /api/backup/restaurar': 'BACKUP_RESTAURADO',
-  'POST /api/backup/mesclar': 'BACKUP_MESCLADO',
-  'POST /api/limpar': 'DADOS_APAGADOS',
+  'GET /api/backups/:arquivo': 'BACKUP_BAIXADO',
+  'POST /api/calibracoes/:id/emitir': 'CERTIFICADO_EMITIDO',
+  'POST /api/calibracoes/:id/cancelar': 'CERTIFICADO_CANCELADO',
+  'POST /api/calibracoes/:id/email': 'CERTIFICADO_ENVIADO',
 }
 
-const MENSAGEM_DESATIVAR = 'Só o administrador desativa ou reativa máquinas.'
+/** Rotas que só calculam ou geram prévia (POST sem gravar dados): fora da auditoria. */
+const SO_LEITURA = new Set(['POST /api/calibracoes/:id/previa', 'POST /api/primeiro-acesso'])
 
 type Bruto = Record<string, unknown>
 const obj = (v: unknown): Bruto => (v && typeof v === 'object' && !Array.isArray(v) && !Buffer.isBuffer(v) ? (v as Bruto) : {})
@@ -206,7 +201,7 @@ const idDaRota = (req: FastifyRequest) => {
  * Instala o controle de acesso. Chamar logo depois do gancho de Host e CSRF e antes de registrar
  * qualquer rota (o onRoute classifica as rotas na hora do registro).
  */
-export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal, repo }: DependenciasAcesso, opcoes: OpcoesAcesso) {
+export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal }: DependenciasAcesso, opcoes: OpcoesAcesso) {
   const { nomeCookie } = opcoes
   const livre = !!opcoes.acessoLivreParaTestes
   const registradas = new Set<string>()
@@ -302,69 +297,6 @@ export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal, repo
     }
   })
 
-  // ---- Regras finas (com o corpo já lido), só para quem não tem a permissão ----
-  app.addHook('preHandler', async (req) => {
-    const chave = req.routeOptions.config?.chaveAcesso
-    const nivel = req.usuario?.nivel
-    if (chave === 'PUT /api/maquinas/:id' && !pode(nivel, 'gerenciarFrota')) regraF1(req)
-    else if ((chave === 'POST /api/ordens' || chave === 'PUT /api/ordens/:id') && !pode(nivel, 'gerenciarFrota')) regraF2(req)
-    else if (chave === 'PUT /api/config/servicos' && !pode(nivel, 'gerenciarServicos')) regraF3(req)
-  })
-
-  /**
-   * F1: o comum só alterna a situação Disponível/Manutenção. O corpo é reescrito com o cadastro
-   * atual (o resto do que veio é ignorado); desativar ou reativar é recusado.
-   */
-  function regraF1(req: FastifyRequest) {
-    const atual = repo.obterMaquina(idDaRota(req))
-    if (!atual) return // o handler responde 404
-    const corpo = obj(req.body)
-    const versao = corpo.versao
-    const desatualizada = typeof versao === 'number' && versao !== atual.versao
-    const pedido = STATUS_MAQUINA_LISTA.includes(corpo.status as StatusMaquina) ? (corpo.status as StatusMaquina) : atual.status
-    // Tela desatualizada: segue para o repositório responder o 409 de conflito (não um 403 enganoso)
-    if (!desatualizada && pedido !== atual.status && (pedido === 'DESATIVADA' || atual.status === 'DESATIVADA'))
-      throw new ErroApi(403, MENSAGEM_DESATIVAR, { codigo: 'SEM_PERMISSAO', permissao: 'gerenciarFrota' })
-    const { tipo, identificacao, modelo, numeroSerie, dataAquisicao, observacoes } = atual
-    req.body = {
-      tipo,
-      identificacao,
-      modelo,
-      numeroSerie,
-      dataAquisicao,
-      observacoes,
-      status: desatualizada ? atual.status : pedido,
-      versao,
-    }
-  }
-
-  /** F2: a O.S. do comum não desativa nem reativa a máquina (registrar O.S. numa desativada pode). */
-  function regraF2(req: FastifyRequest) {
-    const corpo = obj(req.body)
-    const status = corpo.statusMaquina
-    if (status === 'DESATIVADA')
-      throw new ErroApi(403, MENSAGEM_DESATIVAR, { codigo: 'SEM_PERMISSAO', permissao: 'gerenciarFrota' })
-    if (!STATUS_MAQUINA_LISTA.includes(status as StatusMaquina)) return
-    const maquina = typeof corpo.maquinaId === 'string' ? repo.obterMaquina(corpo.maquinaId) : undefined
-    if (maquina?.status === 'DESATIVADA' && status !== maquina.status)
-      throw new ErroApi(403, MENSAGEM_DESATIVAR, { codigo: 'SEM_PERMISSAO', permissao: 'gerenciarFrota' })
-  }
-
-  /**
-   * F3: o comum só acrescenta serviços. A lista vira "a atual + os itens novos"; remoções e
-   * renomeações (inclusive só de maiúscula ou acento) são ignoradas, nunca recusadas.
-   */
-  function regraF3(req: FastifyRequest) {
-    const corpo = obj(req.body)
-    if (!Array.isArray(corpo.servicos)) return // o handler responde 400
-    const atuais = repo.obterConfig().servicosManutencao
-    const conhecidas = new Set(atuais.map((s) => chaveServico(s)))
-    const novos = corpo.servicos.filter(
-      (s): s is string => typeof s === 'string' && !conhecidas.has(chaveServico(s.replace(/\s+/g, ' ').trim())),
-    )
-    req.body = { ...corpo, servicos: [...atuais, ...novos] }
-  }
-
   // ---- Registro de atividades das gravações -------------------------------------
   app.addHook('onResponse', async (req, reply) => {
     if (reply.statusCode >= 400 || !req.usuario) return
@@ -375,7 +307,7 @@ export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal, repo
     if (acao === 'BACKUP_BAIXADO' && req.method === 'HEAD') return
     let detalhe = chave
     if (!acao) {
-      if (req.method === 'GET' || req.method === 'HEAD' || foraDaAuditoria(url)) return
+      if (req.method === 'GET' || req.method === 'HEAD' || foraDaAuditoria(url) || SO_LEITURA.has(chave)) return
       acao = 'ALTERACAO'
       // Na alteração parcial, os nomes dos campos enviados (nunca os valores)
       if (req.method === 'PATCH') {
