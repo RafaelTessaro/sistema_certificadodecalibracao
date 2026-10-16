@@ -1,5 +1,15 @@
 import { ClipboardCheck, Pencil, Scale, SlidersHorizontal, Wrench } from 'lucide-react'
-import { AJUSTES, capacidadeTexto, FINALIDADES, RECEPTORES, ROTULO_CLASSE, TIPOS_BALANCA } from '#shared/dominio.ts'
+import {
+  AJUSTES,
+  capacidadeTexto,
+  divisaoLegivel,
+  FINALIDADES,
+  numeroBr,
+  parteSeparada,
+  RECEPTORES,
+  ROTULO_CLASSE,
+  TIPOS_BALANCA,
+} from '#shared/dominio.ts'
 import type { AjusteRealizado, CalibracaoInput, Verificacao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
@@ -37,6 +47,13 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
     }))
   const setReparo = (k: keyof CalibracaoInput['reparo'], v: string | boolean) =>
     alterar((s) => ({ ...s, reparo: { ...s.reparo, [k]: v } }))
+  // e na unidade mais legível, como na plaqueta (0,005 kg → 5 g)
+  const e = divisaoLegivel(
+    balanca.faixas.map((x) => x.e),
+    balanca.unidade,
+  )
+  // Plataforma com plaqueta própria (ou, numa cópia antiga, o indicador separado)
+  const separada = parteSeparada(balanca)
 
   return (
     <div className="flex flex-col gap-6">
@@ -54,15 +71,20 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
         <div className="grid grid-cols-2 gap-x-6 gap-y-3 px-5 pb-5 text-sm md:grid-cols-4">
           <Info rotulo="Tipo">{TIPOS_BALANCA[balanca.tipo]}</Info>
           <Info rotulo="Fabricante / modelo">{[balanca.fabricante, balanca.modelo].filter(Boolean).join(' ')}</Info>
-          <Info rotulo="Nº de série">{balanca.numeroSerie}</Info>
+          <Info rotulo={separada?.rotulo === 'Indicador' ? 'Nº de série' : 'Nº de série (indicador)'}>{balanca.numeroSerie}</Info>
           <Info rotulo="Identificação / TAG">{balanca.identificacao}</Info>
           <Info rotulo="Capacidade × divisão">{capacidadeTexto(balanca)}</Info>
           <Info rotulo="Divisão de verificação (e)">
-            {balanca.faixas.map((x) => String(x.e).replace('.', ',')).join(' / ')} {balanca.unidade}
+            {e.valores.map((v) => numeroBr(v)).join('/')} {e.unidade}
           </Info>
           <Info rotulo="Classe de exatidão">{ROTULO_CLASSE[balanca.classe]}</Info>
           <Info rotulo="Portaria de aprovação">{balanca.portariaAprovacao}</Info>
           <Info rotulo="Receptor de carga">{RECEPTORES[balanca.receptor]}</Info>
+          {separada && (
+            <Info rotulo={separada.rotulo}>
+              {[separada.nome, separada.serie && `nº de série ${separada.serie}`].filter(Boolean).join(' · ')}
+            </Info>
+          )}
           <Info rotulo="Finalidade">{balanca.finalidade ? FINALIDADES[balanca.finalidade] : ''}</Info>
           <Info rotulo="Local de instalação" className="col-span-2">
             {balanca.localInstalacao}

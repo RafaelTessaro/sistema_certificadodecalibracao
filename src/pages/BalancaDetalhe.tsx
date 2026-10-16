@@ -6,8 +6,8 @@ import {
   FileBadge2,
   FilePlus2,
   Gauge,
+  Layers,
   MapPin,
-  Monitor,
   Pencil,
   Ruler,
   Scale,
@@ -21,6 +21,7 @@ import {
   divisaoLegivel,
   FINALIDADES,
   numeroBr,
+  parteSeparada,
   RECEPTORES,
   ROTULO_CLASSE,
   TIPOS_BALANCA,
@@ -124,7 +125,7 @@ export function BalancaDetalhe() {
   const faixas = balanca.faixas
   const multi = faixas.length > 1
   const posicoes = posicoesExcentricidade(balanca.receptor, balanca.apoios)
-  const temIndicador = !!(balanca.indicadorFabricante || balanca.indicadorModelo || balanca.indicadorSerie)
+  const plataforma = parteSeparada(balanca)
 
   return (
     <>
@@ -199,7 +200,7 @@ export function BalancaDetalhe() {
           detalhe={
             <span className="tnum">
               n = {faixas.map(nValor).join('/')}
-              {balanca.min > 0 && ` · Min ${numeroBr(balanca.min)} ${balanca.unidade}`}
+              {balanca.min > 0 && ` · Min ${divisao(balanca.min, balanca.unidade)}`}
             </span>
           }
           destaque
@@ -301,7 +302,9 @@ export function BalancaDetalhe() {
             <div className="grid grid-cols-1 gap-x-8 gap-y-6 md:grid-cols-3">
               <Grupo titulo="Identificação">
                 <Dado rotulo="Fabricante e modelo">{[balanca.fabricante, balanca.modelo].filter(Boolean).join(' · ')}</Dado>
-                <Dado rotulo="Nº de série">{balanca.numeroSerie && <span className="tnum">{balanca.numeroSerie}</span>}</Dado>
+                <Dado rotulo="Nº de série (do indicador)">
+                  {balanca.numeroSerie && <span className="tnum">{balanca.numeroSerie}</span>}
+                </Dado>
                 <Dado rotulo="Identificação no cliente">
                   {balanca.identificacao && <span className="tnum">{balanca.identificacao}</span>}
                 </Dado>
@@ -317,14 +320,10 @@ export function BalancaDetalhe() {
               <Grupo titulo="Metrologia">
                 <Dado rotulo="Classe de exatidão">{ROTULO_CLASSE[balanca.classe]}</Dado>
                 <Dado rotulo="Carga mínima (Min)">
-                  {balanca.min > 0 && (
-                    <span className="tnum">
-                      {numeroBr(balanca.min)} {balanca.unidade}
-                    </span>
-                  )}
+                  {balanca.min > 0 && <span className="tnum">{divisao(balanca.min, balanca.unidade)}</span>}
                 </Dado>
                 <Dado rotulo="Faixas de pesagem">{TIPOS_FAIXAS[balanca.tipoFaixas]}</Dado>
-                <Dado rotulo="Unidade">{balanca.unidade}</Dado>
+                <Dado rotulo="Unidade da indicação">{balanca.unidade}</Dado>
                 <Dado rotulo="Portaria de aprovação de modelo">{balanca.portariaAprovacao}</Dado>
               </Grupo>
 
@@ -349,12 +348,10 @@ export function BalancaDetalhe() {
                     'Não se aplica (balança suspensa)'
                   )}
                 </Dado>
-                {temIndicador && (
-                  <Dado rotulo="Indicador separado" icone={<Monitor className="h-3.5 w-3.5" />}>
-                    {[balanca.indicadorFabricante, balanca.indicadorModelo].filter(Boolean).join(' ')}
-                    {balanca.indicadorSerie && (
-                      <span className="tnum block text-xs text-muted">Série {balanca.indicadorSerie}</span>
-                    )}
+                {plataforma && (
+                  <Dado rotulo={`${plataforma.rotulo} (plaqueta própria)`} icone={<Layers className="h-3.5 w-3.5" />}>
+                    {plataforma.nome}
+                    {plataforma.serie && <span className="tnum block text-xs text-muted">Série {plataforma.serie}</span>}
                   </Dado>
                 )}
               </Grupo>

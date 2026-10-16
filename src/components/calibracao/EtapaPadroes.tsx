@@ -1,4 +1,5 @@
 import { Check, Droplets, Gauge, Thermometer, TriangleAlert, Weight } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { formatarDataBr, resumoPesos, situacaoValidade, totalPesos, TIPOS_PADRAO, massaLegivel } from '#shared/dominio.ts'
 import type { CondicoesAmbientais, Padrao } from '#shared/tipos.ts'
@@ -85,57 +86,122 @@ export function EtapaPadroes({ f, alterar, padroes, config }: ContextoEtapa) {
               ))}
             </div>
           )}
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-            <Field label="Temperatura inicial" htmlFor="amb-ti">
-              <CampoNumero
-                id="amb-ti"
-                valor={amb.temperaturaInicial}
-                aoMudar={(v) => setAmb('temperaturaInicial', v)}
-                unidade="°C"
-                grade={{ grupo: 'amb', lin: 0, col: 0 }}
-              />
-            </Field>
-            <Field label="Temperatura final" htmlFor="amb-tf">
-              <CampoNumero
-                id="amb-tf"
-                valor={amb.temperaturaFinal}
-                aoMudar={(v) => setAmb('temperaturaFinal', v)}
-                unidade="°C"
-                grade={{ grupo: 'amb', lin: 1, col: 0 }}
-              />
-            </Field>
-            <Field label="Umidade inicial" htmlFor="amb-ui">
-              <CampoNumero
-                id="amb-ui"
-                valor={amb.umidadeInicial}
-                aoMudar={(v) => setAmb('umidadeInicial', v)}
-                unidade="%"
-                grade={{ grupo: 'amb', lin: 0, col: 1 }}
-              />
-            </Field>
-            <Field label="Umidade final" htmlFor="amb-uf">
-              <CampoNumero
-                id="amb-uf"
-                valor={amb.umidadeFinal}
-                aoMudar={(v) => setAmb('umidadeFinal', v)}
-                unidade="%"
-                grade={{ grupo: 'amb', lin: 1, col: 1 }}
-              />
-            </Field>
-            <Field label="Pressão (opcional)" htmlFor="amb-p" className="col-span-2 md:col-span-1">
-              <CampoNumero id="amb-p" valor={amb.pressao} aoMudar={(v) => setAmb('pressao', v)} unidade="hPa" />
-            </Field>
+          {/* Três grupos (início e fim lado a lado); as colunas 2fr/2fr/1fr deixam os cinco campos da mesma largura */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1fr)]">
+            <GrupoAmbiente
+              icone={<Thermometer className="h-3.5 w-3.5" />}
+              titulo="Temperatura"
+              extra={
+                deltaT !== null && (
+                  <span
+                    title="Variação da temperatura durante a calibração"
+                    className={cn(
+                      'tnum rounded-md px-1.5 text-[11px] leading-5 font-medium whitespace-nowrap',
+                      deltaT > 5 ? 'bg-warning-soft text-warning' : 'bg-surface-3 text-muted',
+                    )}
+                  >
+                    Δ {numeroCurto(deltaT)} °C
+                  </span>
+                )
+              }
+            >
+              <Field label="Início" htmlFor="amb-ti">
+                <CampoNumero
+                  id="amb-ti"
+                  valor={amb.temperaturaInicial}
+                  aoMudar={(v) => setAmb('temperaturaInicial', v)}
+                  unidade="°C"
+                  grade={{ grupo: 'amb', lin: 0, col: 0 }}
+                />
+              </Field>
+              <Field label="Fim" htmlFor="amb-tf">
+                <CampoNumero
+                  id="amb-tf"
+                  valor={amb.temperaturaFinal}
+                  aoMudar={(v) => setAmb('temperaturaFinal', v)}
+                  unidade="°C"
+                  grade={{ grupo: 'amb', lin: 1, col: 0 }}
+                />
+              </Field>
+            </GrupoAmbiente>
+            <GrupoAmbiente icone={<Droplets className="h-3.5 w-3.5" />} titulo="Umidade relativa">
+              <Field label="Início" htmlFor="amb-ui">
+                <CampoNumero
+                  id="amb-ui"
+                  valor={amb.umidadeInicial}
+                  aoMudar={(v) => setAmb('umidadeInicial', v)}
+                  unidade="%"
+                  grade={{ grupo: 'amb', lin: 0, col: 1 }}
+                />
+              </Field>
+              <Field label="Fim" htmlFor="amb-uf">
+                <CampoNumero
+                  id="amb-uf"
+                  valor={amb.umidadeFinal}
+                  aoMudar={(v) => setAmb('umidadeFinal', v)}
+                  unidade="%"
+                  grade={{ grupo: 'amb', lin: 1, col: 1 }}
+                />
+              </Field>
+            </GrupoAmbiente>
+            <GrupoAmbiente icone={<Gauge className="h-3.5 w-3.5" />} titulo="Pressão" colunas={1}>
+              {/* "Opcional" no rótulo (e não numa dica embaixo): os três grupos ficam da mesma altura */}
+              <Field label="Opcional" htmlFor="amb-p">
+                <CampoNumero
+                  id="amb-p"
+                  aria-label="Pressão atmosférica (opcional)"
+                  valor={amb.pressao}
+                  aoMudar={(v) => setAmb('pressao', v)}
+                  unidade="hPa"
+                  grade={{ grupo: 'amb', lin: 0, col: 2 }}
+                />
+              </Field>
+            </GrupoAmbiente>
           </div>
           {deltaT !== null && deltaT > 5 && (
             <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
-              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />A temperatura variou{' '}
-              {String(Math.round(deltaT * 10) / 10).replace('.', ',')} °C durante a calibração. O recomendado para balanças classe
-              III é até 5 °C; registre nas observações.
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />A temperatura variou {numeroCurto(deltaT)} °C durante a
+              calibração. O recomendado para balanças classe III é até 5 °C; registre nas observações.
             </p>
           )}
         </div>
       </Card>
     </div>
+  )
+}
+
+/** Uma casa decimal, com vírgula (ex.: 0,7). */
+const numeroCurto = (v: number) => String(Math.round(v * 10) / 10).replace('.', ',')
+
+/**
+ * Grupo das condições ambientais: título com ícone e os campos lado a lado (início e fim). Na pressão, um
+ * campo só: no celular ele fica com a largura dos outros (metade), no computador o grupo é que é mais estreito.
+ */
+function GrupoAmbiente({
+  icone,
+  titulo,
+  extra,
+  colunas = 2,
+  children,
+}: {
+  icone: ReactNode
+  titulo: string
+  extra?: ReactNode
+  colunas?: 1 | 2
+  children: ReactNode
+}) {
+  return (
+    <fieldset className="min-w-0 rounded-xl border border-line bg-surface-2/40 px-3.5 pt-3 pb-3.5">
+      <legend className="sr-only">{titulo}</legend>
+      <div aria-hidden className="mb-2.5 flex h-5 items-center gap-2">
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-surface text-ink-2 shadow-xs ring-1 ring-line">
+          {icone}
+        </span>
+        <span className="min-w-0 truncate text-[13px] font-semibold text-ink">{titulo}</span>
+        {extra && <span className="ml-auto shrink-0">{extra}</span>}
+      </div>
+      <div className={cn('grid grid-cols-2 gap-3', colunas === 1 && 'sm:grid-cols-1')}>{children}</div>
+    </fieldset>
   )
 }
 
@@ -183,7 +249,9 @@ function CartaoPadrao({
           )}
           <ValidadePadraoBadge validade={p.validade} diasAviso={dias} />
         </span>
-        <span className="mt-0.5 block truncate text-[13px] text-ink-2">{p.descricao || TIPOS_PADRAO[p.tipo]}</span>
+        <span className="mt-0.5 block truncate text-[13px] text-ink-2" title={p.descricao || undefined}>
+          {p.descricao || TIPOS_PADRAO[p.tipo]}
+        </span>
         <span className="mt-1 block text-xs text-muted">
           {p.tipo === 'PESOS'
             ? `${resumoPesos(p.pesos)} · total ${massaLegivel(totalPesos(p.pesos))}`

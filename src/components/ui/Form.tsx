@@ -3,6 +3,7 @@ import {
   forwardRef,
   useId,
   type InputHTMLAttributes,
+  type MouseEvent,
   type ReactNode,
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
@@ -15,6 +16,22 @@ const baseCampo =
   'hover:border-line-strong focus:border-brand focus:ring-4 focus:ring-[var(--ring)] focus:outline-none ' +
   'disabled:cursor-not-allowed disabled:bg-surface-2 disabled:opacity-70'
 
+/** Rótulo cortado com "…": ao passar o mouse, mostra o texto inteiro (sem cortar, não há dica). */
+function dicaSeCortado(e: MouseEvent<HTMLElement>) {
+  const el = e.currentTarget
+  const cortado = el.scrollWidth > el.clientWidth + 1
+  if (cortado) el.title = el.textContent?.trim() ?? ''
+  else el.removeAttribute('title')
+}
+
+/**
+ * Campo de formulário: rótulo, controle e dica (ou erro) embaixo.
+ *
+ * O rótulo ocupa sempre uma linha de altura fixa, tenha ou não `extra` ao lado: em qualquer linha de campos
+ * lado a lado (grade ou flex), os controles começam na mesma altura. O rótulo nunca quebra em duas linhas;
+ * se não couber, corta com "…" e mostra o texto inteiro ao passar o mouse. Por isso o rótulo deve ser curto
+ * (o detalhe vai na dica) e a coluna, larga o bastante para ele.
+ */
 export function Field({
   label,
   hint,
@@ -35,13 +52,17 @@ export function Field({
   return (
     <div className={cn('flex min-w-0 flex-col gap-1.5', className)}>
       {(label || extra) && (
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex h-5 min-w-0 items-center justify-between gap-2">
           {label && (
-            <label htmlFor={htmlFor} className="text-[13px] font-medium text-ink-2">
+            <label
+              htmlFor={htmlFor}
+              onMouseEnter={dicaSeCortado}
+              className="min-w-0 truncate text-[13px] leading-5 font-medium text-ink-2"
+            >
               {label}
             </label>
           )}
-          {extra}
+          {extra && <div className="flex shrink-0 items-center">{extra}</div>}
         </div>
       )}
       {children}
@@ -50,6 +71,19 @@ export function Field({
       ) : hint ? (
         <p className="text-xs text-muted">{hint}</p>
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * Controle sem rótulo numa linha de campos (ex.: o botão ao lado de um campo): reserva a linha do rótulo
+ * para ficar na altura dos controles vizinhos. Abaixo de `sm`, onde os campos ficam numa coluna só, o espaço some.
+ */
+export function SemRotulo({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={cn('flex min-w-0 flex-col gap-1.5', className)}>
+      <div aria-hidden className="h-5 max-sm:hidden" />
+      {children}
     </div>
   )
 }

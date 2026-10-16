@@ -25,10 +25,13 @@ export function CertificadosTabela({
       <thead>
         <tr>
           <Th>Certificado</Th>
-          {!ocultarCliente && <Th>Cliente</Th>}
-          {!ocultarBalanca && <Th className="max-md:hidden">Balança</Th>}
+          {/* Cliente e Balança ficam com o espaço que sobra e cortam o texto comprido com "…" (max-w-0 nas
+              células); as outras colunas não quebram linha */}
+          {!ocultarCliente && <Th className="w-[45%]">Cliente</Th>}
+          {!ocultarBalanca && <Th className="w-[55%] max-md:hidden">Balança</Th>}
           <Th className="max-sm:hidden">Calibração</Th>
-          <Th className="max-lg:hidden">OS</Th>
+          {/* Abaixo de 1536 px a OS vai para baixo da data da calibração (a tabela cabe em 1280 e 1366) */}
+          <Th className="max-2xl:hidden">OS</Th>
           <Th>Situação</Th>
           <Th className="w-8" />
         </tr>
@@ -56,19 +59,30 @@ export function CertificadosTabela({
               </div>
             </Td>
             {!ocultarCliente && (
-              <Td>
-                <p className="max-w-[220px] truncate text-ink-2">{k.clienteNome}</p>
+              <Td className="max-w-0">
+                <p className="truncate text-ink-2" title={k.clienteNome}>
+                  {k.clienteNome}
+                </p>
               </Td>
             )}
             {!ocultarBalanca && (
-              <Td className="max-md:hidden">
-                <p className="max-w-[260px] truncate text-ink-2">{k.balancaDescricao.replace(/^Balança /, '')}</p>
-                {k.balancaSerie && <p className="tnum text-xs text-muted">Série {k.balancaSerie}</p>}
+              <Td className="max-w-0 max-md:hidden">
+                <p className="truncate text-ink-2" title={k.balancaDescricao}>
+                  {k.balancaDescricao.replace(/^Balança /, '')}
+                </p>
+                {k.balancaSerie && <p className="tnum truncate text-xs text-muted">Série {k.balancaSerie}</p>}
               </Td>
             )}
-            <Td className="tnum max-sm:hidden">{dataCurta(k.dataCalibracao)}</Td>
-            <Td className="tnum max-lg:hidden">{k.ordemServico || <span className="text-muted">—</span>}</Td>
-            <Td>
+            <Td className="tnum whitespace-nowrap max-sm:hidden">
+              {dataCurta(k.dataCalibracao)}
+              {k.ordemServico && (
+                <p className="text-xs text-muted 2xl:hidden">
+                  {/^os\b/i.test(k.ordemServico) ? k.ordemServico : `OS ${k.ordemServico}`}
+                </p>
+              )}
+            </Td>
+            <Td className="tnum whitespace-nowrap max-2xl:hidden">{k.ordemServico || <span className="text-muted">—</span>}</Td>
+            <Td className="whitespace-nowrap">
               <StatusCalibracaoBadge status={k.status} />
             </Td>
             <Td>

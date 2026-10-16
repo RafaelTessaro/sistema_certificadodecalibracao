@@ -1,7 +1,8 @@
-// Auxiliares das telas de sessão: erros ao entrar, a espera do bloqueio por tentativas (429) e a
-// conferência da senha nova (a mesma política do servidor, em shared/usuarios.ts).
+// Auxiliares das telas de sessão: erros ao entrar, a espera do bloqueio por tentativas (429), a
+// conferência da senha nova (a mesma política do servidor, em shared/usuarios.ts) e o Enter que passa
+// para o próximo campo.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type KeyboardEvent } from 'react'
 import { validarSenhaNova } from '#shared/usuarios.ts'
 import { ErroApi } from '../../lib/api'
 
@@ -75,4 +76,27 @@ export function useEspera(): [number, (segundos: number, porComputador?: boolean
     setPorComputador(computador)
   }
   return [faltam, esperar, faltam > 0 ? avisoEspera(faltam, porComputador) : '']
+}
+
+/** Campos em que o Enter passa para o seguinte (a senha vira "text" quando está à mostra). */
+const CAMPOS_DE_TEXTO = new Set(['text', 'password', 'email', 'search', 'tel', 'url', 'number'])
+
+/**
+ * Para o `onKeyDown` do formulário: o Enter num campo de texto vai para o próximo campo (na mesma ordem
+ * do Tab) e, no último, envia o formulário. Assim a tela se preenche de cima a baixo só com o teclado.
+ */
+export function enterVaiParaOProximo(e: KeyboardEvent<HTMLFormElement>) {
+  if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.nativeEvent.isComposing) return
+  const atual = e.target
+  if (!(atual instanceof HTMLInputElement)) return
+  const campos = Array.from(e.currentTarget.elements).filter(
+    (c): c is HTMLInputElement =>
+      c instanceof HTMLInputElement && CAMPOS_DE_TEXTO.has(c.type) && !c.disabled && !c.readOnly && !c.hidden && c.tabIndex >= 0,
+  )
+  const i = campos.indexOf(atual)
+  const proximo = i >= 0 ? campos[i + 1] : undefined
+  // Último campo (ou fora da lista): o Enter segue o normal e envia o formulário
+  if (!proximo) return
+  e.preventDefault()
+  proximo.focus()
 }

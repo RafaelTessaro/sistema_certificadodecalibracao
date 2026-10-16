@@ -42,7 +42,7 @@ import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Combobox } from '../components/ui/Combobox'
 import { confirmar } from '../components/ui/Feedback'
-import { Field, Input } from '../components/ui/Form'
+import { Field, Input, SemRotulo } from '../components/ui/Form'
 import { Modal } from '../components/ui/Modal'
 import { EmptyState, PageHeader } from '../components/ui/Misc'
 import { api, ErroApi, type MembroEquipe } from '../lib/api'
@@ -182,7 +182,7 @@ function NovaCalibracao() {
 
         <Card className={cn(!balancaId && 'pointer-events-none opacity-50')}>
           <CardHeader icone={<ClipboardList className="h-4 w-4" />} titulo="3. Ordem de serviço" />
-          <div className="flex flex-col gap-4 px-5 pb-5 sm:flex-row sm:items-end">
+          <div className="flex flex-col gap-4 px-5 pb-5 sm:flex-row sm:items-start">
             <Field
               label="Nº da OS no sistema da empresa"
               htmlFor="nova-os"
@@ -191,15 +191,16 @@ function NovaCalibracao() {
             >
               <Input id="nova-os" value={os} onChange={(e) => setOs(e.target.value)} placeholder="Opcional" />
             </Field>
-            <Button
-              variante="primary"
-              className="sm:ml-auto"
-              icone={criando ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-              disabled={!clienteId || !balancaId || criando}
-              onClick={() => void comecar()}
-            >
-              Começar calibração
-            </Button>
+            <SemRotulo className="sm:ml-auto">
+              <Button
+                variante="primary"
+                icone={criando ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                disabled={!clienteId || !balancaId || criando}
+                onClick={() => void comecar()}
+              >
+                Começar calibração
+              </Button>
+            </SemRotulo>
           </div>
         </Card>
       </div>

@@ -23,29 +23,43 @@ const semAcento = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLow
 
 // ---- Login -----------------------------------------------------------------------
 
-/** Login como é guardado e comparado: minúsculo, sem espaços nas pontas. */
+export const LOGIN_MIN = 2
+export const LOGIN_MAX = 40
+
+/**
+ * Login como é guardado e comparado: sem caracteres invisíveis, sem espaços nas pontas, com os espaços de
+ * dentro reduzidos a um só e tudo minúsculo (NFC). "Rafael Tessaro" e "  rafael   TESSARO " são o mesmo login.
+ */
 export function normalizarLogin(v: unknown): string {
-  return texto(v).normalize('NFC').trim().toLowerCase()
+  return texto(v)
+    .replace(/\p{Cf}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .normalize('NFC')
 }
 
-const LOGIN_VALIDO = /^[a-z0-9][a-z0-9._-]{2,31}$/
+/** Caracteres aceitos no login (o espaço já vem simples, entre as palavras). */
+const CARACTERE_LOGIN = /^[\p{L}\p{M}\p{Nd}._@ -]$/u
+/** O primeiro: letra ou número. */
+const INICIO_LOGIN = /^[\p{L}\p{Nd}]/u
 
-/** `null` quando o login (já normalizado) é aceito; senão, o motivo. */
+/**
+ * `null` quando o login é aceito; senão, o motivo. A pessoa escolhe o próprio login: letras (com ou sem
+ * acento), números, espaço, ponto, hífen, sublinhado e @, de 2 a 40 caracteres, começando por letra ou
+ * número. Confere o login como ele fica gravado (depois do `normalizarLogin`).
+ */
 export function validarLogin(login: string): string | null {
-  return LOGIN_VALIDO.test(login) ? null : 'Use de 3 a 32 letras sem acento, números, ponto, hífen ou sublinhado, sem espaços.'
-}
-
-/** Login sugerido a partir do nome: "Maria Souza" → "maria.souza", "João da Silva" → "joao.silva"; '' se não der. */
-export function sugerirLogin(nome: string): string {
-  const palavras = semAcento(String(nome ?? ''))
-    .split(/\s+/)
-    .map((p) => p.replace(/[^a-z0-9]/g, ''))
-    .filter(Boolean)
-  if (!palavras.length) return ''
-  const login = (palavras.length === 1 ? palavras[0] : `${palavras[0]}.${palavras[palavras.length - 1]}`)
-    .slice(0, 32)
-    .replace(/\.$/, '')
-  return validarLogin(login) ? '' : login
+  const l = normalizarLogin(login)
+  if (!l) return 'Informe o usuário (o nome para entrar no sistema).'
+  const n = tamanho(l)
+  if (n < LOGIN_MIN) return `O usuário precisa ter pelo menos ${LOGIN_MIN} caracteres.`
+  if (n > LOGIN_MAX) return `O usuário pode ter até ${LOGIN_MAX} caracteres.`
+  if (!INICIO_LOGIN.test(l)) return 'O usuário precisa começar com uma letra ou um número.'
+  const ruim = [...l].find((c) => !CARACTERE_LOGIN.test(c))
+  if (ruim !== undefined)
+    return `O usuário não pode ter “${ruim}”. Use letras (com ou sem acento), números, espaço, ponto, hífen, sublinhado ou @.`
+  return null
 }
 
 // ---- Senha -----------------------------------------------------------------------
@@ -160,6 +174,13 @@ export function normalizarAlteracaoUsuario(e: unknown): Resultado<AlteracaoUsuar
   const erros: string[] = []
   const valor: AlteracaoUsuario = {}
   if ('nome' in r) valor.nome = lerNome(r.nome, erros)
+  if ('login' in r) {
+    // Mesma regra do cadastro: a pessoa pode trocar o login que o administrador escolheu
+    const login = normalizarLogin(r.login)
+    const erroLogin = validarLogin(login)
+    if (erroLogin) erros.push(erroLogin)
+    else valor.login = login
+  }
   if ('nivel' in r) {
     if (NIVEIS.includes(r.nivel as NivelUsuario)) valor.nivel = r.nivel as NivelUsuario
     else erros.push('Nível inválido. Escolha Administrador ou Técnico.')

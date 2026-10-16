@@ -383,6 +383,46 @@ describe('revisão e cancelamento', () => {
   })
 })
 
+describe('troca da unidade da indicação da balança', () => {
+  it('as calibrações abertas acompanham (30 kg → 30 000 g); a emitida não muda', async () => {
+    const emitida: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const aberta = await calibracaoPronta()
+    // A mesma balança, cadastrada em g: 30 000 g × 10 g
+    const r = await t.chamar('PUT', `/api/balancas/${balanca.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...balanca, unidade: 'g', faixas: [{ max: 30000, e: 10, d: 10 }], versao: balanca.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+
+    const k: Calibracao = (await t.chamar('GET', `/api/calibracoes/${aberta.id}`, { cookie: t.cookieAdmin })).json().calibracao
+    // A versão sobe: uma tela com o rascunho antigo aberto não grava por cima os números em kg
+    expect(k.versao).toBe(aberta.versao + 1)
+    expect(k.repetibilidade[0]).toMatchObject({ carga: 15000, leituras: [15000, 15000, 15010, 15000, 15000, 15000] })
+    expect(k.excentricidade.carga).toBe(10000)
+    expect(k.excentricidade.posicoes.map((p) => p.leitura)).toEqual([10000, 10000, 10010, 10000, 10000])
+    expect(k.indicacao.pontos.map((p) => [p.carga, p.crescente, p.decrescente])).toEqual([
+      [5000, 5000, 5000],
+      [10000, 10000, 10010],
+      [20000, 20010, 20010],
+      [30000, 30010, 30010],
+    ])
+    expect(k.indicacao.retornoZero).toBe(0)
+    // Os pesos padrão continuam os mesmos
+    expect(k.indicacao.pontos[3].pecas).toEqual(aberta.indicacao.pontos[3].pecas)
+    const salvar = await t.chamar('PUT', `/api/calibracoes/${aberta.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...aberta, versao: aberta.versao },
+    })
+    expect(salvar.statusCode).toBe(409)
+
+    // O certificado emitido guarda a balança e as leituras de quando foi emitido
+    const e: Calibracao = (await t.chamar('GET', `/api/calibracoes/${emitida.id}`, { cookie: t.cookieAdmin })).json().calibracao
+    expect(e.versao).toBe(emitida.versao)
+    expect(e.repetibilidade[0].carga).toBe(15)
+    expect(e.emissao?.balanca).toMatchObject({ unidade: 'kg', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
+  })
+})
+
 describe('listas e painel', () => {
   it('a lista filtra por situação e busca; o painel conta', async () => {
     const emitida: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao

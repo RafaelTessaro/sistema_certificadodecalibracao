@@ -1,14 +1,19 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { parteSeparada, semIndicadorLegado, textoBusca, textoBuscaBalanca } from '#shared/dominio.ts'
+import type { Balanca, Calibracao } from '#shared/tipos.ts'
 
 export type Banco = DatabaseSync
+
+/** SQL, ou uma função para o que o SQL sozinho não faz bem (mexer no JSON de `dados`). Roda dentro da transação. */
+type Migracao = string | ((db: Banco) => void)
 
 /**
  * Migrações do esquema. Cada item roda uma única vez, em ordem, controlado
  * pelo `PRAGMA user_version`. Nunca altere um item já publicado — acrescente outro.
  */
-const MIGRACOES: string[] = [
+const MIGRACOES: Migracao[] = [
   // 1: cadastros, calibrações (certificados), configurações, usuários, sessões e registro de atividades.
   // Cada registro guarda o objeto completo em `dados` (JSON); as colunas ao lado servem para buscar,
   // ordenar e ligar as tabelas. `versao` impede que duas pessoas gravem por cima uma da outra.
@@ -144,7 +149,44 @@ const MIGRACOES: string[] = [
   );
   CREATE INDEX auditoria_em ON auditoria(em);
   `,
+
+  // 2: a balança passa a ser identificada pelo indicador (é o nº de série dele que vale) e a plataforma com
+  // plaqueta própria vira o dado opcional (ver `semIndicadorLegado`).
+  balancaPeloIndicador,
 ]
+
+/**
+ * Migração 2. Nas balanças com dados do indicador separado, eles passam para a identificação principal e a
+ * identificação de antes vai inteira para a plataforma; quando o indicador só repetia a identificação
+ * principal, e nas outras, só troca as chaves (ver `semIndicadorLegado`). As colunas de busca e de
+ * nº de série acompanham. Os certificados emitidos guardam a cópia congelada do cadastro antigo e não
+ * mudam: só ganham na busca o nº de série que passou a valer.
+ */
+function balancaPeloIndicador(db: Banco) {
+  const balancas = new Map<string, Balanca>()
+  const gravar = db.prepare('UPDATE balancas SET dados = ?, numero_serie = ?, busca = ? WHERE id = ?')
+  for (const l of db.prepare('SELECT id, dados FROM balancas').all() as Array<{ id: string; dados: string }>) {
+    const b = semIndicadorLegado(JSON.parse(l.dados) as Balanca)
+    balancas.set(l.id, b)
+    gravar.run(JSON.stringify(b), b.numeroSerie ?? '', textoBuscaBalanca(b), l.id)
+  }
+  const buscaCalibracao = db.prepare('UPDATE calibracoes SET busca = ? WHERE id = ?')
+  const calibracoes = db.prepare('SELECT id, balanca_id, busca, dados FROM calibracoes').all() as Array<{
+    id: string
+    balanca_id: string
+    busca: string
+    dados: string
+  }>
+  for (const l of calibracoes) {
+    const k = JSON.parse(l.dados) as Calibracao
+    const b = k.emissao?.balanca ?? balancas.get(l.balanca_id)
+    if (!b) continue
+    const novos = [b.numeroSerie, parteSeparada(b)?.serie]
+      .map((x) => textoBusca(x))
+      .filter((x) => x && !` ${l.busca} `.includes(` ${x} `))
+    if (novos.length) buscaCalibracao.run([l.busca, ...new Set(novos)].filter(Boolean).join(' '), l.id)
+  }
+}
 
 export function abrirBanco(arquivo: string): Banco {
   if (arquivo !== ':memory:') mkdirSync(dirname(arquivo), { recursive: true })
@@ -179,14 +221,17 @@ function ativarWal(db: Banco) {
   }
 }
 
-function migrar(db: Banco) {
+/** Aplica as migrações que faltam (até a `ate`, para os testes montarem um banco de uma versão antiga). */
+export function migrar(db: Banco, ate = MIGRACOES.length) {
   const versao = () => Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version)
-  for (let i = versao(); i < MIGRACOES.length; i++) {
+  for (let i = versao(); i < Math.min(ate, MIGRACOES.length); i++) {
     transacao(db, () => {
       // Relida já com a trava de escrita (BEGIN IMMEDIATE): o servidor e a ferramenta de senha podem abrir
       // o mesmo banco ao mesmo tempo, e só um deles aplica cada migração
       if (versao() > i) return
-      db.exec(MIGRACOES[i])
+      const m = MIGRACOES[i]
+      if (typeof m === 'string') db.exec(m)
+      else m(db)
       db.exec(`PRAGMA user_version = ${i + 1}`)
     })
   }

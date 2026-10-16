@@ -95,7 +95,9 @@ export function Balancas() {
           b.identificacao,
           b.clienteNome,
           b.localInstalacao,
-          b.indicadorSerie,
+          b.plataformaFabricante,
+          b.plataformaModelo,
+          b.plataformaSerie,
           TIPOS_BALANCA[b.tipo],
           capacidadeTexto(b),
           b.ultimoCertificado,
@@ -145,7 +147,7 @@ export function Balancas() {
         'Local de instalação',
         'Capacidade',
         'Classe',
-        'Indicador',
+        'Plataforma',
         'Certificados',
         'Última calibração',
         'Último certificado',
@@ -162,7 +164,7 @@ export function Balancas() {
         b.localInstalacao,
         capacidadeTexto(b),
         ROTULO_CLASSE[b.classe],
-        [b.indicadorFabricante, b.indicadorModelo, b.indicadorSerie && `série ${b.indicadorSerie}`].filter(Boolean).join(' '),
+        [b.plataformaFabricante, b.plataformaModelo, b.plataformaSerie && `série ${b.plataformaSerie}`].filter(Boolean).join(' '),
         b.certificados,
         b.ultimaCalibracao ? dataCurta(b.ultimaCalibracao) : '',
         b.ultimoCertificado,
@@ -196,14 +198,16 @@ export function Balancas() {
       />
 
       <Card className="overflow-hidden">
-        <div className="flex flex-col gap-3 border-b border-line p-4 lg:flex-row lg:items-center">
+        {/* Em telas de notebook (1280, 1366) o que não cabe passa para a linha de baixo, sem cortar o texto */}
+        <div className="flex flex-col gap-3 border-b border-line p-4 lg:flex-row lg:flex-wrap lg:items-center">
           <SearchInput
             valor={busca}
             aoMudar={setBusca}
-            placeholder="Buscar por série, TAG, modelo ou cliente…"
-            className="lg:w-80"
+            placeholder="Série, TAG, modelo ou cliente…"
+            className="lg:max-w-80 lg:min-w-60 lg:flex-1"
           />
           <Segmented
+            className="shrink-0"
             valor={filtro}
             aoMudar={setFiltro}
             opcoes={[
@@ -213,7 +217,7 @@ export function Balancas() {
               { valor: 'sem', label: 'Sem calibração', contagem: contagem.sem },
             ]}
           />
-          <label className="flex cursor-pointer items-center gap-2 text-[13px] text-ink-2 lg:ml-auto">
+          <label className="flex shrink-0 cursor-pointer items-center gap-2 text-[13px] whitespace-nowrap text-ink-2 lg:ml-auto">
             <input
               type="checkbox"
               checked={inativas}
@@ -263,10 +267,13 @@ export function Balancas() {
           <Tabela>
             <thead>
               <tr>
-                <Th>Balança</Th>
+                {/* Balança e Cliente ficam com o espaço que sobra e cortam o texto comprido com "…" (max-w-0 nas
+                    células); as outras colunas não quebram linha. Abaixo de 1366 px a última calibração sai da
+                    lista (continua na página da balança) para a tabela caber sem rolar para o lado. */}
+                <Th className="w-[60%]">Balança</Th>
                 <Th className="max-lg:hidden">Série / TAG</Th>
-                <Th className="max-md:hidden">Cliente</Th>
-                <Th className="max-xl:hidden">Última calibração</Th>
+                <Th className="w-[40%] max-md:hidden">Cliente</Th>
+                <Th className="max-[1366px]:hidden">Última calibração</Th>
                 <Th>Próxima</Th>
                 <Th className="w-10">
                   <span className="sr-only">Ações</span>
@@ -276,17 +283,19 @@ export function Balancas() {
             <tbody>
               {lista.map((b, i) => (
                 <Linha key={b.id} indice={i} aoClicar={() => navegar(`/balancas/${b.id}`)}>
-                  <Td>
+                  <Td className="max-w-0">
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-2 text-ink-2">
                         <Scale className="h-4 w-4" />
                       </div>
                       <div className="min-w-0">
                         <p className="flex items-center gap-2 font-medium text-ink">
-                          <span className="truncate">{nomeBalanca(b)}</span>
+                          <span className="truncate" title={nomeBalanca(b)}>
+                            {nomeBalanca(b)}
+                          </span>
                           {!b.ativo && <Badge tom="neutral">Desativada</Badge>}
                         </p>
-                        <p className="truncate text-xs text-muted">
+                        <p className="truncate text-xs text-muted" title={`${TIPOS_BALANCA[b.tipo]} · ${capacidadeTexto(b)}`}>
                           {TIPOS_BALANCA[b.tipo]} · <span className="tnum">{capacidadeTexto(b)}</span>
                         </p>
                         {/* Telas estreitas: série e cliente aparecem aqui, já que as colunas somem */}
@@ -300,24 +309,25 @@ export function Balancas() {
                       </div>
                     </div>
                   </Td>
-                  <Td className="tnum max-lg:hidden">
+                  <Td className="tnum whitespace-nowrap max-lg:hidden">
                     {b.numeroSerie || <span className="text-muted">—</span>}
                     {b.identificacao && <p className="text-xs text-muted">{b.identificacao}</p>}
                   </Td>
-                  <Td className="max-md:hidden">
+                  <Td className="max-w-0 max-md:hidden">
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation()
                         navegar(`/clientes/${b.clienteId}`)
                       }}
-                      className="block max-w-[220px] cursor-pointer truncate text-left text-ink-2 hover:text-brand-ink hover:underline"
+                      className="block max-w-full cursor-pointer truncate text-left text-ink-2 hover:text-brand-ink hover:underline"
+                      title={b.clienteNome}
                     >
                       {b.clienteNome}
                     </button>
-                    {b.localInstalacao && <p className="max-w-[220px] truncate text-xs text-muted">{b.localInstalacao}</p>}
+                    {b.localInstalacao && <p className="truncate text-xs text-muted">{b.localInstalacao}</p>}
                   </Td>
-                  <Td className="max-xl:hidden">
+                  <Td className="whitespace-nowrap max-[1366px]:hidden">
                     {b.ultimaCalibracao ? (
                       <>
                         <p className="tnum">{dataCurta(b.ultimaCalibracao)}</p>
@@ -338,7 +348,7 @@ export function Balancas() {
                       <span className="text-xs text-muted">Nunca calibrada</span>
                     )}
                   </Td>
-                  <Td>
+                  <Td className="whitespace-nowrap">
                     {b.proximaCalibracao ? (
                       <div>
                         <p className="tnum">{dataCurta(b.proximaCalibracao)}</p>

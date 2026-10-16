@@ -3,6 +3,8 @@ import { SENHAS_COMUNS } from './senhasComuns.ts'
 import type { AcaoAuditoria } from './tipos.ts'
 import {
   GRUPOS_AUDITORIA,
+  LOGIN_MAX,
+  LOGIN_MIN,
   normalizarAlteracaoUsuario,
   normalizarLogin,
   normalizarNovoUsuario,
@@ -10,12 +12,18 @@ import {
   ROTULO_GRUPO_AUDITORIA,
   SENHA_MAX,
   SENHA_MIN,
-  sugerirLogin,
   validarLogin,
   validarSenhaNova,
 } from './usuarios.ts'
 
-const MSG_LOGIN = 'Use de 3 a 32 letras sem acento, números, ponto, hífen ou sublinhado, sem espaços.'
+const MSG_LOGIN = {
+  vazio: 'Informe o usuário (o nome para entrar no sistema).',
+  curto: 'O usuário precisa ter pelo menos 2 caracteres.',
+  longo: 'O usuário pode ter até 40 caracteres.',
+  inicio: 'O usuário precisa começar com uma letra ou um número.',
+  caractere: (c: string) =>
+    `O usuário não pode ter “${c}”. Use letras (com ou sem acento), números, espaço, ponto, hífen, sublinhado ou @.`,
+}
 const MSG = {
   tamanho: 'A senha precisa ter de 8 a 128 caracteres.',
   comum: 'Essa senha é muito comum. Use uma frase de 3 ou 4 palavras.',
@@ -42,32 +50,60 @@ describe('login', () => {
     expect(normalizarLogin({ login: 'maria' })).toBe('')
   })
 
-  it('aceita de 3 a 32 letras sem acento, números, ponto, hífen e sublinhado', () => {
-    for (const ok of ['ana', 'maria.souza', 'joao_lima', 'recepcao-2', '1caixa', 'a'.repeat(32)])
+  it('normaliza os espaços de dentro: "Rafael Tessaro" e "rafael  tessaro" são o mesmo login', () => {
+    const mesmo = 'rafael tessaro'
+    for (const v of ['Rafael Tessaro', 'rafael  tessaro', '  RAFAEL\tTessaro ', 'Rafael\u00a0\u00a0Tessaro', 'rafael \n tessaro'])
+      expect(normalizarLogin(v), JSON.stringify(v)).toBe(mesmo)
+    // Caracteres invisíveis (espaço de largura zero, hífen suave) não contam
+    expect(normalizarLogin('ra\u200bfael\u00ad tessaro')).toBe(mesmo)
+  })
+
+  it('normaliza os acentos (NFC): "é" composto ou decomposto é o mesmo login', () => {
+    const composto = 'joão.conceição'
+    const decomposto = 'joa\u0303o.conceic\u0327a\u0303o'
+    expect(decomposto).not.toBe(composto)
+    expect(normalizarLogin(decomposto)).toBe(composto)
+    expect(normalizarLogin('JOÃO.CONCEIÇÃO')).toBe(composto)
+    expect(validarLogin(decomposto)).toBeNull()
+  })
+
+  it('aceita o que a pessoa escolher: letras com acento, números, espaço, ponto, hífen, sublinhado e @', () => {
+    expect([LOGIN_MIN, LOGIN_MAX]).toEqual([2, 40])
+    for (const ok of [
+      'ana',
+      'li',
+      'r2',
+      'maria.souza',
+      'joao_lima',
+      'recepcao-2',
+      '1caixa',
+      'joão',
+      'José Conceição',
+      'Rafael Tessaro',
+      'ana@balancas.com',
+      'técnico 2',
+      'Ñandú',
+      'Maria',
+      'a'.repeat(LOGIN_MAX),
+      'é'.repeat(LOGIN_MAX),
+    ])
       expect(validarLogin(ok), ok).toBeNull()
-    for (const ruim of ['', 'ab', 'a'.repeat(33), 'maria souza', 'joão', '.maria', '-ana', '_ana', 'Maria', 'ana@bc', 'ana/1'])
-      expect(validarLogin(ruim), ruim).toBe(MSG_LOGIN)
   })
 
-  it('sugere o primeiro e o último nome, sem acentos', () => {
-    expect(sugerirLogin('Maria Souza')).toBe('maria.souza')
-    expect(sugerirLogin('  João da Silva  ')).toBe('joao.silva')
-    expect(sugerirLogin('Conceição')).toBe('conceicao')
-    expect(sugerirLogin("Maria D'Ávila")).toBe('maria.davila')
-    expect(sugerirLogin('Recepção 2')).toBe('recepcao.2')
-    expect(sugerirLogin('Ana-Lúcia Prado')).toBe('analucia.prado')
-  })
-
-  it('sugestão corta em 32 caracteres e devolve vazio quando não dá', () => {
-    const longa = sugerirLogin('Bartolomeuzinhodasilvasauro Albuquerquemaranhao')
-    expect(longa.length).toBeLessThanOrEqual(32)
-    expect(validarLogin(longa)).toBeNull()
-    expect(sugerirLogin('Abcdefghijklmnopqrstuvwxyzabcde Souza')).toBe('abcdefghijklmnopqrstuvwxyzabcde')
-    expect(sugerirLogin('')).toBe('')
-    expect(sugerirLogin('   ')).toBe('')
-    expect(sugerirLogin('Li')).toBe('')
-    expect(sugerirLogin('李明')).toBe('')
-    expect(sugerirLogin('!!! ???')).toBe('')
+  it('recusa com uma mensagem que diz o motivo', () => {
+    expect(validarLogin('')).toBe(MSG_LOGIN.vazio)
+    expect(validarLogin('   ')).toBe(MSG_LOGIN.vazio)
+    expect(validarLogin('a')).toBe(MSG_LOGIN.curto)
+    expect(validarLogin(' a ')).toBe(MSG_LOGIN.curto)
+    expect(validarLogin('a'.repeat(LOGIN_MAX + 1))).toBe(MSG_LOGIN.longo)
+    // O tamanho conta como a pessoa conta: 40 "é" decompostos são 40 caracteres
+    expect(validarLogin('e\u0301'.repeat(LOGIN_MAX))).toBeNull()
+    for (const ruim of ['.maria', '-ana', '_ana', '@ana']) expect(validarLogin(ruim), ruim).toBe(MSG_LOGIN.inicio)
+    expect(validarLogin('ana/1')).toBe(MSG_LOGIN.caractere('/'))
+    expect(validarLogin('maria#1')).toBe(MSG_LOGIN.caractere('#'))
+    expect(validarLogin("d'ávila")).toBe(MSG_LOGIN.caractere("'"))
+    expect(validarLogin('ana 🔑')).toBe(MSG_LOGIN.caractere('🔑'))
+    expect(validarLogin('ana\u0000b')).toBe(MSG_LOGIN.caractere('\u0000'))
   })
 })
 
@@ -118,6 +154,8 @@ describe('política de senha', () => {
     expect(validarSenhaNova('banana split', { login: 'ana', nome: 'A' })).toBe(MSG.login)
     // Login curto demais não conta
     expect(validarSenhaNova('ab ab ab ab', { login: 'ab', nome: '' })).toBeNull()
+    // Login com espaços e maiúsculas: conferido como fica gravado
+    expect(validarSenhaNova('oi rafael tessaro!', { login: 'Rafael  Tessaro', nome: 'R T' })).toBe(MSG.login)
   })
 
   it('recusa o nome do sistema', () => {
@@ -186,6 +224,13 @@ describe('normalização das entradas', () => {
     })
   })
 
+  it('novo usuário: login escolhido com acentos e espaços fica gravado normalizado', () => {
+    const r = normalizarNovoUsuario({ nome: 'Rafael Tessaro', login: '  Rafael   TESSARO ', nivel: 'ADMIN', senha: '' })
+    expect(r.erros).toEqual([])
+    expect(r.valor.login).toBe('rafael tessaro')
+    expect(normalizarNovoUsuario({ nome: 'João', login: 'João Conceição' }).valor.login).toBe('joão conceição')
+  })
+
   it('novo usuário: nível inválido vira comum e senha vazia é aceita', () => {
     const r = normalizarNovoUsuario({ nome: 'João Lima', login: 'joao', nivel: 'DONO' })
     expect(r.erros).toEqual([])
@@ -201,11 +246,12 @@ describe('normalização das entradas', () => {
   })
 
   it('novo usuário: valida nome, login e senha digitada', () => {
-    expect(normalizarNovoUsuario({}).erros).toEqual(['Informe o nome da pessoa.', MSG_LOGIN])
+    expect(normalizarNovoUsuario({}).erros).toEqual(['Informe o nome da pessoa.', MSG_LOGIN.vazio])
     expect(normalizarNovoUsuario(null).erros).toHaveLength(2)
     expect(normalizarNovoUsuario({ nome: 'a'.repeat(61), login: 'ana' }).erros).toEqual(['O nome pode ter até 60 caracteres.'])
     expect(normalizarNovoUsuario({ nome: 'á'.repeat(60), login: 'ana' }).erros).toEqual([])
-    expect(normalizarNovoUsuario({ nome: 'João Lima', login: 'joão' }).erros).toEqual([MSG_LOGIN])
+    expect(normalizarNovoUsuario({ nome: 'João Lima', login: 'joão' }).erros).toEqual([])
+    expect(normalizarNovoUsuario({ nome: 'João Lima', login: 'joão!' }).erros).toEqual([MSG_LOGIN.caractere('!')])
     expect(normalizarNovoUsuario({ nome: 'João Lima', login: 'joao', senha: 'curta' }).erros).toEqual([MSG.tamanho])
     // Quem cadastra é o administrador: as mensagens falam da pessoa
     expect(normalizarNovoUsuario({ nome: 'João Lima', login: 'joao', senha: 'o joao chegou' }).erros).toEqual([MSG_OUTRA.login])
@@ -222,10 +268,17 @@ describe('normalização das entradas', () => {
   it('alteração: só os campos presentes', () => {
     expect(normalizarAlteracaoUsuario({})).toEqual({ valor: {}, erros: [] })
     expect(normalizarAlteracaoUsuario({ nivel: 'ADMIN', versao: 3 })).toEqual({ valor: { nivel: 'ADMIN', versao: 3 }, erros: [] })
-    expect(normalizarAlteracaoUsuario({ nome: ' Ana  Prado ', ativo: false, login: 'outro' })).toEqual({
-      valor: { nome: 'Ana Prado', ativo: false },
+    expect(normalizarAlteracaoUsuario({ nome: ' Ana  Prado ', ativo: false, login: ' Outro ' })).toEqual({
+      valor: { nome: 'Ana Prado', ativo: false, login: 'outro' },
       erros: [],
     })
+  })
+
+  it('alteração do login: mesma normalização e validação do cadastro', () => {
+    expect(normalizarAlteracaoUsuario({ login: 'Rafael  Tessaro' })).toEqual({ valor: { login: 'rafael tessaro' }, erros: [] })
+    expect(normalizarAlteracaoUsuario({ login: '' })).toEqual({ valor: {}, erros: [MSG_LOGIN.vazio] })
+    expect(normalizarAlteracaoUsuario({ login: '-ana' })).toEqual({ valor: {}, erros: [MSG_LOGIN.inicio] })
+    expect(normalizarAlteracaoUsuario({ login: 'ana#1' }).erros).toEqual([MSG_LOGIN.caractere('#')])
   })
 
   it('alteração: nível, situação, versão e nome inválidos são erro', () => {

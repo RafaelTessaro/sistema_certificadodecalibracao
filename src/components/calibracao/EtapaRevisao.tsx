@@ -82,7 +82,7 @@ export function EtapaRevisao({
           <div className="scroll-fino overflow-x-auto border-t border-line">
             <table className="w-full min-w-[520px] text-sm">
               <thead>
-                <tr className="bg-surface-2/70 text-left text-xs text-muted">
+                <tr className="bg-surface-2/70 text-left text-xs whitespace-nowrap text-muted">
                   <th className="px-5 py-2.5 font-medium">Carga ({ctx.balanca.unidade})</th>
                   <th className="px-3 py-2.5 text-right font-medium">Indicação</th>
                   <th className="px-3 py-2.5 text-right font-medium">Erro</th>

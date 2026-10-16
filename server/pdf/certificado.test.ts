@@ -130,6 +130,39 @@ describe('gerarCertificadoPdf', () => {
     expect(doc.language).toBe('pt-BR')
   })
 
+  it('instrumento: identificação pelo indicador e a plataforma numa linha à parte', () => {
+    /** Textos do quadro do instrumento (rótulo seguido do valor). */
+    const textos = (d: DadosCertificadoPdf) => JSON.stringify(definicaoCertificado(d))
+    const d = exemploPlataforma()
+    const t = textos(d)
+    expect(t).toContain('"text":"9091-118832"')
+    expect(t).toContain('"text":"PLATAFORMA"')
+    expect(t).toContain('Toledo do Brasil 2180 · nº de série 2180-0041273')
+    expect(t).not.toContain('"text":"INDICADOR"')
+
+    // Sem plataforma cadastrada, não há a linha
+    const semPlataforma = exemploPlataforma()
+    semPlataforma.emissao.balanca = { ...d.emissao.balanca, plataformaFabricante: '', plataformaModelo: '', plataformaSerie: '' }
+    expect(textos(semPlataforma)).not.toContain('"text":"PLATAFORMA"')
+
+    // Certificado emitido com o cadastro antigo (cópia congelada): sai como foi emitido, com a linha do indicador
+    const antigo = exemploPlataforma()
+    const { plataformaFabricante: _f, plataformaModelo: _m, plataformaSerie: _s, ...resto } = d.emissao.balanca
+    antigo.emissao.balanca = {
+      ...resto,
+      modelo: '2180',
+      numeroSerie: '2180-0041273',
+      indicadorFabricante: 'Toledo do Brasil',
+      indicadorModelo: '9091',
+      indicadorSerie: '9091-118832',
+    } as unknown as typeof d.emissao.balanca
+    const ta = textos(antigo)
+    expect(ta).toContain('"text":"2180-0041273"')
+    expect(ta).toContain('"text":"INDICADOR"')
+    expect(ta).toContain('Toledo do Brasil 9091 · nº de série 9091-118832')
+    expect(ta).not.toContain('"text":"PLATAFORMA"')
+  })
+
   it("só põe a marca d'água quando ela é informada", () => {
     expect(definicaoCertificado(exemploPlataforma())).not.toHaveProperty('watermark')
     const comMarca = definicaoCertificado(exemploRodoviaria()) as { watermark?: { text: string } }
@@ -177,6 +210,8 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', () => {
     expect(t).toContain('FRIGORÍFICO VALE DO CORUMBATAÍ LTDA')
     expect(t).toContain('11.444.777/0001-61')
     expect(t).toContain('Toledo do Brasil')
+    expect(t).toContain('9091-118832')
+    expect(t).toContain('PLATAFORMA')
     expect(t).toContain('2180-0041273')
     expect(t).toContain('Portaria Inmetro/Dimel nº 0236/2009')
     expect(t).toContain('OS-2026-0456')

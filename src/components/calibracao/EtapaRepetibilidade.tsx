@@ -74,7 +74,8 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
                 )
               }
             />
-            <div className="grid grid-cols-1 gap-5 px-5 pb-5 lg:grid-cols-[200px_1fr]">
+            {/* Carga e leituras com o mesmo rótulo (Field) e a mesma altura de campo: ficam na mesma linha */}
+            <div className="grid grid-cols-1 gap-5 px-5 pb-5 lg:grid-cols-[200px_minmax(0,1fr)]">
               <Field label="Carga aplicada" htmlFor={`rep-c-${ens.id}`}>
                 <CampoNumero
                   id={`rep-c-${ens.id}`}
@@ -84,25 +85,27 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
                 />
               </Field>
               <div>
-                <p className="mb-1.5 text-[13px] font-medium text-ink-2">Indicações</p>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
-                  {ens.leituras.map((v, i) => (
-                    <div key={i} className="relative">
-                      <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-[11px] font-medium text-muted">
-                        {i + 1}
-                      </span>
-                      <CampoNumero
-                        valor={v}
-                        compacto
-                        aria-label={`Leitura ${i + 1}`}
-                        className="[&_input]:pl-7"
-                        aoMudar={(x) => setEns((e) => ({ ...e, leituras: e.leituras.map((y, j) => (j === i ? x : y)) }))}
-                        grade={{ grupo: `rep-${ens.id}`, lin: i, col: 0 }}
-                        unidade={u}
-                      />
-                    </div>
-                  ))}
-                </div>
+                <Field label="Indicações" htmlFor={`rep-${ens.id}-1`}>
+                  {/* Quantas colunas couberem, cada uma larga o bastante para "160,05 kg" */}
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-2">
+                    {ens.leituras.map((v, i) => (
+                      <div key={i} className="relative">
+                        <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[11px] font-medium text-muted">
+                          {i + 1}
+                        </span>
+                        <CampoNumero
+                          id={`rep-${ens.id}-${i + 1}`}
+                          valor={v}
+                          aria-label={`Leitura ${i + 1}`}
+                          className="[&_input]:pl-8"
+                          aoMudar={(x) => setEns((e) => ({ ...e, leituras: e.leituras.map((y, j) => (j === i ? x : y)) }))}
+                          grade={{ grupo: `rep-${ens.id}`, lin: i, col: 0 }}
+                          unidade={u}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </Field>
                 <div className="mt-2 flex items-center gap-2">
                   <Button
                     variante="ghost"

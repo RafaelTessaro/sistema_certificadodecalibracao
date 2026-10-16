@@ -99,13 +99,32 @@ function Ler-Nome([string]$Pergunta) {
   }
 }
 
-# Confere o usuário digitado com a mesma regra do sistema (shared/usuarios.ts): o erro, ou $null se
-# serve. Na hora, antes de pedir a senha (o servidor continua sendo quem decide).
+# Usuário como o sistema guarda e compara (normalizarLogin em shared/usuarios.ts): sem caracteres
+# invisíveis, sem espaços nas pontas, os de dentro reduzidos a um só e minúsculo. Assim "Rafael  Tessaro"
+# acha a conta "rafael tessaro". Os espaços são os mesmos do \s do JavaScript, e o Trim tira só o espaço
+# comum (o Trim() do .NET tiraria também caracteres que o sistema recusa).
+function Normalizar-Usuario([string]$Login) {
+  $l = $Login -replace '\p{Cf}', ''
+  $l = $l -replace '[\t\n\v\f\r\p{Zs}\u2028\u2029]+', ' '
+  return $l.Trim([char]' ').ToLowerInvariant().Normalize([Text.NormalizationForm]::FormC)
+}
+
+# Confere o usuário (já normalizado) com a mesma regra do sistema (validarLogin em shared/usuarios.ts):
+# o erro, ou $null se serve. Na hora, antes de pedir a senha (o servidor continua sendo quem decide).
+# Letras (com ou sem acento), números, espaço, ponto, hífen, sublinhado e @, de 2 a 40 caracteres,
+# começando por letra ou número.
 function Erro-Usuario([string]$Login) {
-  $l = $Login.Normalize([Text.NormalizationForm]::FormC).ToLowerInvariant()
-  # -cmatch: com o -match comum, o [a-z] aceitaria também maiúsculas e outras letras
-  if ($l -cmatch '^[a-z0-9][a-z0-9._-]{2,31}$') { return $null }
-  return 'Usuário inválido: use de 3 a 32 letras sem acento, números, ponto, hífen ou sublinhado, sem espaços (ex.: fabio ou maria.souza).'
+  if (-not $Login) { return 'Informe o usuário (ex.: fabio, maria.souza ou Rafael Tessaro).' }
+  # Tamanho como o sistema conta: um caractere fora do básico (par de surrogates) vale 1
+  $n = 0
+  foreach ($c in $Login.ToCharArray()) { if (-not [char]::IsLowSurrogate($c)) { $n++ } }
+  if ($n -lt 2) { return 'O usuário precisa ter pelo menos 2 caracteres.' }
+  if ($n -gt 40) { return 'O usuário pode ter até 40 caracteres.' }
+  if ($Login -cnotmatch '^[\p{L}\p{Nd}]') { return 'O usuário precisa começar com uma letra ou um número.' }
+  if ($Login -cnotmatch '^[\p{L}\p{M}\p{Nd}._@ -]+\z') {
+    return 'O usuário só pode ter letras (com ou sem acento), números, espaço, ponto, hífen, sublinhado ou @.'
+  }
+  return $null
 }
 
 # Texto de uma senha lida com Read-Host -AsSecureString; a cópia em memória não gerenciada é zerada.
@@ -201,7 +220,7 @@ try {
       Write-Host "O jeito recomendado é abrir $endereco no navegador DESTE computador: a tela pede os dados"
       Write-Host 'do administrador e já o cadastra como signatário dos certificados.'
       if (-not (Perguntar-SimNao 'Criar o ADMINISTRADOR por aqui mesmo assim? (S/N)')) { exit 0 }
-      $login = Ler-Texto 'Usuário para entrar no sistema (sem acentos nem espaços, ex.: fabio; Enter = admin)'
+      $login = Normalizar-Usuario (Ler-Texto 'Usuário para entrar no sistema (você escolhe, ex.: fabio ou Rafael Tessaro; Enter = admin)')
       if (-not $login) { $login = 'admin' }
     } else {
       Write-Host 'Usuários cadastrados:'
@@ -210,7 +229,7 @@ try {
         Write-Host 'Nenhum administrador ativo: escolha uma conta para tornar administrador ou digite um usuário novo.' -ForegroundColor Yellow
       }
       Write-Host ''
-      $login = Ler-Texto 'Usuário que vai receber a senha nova (ou um usuário novo, sem acentos nem espaços, para criar outro administrador)'
+      $login = Normalizar-Usuario (Ler-Texto 'Usuário que vai receber a senha nova (ou um usuário novo, para criar outro administrador)')
       if (-not $login) { continue }
     }
     # Usuário inválido: avisa já, antes de perguntar mais nada

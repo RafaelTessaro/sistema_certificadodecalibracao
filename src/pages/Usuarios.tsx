@@ -116,7 +116,7 @@ export function Usuarios() {
   const atualizar = (u: Usuario) => {
     setUsuarios((atual) => ordenar([...(atual ?? []).filter((x) => x.id !== u.id), u]))
     registrarAcao()
-    // A própria conta mudou de nome: o menu do usuário acompanha
+    // A própria conta mudou de nome ou de login: o menu do usuário acompanha
     if (u.id === eu?.id) void useSessao.getState().conferir()
   }
 
@@ -436,6 +436,7 @@ export function Usuarios() {
       <NovoUsuarioModal aberto={novo} aoFechar={() => setNovo(false)} usuarios={lista} aoCriar={aoCriar} />
       <EditarUsuarioModal
         usuario={editando}
+        usuarios={lista}
         motivoNivel={motivoNivel}
         aoFechar={() => setEditando(null)}
         aoSalvar={(u) => {

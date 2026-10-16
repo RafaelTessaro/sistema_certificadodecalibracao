@@ -66,13 +66,18 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config }: Cont
           <Field label="Data da calibração" htmlFor="k-data" className="sm:col-span-2">
             <Input id="k-data" type="date" value={f.dataCalibracao} onChange={(e) => set('dataCalibracao', e.target.value)} />
           </Field>
-          <Field label="Técnico que executou" htmlFor="k-tec" className="sm:col-span-2">
+          {/* Só o nome na lista (cabe na coluna); o cargo de quem foi escolhido aparece embaixo */}
+          <Field
+            label="Técnico que executou"
+            htmlFor="k-tec"
+            className="sm:col-span-2"
+            hint={equipe.find((u) => u.id === f.tecnicoId)?.cargo || undefined}
+          >
             <Select id="k-tec" value={f.tecnicoId} onChange={(e) => set('tecnicoId', e.target.value)}>
               <option value="">Escolha…</option>
               {equipe.map((u) => (
-                <option key={u.id} value={u.id}>
+                <option key={u.id} value={u.id} title={u.cargo || undefined}>
                   {u.nome}
-                  {u.cargo ? ` — ${u.cargo}` : ''}
                 </option>
               ))}
             </Select>

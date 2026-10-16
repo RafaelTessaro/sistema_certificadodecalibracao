@@ -179,6 +179,21 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
     expect(rodar(['definir', banco], { login: 'joao' }).json).toMatchObject({ nivel: 'COMUM' })
   })
 
+  it('login escolhido com acentos e espaços: grava normalizado e acha a conta com outra grafia', async () => {
+    const criado = rodar(['definir', banco], { login: '  Rafael   Tessaro ', nome: 'Rafael Tessaro', senha: SENHA_FORTE }, true)
+    expect(criado.status).toBe(0)
+    expect(criado.json).toMatchObject({ login: 'rafael tessaro', criado: true })
+    // Maiúsculas, espaços e o "ç" decomposto: a mesma conta (redefine, não cria outra)
+    const mesma = rodar(['definir', banco], { login: 'RAFAEL tessaro' })
+    expect(mesma.json).toMatchObject({ login: 'rafael tessaro', criado: false })
+    expect(rodar(['definir', banco], { login: 'Conceic\u0327ão', nome: 'Maria' }, true).json).toMatchObject({
+      login: 'conceição',
+      criado: true,
+    })
+    expect(rodar(['definir', banco], { login: 'CONCEIÇÃO' }).json).toMatchObject({ criado: false })
+    expect(await contar(banco, 'SELECT COUNT(*) AS n FROM usuarios')).toBe(2)
+  })
+
   it('encerrar-sessoes apaga todas as sessões', async () => {
     rodar(['definir', banco], { login: 'admin', senha: SENHA_FORTE })
     const id = String((await linhaUsuario(banco, 'admin'))!.id)
@@ -203,7 +218,10 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
     expect(rodar(['definir', banco], { login: 'admin', senha: 'fabio-123-aqui' }).json.erro).toBe(
       'A senha não pode conter o nome da pessoa.',
     )
-    expect(rodar(['definir', banco], { login: 'a b', senha: SENHA_FORTE }).status).toBe(1)
+    const login = rodar(['definir', banco], { login: 'a/b', senha: SENHA_FORTE })
+    expect(login.status).toBe(1)
+    expect(login.json.erro).toMatch(/^O usuário não pode ter “\/”/)
+    expect(rodar(['definir', banco], { login: '.admin', senha: SENHA_FORTE }).status).toBe(1)
 
     expect((await linhaUsuario(banco, 'admin'))!.senha_hash).toBe(antes.senha_hash)
     expect(await contar(banco, 'SELECT COUNT(*) AS n FROM usuarios')).toBe(1)

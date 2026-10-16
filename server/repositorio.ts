@@ -4,6 +4,7 @@
 // pessoa (409). Toda gravação aumenta a revisão geral e avisa as telas abertas (tempo real).
 
 import {
+  calibracaoEmOutraUnidade,
   completarConfig,
   CONFIG_PADRAO,
   dataIsoValida,
@@ -15,7 +16,9 @@ import {
   normalizarCliente,
   normalizarConfig,
   normalizarPadrao,
+  parteSeparada,
   textoBusca,
+  textoBuscaBalanca,
 } from '#shared/dominio.ts'
 import { somenteDigitos, normalizarCnpj } from '#shared/documentos.ts'
 import { novoId } from '#shared/id.ts'
@@ -34,6 +37,7 @@ import type {
   Padrao,
   ResumoPainel,
   StatusCalibracao,
+  Unidade,
   Vencimento,
 } from '#shared/tipos.ts'
 import { type Banco, gravarMeta, lerMeta, transacao } from './db.ts'
@@ -340,9 +344,29 @@ export class Repositorio {
         this.db
           .prepare("UPDATE calibracoes SET cliente_id = ? WHERE balanca_id = ? AND status IN ('RASCUNHO','REVISAO')")
           .run(valor.clienteId, id)
+      // ... e a troca da unidade da indicação: as cargas e leituras deles estão na unidade antiga
+      if (valor.unidade !== atual.unidade) this.converterAbertas(id, atual.unidade, valor.unidade, balanca.atualizadoEm)
       this.mudou('balanca', id)
       return balanca
     })
+  }
+
+  /**
+   * Passa as cargas e leituras das calibrações abertas da balança para a nova unidade da indicação
+   * (6000 g → 6 kg), dentro da transação da troca. A versão sobe: uma tela com o rascunho antigo aberto
+   * recebe o aviso de que ele mudou, em vez de gravar por cima os números na unidade de antes. Os
+   * certificados emitidos têm a cópia congelada da balança e não mudam.
+   */
+  private converterAbertas(balancaId: string, de: Unidade, para: Unidade, em: string) {
+    const ids = this.db
+      .prepare("SELECT id FROM calibracoes WHERE balanca_id = ? AND status IN ('RASCUNHO','REVISAO')")
+      .all(balancaId) as Array<{ id: string }>
+    for (const { id } of ids) {
+      const k = this.obterCalibracao(id)
+      if (!k) continue
+      this.gravarCalibracao({ ...calibracaoEmOutraUnidade(k, de, para), versao: k.versao + 1, atualizadoEm: em }, false)
+      this.mudou('calibracao', id)
+    }
   }
 
   excluirBalanca(id: string) {
@@ -360,7 +384,7 @@ export class Repositorio {
   }
 
   private gravarBalanca(b: Balanca, nova: boolean) {
-    const busca = textoBusca(b.fabricante, b.modelo, b.numeroSerie, b.identificacao, b.localInstalacao, b.indicadorSerie)
+    const busca = textoBuscaBalanca(b)
     const params = [b.clienteId, b.numeroSerie, busca, b.ativo ? 1 : 0, JSON.stringify(b), b.versao, b.atualizadoEm]
     if (nova)
       this.db
@@ -756,6 +780,7 @@ export class Repositorio {
       balanca?.fabricante,
       balanca?.modelo,
       balanca?.numeroSerie,
+      balanca && parteSeparada(balanca)?.serie,
       balanca?.identificacao,
     )
     const colunas = {

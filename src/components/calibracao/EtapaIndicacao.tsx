@@ -1,5 +1,5 @@
-import { CircleCheck, CircleX, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { CircleCheck, CircleX, Hand, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
+import { Fragment, useMemo, useState } from 'react'
 import { cargaDasPecas } from '#shared/calibracao.ts'
 import { massaLegivel, METODOS_CARREGAMENTO } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
@@ -188,7 +188,7 @@ function TabelaPontos({
         <div className="scroll-fino overflow-x-auto border-t border-line">
           <table className="w-full min-w-[760px] text-sm">
             <thead>
-              <tr className="bg-surface-2/70 text-left text-xs font-medium text-muted">
+              <tr className="bg-surface-2/70 text-left text-xs font-medium whitespace-nowrap text-muted">
                 <th className="w-10 px-3 py-2.5 pl-5">#</th>
                 <th className="px-3 py-2.5">Carga ({u})</th>
                 <th className="px-3 py-2.5">Pesos padrão</th>
@@ -208,7 +208,8 @@ function TabelaPontos({
                 const falta = montagem && montagem.falta > 0
                 return (
                   <tr key={p.id} className="border-t border-line align-top">
-                    <td className="tnum px-3 py-2.5 pl-5 text-muted">{i + 1}</td>
+                    {/* Linha alinhada pelo topo: textos com leading-9 ficam no meio dos campos (36 px) */}
+                    <td className="tnum px-3 py-2 pl-5 leading-9 text-muted">{i + 1}</td>
                     <td className="px-3 py-2">
                       <CampoNumero
                         compacto
@@ -232,15 +233,31 @@ function TabelaPontos({
                       >
                         <Layers className="h-3.5 w-3.5 shrink-0 text-muted" />
                         <span className="line-clamp-2">
-                          {p.carga === 0
+                          {/* Cada grupo de peças ("3 × 20 kg") inteiro numa linha: quebra só entre os grupos */}
+                          {(p.carga === 0
                             ? 'Sem carga (zero)'
                             : p.pecas.length
                               ? descreverPecas(p.pecas, pesos)
                               : pesos.length
                                 ? 'Nenhum peso'
-                                : '—'}
+                                : '—'
+                          )
+                            .split(' + ')
+                            .map((grupo, k) => (
+                              <Fragment key={k}>
+                                {k > 0 && ' + '}
+                                <span className="whitespace-nowrap">{grupo}</span>
+                              </Fragment>
+                            ))}
                           {falta && ` · faltam ${formatarNumero(montagem!.falta, casas)} ${u}`}
-                          {p.pecasManuais && <span className="text-muted"> · à mão</span>}
+                          {/* Ícone em vez de "· à mão": a descrição cabe numa linha e a linha fica da altura dos campos */}
+                          {p.pecasManuais && (
+                            <span className="whitespace-nowrap text-muted">
+                              {' '}
+                              <Hand aria-hidden className="inline h-3 w-3 align-[-2px]" />
+                              <span className="sr-only">(escolhidos à mão)</span>
+                            </span>
+                          )}
                         </span>
                       </button>
                     </td>
@@ -303,11 +320,11 @@ function TabelaPontos({
                       )}
                     </td>
                     {comConformidade && (
-                      <td className="px-3 py-2.5 text-center">
+                      <td className="px-3 py-2 text-center leading-9">
                         {r?.conformidade ? (
                           <span
                             className={cn(
-                              'inline-flex items-center gap-1 text-xs font-medium',
+                              'inline-flex h-9 items-center gap-1 align-top text-xs font-medium',
                               r.conformidade === 'CONFORME' ? 'text-success' : 'text-danger',
                             )}
                             title={`EMA ±${r.texto.ema} ${u}`}
@@ -325,9 +342,11 @@ function TabelaPontos({
                       </td>
                     )}
                     <td className="py-2 pr-5">
+                      {/* mt-0.5: no centro dos campos da linha (36 px), que ficam no topo da célula */}
                       <Button
                         variante="ghost"
                         tamanho="icon-sm"
+                        className="mt-0.5"
                         aria-label={`Remover o ponto ${i + 1}`}
                         onClick={() => setPontos((l) => l.filter((x) => x.id !== p.id))}
                       >

@@ -100,15 +100,20 @@ export interface Balanca {
   versao: number
   clienteId: ID
   tipo: TipoBalanca
+  /**
+   * Fabricante, modelo e nº de série da balança como identificada pelo indicador (o mostrador): é o
+   * nº de série do indicador que vale, mesmo quando a plataforma é um aparelho à parte.
+   */
   fabricante: string
   modelo: string
   numeroSerie: string
   /** Identificação do cliente: TAG, patrimônio, código interno. */
   identificacao: string
-  /** Indicador separado da plataforma (balanças compostas). */
-  indicadorFabricante: string
-  indicadorModelo: string
-  indicadorSerie: string
+  /** Plataforma (receptor de carga) com plaqueta própria. Opcional: quase nunca tem nº de série próprio. */
+  plataformaFabricante: string
+  plataformaModelo: string
+  plataformaSerie: string
+  /** Unidade da indicação (como o mostrador indica o peso): todos os valores abaixo e as leituras estão nela. */
   unidade: Unidade
   tipoFaixas: TipoFaixas
   /** Pelo menos uma; em ordem crescente de Max. Valores na `unidade` da balança. */
@@ -134,6 +139,16 @@ export interface Balanca {
 }
 
 export type BalancaInput = Omit<Balanca, 'id' | 'versao' | 'criadoEm' | 'atualizadoEm'>
+
+/**
+ * Campos do cadastro antigo, quando a identificação principal era a da plataforma e o indicador separado
+ * ficava à parte. Só continuam existindo nas cópias congeladas dos certificados emitidos antes da troca.
+ */
+export interface IndicadorLegado {
+  indicadorFabricante?: string
+  indicadorModelo?: string
+  indicadorSerie?: string
+}
 
 export interface BalancaResumo extends Balanca {
   clienteNome: string
@@ -622,7 +637,7 @@ export type NivelUsuario = 'ADMIN' | 'COMUM'
 export interface Usuario {
   id: ID
   versao: number
-  /** Para entrar: minúsculo, sem espaços nem acentos (ex.: "maria.souza"). */
+  /** Para entrar, escolhido pela pessoa; guardado minúsculo e com espaços simples (ex.: "maria.souza", "rafael tessaro"). */
   login: string
   /** Como aparece nas telas e no certificado (ex.: "Maria Souza"). */
   nome: string
@@ -686,6 +701,8 @@ export interface NovoUsuario {
 }
 export interface AlteracaoUsuario {
   nome?: string
+  /** Login novo (a pessoa passa a entrar com ele; as sessões abertas continuam). */
+  login?: string
   nivel?: NivelUsuario
   ativo?: boolean
   signatario?: boolean

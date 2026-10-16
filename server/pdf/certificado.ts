@@ -28,6 +28,7 @@ import {
   LOCAIS,
   METODOS_EXCENTRICIDADE,
   numeroBr,
+  parteSeparada,
   RECEPTORES,
   REGRAS_DECISAO,
   resumoPesos,
@@ -551,8 +552,8 @@ const ZERO_AUTOMATICO = { LIGADO: 'ligado', DESLIGADO: 'desligado', NAO_POSSUI: 
 function secaoInstrumento(ctx: Contexto, n: number): No[] {
   const { b, k, u } = ctx
   const faixas = faixasOrdenadas(b.faixas)
-  const indicador = [b.indicadorFabricante, b.indicadorModelo].filter((x) => !vazio(x)).join(' ')
-  const temIndicador = !vazio(indicador) || !vazio(b.indicadorSerie)
+  // Plataforma com plaqueta própria; nos certificados emitidos com o cadastro antigo, o indicador separado
+  const separada = parteSeparada(b)
   const receptor = [
     RECEPTORES[b.receptor] ?? b.receptor,
     vazio(b.dimensoes) ? '' : b.dimensoes.trim(),
@@ -580,11 +581,11 @@ function secaoInstrumento(ctx: Contexto, n: number): No[] {
       { rotulo: 'Unidade', valor: u },
     ],
   ]
-  if (temIndicador)
+  if (separada)
     linhas.push([
       {
-        rotulo: 'Indicador',
-        valor: [indicador, vazio(b.indicadorSerie) ? '' : `nº de série ${b.indicadorSerie.trim()}`].filter(Boolean).join(' · '),
+        rotulo: separada.rotulo,
+        valor: [separada.nome, separada.serie && `nº de série ${separada.serie}`].filter(Boolean).join(' · '),
         span: 4,
       },
     ])

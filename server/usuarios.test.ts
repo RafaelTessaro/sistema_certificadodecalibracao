@@ -166,6 +166,20 @@ describe('entrar', () => {
     expect((await t.entrar('  Comum ', SENHA_COMUM)).status).toBe(200)
   })
 
+  it('login com espaços e acentos: entra com outra grafia (maiúsculas, espaços repetidos, acento decomposto)', async () => {
+    const { usuario } = await t.usuarios.definirSenhaLocal({ login: 'José Conceição', nome: 'José', senha: 'mesa-de-madeira' })
+    expect(usuario.login).toBe('josé conceição')
+    for (const grafia of ['José Conceição', 'JOSÉ  CONCEIÇÃO', ' josé\tconceição ', 'jose\u0301 conceic\u0327a\u0303o']) {
+      const r = await t.entrar(grafia, 'mesa-de-madeira')
+      expect(r.status, JSON.stringify(grafia)).toBe(200)
+      expect(r.resposta.json().usuario.login).toBe('josé conceição')
+    }
+    // Acento faz parte do login: sem ele é outro usuário (que não existe)
+    expect((await t.entrar('jose conceicao', 'mesa-de-madeira')).status).toBe(401)
+    // Login maior que o máximo nem é procurado
+    expect((await t.entrar('a'.repeat(41), 'mesa-de-madeira')).status).toBe(401)
+  })
+
   it('conta desativada: 403 só depois de a senha conferir', async () => {
     await t.chamar('PUT', `/api/usuarios/${t.comumId}`, { cookie: t.cookieAdmin, payload: { ativo: false } })
     const certo = await t.entrar('comum', SENHA_COMUM)
@@ -330,6 +344,27 @@ describe('revogação', () => {
     expect(await statusDados(c)).toBe(200)
   })
 
+  it('trocar o login: entra com o novo, a sessão continua, fica na auditoria; login repetido é 409', async () => {
+    const c = await t.cookieDe('comum', SENHA_COMUM)
+    const r = await comoAdmin('PUT', `/api/usuarios/${t.comumId}`, { login: '  Maria.Souza ' })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().usuario).toMatchObject({ login: 'maria.souza' })
+    expect(await statusDados(c)).toBe(200)
+    expect((await t.entrar('comum', SENHA_COMUM)).status).toBe(401)
+    expect((await t.entrar('maria.souza', SENHA_COMUM)).status).toBe(200)
+    expect(auditoria('USUARIO_ALTERADO').at(-1)?.detalhe).toBe('comum: login: comum → maria.souza')
+
+    // O mesmo login de outra conta, e login inválido
+    const repetido = await comoAdmin('PUT', `/api/usuarios/${t.comumId}`, { login: 'ADMIN' })
+    expect(repetido.statusCode).toBe(409)
+    expect(repetido.json().codigo).toBe('LOGIN_EXISTENTE')
+    expect((await comoAdmin('PUT', `/api/usuarios/${t.comumId}`, { login: '.x' })).statusCode).toBe(400)
+    // O administrador troca o próprio login (o que foi preenchido no primeiro acesso)
+    const proprio = await comoAdmin('PUT', `/api/usuarios/${t.adminId}`, { login: 'rafael' })
+    expect(proprio.statusCode, proprio.body).toBe(200)
+    expect(proprio.json().usuario.login).toBe('rafael')
+  })
+
   it('trocar a própria senha mantém a sessão atual (mesmo cookie) e derruba as outras', async () => {
     const atual = await t.cookieDe('comum', SENHA_COMUM)
     const outra = await t.cookieDe('comum', SENHA_COMUM)
@@ -414,6 +449,29 @@ describe('regras dos usuários', () => {
     expect(r.json()).toEqual({ erro: 'Outra pessoa alterou este usuário. Feche e abra de novo.', codigo: 'CONFLITO' })
     expect((await comoAdmin('PUT', '/api/usuarios/nao-existe', { nome: 'X' })).statusCode).toBe(404)
     expect((await comoAdmin('PUT', `/api/usuarios/${t.comumId}`, { nivel: 'CHEFE' })).statusCode).toBe(400)
+  })
+
+  it('login escolhido pela pessoa: acentos, espaços e @; único sem diferenciar maiúsculas e espaços', async () => {
+    const r = await comoAdmin('POST', '/api/usuarios', {
+      nome: 'Rafael Tessaro',
+      login: ' Rafael Tessaro ',
+      nivel: 'COMUM',
+      senha: '',
+    })
+    expect(r.statusCode).toBe(201)
+    const { usuario, senhaTemporaria } = r.json() as ResultadoSenha
+    expect(usuario.login).toBe('rafael tessaro')
+    for (const login of ['rafael tessaro', 'RAFAEL  TESSARO', 'Rafael\tTessaro']) {
+      const repetido = await comoAdmin('POST', '/api/usuarios', { nome: 'Outro', login, nivel: 'COMUM', senha: '' })
+      expect(repetido.statusCode, login).toBe(409)
+      expect(repetido.json().codigo).toBe('LOGIN_EXISTENTE')
+    }
+    expect((await t.entrar('Rafael  TESSARO', senhaTemporaria!)).status).toBe(200)
+    const email = await comoAdmin('POST', '/api/usuarios', { nome: 'Ana', login: 'Ana@Balancas.com', nivel: 'COMUM', senha: '' })
+    expect(email.json().usuario.login).toBe('ana@balancas.com')
+    const invalido = await comoAdmin('POST', '/api/usuarios', { nome: 'Ana', login: 'ana#2', nivel: 'COMUM', senha: '' })
+    expect(invalido.statusCode).toBe(400)
+    expect(invalido.json().erro).toMatch(/^O usuário não pode ter “#”/)
   })
 
   it('login repetido: 409 (também em dois cadastros simultâneos, nunca 500)', async () => {
@@ -554,6 +612,40 @@ describe('sem usuários cadastrados', () => {
       expect((await vazio.chamar('GET', '/api/painel')).statusCode).toBe(401)
       expect((await vazio.entrar('admin', 'qualquer-senha')).status).toBe(401)
       expect(vazio.usuarios.situacao()).toEqual({ usuarios: 0, administradoresAtivos: 0, lista: [] })
+    } finally {
+      await vazio.fechar()
+    }
+  })
+})
+
+describe('primeiro acesso', () => {
+  it('cria o administrador com o login que a pessoa escolheu; sai e entra com outra grafia', async () => {
+    const vazio = await criarAppComLogin({ semUsuarios: true })
+    try {
+      const corpo = { nome: 'Rafael Tessaro', login: 'Rafael Tessaro', senha: 'mesa-de-madeira', cargo: 'Responsável técnico' }
+      const r = await vazio.chamar('POST', '/api/primeiro-acesso', { payload: corpo })
+      expect(r.statusCode).toBe(200)
+      expect(r.json().usuario).toMatchObject({
+        login: 'rafael tessaro',
+        nome: 'Rafael Tessaro',
+        nivel: 'ADMIN',
+        signatario: true,
+      })
+      const cookie = r.cookies.find((c) => c.name === vazio.nomeCookie)!.value
+      expect((await vazio.chamar('DELETE', '/api/sessao', { cookie })).statusCode).toBe(204)
+      const entrou = await vazio.entrar('rafael tessaro', 'mesa-de-madeira')
+      expect(entrou.status).toBe(200)
+      expect(entrou.resposta.json().usuario.login).toBe('rafael tessaro')
+      // Login inválido não cria nada
+      const outro = await criarAppComLogin({ semUsuarios: true })
+      try {
+        const ruim = await outro.chamar('POST', '/api/primeiro-acesso', { payload: { ...corpo, login: 'r' } })
+        expect(ruim.statusCode).toBe(400)
+        expect(ruim.json().erro).toBe('O usuário precisa ter pelo menos 2 caracteres.')
+        expect(outro.usuarios.situacao().usuarios).toBe(0)
+      } finally {
+        await outro.fechar()
+      }
     } finally {
       await vazio.fechar()
     }
@@ -749,7 +841,10 @@ describe('ferramenta local (API usada pelo redefinir-senha.mjs)', () => {
     expect((await erroDe(t.usuarios.definirSenhaLocal({ login: 'admin', senha: 'admin-123456' }))).message).toBe(
       'A senha não pode conter o usuário (login) da pessoa.',
     )
-    expect((await erroDe(t.usuarios.definirSenhaLocal({ login: 'a b' }))).message).toMatch(/Use de 3 a 32 letras/)
+    expect((await erroDe(t.usuarios.definirSenhaLocal({ login: 'a/b' }))).message).toMatch(/^O usuário não pode ter “\/”/)
+    expect((await erroDe(t.usuarios.definirSenhaLocal({ login: '_admin' }))).message).toBe(
+      'O usuário precisa começar com uma letra ou um número.',
+    )
     expect((await erroDe(t.usuarios.definirSenhaLocal({ login: 'novo', nome: 'x'.repeat(61) }))).message).toMatch(/até 60/)
     expect(t.usuarios.situacao().usuarios).toBe(2)
   })

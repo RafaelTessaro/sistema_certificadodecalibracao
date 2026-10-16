@@ -64,7 +64,10 @@ export function EmptyState({
   )
 }
 
-/** Controle segmentado com indicador animado (usado em filtros e abas). */
+/**
+ * Controle segmentado com indicador animado (usado em filtros e abas). Tamanhos: `md` (40 px, filtros e abas),
+ * `sm` (36 px, compacto) e `campo` (texto do `sm` na altura de um campo, 40 px: para ficar ao lado de campos).
+ */
 export function Segmented<T extends string>({
   opcoes,
   valor,
@@ -76,7 +79,7 @@ export function Segmented<T extends string>({
   valor: T
   aoMudar: (v: T) => void
   className?: string
-  tamanho?: 'sm' | 'md'
+  tamanho?: 'sm' | 'md' | 'campo'
 }) {
   const grupo = useId()
   return (
@@ -98,7 +101,7 @@ export function Segmented<T extends string>({
             onClick={() => aoMudar(o.valor)}
             className={cn(
               'relative flex cursor-pointer items-center gap-1.5 rounded-lg font-medium whitespace-nowrap transition-colors duration-150',
-              tamanho === 'sm' ? 'h-7 px-2.5 text-xs' : 'h-8 px-3 text-[13px]',
+              tamanho === 'sm' ? 'h-7 px-2.5 text-xs' : tamanho === 'campo' ? 'h-8 px-2.5 text-xs' : 'h-8 px-3 text-[13px]',
               ativo ? 'text-ink' : 'text-muted hover:text-ink-2',
             )}
           >
@@ -127,6 +130,7 @@ export function Segmented<T extends string>({
   )
 }
 
+/** Busca das listas. O "x" de limpar fica fora do Tab (o Tab segue para o próximo controle); Esc também limpa. */
 export function SearchInput({
   valor,
   aoMudar,
@@ -144,6 +148,14 @@ export function SearchInput({
       <input
         value={valor}
         onChange={(e) => aoMudar(e.target.value)}
+        onKeyDown={(e) => {
+          // Esc com texto limpa a busca (sem texto, o Esc segue para quem estiver em volta)
+          if (e.key === 'Escape' && valor) {
+            e.preventDefault()
+            e.stopPropagation()
+            aoMudar('')
+          }
+        }}
         placeholder={placeholder}
         className="h-10 w-full rounded-xl border border-line-strong/80 bg-surface pr-9 pl-9 text-sm text-ink shadow-xs transition-[border-color,box-shadow] placeholder:text-muted/80 hover:border-line-strong focus:border-brand focus:ring-4 focus:ring-[var(--ring)] focus:outline-none"
       />
@@ -154,8 +166,12 @@ export function SearchInput({
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.8 }}
+            tabIndex={-1}
+            // Não tira o foco da busca
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => aoMudar('')}
             aria-label="Limpar busca"
+            title="Limpar busca (Esc)"
             className="absolute top-1/2 right-2 flex h-6 w-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md text-muted hover:bg-surface-2 hover:text-ink"
           >
             <X className="h-3.5 w-3.5" />

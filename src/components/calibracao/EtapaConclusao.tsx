@@ -35,7 +35,13 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
         />
         {conf.solicitada && (
           <div className="grid grid-cols-1 gap-4 px-5 pb-5 sm:grid-cols-2">
-            <Field label="Limite (erro máximo admissível)" htmlFor="conf-crit" hint={CRITERIOS_EMA[conf.criterio].descricao}>
+            {/* Com a tolerância do cliente, os dois lado a lado; sem ela, o limite ocupa a linha (o nome cabe inteiro) */}
+            <Field
+              label="Limite (erro máximo admissível)"
+              htmlFor="conf-crit"
+              className={conf.criterio === 'CLIENTE' ? undefined : 'sm:col-span-2'}
+              hint={CRITERIOS_EMA[conf.criterio].descricao}
+            >
               <Select id="conf-crit" value={conf.criterio} onChange={(e) => setConf('criterio', e.target.value as CriterioEma)}>
                 {(Object.keys(CRITERIOS_EMA) as CriterioEma[]).map((c) => (
                   <option key={c} value={c}>
@@ -44,7 +50,7 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
                 ))}
               </Select>
             </Field>
-            {conf.criterio === 'CLIENTE' ? (
+            {conf.criterio === 'CLIENTE' && (
               <Field label="Tolerância do cliente (±)" htmlFor="conf-tol">
                 <CampoNumero
                   id="conf-tol"
@@ -53,8 +59,6 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
                   unidade={balanca.unidade}
                 />
               </Field>
-            ) : (
-              <div />
             )}
             <Field
               label="Regra de decisão"
@@ -199,7 +203,7 @@ function OpcoesAvancadas({ opcoes, aoMudar }: { opcoes: OpcoesCalculo; aoMudar: 
             <Select id="op-emp" value={opcoes.empuxo} onChange={(e) => set('empuxo', e.target.value as OpcoesCalculo['empuxo'])}>
               <option value="NAO_AJUSTADO">Balança não ajustada antes (recomendado)</option>
               <option value="AJUSTADO">Balança ajustada logo antes</option>
-              <option value="DELTA_T">Com a variação de temperatura do local</option>
+              <option value="DELTA_T">Pela variação de temperatura</option>
               <option value="NENHUM">Não considerar</option>
             </Select>
           </Field>
@@ -219,9 +223,13 @@ function OpcoesAvancadas({ opcoes, aoMudar }: { opcoes: OpcoesCalculo; aoMudar: 
               <CampoNumero id="op-kd" valor={opcoes.kD} aoMudar={(v) => set('kD', v ?? 1)} />
             </Field>
           )}
-          <Field label="Fator de abrangência (k)" htmlFor="op-k">
+          <Field
+            label="Fator de abrangência (k)"
+            htmlFor="op-k"
+            hint={opcoes.metodoK === 'T_EXATO' ? 'Pelos graus de liberdade de cada ponto.' : undefined}
+          >
             <Select id="op-k" value={opcoes.metodoK} onChange={(e) => set('metodoK', e.target.value as OpcoesCalculo['metodoK'])}>
-              <option value="T_EXATO">t de Student pelos graus de liberdade (recomendado)</option>
+              <option value="T_EXATO">t de Student (recomendado)</option>
               <option value="TABELA">Tabela G.2 do GUM</option>
               <option value="K2">k = 2 fixo</option>
             </Select>
@@ -239,24 +247,27 @@ function OpcoesAvancadas({ opcoes, aoMudar }: { opcoes: OpcoesCalculo; aoMudar: 
           <Field label="Divisão usada nas leituras (modo serviço)" htmlFor="op-dteste" hint="0 = a divisão normal da balança.">
             <CampoNumero id="op-dteste" valor={opcoes.divisaoTeste || null} aoMudar={(v) => set('divisaoTeste', v ?? 0)} />
           </Field>
-          <label className="flex cursor-pointer items-start gap-3 self-end pb-2">
-            <input
-              type="checkbox"
-              checked={opcoes.excentricidade}
-              onChange={(e) => set('excentricidade', e.target.checked)}
-              className="mt-0.5 h-4 w-4 accent-[var(--brand)]"
-            />
-            <span className="text-sm text-ink-2">Incluir a excentricidade na incerteza de cada ponto</span>
-          </label>
-          <label className="flex cursor-pointer items-start gap-3 self-end pb-2">
-            <input
-              type="checkbox"
-              checked={opcoes.zeroAprovado}
-              onChange={(e) => set('zeroAprovado', e.target.checked)}
-              className="mt-0.5 h-4 w-4 accent-[var(--brand)]"
-            />
-            <span className="text-sm text-ink-2">Balança aprovada com zero automático (resolução no zero d/4√3)</span>
-          </label>
+          {/* As chaves ficam numa linha própria, embaixo dos campos (não ao lado de um campo, desalinhadas) */}
+          <div className="flex flex-col gap-2.5 sm:col-span-2">
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                checked={opcoes.excentricidade}
+                onChange={(e) => set('excentricidade', e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-[var(--brand)]"
+              />
+              <span className="text-sm text-ink-2">Incluir a excentricidade na incerteza de cada ponto</span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                checked={opcoes.zeroAprovado}
+                onChange={(e) => set('zeroAprovado', e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-[var(--brand)]"
+              />
+              <span className="text-sm text-ink-2">Balança aprovada com zero automático (resolução no zero d/4√3)</span>
+            </label>
+          </div>
         </div>
       )}
     </Card>

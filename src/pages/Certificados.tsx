@@ -96,14 +96,16 @@ export function Certificados() {
       />
 
       <Card className="overflow-hidden">
-        <div className="flex flex-col gap-3 border-b border-line p-4 xl:flex-row xl:items-center">
+        {/* Em telas de notebook (1280, 1366) as datas passam para a linha de baixo, sem cortar o filtro */}
+        <div className="flex flex-col gap-3 border-b border-line p-4 lg:flex-row lg:flex-wrap lg:items-center">
           <SearchInput
             valor={busca}
             aoMudar={setBusca}
             placeholder="Nº do certificado, cliente, série, OS…"
-            className="xl:w-80"
+            className="lg:max-w-80 lg:min-w-60 lg:flex-1"
           />
           <Segmented
+            className="shrink-0"
             valor={filtro}
             aoMudar={mudarFiltro}
             opcoes={[
@@ -114,7 +116,7 @@ export function Certificados() {
               { valor: 'SUBSTITUIDO', label: 'Substituídos' },
             ]}
           />
-          <div className="flex items-center gap-2 xl:ml-auto">
+          <div className="flex shrink-0 items-center gap-2 lg:ml-auto">
             <Input
               type="date"
               value={de}

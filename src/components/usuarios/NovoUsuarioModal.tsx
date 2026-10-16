@@ -1,7 +1,7 @@
 import { AtSign, UserPlus } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import type { NivelUsuario, ResultadoSenha, Usuario } from '#shared/tipos.ts'
-import { NOME_USUARIO_MAX, normalizarLogin, sugerirLogin, validarLogin, validarSenhaNova } from '#shared/usuarios.ts'
+import { LOGIN_MAX, NOME_USUARIO_MAX, normalizarLogin, validarLogin, validarSenhaNova } from '#shared/usuarios.ts'
 import { api, ErroApi } from '../../lib/api'
 import { avisarErro, toast } from '../../store/ui'
 import { Button } from '../ui/Button'
@@ -12,8 +12,8 @@ import { EscolhaNivel } from './EscolhaNivel'
 import { SenhaInicial, type ModoSenha } from './SenhaInicial'
 
 /**
- * Cadastro de um usuário: nome, login (sugerido pelo nome), nível, os dados que saem no certificado
- * (cargo, registro, signatário e assinatura) e a senha inicial (temporária).
+ * Cadastro de um usuário: nome, login (escolhido, nada é sugerido pelo nome), nível, os dados que saem
+ * no certificado (cargo, registro, signatário e assinatura) e a senha inicial (temporária).
  */
 export function NovoUsuarioModal({
   aberto,
@@ -61,8 +61,6 @@ function FormNovoUsuario({
 }) {
   const [nome, setNome] = useState('')
   const [login, setLogin] = useState('')
-  /** O login acompanha o nome até a pessoa digitar outro. */
-  const [loginEditado, setLoginEditado] = useState(false)
   const [nivel, setNivel] = useState<NivelUsuario>('COMUM')
   const [certificado, setCertificado] = useState<DadosNoCertificado>({
     signatario: false,
@@ -76,20 +74,14 @@ function FormNovoUsuario({
   const [loginRecusado, setLoginRecusado] = useState('')
   const [enviando, setEnviando] = useState(false)
 
+  // Como fica gravado: "Maria Souza" e "maria  souza" são o mesmo login (e o repetido aparece na hora)
   const loginFinal = normalizarLogin(login)
   const erroNome = !nome.trim() ? 'Informe o nome da pessoa.' : null
-  const repetido = usuarios.some((u) => u.login === loginFinal)
-  const erroLogin = !loginFinal
-    ? 'Informe o usuário (o login para entrar).'
-    : (validarLogin(loginFinal) ?? (repetido || loginRecusado === loginFinal ? 'Já existe um usuário com este login.' : null))
+  const repetido = usuarios.some((u) => u.login === loginFinal) || loginRecusado === loginFinal
+  const erroLogin = validarLogin(loginFinal) ?? (repetido ? 'Já existe um usuário com este login.' : null)
   const erroSenha = modo === 'digitar' ? validarSenhaNova(senha, { login: loginFinal, nome }, { deOutraPessoa: true }) : null
-  // O login repetido aparece na hora (mesmo o sugerido); os outros problemas, depois de digitar ou tentar
-  const mostrarErroLogin = tentou || (loginEditado && !!login) || (!!loginFinal && (repetido || loginRecusado === loginFinal))
-
-  const mudarNome = (v: string) => {
-    setNome(v)
-    if (!loginEditado) setLogin(sugerirLogin(v))
-  }
+  // Os problemas do login aparecem enquanto digita (ou ao tentar salvar com o campo vazio)
+  const mostrarErroLogin = tentou || !!login
 
   const enviar = async (e: FormEvent) => {
     e.preventDefault()
@@ -133,14 +125,14 @@ function FormNovoUsuario({
             maxLength={NOME_USUARIO_MAX}
             placeholder="Ex.: Maria Souza"
             value={nome}
-            onChange={(e) => mudarNome(e.target.value)}
+            onChange={(e) => setNome(e.target.value)}
           />
         </Field>
         <Field
           label="Usuário"
           htmlFor="novo-login"
           erro={mostrarErroLogin ? erroLogin : null}
-          hint="Para entrar. Minúsculas, sem espaços nem acentos."
+          hint="Para entrar. Combine com a pessoa; dá para trocar depois."
         >
           <Input
             id="novo-login"
@@ -148,15 +140,13 @@ function FormNovoUsuario({
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
-            maxLength={32}
-            placeholder="maria.souza"
+            maxLength={LOGIN_MAX}
+            placeholder="Ex.: maria.souza"
             icone={<AtSign className="h-4 w-4" />}
             className="font-mono text-[13px]"
             value={login}
-            onChange={(e) => {
-              setLogin(e.target.value.toLowerCase().replace(/\s/g, ''))
-              setLoginEditado(true)
-            }}
+            onChange={(e) => setLogin(e.target.value)}
+            aria-invalid={(mostrarErroLogin && !!erroLogin) || undefined}
           />
         </Field>
       </div>

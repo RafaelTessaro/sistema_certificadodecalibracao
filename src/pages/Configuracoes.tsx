@@ -229,7 +229,7 @@ export function Configuracoes() {
         titulo="Configurações"
         descricao="Dados da empresa e do certificado, e-mail, cópias de segurança e preferências."
       />
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[232px_minmax(0,1fr)] lg:gap-8">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[244px_minmax(0,1fr)] lg:gap-8">
         <NavSecoes atual={secao} sujas={sujas} aoEscolher={irPara} />
         <div className="min-w-0 lg:max-w-[880px]">
           {SECOES.filter((s) => visitadas.has(s.id)).map((s) => (
@@ -625,8 +625,9 @@ function Escolha<T extends string>({
 }) {
   return (
     <fieldset className="flex min-w-0 flex-col gap-2.5">
-      <legend className="p-0 text-sm font-semibold text-ink">{legenda}</legend>
-      {ajuda && <p className="-mt-1.5 text-[13px] leading-snug text-muted">{ajuda}</p>}
+      {/* O legend não é item do flex (o gap não vale para ele): o espaço até a explicação vem da margem */}
+      <legend className={cn('block p-0 text-sm font-semibold text-ink', ajuda ? 'mb-1' : 'mb-2.5')}>{legenda}</legend>
+      {ajuda && <p className="text-[13px] leading-snug text-muted">{ajuda}</p>}
       <div
         className={cn(
           'grid gap-2',

@@ -1,17 +1,32 @@
-import { Building2, Info, Monitor, Plus, Scale, Sparkles, Trash2, TriangleAlert, User, UserPlus, Weight } from 'lucide-react'
+import {
+  Building2,
+  ChevronDown,
+  Info,
+  Layers,
+  Plus,
+  Scale,
+  Sparkles,
+  Trash2,
+  TriangleAlert,
+  User,
+  UserPlus,
+  Weight,
+} from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { forwardRef, useId, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react'
 import { GRAMAS } from '#shared/calibracao.ts'
 import {
   avisosBalanca,
-  BALANCA_VAZIA,
   capacidadeTexto,
+  converterMassa,
+  divisaoLegivel,
   FINALIDADES,
   LIMITES,
   LISTA_TIPOS_BALANCA,
+  massaNaUnidadeLegivel,
   normalizarBalanca,
-  numero,
   numeroBr,
+  parteSeparada,
   RECEPTOR_DO_TIPO,
   RECEPTORES,
   TIPOS_BALANCA,
@@ -41,6 +56,20 @@ import { Combobox, type OpcaoCombo } from './ui/Combobox'
 import { Field, Input, NumberInput, Select, Textarea } from './ui/Form'
 import { Avatar, Segmented } from './ui/Misc'
 import { Modal } from './ui/Modal'
+import {
+  campoInvalido,
+  COM_APOIOS,
+  comUnidade,
+  comUnidadeColuna,
+  comUnidadesSugeridas,
+  espelho,
+  formularioInicial,
+  novaFaixa,
+  paraEntrada,
+  textoDe,
+  type ColunaUnidade,
+  type FormBalanca,
+} from './balancaFormulario'
 
 /** Fabricantes comuns no Brasil (sugestões; aceita qualquer outro). */
 const FABRICANTES = [
@@ -59,8 +88,6 @@ const FABRICANTES = [
   'Elgin',
 ]
 
-/** Receptores em que o número de apoios (células de carga) importa. */
-const COM_APOIOS: Receptor[] = ['APOIOS', 'RODOVIARIA', 'TANQUE']
 const APOIOS_PADRAO: Partial<Record<Receptor, number>> = { APOIOS: 6, RODOVIARIA: 8, TANQUE: 4 }
 
 /** Classe e unidade mais comuns por tipo (sugestões que seguem o tipo enquanto ninguém as muda). */
@@ -98,78 +125,27 @@ const DESCRICAO_FAIXAS: Record<TipoFaixas, string> = {
 
 // ---- Estado do formulário --------------------------------------------------------------
 
-/** Faixa como digitada (texto), para não atrapalhar a digitação de "0,00" ou "1.5". `chave` identifica a linha na tela. */
-interface FaixaTexto {
-  chave: number
-  max: string
-  e: string
-  d: string
-}
-
-type FormBalanca = Omit<BalancaInput, 'faixas' | 'min'> & { faixas: FaixaTexto[]; min: string }
-
-let seqFaixa = 0
-const novaFaixa = (x: Partial<Omit<FaixaTexto, 'chave'>> = {}): FaixaTexto => ({ max: '', e: '', d: '', ...x, chave: ++seqFaixa })
-
-/** Número para o campo de texto: vírgula decimal, sem separador de milhar nem ruído binário; 0 vira vazio. */
-function textoDe(n: number): string {
-  if (!Number.isFinite(n) || n === 0) return ''
-  return Number(n.toPrecision(12)).toLocaleString('pt-BR', { useGrouping: false, maximumFractionDigits: 12 })
-}
-
-/** Campo vazio = 0; texto que não é número = NaN. */
-const lerCampo = (t: string) => (t.trim() ? numero(t) : 0)
-const campoInvalido = (t: string) => t.trim() !== '' && Number.isNaN(numero(t))
-
-function formularioInicial(balanca?: Balanca, clienteId?: string): FormBalanca {
-  let base: BalancaInput
-  if (balanca) {
-    const { id: _i, versao: _v, criadoEm: _c, atualizadoEm: _a, ...resto } = balanca
-    base = { ...BALANCA_VAZIA, ...resto }
-  } else base = { ...BALANCA_VAZIA, clienteId: clienteId ?? '' }
-  return {
-    ...base,
-    faixas: (base.faixas.length ? base.faixas : BALANCA_VAZIA.faixas).map((x) =>
-      novaFaixa({ max: textoDe(x.max), e: textoDe(x.e), d: textoDe(x.d) }),
-    ),
-    min: textoDe(base.min),
-  }
-}
-
-/** O que vai para o servidor: números lidos, faixas e indicador escondidos não são gravados. */
-function paraEntrada(f: FormBalanca, comIndicador: boolean): BalancaInput {
-  const { faixas, min, ...resto } = f
-  return {
-    ...resto,
-    // e e d costumam ser iguais: o que ficar em branco copia o outro
-    faixas: (f.tipoFaixas === 'UNICA' ? faixas.slice(0, 1) : faixas).map((x) => ({
-      max: lerCampo(x.max),
-      e: lerCampo(x.e) || lerCampo(x.d),
-      d: lerCampo(x.d) || lerCampo(x.e),
-    })),
-    min: lerCampo(min),
-    apoios: COM_APOIOS.includes(f.receptor) ? f.apoios : 0,
-    indicadorFabricante: comIndicador ? f.indicadorFabricante : '',
-    indicadorModelo: comIndicador ? f.indicadorModelo : '',
-    indicadorSerie: comIndicador ? f.indicadorSerie : '',
-  }
-}
-
 /** Troca o receptor; ao passar para um receptor com apoios, sugere a quantidade mais comum. */
 function comReceptor(s: FormBalanca, receptor: Receptor): FormBalanca {
   const entrouComApoios = COM_APOIOS.includes(receptor) && !COM_APOIOS.includes(s.receptor)
   return { ...s, receptor, apoios: entrouComApoios ? (APOIOS_PADRAO[receptor] ?? 4) : s.apoios }
 }
 
+/** Mensagens de `normalizarBalanca` sobre a carga mínima (aparecem no campo Min, não na tabela de faixas). */
+const ehDoMin = (e: string) => /\(Min\)/.test(e)
+/** Mensagens que apontam engano de unidade (`errosUnidadeBalanca`): aparecem enquanto a pessoa digita. */
+const ehDeUnidade = (e: string) => /Confira a unidade/.test(e)
+
 /** Erro de cada célula da tabela de faixas, a partir das mensagens de `normalizarBalanca`. */
-function errosPorFaixa(erros: string[], quantidade: number): Array<{ max?: string; d?: string }> {
-  const r: Array<{ max?: string; d?: string }> = Array.from({ length: quantidade }, () => ({}))
+function errosPorFaixa(erros: string[], quantidade: number): Array<{ max?: string; e?: string; d?: string }> {
+  const r: Array<{ max?: string; e?: string; d?: string }> = Array.from({ length: quantidade }, () => ({}))
   for (const e of erros) {
-    if (!/\(Max\)|divis/i.test(e)) continue
+    if (ehDoMin(e) || !/\(Max\)|divis/i.test(e)) continue
     const m = e.match(/da faixa (\d+)/)
     const i = m ? Number(m[1]) - 1 : 0
     if (!r[i]) continue
-    if (/\(Max\)/.test(e)) r[i].max ??= e
+    if (/\(e\)/.test(e)) r[i].e ??= e
+    else if (/\(Max\)/.test(e)) r[i].max ??= e
     else r[i].d ??= e
   }
   return r
@@ -273,9 +249,8 @@ function FormularioBalanca({
   // Versão que a pessoa abriu para editar: se outra pessoa salvar antes, o servidor avisa
   const [versaoBase, setVersaoBase] = useState(balanca?.versao)
   const [tentou, setTentou] = useState(false)
-  const [comIndicador, setComIndicador] = useState(
-    () => !!(balanca && (balanca.indicadorFabricante || balanca.indicadorModelo || balanca.indicadorSerie)),
-  )
+  // A plaqueta da plataforma quase nunca existe: o bloco começa fechado, a não ser que já tenha dados
+  const [verPlataforma, setVerPlataforma] = useState(() => !!(f.plataformaFabricante || f.plataformaModelo || f.plataformaSerie))
   const [novoCliente, setNovoCliente] = useState<{ aberto: boolean; nome?: string }>({ aberto: false })
   /** Cliente cadastrado agora: aparece na lista antes de a busca dos clientes voltar. */
   const [clienteCriado, setClienteCriado] = useState<Cliente | null>(null)
@@ -283,14 +258,17 @@ function FormularioBalanca({
   const set = <K extends keyof FormBalanca>(k: K, v: FormBalanca[K]) => setF((s) => ({ ...s, [k]: v }))
 
   // ---- Derivados (validação, resumo e avisos ao vivo) ----
-  const entrada = paraEntrada(f, comIndicador)
+  const entrada = paraEntrada(f)
   const { valor, erros } = normalizarBalanca(entrada)
   const linhas = f.tipoFaixas === 'UNICA' ? f.faixas.slice(0, 1) : f.faixas
   const multi = f.tipoFaixas !== 'UNICA'
   const celulas = errosPorFaixa(erros, linhas.length)
   const invalidos = linhas.some((x) => campoInvalido(x.max) || campoInvalido(x.e) || campoInvalido(x.d)) || campoInvalido(f.min)
   const erroCliente = erros.find((e) => /cliente/i.test(e))
-  const errosFaixas = [...new Set(erros.filter((e) => /faixa|Max|divis/i.test(e)))]
+  const errosFaixas = [...new Set(erros.filter((e) => !ehDoMin(e) && /faixa|Max|divis/i.test(e)))]
+  const erroMin = erros.find(ehDoMin)
+  // Engano de unidade (n absurdo, Min menor que e) aparece já enquanto a pessoa digita; o resto, ao salvar
+  const verErro = (e: string | undefined) => !!e && (tentou || ehDeUnidade(e))
   const completo =
     valor.faixas.every((x) => x.max > 0 && x.d > 0 && x.d < x.max) && (!multi || valor.faixas.length >= 2) && !invalidos
   // Sem repetir o mesmo aviso (ex.: ordem das faixas, que é conferida par a par)
@@ -321,6 +299,14 @@ function FormularioBalanca({
     clientes?.find((c) => c.id === f.clienteId) ?? (clienteCriado?.id === f.clienteId ? clienteCriado : undefined)
   const trocouCliente = !!balanca && f.clienteId !== balanca.clienteId
 
+  // Trocar a unidade da indicação converte as cargas e leituras das calibrações abertas desta balança (servidor)
+  const trocouUnidade = !!balanca && f.unidade !== balanca.unidade
+  const { dados: abertas } = useConsulta(
+    trocouUnidade ? `abertas-balanca:${balanca.id}` : null,
+    () => api.calibracoes({ balancaId: balanca!.id, status: 'ABERTAS', limite: 1 }).then((r) => r.total),
+    ['calibracao'],
+  )
+
   // ---- Mudanças com sugestões ----
   const mudarTipo = (tipo: TipoBalanca) =>
     setF((s) => {
@@ -329,12 +315,24 @@ function FormularioBalanca({
       if (s.receptor === RECEPTOR_DO_TIPO[s.tipo]) novo = comReceptor(novo, RECEPTOR_DO_TIPO[tipo])
       if (s.classe === classeSugerida(s.tipo)) novo.classe = classeSugerida(tipo)
       const semNumeros = s.faixas.every((x) => !x.max.trim() && !x.e.trim() && !x.d.trim()) && !s.min.trim()
-      if (semNumeros && s.unidade === unidadeSugerida(s.tipo)) novo.unidade = unidadeSugerida(tipo)
-      return novo
+      if (semNumeros && s.unidade === unidadeSugerida(s.tipo)) novo = comUnidade(novo, unidadeSugerida(tipo))
+      // e, d e Min ainda vazios seguem o tipo (rodoviária e piso: em kg)
+      return comUnidadesSugeridas(novo)
     })
 
+  const mudarUnidade = (unidade: Unidade) => setF((s) => comUnidade(s, unidade))
+  const mudarUnidadeColuna = (coluna: ColunaUnidade, u: Unidade) => setF((s) => comUnidadeColuna(s, coluna, u))
+  /** Usa a carga mínima sugerida, na unidade mais legível (0,1 kg → 100 g). */
+  const usarMinSugerido = (valorMin: number) =>
+    setF((s) => {
+      const u = divisaoLegivel([valorMin], s.unidade)
+      return { ...s, un: { ...s.un, min: u.unidade }, min: textoDe(u.valores[0]) }
+    })
+
+  // Mudou a capacidade ou a divisão: as colunas vazias acompanham (Max de 80 000 kg → e e d em kg)
+  const mudarFaixas = (mudar: (s: FormBalanca) => FormBalanca) => setF((s) => comUnidadesSugeridas(mudar(s)))
   const mudarTipoFaixas = (tipoFaixas: TipoFaixas) =>
-    setF((s) => ({
+    mudarFaixas((s) => ({
       ...s,
       tipoFaixas,
       // Multi precisa de pelo menos 2 linhas; as linhas extras ficam guardadas (e não são gravadas) na faixa única
@@ -342,9 +340,9 @@ function FormularioBalanca({
     }))
 
   const mudarFaixa = (i: number, campo: 'max' | 'e' | 'd', v: string) =>
-    setF((s) => ({ ...s, faixas: s.faixas.map((x, j) => (j === i ? { ...x, [campo]: v } : x)) }))
-  const adicionarFaixa = () => setF((s) => ({ ...s, faixas: [...s.faixas, novaFaixa()].slice(0, LIMITES.faixas) }))
-  const removerFaixa = (i: number) => setF((s) => ({ ...s, faixas: s.faixas.filter((_, j) => j !== i) }))
+    mudarFaixas((s) => ({ ...s, faixas: s.faixas.map((x, j) => (j === i ? { ...x, [campo]: v } : x)) }))
+  const adicionarFaixa = () => mudarFaixas((s) => ({ ...s, faixas: [...s.faixas, novaFaixa()].slice(0, LIMITES.faixas) }))
+  const removerFaixa = (i: number) => mudarFaixas((s) => ({ ...s, faixas: s.faixas.filter((_, j) => j !== i) }))
 
   // ---- Salvar ----
   const enviar = async (e: FormEvent) => {
@@ -353,7 +351,7 @@ function FormularioBalanca({
     if (erros.length || invalidos) {
       if (invalidos) toast.erro('Confira os números', 'Use só algarismos e vírgula, como 0,005.')
       else {
-        const visiveis = [erroCliente, ...errosFaixas]
+        const visiveis = [erroCliente, erroMin, ...errosFaixas]
         const escondido = erros.find((x) => !visiveis.includes(x))
         if (escondido) toast.erro('Confira o cadastro', escondido)
       }
@@ -378,6 +376,10 @@ function FormularioBalanca({
   }
 
   const posicoes = posicoesExcentricidade(f.receptor, f.apoios)
+  const plataforma = parteSeparada(f)
+  const resumoPlataforma = plataforma
+    ? [plataforma.nome, plataforma.serie && `série ${plataforma.serie}`].filter(Boolean).join(' · ')
+    : ''
   // No celular, o número da faixa e o botão de remover ficam numa linha acima dos três campos
   const grade = multi ? 'grid-cols-3 sm:grid-cols-[2rem_repeat(3,minmax(0,1fr))_2rem]' : 'grid-cols-3'
 
@@ -481,7 +483,8 @@ function FormularioBalanca({
             </Select>
           </Field>
 
-          <Field label="Fabricante" htmlFor={`${ids}-fab`} className="sm:col-span-2">
+          {/* A balança é identificada pelo indicador (o mostrador): é o nº de série dele que vale */}
+          <Field label="Fabricante" htmlFor={`${ids}-fab`} className="sm:col-span-2" hint="Do indicador.">
             <Input
               id={`${ids}-fab`}
               list={`${ids}-fabricantes`}
@@ -496,15 +499,20 @@ function FormularioBalanca({
               ))}
             </datalist>
           </Field>
-          <Field label="Modelo" htmlFor={`${ids}-modelo`} className="sm:col-span-2">
+          <Field label="Modelo" htmlFor={`${ids}-modelo`} className="sm:col-span-2" hint="Do indicador.">
             <Input
               id={`${ids}-modelo`}
               value={f.modelo}
               onChange={(e) => set('modelo', e.target.value)}
-              placeholder="Ex.: Prix 3 Fit"
+              placeholder="Ex.: Prix 3 Fit, 9091"
             />
           </Field>
-          <Field label="Nº de série" htmlFor={`${ids}-serie`} className="sm:col-span-2">
+          <Field
+            label="Nº de série"
+            htmlFor={`${ids}-serie`}
+            className="sm:col-span-2"
+            hint="Do indicador (plaqueta do mostrador)."
+          >
             <Input
               id={`${ids}-serie`}
               className="tnum"
@@ -530,7 +538,15 @@ function FormularioBalanca({
               placeholder="Ex.: BAL-04"
             />
           </Field>
-          <Field label="Ano de fabricação" htmlFor={`${ids}-ano`} className="sm:col-span-1">
+          <Field label="Local de instalação" htmlFor={`${ids}-local`} className="sm:col-span-2" hint="Setor, linha ou filial.">
+            <Input
+              id={`${ids}-local`}
+              value={f.localInstalacao}
+              onChange={(e) => set('localInstalacao', e.target.value)}
+              placeholder="Ex.: Expedição"
+            />
+          </Field>
+          <Field label="Ano de fabricação" htmlFor={`${ids}-ano`} className="sm:col-span-2">
             <Input
               id={`${ids}-ano`}
               className="tnum"
@@ -539,83 +555,19 @@ function FormularioBalanca({
               autoComplete="off"
               value={f.anoFabricacao}
               onChange={(e) => set('anoFabricacao', e.target.value)}
-              placeholder="2019"
+              placeholder="Ex.: 2019"
             />
           </Field>
-          <Field
-            label="Local de instalação"
-            htmlFor={`${ids}-local`}
-            className="sm:col-span-3"
-            hint="Setor, linha ou filial onde ela fica."
-          >
-            <Input
-              id={`${ids}-local`}
-              value={f.localInstalacao}
-              onChange={(e) => set('localInstalacao', e.target.value)}
-              placeholder="Ex.: Expedição, balcão de frios"
-            />
-          </Field>
-
-          <div className="overflow-hidden rounded-xl border border-line sm:col-span-6">
-            <LinhaInterruptor
-              ligado={comIndicador}
-              aoMudar={setComIndicador}
-              icone={<Monitor className="h-4 w-4" />}
-              titulo="A balança tem indicador separado?"
-              descricao="Comum em plataformas, balanças de piso e rodoviárias: o mostrador é um aparelho à parte."
-            />
-            <AnimatePresence initial={false}>
-              {comIndicador && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                  className="overflow-hidden"
-                >
-                  <div className="grid grid-cols-1 gap-4 border-t border-line bg-surface-2/40 p-4 sm:grid-cols-3">
-                    <Field label="Fabricante do indicador" htmlFor={`${ids}-ind-fab`}>
-                      <Input
-                        id={`${ids}-ind-fab`}
-                        list={`${ids}-fabricantes`}
-                        autoComplete="off"
-                        value={f.indicadorFabricante}
-                        onChange={(e) => set('indicadorFabricante', e.target.value)}
-                        placeholder="Ex.: Toledo"
-                      />
-                    </Field>
-                    <Field label="Modelo do indicador" htmlFor={`${ids}-ind-mod`}>
-                      <Input
-                        id={`${ids}-ind-mod`}
-                        value={f.indicadorModelo}
-                        onChange={(e) => set('indicadorModelo', e.target.value)}
-                        placeholder="Ex.: 9091"
-                      />
-                    </Field>
-                    <Field label="Nº de série do indicador" htmlFor={`${ids}-ind-serie`}>
-                      <Input
-                        id={`${ids}-ind-serie`}
-                        className="tnum"
-                        autoComplete="off"
-                        value={f.indicadorSerie}
-                        onChange={(e) => set('indicadorSerie', e.target.value)}
-                      />
-                    </Field>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
         </SecaoFormulario>
 
         {/* ---- Características metrológicas ---- */}
         <SecaoFormulario titulo="Características metrológicas">
           <div className="grid grid-cols-1 gap-4 rounded-2xl border border-line bg-surface-2/50 p-4 sm:col-span-6 sm:grid-cols-6 sm:p-5">
-            <Field label="Unidade" className="sm:col-span-2">
+            <Field label="Unidade da indicação" className="sm:col-span-2" hint="Como o mostrador indica o peso.">
               <Segmented
                 valor={f.unidade}
-                aoMudar={(u) => set('unidade', u)}
-                tamanho="sm"
+                aoMudar={mudarUnidade}
+                tamanho="campo"
                 opcoes={UNIDADES.map((u) => ({ valor: u, label: u }))}
                 className="self-start"
               />
@@ -624,35 +576,62 @@ function FormularioBalanca({
               <Segmented
                 valor={f.tipoFaixas}
                 aoMudar={mudarTipoFaixas}
-                tamanho="sm"
+                tamanho="campo"
                 opcoes={OPCOES_FAIXAS}
                 className="self-start"
               />
             </Field>
+            {trocouUnidade && !!abertas && (
+              <p className="flex items-start gap-2 rounded-xl bg-info-soft px-3.5 py-2.5 text-[13px] text-info sm:col-span-6">
+                <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  {abertas === 1
+                    ? 'Esta balança tem 1 calibração em andamento: ao salvar, as cargas e leituras dela'
+                    : `Esta balança tem ${abertas} calibrações em andamento: ao salvar, as cargas e leituras delas`}{' '}
+                  passam de {balanca!.unidade} para {f.unidade}
+                  {balanca!.faixas[0]?.max > 0 &&
+                    ` (${numeroBr(balanca!.faixas[0].max)} ${balanca!.unidade} → ${numeroBr(converterMassa(balanca!.faixas[0].max, balanca!.unidade, f.unidade))} ${f.unidade})`}
+                  . Os certificados já emitidos não mudam.
+                </span>
+              </p>
+            )}
 
             {/* Tabela de faixas: Max, e, d */}
             <div className="sm:col-span-6">
               <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-xs">
+                {/* Cabeçalho: cada coluna com a sua unidade, como na plaqueta (Max em kg, e e d em g) */}
                 <div
-                  aria-hidden
                   className={cn(
-                    'grid items-end gap-2 border-b border-line bg-surface-2/70 px-3 py-2 text-[12px] font-medium text-muted',
+                    'grid items-center gap-2 border-b border-line bg-surface-2/70 px-3 py-1.5 text-[12px] font-medium text-muted',
                     grade,
                   )}
                 >
-                  {multi && <span className="text-center max-sm:hidden">#</span>}
-                  <span>
-                    <span className="sm:hidden">Max</span>
-                    <span className="max-sm:hidden">Capacidade máxima (Max)</span>
-                  </span>
-                  <span>
-                    <span className="sm:hidden">e</span>
-                    <span className="max-sm:hidden">Divisão de verificação (e)</span>
-                  </span>
-                  <span>
-                    <span className="sm:hidden">d</span>
-                    <span className="max-sm:hidden">Divisão (d)</span>
-                  </span>
+                  {multi && (
+                    <span aria-hidden className="text-center max-sm:hidden">
+                      #
+                    </span>
+                  )}
+                  <CabecalhoColuna
+                    curto="Max"
+                    longo="Capacidade (Max)"
+                    unidade={f.un.max}
+                    aoMudar={(u) => mudarUnidadeColuna('max', u)}
+                    rotulo="Unidade da capacidade máxima (Max)"
+                  />
+                  <CabecalhoColuna
+                    curto="e"
+                    longo="Verificação (e)"
+                    unidade={f.un.e}
+                    aoMudar={(u) => mudarUnidadeColuna('e', u)}
+                    rotulo="Unidade da divisão de verificação (e)"
+                  />
+                  <CabecalhoColuna
+                    curto="d"
+                    longo="Divisão (d)"
+                    unidade={f.un.d}
+                    aoMudar={(u) => mudarUnidadeColuna('d', u)}
+                    rotulo="Unidade da divisão (d)"
+                  />
                   {multi && <span className="max-sm:hidden" />}
                 </div>
                 <AnimatePresence initial={false}>
@@ -684,31 +663,31 @@ function FormularioBalanca({
                           )}
                           <CampoNumerico
                             className={cn(multi && 'order-3 sm:order-none')}
-                            aria-label={`Capacidade máxima (Max)${nome}`}
+                            aria-label={`Capacidade máxima (Max)${nome}, em ${f.un.max}`}
                             valor={x.max}
                             aoMudar={(v) => mudarFaixa(i, 'max', v)}
-                            unidade={f.unidade}
-                            invalido={campoInvalido(x.max) || (tentou && !!celulas[i]?.max)}
+                            unidade={f.un.max}
+                            invalido={campoInvalido(x.max) || verErro(celulas[i]?.max)}
                             placeholder="0"
                           />
                           <CampoNumerico
                             className={cn(multi && 'order-3 sm:order-none')}
-                            aria-label={`Divisão de verificação (e)${nome}`}
+                            aria-label={`Divisão de verificação (e)${nome}, em ${f.un.e}`}
                             valor={x.e}
                             aoMudar={(v) => mudarFaixa(i, 'e', v)}
-                            unidade={f.unidade}
-                            invalido={campoInvalido(x.e)}
-                            placeholder={x.d.trim() || '= d'}
+                            unidade={f.un.e}
+                            invalido={campoInvalido(x.e) || verErro(celulas[i]?.e)}
+                            placeholder={espelho(f, x, 'e')}
                             title="Em branco, fica igual a d"
                           />
                           <CampoNumerico
                             className={cn(multi && 'order-3 sm:order-none')}
-                            aria-label={`Divisão (d)${nome}`}
+                            aria-label={`Divisão (d)${nome}, em ${f.un.d}`}
                             valor={x.d}
                             aoMudar={(v) => mudarFaixa(i, 'd', v)}
-                            unidade={f.unidade}
-                            invalido={campoInvalido(x.d) || (tentou && !!celulas[i]?.d)}
-                            placeholder={x.e.trim() || '= e'}
+                            unidade={f.un.d}
+                            invalido={campoInvalido(x.d) || verErro(celulas[i]?.d)}
+                            placeholder={espelho(f, x, 'd')}
                             title="Em branco, fica igual a e"
                           />
                           {multi &&
@@ -732,10 +711,10 @@ function FormularioBalanca({
                 </AnimatePresence>
               </div>
               <div className="mt-2 flex flex-wrap items-start justify-between gap-2">
-                <p className="text-xs text-muted">
-                  <b className="font-medium text-ink-2">e</b> é a divisão usada pelo Inmetro e{' '}
-                  <b className="font-medium text-ink-2">d</b> é o menor passo do mostrador. Costumam ser iguais: se a plaqueta
-                  mostra só um, deixe o outro em branco.
+                <p className="min-w-0 flex-1 text-xs text-muted">
+                  Cada coluna na unidade da plaqueta (ex.: Max em kg, e e d em g). <b className="font-medium text-ink-2">e</b> é a
+                  divisão usada pelo Inmetro e <b className="font-medium text-ink-2">d</b>, o menor passo do mostrador: se a
+                  plaqueta mostra só um, deixe o outro em branco.
                 </p>
                 {multi && f.faixas.length < LIMITES.faixas && (
                   <Button
@@ -749,9 +728,9 @@ function FormularioBalanca({
                   </Button>
                 )}
               </div>
-              {tentou && errosFaixas.length > 0 && (
+              {errosFaixas.some(verErro) && (
                 <ul className="mt-2 space-y-0.5 text-xs font-medium text-danger">
-                  {errosFaixas.map((e) => (
+                  {errosFaixas.filter(verErro).map((e) => (
                     <li key={e}>{e}</li>
                   ))}
                 </ul>
@@ -762,15 +741,15 @@ function FormularioBalanca({
               label="Carga mínima (Min)"
               htmlFor={`${ids}-min`}
               className="sm:col-span-2"
-              erro={campoInvalido(f.min) ? 'Número inválido.' : null}
+              erro={campoInvalido(f.min) ? 'Número inválido.' : verErro(erroMin) ? erroMin : null}
               hint={
                 !f.min.trim() && minSugerido ? (
                   <button
                     type="button"
-                    onClick={() => set('min', textoDe(minSugerido.valor))}
+                    onClick={() => usarMinSugerido(minSugerido.valor)}
                     className="cursor-pointer text-left text-brand-ink hover:underline"
                   >
-                    Usar {numeroBr(minSugerido.valor)} {f.unidade} ({minSugerido.vezes} e, o usual da classe)
+                    Usar {massaNaUnidadeLegivel(minSugerido.valor, f.unidade)} ({minSugerido.vezes} e, o usual da classe)
                   </button>
                 ) : (
                   'Opcional. Consta na plaqueta.'
@@ -781,16 +760,22 @@ function FormularioBalanca({
                 id={`${ids}-min`}
                 valor={f.min}
                 aoMudar={(v) => set('min', v)}
-                unidade={f.unidade}
-                invalido={campoInvalido(f.min)}
+                invalido={campoInvalido(f.min) || verErro(erroMin)}
                 placeholder="0"
+                acessorio={
+                  <SeletorUnidade
+                    valor={f.un.min}
+                    aoMudar={(u) => mudarUnidadeColuna('min', u)}
+                    rotulo="Unidade da carga mínima (Min)"
+                  />
+                }
               />
             </Field>
             <Field label="Classe de exatidão" className="sm:col-span-4" hint={DESCRICAO_CLASSE[f.classe]}>
               <Segmented
                 valor={f.classe}
                 aoMudar={(c) => set('classe', c)}
-                tamanho="sm"
+                tamanho="campo"
                 opcoes={OPCOES_CLASSE}
                 className="self-start"
               />
@@ -881,6 +866,81 @@ function FormularioBalanca({
                 Balança suspensa: a carga se centra sozinha, então não há ensaio de excentricidade.
               </p>
             )}
+          </div>
+
+          {/* Plaqueta própria da plataforma: rara (o nº de série que vale é o do indicador), por isso fica recolhida */}
+          <div className="overflow-hidden rounded-xl border border-line sm:col-span-6">
+            <button
+              type="button"
+              aria-expanded={verPlataforma}
+              aria-controls={`${ids}-plataforma`}
+              onClick={() => setVerPlataforma((v) => !v)}
+              className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2/60 focus-visible:-outline-offset-2"
+            >
+              <span
+                className={cn(
+                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors',
+                  resumoPlataforma ? 'bg-brand-soft text-brand-ink' : 'bg-surface-2 text-ink-2',
+                )}
+              >
+                <Layers className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-ink">Plataforma / receptor de carga (opcional)</span>
+                <span className="mt-0.5 block text-xs text-muted sm:truncate">
+                  {resumoPlataforma && !verPlataforma
+                    ? resumoPlataforma
+                    : 'Só se a plataforma tiver plaqueta própria; o nº de série que vale é o do indicador.'}
+                </span>
+              </span>
+              <ChevronDown
+                aria-hidden
+                className={cn('h-4 w-4 shrink-0 text-muted transition-transform duration-200', verPlataforma && 'rotate-180')}
+              />
+            </button>
+            <AnimatePresence initial={false}>
+              {verPlataforma && (
+                <motion.div
+                  id={`${ids}-plataforma`}
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                  className="overflow-hidden"
+                >
+                  <div className="grid grid-cols-1 gap-4 border-t border-line bg-surface-2/40 p-4 sm:grid-cols-3">
+                    <Field label="Fabricante da plataforma" htmlFor={`${ids}-plat-fab`}>
+                      <Input
+                        id={`${ids}-plat-fab`}
+                        list={`${ids}-fabricantes`}
+                        autoComplete="off"
+                        value={f.plataformaFabricante}
+                        onChange={(e) => set('plataformaFabricante', e.target.value)}
+                        placeholder="Ex.: Toledo"
+                      />
+                    </Field>
+                    <Field label="Modelo da plataforma" htmlFor={`${ids}-plat-mod`}>
+                      <Input
+                        id={`${ids}-plat-mod`}
+                        value={f.plataformaModelo}
+                        onChange={(e) => set('plataformaModelo', e.target.value)}
+                        placeholder="Ex.: 2180"
+                      />
+                    </Field>
+                    <Field label="Nº de série da plataforma" htmlFor={`${ids}-plat-serie`}>
+                      <Input
+                        id={`${ids}-plat-serie`}
+                        className="tnum"
+                        autoComplete="off"
+                        value={f.plataformaSerie}
+                        onChange={(e) => set('plataformaSerie', e.target.value)}
+                        placeholder="Se houver"
+                      />
+                    </Field>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </SecaoFormulario>
 
@@ -973,11 +1033,7 @@ function ResumoMetrologico({ valor, completo, avisos }: { valor: BalancaInput; c
           </AnimatePresence>
           {completo && (
             <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-              {valor.min > 0 && (
-                <span className="tnum">
-                  Min {numeroBr(valor.min)} {valor.unidade}
-                </span>
-              )}
+              {valor.min > 0 && <span className="tnum">Min {massaNaUnidadeLegivel(valor.min, valor.unidade)}</span>}
               {classePesos && (
                 <span className="inline-flex items-center gap-1">
                   <Weight className="h-3 w-3" />
@@ -1013,6 +1069,74 @@ function ResumoMetrologico({ valor, completo, avisos }: { valor: BalancaInput; c
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  )
+}
+
+// ---- Unidade de cada coluna ------------------------------------------------------------------
+
+/**
+ * Seletor compacto de unidade (mg, g, kg, t), dentro do campo ou no cabeçalho da coluna (`noCabecalho`).
+ * Fica na ordem do Tab (dá para trocar a unidade só com o teclado): os do cabeçalho vêm antes dos campos
+ * da tabela, então o Tab entre Max, e e d não é interrompido.
+ */
+function SeletorUnidade({
+  valor,
+  aoMudar,
+  rotulo,
+  noCabecalho,
+}: {
+  valor: Unidade
+  aoMudar: (u: Unidade) => void
+  rotulo: string
+  noCabecalho?: boolean
+}) {
+  return (
+    <span className="relative inline-flex shrink-0">
+      <select
+        aria-label={rotulo}
+        title={rotulo}
+        value={valor}
+        onChange={(e) => aoMudar(e.target.value as Unidade)}
+        className={cn(
+          'cursor-pointer appearance-none rounded-md pr-5 pl-2 text-xs font-medium text-ink-2 transition-colors outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-brand',
+          noCabecalho
+            ? 'h-6 border border-line-strong/70 bg-surface shadow-xs hover:border-line-strong'
+            : 'h-7 bg-surface-2 hover:bg-surface-3',
+        )}
+      >
+        {UNIDADES.map((u) => (
+          <option key={u} value={u}>
+            {u}
+          </option>
+        ))}
+      </select>
+      <ChevronDown aria-hidden className="pointer-events-none absolute top-1/2 right-1 h-3 w-3 -translate-y-1/2 text-muted" />
+    </span>
+  )
+}
+
+/** Título da coluna da tabela de faixas (curto no celular) com a unidade em que ela é digitada. */
+function CabecalhoColuna({
+  curto,
+  longo,
+  unidade,
+  aoMudar,
+  rotulo,
+}: {
+  curto: string
+  longo: string
+  unidade: Unidade
+  aoMudar: (u: Unidade) => void
+  rotulo: string
+}) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-1.5">
+      <span aria-hidden className="truncate">
+        <span className="sm:hidden">{curto}</span>
+        <span className="max-sm:hidden">{longo}</span>
+      </span>
+      <SeletorUnidade valor={unidade} aoMudar={aoMudar} rotulo={rotulo} noCabecalho />
     </div>
   )
 }
@@ -1125,7 +1249,7 @@ export function Interruptor({ ligado }: { ligado: boolean }) {
   )
 }
 
-/** Linha inteira clicável com título, explicação e a chave (para "tem indicador?", "em uso"…). */
+/** Linha inteira clicável com título, explicação e a chave (para "em uso"…). */
 export function LinhaInterruptor({
   ligado,
   aoMudar,

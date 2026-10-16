@@ -224,7 +224,7 @@ export function AtividadeRecente({ usuarios, atualizar }: { usuarios: Usuario[];
       />
       <div className="flex flex-col gap-3 border-b border-line px-5 pb-4 md:flex-row md:items-center">
         <Segmented
-          tamanho="sm"
+          tamanho="campo"
           valor={grupo}
           aoMudar={setGrupo}
           opcoes={[

@@ -21,6 +21,7 @@ import type {
   EnsaioRepetibilidade,
   Faixa,
   Finalidade,
+  IndicadorLegado,
   LocalCalibracao,
   MetodoCarregamento,
   MetodoExcentricidade,
@@ -467,6 +468,47 @@ export function capacidadeTexto(b: Pick<Balanca, 'faixas' | 'unidade'>): string 
   return `${maxes} ${b.unidade} × ${valores.map((d) => numeroBr(d)).join('/')} ${unidade}`
 }
 
+/**
+ * Converte uma massa de uma unidade para outra sem ruído binário (0,002 kg → 2 g; 6000 g → 6 kg).
+ * Cada passo entre mg, g, kg e t é ×1000; o resultado sai com 12 algarismos significativos.
+ */
+export function converterMassa(valor: number, de: Unidade, para: Unidade): number {
+  if (de === para || !Number.isFinite(valor)) return valor
+  const passos = UNIDADES.indexOf(de) - UNIDADES.indexOf(para)
+  const fator = 1000 ** Math.abs(passos)
+  return Number((passos > 0 ? valor * fator : valor / fator).toPrecision(12))
+}
+
+/** Unidade em que e e d costumam vir na plaqueta para cada unidade da indicação (balança em kg → e = 5 g). */
+export function unidadeDivisaoPadrao(unidade: Unidade): Unidade {
+  return unidade === 't' ? 'kg' : unidade === 'kg' ? 'g' : unidade
+}
+
+/** Tipos em que e e d vêm em kg na plaqueta mesmo com a indicação em kg (e = 0,5 a 50 kg). */
+export const TIPOS_DIVISAO_EM_KG: readonly TipoBalanca[] = ['PISO', 'RODOVIARIA', 'FERROVIARIA', 'TRANSPALETEIRA']
+
+/**
+ * Unidade em que e e d costumam vir na plaqueta, pelo tipo e pela capacidade: com a indicação em kg, g nas
+ * balanças pequenas (30 kg × 5 g) e kg nas de piso, rodoviárias e em qualquer uma de 1 t ou mais (80 t × 20 kg).
+ * `max`: a maior capacidade, na unidade da indicação.
+ */
+export function unidadeDivisaoSugerida(unidade: Unidade, tipo?: TipoBalanca, max = 0): Unidade {
+  if (unidade === 'kg' && ((tipo && TIPOS_DIVISAO_EM_KG.includes(tipo)) || max >= 1000)) return 'kg'
+  return unidadeDivisaoPadrao(unidade)
+}
+
+/** Unidade mais legível para mostrar estes valores (os da divisão, da carga mínima…); sem valores, a padrão da divisão. */
+export function unidadeLegivel(valores: number[], unidade: Unidade): Unidade {
+  const positivos = valores.filter((v) => v > 0)
+  return positivos.length ? divisaoLegivel(positivos, unidade).unidade : unidadeDivisaoPadrao(unidade)
+}
+
+/** Massa com a unidade mais legível: 0,04 kg → "40 g"; 400 kg → "400 kg". */
+export function massaNaUnidadeLegivel(valor: number, unidade: Unidade): string {
+  const { valores, unidade: u } = divisaoLegivel([valor], unidade)
+  return `${numeroBr(valores[0])} ${u}`
+}
+
 /** A divisão em uma unidade menor quando fica mais legível (0,005 kg → 5 g). */
 export function divisaoLegivel(ds: number[], unidade: Unidade): { valores: number[]; unidade: Unidade } {
   const fatores: Record<Unidade, number> = { mg: 1e-3, g: 1, kg: 1e3, t: 1e6 }
@@ -485,6 +527,63 @@ export function descricaoBalanca(b: Pick<Balanca, 'tipo' | 'fabricante' | 'model
   const nome = [b.fabricante, b.modelo].filter(Boolean).join(' ')
   const cap = capacidadeTexto(b)
   return `Balança ${tipo}${nome ? ` ${nome}` : ''}${cap ? ` — ${cap}` : ''}`
+}
+
+/** Aparelho com plaqueta própria além do principal, para mostrar ao lado da identificação da balança. */
+export interface ParteSeparada {
+  /** "Plataforma"; nas cópias congeladas dos certificados antigos, "Indicador" (ver `IndicadorLegado`). */
+  rotulo: 'Plataforma' | 'Indicador'
+  /** Fabricante e modelo. */
+  nome: string
+  serie: string
+}
+
+/**
+ * Plataforma com plaqueta própria, quando cadastrada. Aceita também as cópias congeladas dos certificados
+ * emitidos antes da troca (cadastro antigo): nelas o que ficava à parte era o indicador, e é assim que
+ * continuam aparecendo, iguais ao certificado emitido.
+ */
+export function parteSeparada(
+  b: Partial<Pick<Balanca, 'plataformaFabricante' | 'plataformaModelo' | 'plataformaSerie'>> & IndicadorLegado,
+): ParteSeparada | null {
+  const montar = (rotulo: ParteSeparada['rotulo'], fabricante?: string, modelo?: string, serie?: string) => {
+    const nome = [fabricante, modelo]
+      .map((x) => (typeof x === 'string' ? x.trim() : ''))
+      .filter(Boolean)
+      .join(' ')
+    const s = typeof serie === 'string' ? serie.trim() : ''
+    return nome || s ? { rotulo, nome, serie: s } : null
+  }
+  return (
+    montar('Plataforma', b.plataformaFabricante, b.plataformaModelo, b.plataformaSerie) ??
+    montar('Indicador', b.indicadorFabricante, b.indicadorModelo, b.indicadorSerie)
+  )
+}
+
+/** Texto de busca da balança (coluna `busca` do banco): identificação, local e a plataforma. */
+export function textoBuscaBalanca(
+  b: Pick<
+    Balanca,
+    | 'fabricante'
+    | 'modelo'
+    | 'numeroSerie'
+    | 'identificacao'
+    | 'localInstalacao'
+    | 'plataformaFabricante'
+    | 'plataformaModelo'
+    | 'plataformaSerie'
+  >,
+): string {
+  return textoBusca(
+    b.fabricante,
+    b.modelo,
+    b.numeroSerie,
+    b.identificacao,
+    b.localInstalacao,
+    b.plataformaFabricante,
+    b.plataformaModelo,
+    b.plataformaSerie,
+  )
 }
 
 /** Endereço do cliente numa linha. */
@@ -631,9 +730,9 @@ export const BALANCA_VAZIA: BalancaInput = {
   modelo: '',
   numeroSerie: '',
   identificacao: '',
-  indicadorFabricante: '',
-  indicadorModelo: '',
-  indicadorSerie: '',
+  plataformaFabricante: '',
+  plataformaModelo: '',
+  plataformaSerie: '',
   unidade: 'kg',
   tipoFaixas: 'UNICA',
   faixas: [{ max: 0, e: 0, d: 0 }],
@@ -662,6 +761,20 @@ export function valor125(v: number): boolean {
  * Coerência das características metrológicas (avisos, não bloqueios: o certificado transcreve o que
  * está marcado no instrumento).
  */
+/** Número de divisões n = Max/e de cada classe (Portaria Inmetro 157/2022, tabela 3). */
+const LIMITES_N: Partial<Record<ClasseExatidao, [number, number]>> = {
+  I: [50_000, Infinity],
+  II: [100, 100_000],
+  III: [100, 10_000],
+  IIII: [100, 1_000],
+}
+
+/** n acima disto (10 vezes o máximo da classe) não é balança fora da classe: é e ou Max na unidade errada. */
+const nAbsurdo = (classe: ClasseExatidao, n: number) => {
+  const lim = LIMITES_N[classe]
+  return !!lim && n > 10 * lim[1] + 1e-9
+}
+
 export function avisosBalanca(b: Pick<BalancaInput, 'faixas' | 'classe' | 'min' | 'tipoFaixas' | 'unidade'>): string[] {
   const avisos: string[] = []
   b.faixas.forEach((f, i) => {
@@ -670,19 +783,38 @@ export function avisosBalanca(b: Pick<BalancaInput, 'faixas' | 'classe' | 'min' 
     if (f.e && !valor125(f.e)) avisos.push(`A divisão de verificação e costuma ser 1, 2 ou 5 × 10ⁿ${nome}.`)
     if (f.d && !valor125(f.d)) avisos.push(`A divisão d costuma ser 1, 2 ou 5 × 10ⁿ${nome}.`)
     const n = f.e > 0 ? f.max / f.e : 0
-    const limites: Partial<Record<ClasseExatidao, [number, number]>> = {
-      I: [50_000, Infinity],
-      II: [100, 100_000],
-      III: [100, 10_000],
-      IIII: [100, 1_000],
-    }
-    const lim = limites[b.classe]
-    if (lim && n && (n < lim[0] - 1e-9 || n > lim[1] + 1e-9))
+    const lim = LIMITES_N[b.classe]
+    // O n absurdo é erro (ver `errosUnidadeBalanca`), não aviso
+    if (lim && n && !nAbsurdo(b.classe, n) && (n < lim[0] - 1e-9 || n > lim[1] + 1e-9))
       avisos.push(`n = Max/e = ${numeroBr(n, 0)} está fora do intervalo da classe ${b.classe}${nome}.`)
   })
   for (let i = 1; i < b.faixas.length; i++)
     if (b.faixas[i].max <= b.faixas[i - 1].max) avisos.push('As faixas devem estar em ordem crescente de capacidade.')
   return avisos
+}
+
+/**
+ * Valores que só podem ser engano de unidade (ex.: e = 20 digitado em g numa balança de 80 t): impedem gravar,
+ * porque iriam errados para o certificado. n = Max/e mais de 10 vezes acima do máximo da classe, e a carga
+ * mínima menor que e ou não menor que Max. As mensagens falam "(e)" e "(Min)" para a tela marcar o campo.
+ */
+export function errosUnidadeBalanca(b: Pick<BalancaInput, 'faixas' | 'classe' | 'min'>): string[] {
+  const erros: string[] = []
+  b.faixas.forEach((f, i) => {
+    const nome = b.faixas.length > 1 ? ` da faixa ${i + 1}` : ''
+    const n = f.e > 0 && f.max > 0 ? f.max / f.e : 0
+    if (nAbsurdo(b.classe, n))
+      erros.push(
+        `A divisão de verificação (e)${nome} dá n = Max/e = ${numeroBr(n, 0)}, mais de 10 vezes o máximo da classe ${b.classe} (${numeroBr(LIMITES_N[b.classe]![1], 0)}). Confira a unidade de e e d (g ou kg).`,
+      )
+  })
+  const e1 = b.faixas[0]?.e ?? 0
+  const maxTotal = Math.max(0, ...b.faixas.map((f) => f.max))
+  if (b.min > 0 && e1 > 0 && b.min < e1 - 1e-12)
+    erros.push('A carga mínima (Min) é menor que a divisão e. Confira a unidade do Min (g ou kg).')
+  else if (b.min > 0 && maxTotal > 0 && b.min >= maxTotal)
+    erros.push('A carga mínima (Min) precisa ser menor que a capacidade (Max). Confira a unidade do Min (g ou kg).')
+  return erros
 }
 
 function normalizarFaixas(v: unknown, erros: string[]): Faixa[] {
@@ -701,8 +833,52 @@ function normalizarFaixas(v: unknown, erros: string[]): Faixa[] {
   return lista
 }
 
+/** Dados do indicador no cadastro antigo → lugar que passam a ocupar (principal) → para onde vai o que estava lá. */
+const TROCA_INDICADOR = [
+  ['indicadorFabricante', 'fabricante', 'plataformaFabricante'],
+  ['indicadorModelo', 'modelo', 'plataformaModelo'],
+  ['indicadorSerie', 'numeroSerie', 'plataformaSerie'],
+] as const
+
+/**
+ * Cadastro antigo → atual. Antes, fabricante, modelo e nº de série eram os da plataforma e o indicador
+ * separado ia nos campos `indicador*`; agora a balança é identificada pelo indicador (é o nº de série dele
+ * que vale) e a plataforma é que fica à parte. A troca é feita em bloco: os dados do indicador passam para
+ * a identificação principal (o fabricante, se faltar, continua o de antes) e a identificação de antes vai
+ * inteira para a plataforma. Não há troca quando o indicador só repete a identificação principal (os dados
+ * do indicador digitados nos dois lugares): aí não existe plataforma à parte. Sem dados do indicador, ou com
+ * a plataforma já preenchida (formato novo), só tira as chaves antigas. Serve às telas antigas ainda abertas,
+ * às cópias e à migração do banco.
+ */
+export function semIndicadorLegado<T extends object>(entrada: T): T {
+  const r = { ...entrada } as Bruto
+  const valor = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : typeof v === 'number' ? String(v) : '')
+  const igual = (a: unknown, b: unknown) => valor(a).toLowerCase() === valor(b).toLowerCase()
+  const legado =
+    TROCA_INDICADOR.some(([indicador]) => valor(r[indicador])) &&
+    !TROCA_INDICADOR.some(([, , plataforma]) => valor(r[plataforma]))
+  const repetido = TROCA_INDICADOR.every(([indicador, principal]) => !valor(r[indicador]) || igual(r[indicador], r[principal]))
+  if (legado && !repetido) {
+    const antes = { fabricante: r.fabricante ?? '', modelo: r.modelo ?? '', numeroSerie: r.numeroSerie ?? '' }
+    for (const [indicador, principal, plataforma] of TROCA_INDICADOR) {
+      r[plataforma] = antes[principal]
+      r[principal] = valor(r[indicador]) ? r[indicador] : principal === 'fabricante' ? antes.fabricante : ''
+    }
+    // Dois aparelhos não têm o mesmo nº de série (nem, na prática, o mesmo modelo): é o do indicador repetido
+    if (igual(r.plataformaSerie, r.numeroSerie)) r.plataformaSerie = ''
+    if (igual(r.plataformaModelo, r.modelo)) r.plataformaModelo = ''
+    // Só o fabricante não identifica plataforma nenhuma
+    if (!valor(r.plataformaModelo) && !valor(r.plataformaSerie)) r.plataformaFabricante = ''
+  }
+  for (const [indicador, , plataforma] of TROCA_INDICADOR) {
+    r[plataforma] ??= ''
+    delete r[indicador]
+  }
+  return r as T
+}
+
 export function normalizarBalanca(entrada: unknown): Resultado<BalancaInput> {
-  const r = obj(entrada)
+  const r = semIndicadorLegado(obj(entrada))
   const erros: string[] = []
   const clienteId = texto(r.clienteId, 100)
   if (!clienteId) erros.push('Escolha o cliente dono da balança.')
@@ -712,6 +888,9 @@ export function normalizarBalanca(entrada: unknown): Resultado<BalancaInput> {
   else if (faixas.length < 2) erros.push('Balança multi-intervalo ou de múltiplas faixas precisa de pelo menos 2 faixas.')
   const receptor = umDe(r.receptor, LISTA_RECEPTORES, 'RETANGULAR')
   const finalidade = umDe(r.finalidade, ['COMERCIAL', 'PROCESSO', 'LABORATORIO', 'SAUDE', ''] as const, '')
+  const classe = umDe(r.classe, CLASSES, '')
+  const min = positivo(r.min)
+  erros.push(...errosUnidadeBalanca({ faixas, classe, min }))
   return {
     valor: {
       clienteId,
@@ -720,14 +899,14 @@ export function normalizarBalanca(entrada: unknown): Resultado<BalancaInput> {
       modelo: texto(r.modelo, 80),
       numeroSerie: texto(r.numeroSerie, 80),
       identificacao: texto(r.identificacao, 80),
-      indicadorFabricante: texto(r.indicadorFabricante, 80),
-      indicadorModelo: texto(r.indicadorModelo, 80),
-      indicadorSerie: texto(r.indicadorSerie, 80),
+      plataformaFabricante: texto(r.plataformaFabricante, 80),
+      plataformaModelo: texto(r.plataformaModelo, 80),
+      plataformaSerie: texto(r.plataformaSerie, 80),
       unidade: umDe(r.unidade, UNIDADES, 'kg'),
       tipoFaixas,
       faixas,
-      min: positivo(r.min),
-      classe: umDe(r.classe, CLASSES, ''),
+      min,
+      classe,
       portariaAprovacao: texto(r.portariaAprovacao, 120),
       receptor,
       apoios: inteiro(r.apoios, 64, 0) || (receptor === 'RETANGULAR' ? 4 : 0),
@@ -1001,6 +1180,43 @@ export function normalizarOpcoes(v: unknown, base: OpcoesCalculo = OPCOES_CALCUL
 const numOuNuloAmb = (v: unknown, min: number, max: number) => {
   const n = numeroOuNulo(v)
   return n === null || n < min || n > max ? null : n
+}
+
+/**
+ * A calibração com as cargas e leituras passadas para outra unidade (6000 g → 6 kg): para quando a unidade
+ * da indicação da balança muda com calibrações ainda abertas. Essas massas são números puros, lidos na
+ * unidade da balança; sem a conversão, uma leitura de 6000 passaria a valer 6000 kg. Os pesos padrão
+ * (`pecas`) são referências aos padrões e não mudam.
+ */
+export function calibracaoEmOutraUnidade<T extends CalibracaoInput>(k: T, de: Unidade, para: Unidade): T {
+  if (de === para) return k
+  const c = (v: number) => converterMassa(v, de, para)
+  const cn = (v: number | null) => (v === null ? null : c(v))
+  const indicacao = (e: EnsaioIndicacao): EnsaioIndicacao => ({
+    ...e,
+    pontos: e.pontos.map((p) => ({ ...p, carga: c(p.carga), crescente: cn(p.crescente), decrescente: cn(p.decrescente) })),
+    retornoZero: cn(e.retornoZero),
+    substituicao: {
+      ...e.substituicao,
+      etapas: e.substituicao.etapas.map((x) => ({
+        leituraPadroes: cn(x.leituraPadroes),
+        leituraSubstituicao: cn(x.leituraSubstituicao),
+      })),
+    },
+  })
+  return {
+    ...k,
+    comoEncontrado: k.comoEncontrado && indicacao(k.comoEncontrado),
+    indicacao: indicacao(k.indicacao),
+    repetibilidade: k.repetibilidade.map((r) => ({ ...r, carga: c(r.carga), leituras: r.leituras.map(cn) })),
+    excentricidade: {
+      ...k.excentricidade,
+      carga: c(k.excentricidade.carga),
+      posicoes: k.excentricidade.posicoes.map((p) => ({ ...p, leitura: cn(p.leitura), referencia: cn(p.referencia) })),
+    },
+    opcoes: { ...k.opcoes, divisaoTeste: c(k.opcoes.divisaoTeste) },
+    conformidade: { ...k.conformidade, toleranciaCliente: c(k.conformidade.toleranciaCliente) },
+  }
 }
 
 /**

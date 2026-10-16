@@ -7,6 +7,7 @@
 import {
   BLOQUEIO_TROCA_SENHA,
   GRUPOS_AUDITORIA,
+  LOGIN_MAX,
   normalizarAlteracaoUsuario,
   normalizarLogin,
   normalizarNovoUsuario,
@@ -55,8 +56,8 @@ export const PRAZOS_SESSAO = {
 /** Registros do registro de atividades mais antigos que isso são apagados (limpeza diária). */
 export const RETENCAO_AUDITORIA_DIAS = 365
 
-/** Tetos dos textos gravados na auditoria. */
-const TETOS_AUDITORIA = { login: 40, ip: 64, alvo: 100, detalhe: 300 }
+/** Tetos dos textos gravados na auditoria (em unidades UTF-16: o do login cabe qualquer login válido). */
+const TETOS_AUDITORIA = { login: 2 * LOGIN_MAX, ip: 64, alvo: 100, detalhe: 300 }
 
 /** Endereço do próprio computador (127.0.0.0/8 ou ::1). */
 export function ehLoopback(ip: string): boolean {
@@ -336,10 +337,12 @@ export class ServicoUsuarios {
     const senha = typeof r.senha === 'string' ? r.senha : ''
     if (!login || !senha) throw new ErroApi(400, 'Informe o usuário e a senha.')
     const manterConectado = r.manterConectado === true
-    // Login comprido nunca existe (até 32 caracteres): na chave do limite, só o começo
-    const chaves: ChavesTentativa = { login: login.slice(0, 64), ip, loopback: ehLoopback(ip) }
+    // Mesma normalização do cadastro: "Rafael  TESSARO" entra como "rafael tessaro". Login maior que o
+    // máximo nunca existe: nem consulta o banco e, na chave do limite, vai só o começo
+    const cabe = [...login].length <= LOGIN_MAX
+    const chaves: ChavesTentativa = { login: cabe ? login : login.slice(0, 2 * LOGIN_MAX), ip, loopback: ehLoopback(ip) }
 
-    const linha = login.length <= 64 ? this.linhaPorLogin(login) : undefined
+    const linha = cabe ? this.linhaPorLogin(login) : undefined
     const bloqueio = this.limite.bloqueio(chaves, linha ? Date.parse(linha.senha_alterada_em) : undefined)
     if (bloqueio) throw erroMuitasTentativas(bloqueio.segundos, bloqueio.tipo === 'ip')
 
@@ -464,7 +467,10 @@ export class ServicoUsuarios {
     return { usuario: this.obter(id)!, ...(senhaTemporaria ? { senhaTemporaria } : {}) }
   }
 
-  /** Nome, nível e situação. Mudar o nível ou desativar encerra as sessões da pessoa. */
+  /**
+   * Nome, login, nível e situação. Mudar o nível ou desativar encerra as sessões da pessoa; trocar o login,
+   * não (a sessão é ligada à conta, e a pessoa só passa a entrar com o login novo).
+   */
   alterar(id: string, e: unknown, autor: UsuarioSessao, ip: string): { usuario: Usuario; sessoesEncerradas: string[] } {
     const dados = validar(normalizarAlteracaoUsuario(e))
     const sessoesEncerradas = transacao(this.db, () => {
@@ -473,28 +479,33 @@ export class ServicoUsuarios {
       if (dados.versao !== undefined && dados.versao !== atual.versao)
         throw new ErroApi(409, MENSAGENS.conflito, { codigo: 'CONFLITO' })
       const nome = dados.nome ?? atual.nome
+      const login = dados.login ?? atual.login
       const nivel = dados.nivel ?? atual.nivel
       const ativo = dados.ativo ?? !!atual.ativo
       const mudouNivel = nivel !== atual.nivel
       const mudouAtivo = ativo !== !!atual.ativo
       const mudouNome = nome !== atual.nome
+      const mudouLogin = login !== atual.login
       const signatario = dados.signatario ?? !!atual.signatario
       const cargo = dados.cargo ?? atual.cargo
       const registro = dados.registro ?? atual.registro
       const assinatura = dados.assinatura ?? atual.assinatura
       const mudouSignatario = signatario !== !!atual.signatario
       const mudouDadosAssinatura = cargo !== atual.cargo || registro !== atual.registro || assinatura !== atual.assinatura
-      if (!mudouNivel && !mudouAtivo && !mudouNome && !mudouSignatario && !mudouDadosAssinatura) return []
+      if (!mudouNivel && !mudouAtivo && !mudouNome && !mudouLogin && !mudouSignatario && !mudouDadosAssinatura) return []
       if (id === autor.id && (mudouNivel || mudouAtivo))
         throw new ErroApi(409, MENSAGENS.propriaConta, { codigo: 'PROPRIA_CONTA' })
       this.verificarUltimoAdmin(atual, nivel === 'ADMIN' && ativo)
+      if (mudouLogin && this.linhaPorLogin(login))
+        throw new ErroApi(409, MENSAGENS.loginExistente, { codigo: 'LOGIN_EXISTENTE' })
       this.db
         .prepare(
-          `UPDATE usuarios SET nome = ?, nivel = ?, ativo = ?, signatario = ?, cargo = ?, registro = ?, assinatura = ?,
+          `UPDATE usuarios SET nome = ?, login = ?, nivel = ?, ativo = ?, signatario = ?, cargo = ?, registro = ?, assinatura = ?,
                   versao = versao + 1, atualizado_em = ? WHERE id = ?`,
         )
         .run(
           nome,
+          login,
           nivel,
           ativo ? 1 : 0,
           signatario ? 1 : 0,
@@ -507,6 +518,7 @@ export class ServicoUsuarios {
       const encerradas = mudouNivel || (mudouAtivo && !ativo) ? this.apagarSessoes(id) : []
       const detalhe = [
         mudouNome ? `nome: ${atual.nome} → ${nome}` : '',
+        mudouLogin ? `login: ${atual.login} → ${login}` : '',
         mudouNivel ? `nível: ${NOME_NIVEL[atual.nivel]} → ${NOME_NIVEL[nivel]}` : '',
         mudouAtivo ? (ativo ? 'reativado' : 'desativado') : '',
         mudouSignatario ? (signatario ? 'passou a ser signatário' : 'deixou de ser signatário') : '',

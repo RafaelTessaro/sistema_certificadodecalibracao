@@ -4,7 +4,7 @@
 import { BadgeCheck, KeyRound, LogIn, LogOut, Monitor, RefreshCw, ShieldCheck, User, UserCog } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { erroAoEntrar, problemasSenhaNova, useEspera } from '../components/sessao/auxiliares'
+import { enterVaiParaOProximo, erroAoEntrar, problemasSenhaNova, useEspera } from '../components/sessao/auxiliares'
 import { CampoSenha } from '../components/sessao/CampoSenha'
 import { SenhaNova } from '../components/sessao/SenhaNova'
 import { SeletorTema } from '../components/layout/Sidebar'
@@ -15,7 +15,10 @@ import { ErroApi } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useSessao } from '../store/sessao'
 import { toast } from '../store/ui'
-import { normalizarLogin, sugerirLogin, validarLogin } from '#shared/usuarios.ts'
+import { LOGIN_MAX, validarLogin } from '#shared/usuarios.ts'
+
+/** Põe o cursor no campo (o primeiro com problema, ao tentar enviar). */
+const focar = (id: string) => document.getElementById(id)?.focus()
 
 /** Moldura das telas de sessão: logo, cartão central e o seletor de tema no canto. */
 function TelaSessao({
@@ -91,7 +94,15 @@ export function Entrar() {
   const enviar = async (e: FormEvent) => {
     e.preventDefault()
     if (enviando || faltam) return
-    if (!login.trim() || !senha) return setErro('Digite o usuário e a senha.')
+    if (!login.trim()) {
+      focar('entrar-usuario')
+      return setErro('Digite o usuário e a senha.')
+    }
+    if (!senha) {
+      // Enter no usuário só passa para a senha; pelo botão, avisa o que falta
+      if (document.activeElement?.id !== 'entrar-usuario') setErro('Digite o usuário e a senha.')
+      return focar('entrar-senha')
+    }
     setEnviando(true)
     setErro('')
     try {
@@ -192,8 +203,8 @@ export function PrimeiroAcesso({ local }: { local: boolean }) {
 function CriarAdministrador() {
   const primeiroAcesso = useSessao((s) => s.primeiroAcesso)
   const [nome, setNome] = useState('')
+  // A pessoa escolhe o próprio usuário (nada é sugerido a partir do nome)
   const [login, setLogin] = useState('')
-  const [loginEditado, setLoginEditado] = useState(false)
   const [cargo, setCargo] = useState('Responsável técnico')
   const [nova, setNova] = useState('')
   const [repetir, setRepetir] = useState('')
@@ -201,26 +212,31 @@ function CriarAdministrador() {
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState('')
   const [erroNova, setErroNova] = useState('')
-  const loginFinal = loginEditado ? login : sugerirLogin(nome)
-  const dono = { login: loginFinal, nome }
+  const dono = { login, nome }
+  const erroNome = nome.trim() ? null : 'Informe o seu nome.'
+  const erroLogin = validarLogin(login)
 
   const enviar = async (e: FormEvent) => {
     e.preventDefault()
     setTentou(true)
     setErro('')
-    if (!nome.trim()) return setErro('Informe o seu nome.')
-    const erroLogin = validarLogin(normalizarLogin(loginFinal))
-    if (erroLogin) return setErro(`Usuário: ${erroLogin}`)
+    if (salvando) return
+    // O cursor vai para o primeiro campo com problema, na ordem da tela
+    if (erroNome) return focar('pa-nome')
+    if (erroLogin) return focar('pa-login')
     const p = problemasSenhaNova(nova, repetir, dono)
-    if (p.nova || p.repetir || salvando) return
+    if (p.nova) return focar('pa-nova')
+    if (p.repetir) return focar('pa-repetir')
     setSalvando(true)
     try {
-      await primeiroAcesso({ nome, login: loginFinal, senha: nova, cargo, registro: '' })
+      await primeiroAcesso({ nome, login, senha: nova, cargo, registro: '' })
       toast.sucesso('Administrador criado', 'Agora cadastre a sua empresa em Configurações.')
     } catch (err) {
       setSalvando(false)
-      if (err instanceof ErroApi && err.status === 400) setErroNova(err.message)
-      else setErro(err instanceof Error ? err.message : 'Erro inesperado.')
+      if (err instanceof ErroApi && err.status === 400) {
+        setErroNova(err.message)
+        focar('pa-nova')
+      } else setErro(err instanceof Error ? err.message : 'Erro inesperado.')
     }
   }
 
@@ -234,28 +250,43 @@ function CriarAdministrador() {
         titulo="Bem-vindo ao BC Calibração"
         texto="Este é o primeiro acesso. Crie a conta do administrador, que também assina os certificados."
       />
-      <form onSubmit={enviar} className="flex flex-col gap-4" noValidate>
-        <Field label="Seu nome completo" htmlFor="pa-nome" hint="Sai nos certificados que você autorizar.">
+      {/* Enter e Tab seguem a mesma ordem: nome → usuário → cargo → nova senha → repetição → botão */}
+      <form onSubmit={enviar} onKeyDown={enterVaiParaOProximo} className="flex flex-col gap-4" noValidate>
+        <Field
+          label="Seu nome completo"
+          htmlFor="pa-nome"
+          erro={tentou ? erroNome : null}
+          hint="Sai nos certificados que você autorizar."
+        >
           <Input
             id="pa-nome"
             autoFocus
+            autoComplete="name"
             value={nome}
             onChange={(e) => setNome(e.target.value)}
+            aria-invalid={(tentou && !!erroNome) || undefined}
             icone={<User className="h-4 w-4" />}
           />
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Usuário (para entrar)" htmlFor="pa-login">
+          <Field
+            label="Usuário (para entrar)"
+            htmlFor="pa-login"
+            erro={tentou || login ? erroLogin : null}
+            hint="Você escolhe como quer entrar."
+          >
             <Input
               id="pa-login"
+              name="username"
+              autoComplete="username"
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              value={loginFinal}
-              onChange={(e) => {
-                setLogin(e.target.value)
-                setLoginEditado(true)
-              }}
+              maxLength={LOGIN_MAX}
+              placeholder="Ex.: rafael"
+              value={login}
+              onChange={(e) => setLogin(e.target.value)}
+              aria-invalid={((tentou || !!login) && !!erroLogin) || undefined}
             />
           </Field>
           <Field label="Cargo" htmlFor="pa-cargo">
@@ -380,9 +411,14 @@ export function TrocarSenhaObrigatoria() {
     setTentou(true)
     setErro('')
     const senhaAtual = pedirAtual ? atual : senhaTemporaria
-    if (!senhaAtual) return setErroAtual('Digite a senha temporária que você recebeu.')
+    if (!senhaAtual) {
+      focar('troca-atual')
+      return setErroAtual('Digite a senha temporária que você recebeu.')
+    }
     const p = problemasSenhaNova(nova, repetir, dono)
-    if (p.nova || p.repetir || faltam || salvando) return
+    if (p.nova) return focar('troca-nova')
+    if (p.repetir) return focar('troca-repetir')
+    if (faltam || salvando) return
     setSalvando(true)
     try {
       await trocarSenha({ senhaAtual, senhaNova: nova })
@@ -421,7 +457,7 @@ export function TrocarSenhaObrigatoria() {
           </>
         }
       />
-      <form onSubmit={enviar} className="flex flex-col gap-4" noValidate>
+      <form onSubmit={enviar} onKeyDown={enterVaiParaOProximo} className="flex flex-col gap-4" noValidate>
         <input type="text" name="username" autoComplete="username" value={usuario.login} readOnly hidden />
         {pedirAtual && (
           <Field
