@@ -1,7 +1,7 @@
 {
   "name": "bc-calibracao",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Certificados de calibração de balanças — clientes, balanças, padrões, calibrações e certificados em PDF",
   "type": "module",
   "engines": {
