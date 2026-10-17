@@ -2,7 +2,7 @@
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
-import { migrar } from './db.ts'
+import { detalheTrocaIndicador, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 
@@ -38,6 +38,9 @@ const linha = (db: DatabaseSync, id: string) =>
     dados: string
     versao: number
   }
+
+const registros = (db: DatabaseSync) =>
+  db.prepare('SELECT acao, ip, detalhe FROM auditoria').all() as Array<{ acao: string; ip: string; detalhe: string }>
 
 const PLATAFORMA_ANTIGA = {
   fabricante: 'Toledo do Brasil',
@@ -81,6 +84,15 @@ describe('migração 2: balança identificada pelo indicador', () => {
     expect(l.busca).toContain('expedicao')
     expect(l.versao).toBe(3)
     expect(b.versao).toBe(3)
+    // O registro de atividades conta as balanças trocadas, para o dono conferir
+    expect(registros(db)).toEqual([
+      {
+        acao: 'SISTEMA_ATUALIZADO',
+        ip: 'local',
+        detalhe:
+          '1 balança com indicador separado passou a ser identificada pelo indicador; os dados de antes ficaram como plataforma. Confira: 9091-118832.',
+      },
+    ])
   })
 
   it('sem indicador separado: só troca as chaves', () => {
@@ -109,6 +121,8 @@ describe('migração 2: balança identificada pelo indicador', () => {
     expect(b).not.toHaveProperty('indicadorSerie')
     expect(l.numero_serie).toBe('FZ-88213')
     expect(l.busca).toBe('filizola platina 15 fz-88213')
+    // Nada mudou na identificação: nada a conferir
+    expect(registros(db)).toEqual([])
   })
 
   it('indicador igual à identificação principal (digitado nos dois lugares): sem plataforma inventada', () => {
@@ -159,6 +173,54 @@ describe('migração 2: balança identificada pelo indicador', () => {
       plataformaSerie: '2180-0041273',
     })
     expect(l.numero_serie).toBe('9091-118832')
+  })
+
+  it('indicador sem nº de série: o nº de série principal fica (a plataforma quase nunca tem o seu)', () => {
+    const db = bancoV1()
+    inserirBalanca(db, 'b5', {
+      fabricante: 'Fabricante Plataforma',
+      modelo: '',
+      numeroSerie: 'P-4',
+      indicadorFabricante: 'Alfa',
+      indicadorModelo: '3101C',
+      indicadorSerie: '',
+      unidade: 'kg',
+      faixas: [{ max: 300, e: 0.05, d: 0.05 }],
+    })
+    inserirBalanca(db, 'b6', { ...PLATAFORMA_ANTIGA, indicadorSerie: '' })
+    migrar(db)
+    const l5 = linha(db, 'b5')
+    expect(JSON.parse(l5.dados)).toMatchObject({
+      fabricante: 'Alfa',
+      modelo: '3101C',
+      numeroSerie: 'P-4',
+      // Só o fabricante não identifica plataforma nenhuma
+      plataformaFabricante: '',
+      plataformaModelo: '',
+      plataformaSerie: '',
+    })
+    expect(l5.numero_serie).toBe('P-4')
+    // Com o modelo da plataforma: ela fica com o modelo, e o nº de série continua o principal
+    const l6 = linha(db, 'b6')
+    expect(JSON.parse(l6.dados)).toMatchObject({
+      fabricante: 'Toledo do Brasil',
+      modelo: '9091',
+      numeroSerie: '2180-0041273',
+      plataformaFabricante: 'Toledo do Brasil',
+      plataformaModelo: '2180',
+      plataformaSerie: '',
+    })
+    expect(l6.numero_serie).toBe('2180-0041273')
+    expect(registros(db).map((r) => r.detalhe)).toEqual([
+      '2 balanças com indicador separado passaram a ser identificadas pelo indicador; os dados de antes ficaram como plataforma. Confira: P-4, 2180-0041273.',
+    ])
+  })
+
+  it('o detalhe do registro cabe no limite, com "…" quando a lista é longa', () => {
+    const series = Array.from({ length: 40 }, (_, i) => `SERIE-${1000 + i}`)
+    const d = detalheTrocaIndicador(series)
+    expect(d.length).toBeLessThanOrEqual(300)
+    expect(d).toMatch(/^40 balanças .* Confira: SERIE-1000, SERIE-1001, .*, …$/)
   })
 
   it('certificados emitidos não mudam; a busca ganha o nº de série que passou a valer', () => {

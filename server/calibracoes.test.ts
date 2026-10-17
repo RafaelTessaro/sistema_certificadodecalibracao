@@ -421,6 +421,97 @@ describe('troca da unidade da indicação da balança', () => {
     expect(e.repetibilidade[0].carga).toBe(15)
     expect(e.emissao?.balanca).toMatchObject({ unidade: 'kg', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
   })
+
+  it('o que é copiado de um certificado emitido vem na unidade nova (nova calibração, calibrar de novo, revisão)', async () => {
+    const emitida: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const r = await t.chamar('PUT', `/api/balancas/${balanca.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...balanca, unidade: 'g', faixas: [{ max: 30000, e: 10, d: 10 }], versao: balanca.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    const cargas = (k: Calibracao) => ({
+      indicacao: k.indicacao.pontos.map((p) => p.carga),
+      repetibilidade: k.repetibilidade.map((x) => x.carga),
+      excentricidade: k.excentricidade.carga,
+    })
+    const emG = { indicacao: [5000, 10000, 20000, 30000], repetibilidade: [15000], excentricidade: 10000 }
+
+    // Nova calibração (aproveita os pontos da última emitida)
+    const { calibracao: nova } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
+    expect(cargas(nova)).toEqual(emG)
+    await t.chamar('DELETE', `/api/calibracoes/${nova.id}`, { cookie: t.cookieAdmin })
+
+    // Calibrar de novo
+    const { calibracao: denovo } = (await criar(`/api/calibracoes/${emitida.id}/recalibrar`, {})) as { calibracao: Calibracao }
+    expect(cargas(denovo)).toEqual(emG)
+    expect(denovo.indicacao.pontos.every((p) => p.crescente === null)).toBe(true)
+    await t.chamar('DELETE', `/api/calibracoes/${denovo.id}`, { cookie: t.cookieAdmin })
+
+    // Revisão: cargas e leituras convertidas; as pendências são as da unidade certa
+    const { calibracao: rev } = (await criar(`/api/calibracoes/${emitida.id}/revisar`, {
+      motivo: 'Unidade da indicação corrigida',
+    })) as { calibracao: Calibracao }
+    expect(cargas(rev)).toEqual(emG)
+    expect(rev.indicacao.pontos.map((p) => [p.crescente, p.decrescente])).toEqual([
+      [5000, 5000],
+      [10000, 10010],
+      [20010, 20010],
+      [30010, 30010],
+    ])
+    expect(rev.repetibilidade[0].leituras).toEqual([15000, 15000, 15010, 15000, 15000, 15000])
+    expect(rev.excentricidade.posicoes.map((p) => p.leitura)).toEqual([10000, 10000, 10010, 10000, 10000])
+    const detalhe = (await t.chamar('GET', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).json()
+    expect(detalhe.pendencias).toEqual([])
+    const nova2 = await emitir(rev)
+    expect(nova2.statusCode, nova2.body).toBe(200)
+    expect(nova2.json().calibracao.emissao.balanca).toMatchObject({ unidade: 'g' })
+  })
+})
+
+describe('troca do cliente dono da balança', () => {
+  const outroCliente = () =>
+    criar('/api/clientes', {
+      ...CLIENTE_VAZIO,
+      tipo: 'PJ',
+      nome: 'Padaria Nova',
+      documento: '11.222.333/0001-81',
+      logradouro: 'Rua 2',
+      numero: '20',
+      cidade: 'Limeira',
+      uf: 'SP',
+    }).then((r) => r.cliente as Cliente)
+  const abertasDe = async (c: Cliente) =>
+    (await t.chamar('GET', `/api/calibracoes?status=ABERTAS&clienteId=${c.id}`, { cookie: t.cookieAdmin }))
+      .json()
+      .itens.map((k: { id: string }) => k.id)
+
+  for (const comUnidade of [false, true]) {
+    it(`os rascunhos passam para o novo cliente e continuam gravando${comUnidade ? ' (com a troca da unidade junto)' : ''}`, async () => {
+      const aberta = await calibracaoPronta()
+      const novo = await outroCliente()
+      const r = await t.chamar('PUT', `/api/balancas/${balanca.id}`, {
+        cookie: t.cookieAdmin,
+        payload: {
+          ...balanca,
+          clienteId: novo.id,
+          ...(comUnidade ? { unidade: 'g', faixas: [{ max: 30000, e: 10, d: 10 }] } : {}),
+          versao: balanca.versao,
+        },
+      })
+      expect(r.statusCode, r.body).toBe(200)
+      expect(await abertasDe(novo)).toEqual([aberta.id])
+      expect(await abertasDe(cliente)).toEqual([])
+      const k: Calibracao = (await t.chamar('GET', `/api/calibracoes/${aberta.id}`, { cookie: t.cookieAdmin })).json().calibracao
+      expect(k.clienteId).toBe(novo.id)
+      expect(k.versao).toBe(aberta.versao + 1)
+      // O endereço era o do cliente antigo: passa a ser o do novo
+      expect(k.localEndereco).toContain('Limeira')
+      expect(k.repetibilidade[0].carga).toBe(comUnidade ? 15000 : 15)
+      const salvar = await t.chamar('PUT', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin, payload: k })
+      expect(salvar.statusCode, salvar.body).toBe(200)
+      expect(salvar.json().pendencias).toEqual([])
+    })
+  }
 })
 
 describe('listas e painel', () => {

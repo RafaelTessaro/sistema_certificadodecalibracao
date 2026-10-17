@@ -1,4 +1,5 @@
 import { ClipboardCheck, Pencil, Scale, SlidersHorizontal, Wrench } from 'lucide-react'
+import { Fragment } from 'react'
 import {
   AJUSTES,
   capacidadeTexto,
@@ -68,27 +69,37 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
             </Button>
           }
         />
-        <div className="grid grid-cols-2 gap-x-6 gap-y-3 px-5 pb-5 text-sm md:grid-cols-4">
-          <Info rotulo="Tipo">{TIPOS_BALANCA[balanca.tipo]}</Info>
-          <Info rotulo="Fabricante / modelo">{[balanca.fabricante, balanca.modelo].filter(Boolean).join(' ')}</Info>
-          <Info rotulo={separada?.rotulo === 'Indicador' ? 'Nº de série' : 'Nº de série (indicador)'}>{balanca.numeroSerie}</Info>
-          <Info rotulo="Identificação / TAG">{balanca.identificacao}</Info>
-          <Info rotulo="Capacidade × divisão">{capacidadeTexto(balanca)}</Info>
-          <Info rotulo="Divisão de verificação (e)">
-            {e.valores.map((v) => numeroBr(v)).join('/')} {e.unidade}
-          </Info>
-          <Info rotulo="Classe de exatidão">{ROTULO_CLASSE[balanca.classe]}</Info>
-          <Info rotulo="Portaria de aprovação">{balanca.portariaAprovacao}</Info>
-          <Info rotulo="Receptor de carga">{RECEPTORES[balanca.receptor]}</Info>
-          {separada && (
-            <Info rotulo={separada.rotulo}>
-              {[separada.nome, separada.serie && `nº de série ${separada.serie}`].filter(Boolean).join(' · ')}
+        {/* Colunas pela largura do cartão, não da janela: com a coluna "Resultados ao vivo" ao lado, o cartão é
+            estreito mesmo numa tela larga (4 colunas a partir de 42rem, 3 a partir de 36rem) */}
+        <div className="@container px-5 pb-5">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm @xl:grid-cols-3 @2xl:grid-cols-4">
+            <Info rotulo="Tipo">{TIPOS_BALANCA[balanca.tipo]}</Info>
+            <Info rotulo="Fabricante / modelo">{[balanca.fabricante, balanca.modelo].filter(Boolean).join(' ')}</Info>
+            <Info rotulo={separada?.rotulo === 'Indicador' ? 'Nº de série' : 'Nº de série (indicador)'}>
+              {balanca.numeroSerie}
             </Info>
-          )}
-          <Info rotulo="Finalidade">{balanca.finalidade ? FINALIDADES[balanca.finalidade] : ''}</Info>
-          <Info rotulo="Local de instalação" className="col-span-2">
-            {balanca.localInstalacao}
-          </Info>
+            <Info rotulo="Identificação / TAG">{balanca.identificacao}</Info>
+            <Info rotulo="Capacidade × divisão">
+              <SemQuebrarUnidade texto={capacidadeTexto(balanca)} />
+            </Info>
+            <Info rotulo="Verificação (e)">
+              <span className="whitespace-nowrap">
+                {e.valores.map((v) => numeroBr(v)).join('/')} {e.unidade}
+              </span>
+            </Info>
+            <Info rotulo="Classe de exatidão">{ROTULO_CLASSE[balanca.classe]}</Info>
+            <Info rotulo="Portaria de aprovação">{balanca.portariaAprovacao}</Info>
+            <Info rotulo="Receptor de carga">{RECEPTORES[balanca.receptor]}</Info>
+            {separada && (
+              <Info rotulo={separada.rotulo}>
+                {[separada.nome, separada.serie && `nº de série ${separada.serie}`].filter(Boolean).join(' · ')}
+              </Info>
+            )}
+            <Info rotulo="Finalidade">{balanca.finalidade ? FINALIDADES[balanca.finalidade] : ''}</Info>
+            <Info rotulo="Local de instalação" className="col-span-2">
+              {balanca.localInstalacao}
+            </Info>
+          </div>
         </div>
         {balanca.finalidade === 'COMERCIAL' || balanca.finalidade === 'SAUDE' ? (
           <p className="mx-5 mb-5 rounded-xl bg-info-soft px-3.5 py-2.5 text-[13px] text-info">
@@ -222,4 +233,17 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
       </Card>
     </div>
   )
+}
+
+/**
+ * "6/15/33 kg × 2/5/10 g" sem deixar a unidade sozinha na linha de baixo: se não couber, quebra no " × ".
+ */
+function SemQuebrarUnidade({ texto }: { texto: string }) {
+  const partes = texto.split(' × ')
+  return partes.map((p, i) => (
+    <Fragment key={i}>
+      {i > 0 && ' × '}
+      <span className="whitespace-nowrap">{p}</span>
+    </Fragment>
+  ))
 }

@@ -488,12 +488,30 @@ export function unidadeDivisaoPadrao(unidade: Unidade): Unidade {
 export const TIPOS_DIVISAO_EM_KG: readonly TipoBalanca[] = ['PISO', 'RODOVIARIA', 'FERROVIARIA', 'TRANSPALETEIRA']
 
 /**
+ * Tipos que não chegam a 1 t (balcão, precisão, analítica…). Neles, Max de 1 000 kg ou mais é quase certamente
+ * a capacidade digitada em g com a coluna em kg (33 000 em vez de 33): a sugestão de e e d não passa para kg
+ * (assim e = 10 g dá n absurdo e não grava) e `avisosBalanca` avisa.
+ */
+export const TIPOS_ATE_UMA_TONELADA: readonly TipoBalanca[] = [
+  'COMPUTADORA',
+  'ETIQUETADORA',
+  'BALCAO',
+  'ANALITICA',
+  'SEMIANALITICA',
+  'PRECISAO',
+  'CONTADORA',
+  'HOSPITALAR',
+  'CHECKOUT',
+]
+
+/**
  * Unidade em que e e d costumam vir na plaqueta, pelo tipo e pela capacidade: com a indicação em kg, g nas
- * balanças pequenas (30 kg × 5 g) e kg nas de piso, rodoviárias e em qualquer uma de 1 t ou mais (80 t × 20 kg).
- * `max`: a maior capacidade, na unidade da indicação.
+ * balanças pequenas (30 kg × 5 g) e kg nas de piso, rodoviárias e nas de 1 t ou mais (80 t × 20 kg), menos nos
+ * tipos que não chegam a 1 t (`TIPOS_ATE_UMA_TONELADA`). `max`: a maior capacidade, na unidade da indicação.
  */
 export function unidadeDivisaoSugerida(unidade: Unidade, tipo?: TipoBalanca, max = 0): Unidade {
-  if (unidade === 'kg' && ((tipo && TIPOS_DIVISAO_EM_KG.includes(tipo)) || max >= 1000)) return 'kg'
+  const grande = max >= 1000 && !(tipo && TIPOS_ATE_UMA_TONELADA.includes(tipo))
+  if (unidade === 'kg' && ((tipo && TIPOS_DIVISAO_EM_KG.includes(tipo)) || grande)) return 'kg'
   return unidadeDivisaoPadrao(unidade)
 }
 
@@ -775,8 +793,18 @@ const nAbsurdo = (classe: ClasseExatidao, n: number) => {
   return !!lim && n > 10 * lim[1] + 1e-9
 }
 
-export function avisosBalanca(b: Pick<BalancaInput, 'faixas' | 'classe' | 'min' | 'tipoFaixas' | 'unidade'>): string[] {
+export function avisosBalanca(
+  b: Pick<BalancaInput, 'faixas' | 'classe' | 'min' | 'tipoFaixas' | 'unidade'> & { tipo?: TipoBalanca },
+): string[] {
   const avisos: string[] = []
+  // Capacidade que o tipo não tem: o hábito de digitar em g (6000/15000/33000) com a coluna do Max em kg
+  const maxKg = converterMassa(Math.max(0, ...b.faixas.map((f) => f.max)), b.unidade, 'kg')
+  if (b.tipo && TIPOS_ATE_UMA_TONELADA.includes(b.tipo) && maxKg >= 1000) {
+    const plaqueta = numeroBr(maxKg / 1000)
+    avisos.push(
+      `Max de ${numeroBr(maxKg)} kg numa balança ${TIPOS_BALANCA[b.tipo].toLowerCase()}? Se a plaqueta diz ${plaqueta} kg, digite ${plaqueta} com o Max em kg.`,
+    )
+  }
   b.faixas.forEach((f, i) => {
     const nome = b.faixas.length > 1 ? ` (faixa ${i + 1})` : ''
     if (f.e && f.d && (f.d > f.e + 1e-12 || f.e > 10 * f.d + 1e-12)) avisos.push(`O normal é d ≤ e ≤ 10·d${nome}.`)
@@ -845,10 +873,12 @@ const TROCA_INDICADOR = [
  * separado ia nos campos `indicador*`; agora a balança é identificada pelo indicador (é o nº de série dele
  * que vale) e a plataforma é que fica à parte. A troca é feita em bloco: os dados do indicador passam para
  * a identificação principal (o fabricante, se faltar, continua o de antes) e a identificação de antes vai
- * inteira para a plataforma. Não há troca quando o indicador só repete a identificação principal (os dados
- * do indicador digitados nos dois lugares): aí não existe plataforma à parte. Sem dados do indicador, ou com
- * a plataforma já preenchida (formato novo), só tira as chaves antigas. Serve às telas antigas ainda abertas,
- * às cópias e à migração do banco.
+ * para a plataforma. O nº de série é a exceção: sem o nº de série do indicador, o principal fica onde está,
+ * porque a plataforma quase nunca tem nº de série próprio (o digitado ali era, na prática, o da plaqueta do
+ * indicador) e a balança não pode ficar sem nº de série. Não há troca quando o indicador só repete a
+ * identificação principal (os dados do indicador digitados nos dois lugares): aí não existe plataforma à
+ * parte. Sem dados do indicador, ou com a plataforma já preenchida (formato novo), só tira as chaves antigas.
+ * Serve às telas antigas ainda abertas, às cópias e à migração do banco.
  */
 export function semIndicadorLegado<T extends object>(entrada: T): T {
   const r = { ...entrada } as Bruto
@@ -861,6 +891,10 @@ export function semIndicadorLegado<T extends object>(entrada: T): T {
   if (legado && !repetido) {
     const antes = { fabricante: r.fabricante ?? '', modelo: r.modelo ?? '', numeroSerie: r.numeroSerie ?? '' }
     for (const [indicador, principal, plataforma] of TROCA_INDICADOR) {
+      if (principal === 'numeroSerie' && !valor(r[indicador])) {
+        r[plataforma] = ''
+        continue
+      }
       r[plataforma] = antes[principal]
       r[principal] = valor(r[indicador]) ? r[indicador] : principal === 'fabricante' ? antes.fabricante : ''
     }

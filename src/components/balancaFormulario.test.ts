@@ -191,6 +191,36 @@ describe('formulário da balança: unidades de cada coluna', () => {
     expect(p.un).toEqual({ max: 'kg', e: 'g', d: 'g', min: 'kg' })
   })
 
+  it('balcão com o Max digitado em g por hábito (6000/15000/33000 com a coluna em kg): e e d não passam para kg', () => {
+    let f = comUnidadesSugeridas({ ...formularioInicial(undefined, 'c1'), tipo: 'BALCAO' })
+    f = comUnidadesSugeridas({
+      ...f,
+      tipoFaixas: 'MULTI_INTERVALO',
+      faixas: [
+        { chave: 1, max: '6000', e: '', d: '' },
+        { chave: 2, max: '15000', e: '', d: '' },
+        { chave: 3, max: '33000', e: '', d: '' },
+      ],
+    })
+    expect(f.un).toMatchObject({ max: 'kg', e: 'g', d: 'g' })
+    // Com e = 2/5/10 g, n fica absurdo: não grava (e o aviso do Max aparece na tela)
+    f = { ...f, faixas: f.faixas.map((x, i) => ({ ...x, e: ['2', '5', '10'][i] })) }
+    const { erros } = normalizarBalanca({ ...paraEntrada(f), classe: 'III' })
+    expect(erros.some((e) => e.includes('(e)') && e.includes('Confira a unidade'))).toBe(true)
+    // Digitado como na plaqueta (6/15/33 kg × 2/5/10 g): grava, e sai igual
+    const certo = comUnidadesSugeridas({
+      ...f,
+      faixas: [
+        { chave: 1, max: '6', e: '2', d: '' },
+        { chave: 2, max: '15', e: '5', d: '' },
+        { chave: 3, max: '33', e: '10', d: '' },
+      ],
+    })
+    const r = normalizarBalanca({ ...paraEntrada(certo), classe: 'III' })
+    expect(r.erros).toEqual([])
+    expect(capacidadeTexto(r.valor)).toBe('6/15/33 kg × 2/5/10 g')
+  })
+
   it('a unidade escolhida pela pessoa não muda sozinha', () => {
     let f = comUnidadeColuna(formularioInicial(undefined, 'c1'), 'e', 'g')
     f = comUnidadesSugeridas({ ...f, faixas: [{ chave: 1, max: '80000', e: '', d: '' }] })

@@ -157,19 +157,29 @@ const MIGRACOES: Migracao[] = [
 
 /**
  * Migração 2. Nas balanças com dados do indicador separado, eles passam para a identificação principal e a
- * identificação de antes vai inteira para a plataforma; quando o indicador só repetia a identificação
- * principal, e nas outras, só troca as chaves (ver `semIndicadorLegado`). As colunas de busca e de
- * nº de série acompanham. Os certificados emitidos guardam a cópia congelada do cadastro antigo e não
- * mudam: só ganham na busca o nº de série que passou a valer.
+ * identificação de antes vai para a plataforma (o nº de série principal só sai do lugar quando o indicador
+ * tinha o dele); quando o indicador só repetia a identificação principal, e nas outras, só troca as chaves
+ * (ver `semIndicadorLegado`). As colunas de busca e de nº de série acompanham, e o registro de atividades
+ * diz quantas e quais balanças mudaram, para conferir. Os certificados emitidos guardam a cópia congelada do
+ * cadastro antigo e não mudam: só ganham na busca o nº de série que passou a valer.
  */
 function balancaPeloIndicador(db: Banco) {
   const balancas = new Map<string, Balanca>()
+  const trocadas: string[] = []
   const gravar = db.prepare('UPDATE balancas SET dados = ?, numero_serie = ?, busca = ? WHERE id = ?')
   for (const l of db.prepare('SELECT id, dados FROM balancas').all() as Array<{ id: string; dados: string }>) {
-    const b = semIndicadorLegado(JSON.parse(l.dados) as Balanca)
+    const antes = JSON.parse(l.dados) as Balanca
+    const b = semIndicadorLegado(antes)
     balancas.set(l.id, b)
     gravar.run(JSON.stringify(b), b.numeroSerie ?? '', textoBuscaBalanca(b), l.id)
+    if (CAMPOS_IDENTIFICACAO.some((c) => String(antes[c] ?? '') !== String(b[c] ?? '')))
+      trocadas.push(b.numeroSerie || [b.fabricante, b.modelo].filter(Boolean).join(' ') || l.id)
   }
+  if (trocadas.length)
+    db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)").run(
+      new Date().toISOString(),
+      detalheTrocaIndicador(trocadas),
+    )
   const buscaCalibracao = db.prepare('UPDATE calibracoes SET busca = ? WHERE id = ?')
   const calibracoes = db.prepare('SELECT id, balanca_id, busca, dados FROM calibracoes').all() as Array<{
     id: string
@@ -186,6 +196,31 @@ function balancaPeloIndicador(db: Banco) {
       .filter((x) => x && !` ${l.busca} `.includes(` ${x} `))
     if (novos.length) buscaCalibracao.run([l.busca, ...new Set(novos)].filter(Boolean).join(' '), l.id)
   }
+}
+
+const CAMPOS_IDENTIFICACAO = [
+  'fabricante',
+  'modelo',
+  'numeroSerie',
+  'plataformaFabricante',
+  'plataformaModelo',
+  'plataformaSerie',
+] as const
+
+/** "2 balanças com indicador separado passaram a ser identificadas pelo indicador… Confira: A, B." (até 300 letras) */
+export function detalheTrocaIndicador(series: string[]): string {
+  const n = series.length
+  const texto =
+    n === 1
+      ? '1 balança com indicador separado passou a ser identificada pelo indicador; os dados de antes ficaram como plataforma. Confira: '
+      : `${n} balanças com indicador separado passaram a ser identificadas pelo indicador; os dados de antes ficaram como plataforma. Confira: `
+  let lista = ''
+  for (const [i, s] of series.entries()) {
+    const proximo = `${lista}${i ? ', ' : ''}${s}`
+    if (texto.length + proximo.length + 3 > 300) return `${texto}${lista}, …`
+    lista = proximo
+  }
+  return `${texto}${lista}.`
 }
 
 export function abrirBanco(arquivo: string): Banco {

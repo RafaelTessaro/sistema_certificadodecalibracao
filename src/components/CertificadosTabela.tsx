@@ -1,6 +1,7 @@
 import { ChevronRight, FileBadge2, Mail } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { CalibracaoResumo } from '#shared/tipos.ts'
+import { cn } from '../lib/cn'
 import { dataCurta } from '../lib/format'
 import { StatusCalibracaoBadge } from './Selos'
 import { Linha, Tabela, Td, Th } from './ui/Table'
@@ -26,9 +27,10 @@ export function CertificadosTabela({
         <tr>
           <Th>Certificado</Th>
           {/* Cliente e Balança ficam com o espaço que sobra e cortam o texto comprido com "…" (max-w-0 nas
-              células); as outras colunas não quebram linha */}
-          {!ocultarCliente && <Th className="w-[45%]">Cliente</Th>}
-          {!ocultarBalanca && <Th className="w-[55%] max-md:hidden">Balança</Th>}
+              células, com uma largura mínima); as outras colunas não quebram linha. As larguras das que aparecem
+              somam 100 %. */}
+          {!ocultarCliente && <Th className={ocultarBalanca ? 'w-full' : 'w-full md:w-[45%]'}>Cliente</Th>}
+          {!ocultarBalanca && <Th className={cn('max-md:hidden', ocultarCliente ? 'w-full' : 'w-[55%]')}>Balança</Th>}
           <Th className="max-sm:hidden">Calibração</Th>
           {/* Abaixo de 1536 px a OS vai para baixo da data da calibração (a tabela cabe em 1280 e 1366) */}
           <Th className="max-2xl:hidden">OS</Th>
@@ -59,14 +61,14 @@ export function CertificadosTabela({
               </div>
             </Td>
             {!ocultarCliente && (
-              <Td className="max-w-0">
+              <Td className="max-w-0 min-w-32">
                 <p className="truncate text-ink-2" title={k.clienteNome}>
                   {k.clienteNome}
                 </p>
               </Td>
             )}
             {!ocultarBalanca && (
-              <Td className="max-w-0 max-md:hidden">
+              <Td className="max-w-0 min-w-40 max-md:hidden">
                 <p className="truncate text-ink-2" title={k.balancaDescricao}>
                   {k.balancaDescricao.replace(/^Balança /, '')}
                 </p>

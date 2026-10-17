@@ -304,7 +304,7 @@ describe('registro de atividades', () => {
   })
 
   it('rótulos para as ações e para os grupos', () => {
-    expect(TODAS).toHaveLength(18)
+    expect(TODAS).toHaveLength(19)
     for (const a of TODAS) expect(ROTULO_ACAO_AUDITORIA[a].length, a).toBeGreaterThan(3)
     expect(Object.keys(ROTULO_GRUPO_AUDITORIA).sort()).toEqual(Object.keys(GRUPOS_AUDITORIA).sort())
   })

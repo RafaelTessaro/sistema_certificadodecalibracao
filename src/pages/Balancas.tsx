@@ -268,9 +268,10 @@ export function Balancas() {
             <thead>
               <tr>
                 {/* Balança e Cliente ficam com o espaço que sobra e cortam o texto comprido com "…" (max-w-0 nas
-                    células); as outras colunas não quebram linha. Abaixo de 1366 px a última calibração sai da
+                    células, com uma largura mínima; as larguras das que aparecem somam 100 %); as outras colunas não
+                    quebram linha. Abaixo de 1366 px a última calibração sai da
                     lista (continua na página da balança) para a tabela caber sem rolar para o lado. */}
-                <Th className="w-[60%]">Balança</Th>
+                <Th className="w-full md:w-[60%]">Balança</Th>
                 <Th className="max-lg:hidden">Série / TAG</Th>
                 <Th className="w-[40%] max-md:hidden">Cliente</Th>
                 <Th className="max-[1366px]:hidden">Última calibração</Th>
@@ -283,7 +284,7 @@ export function Balancas() {
             <tbody>
               {lista.map((b, i) => (
                 <Linha key={b.id} indice={i} aoClicar={() => navegar(`/balancas/${b.id}`)}>
-                  <Td className="max-w-0">
+                  <Td className="max-w-0 min-w-48">
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-2 text-ink-2">
                         <Scale className="h-4 w-4" />
@@ -313,7 +314,7 @@ export function Balancas() {
                     {b.numeroSerie || <span className="text-muted">—</span>}
                     {b.identificacao && <p className="text-xs text-muted">{b.identificacao}</p>}
                   </Td>
-                  <Td className="max-w-0 max-md:hidden">
+                  <Td className="max-w-0 min-w-32 max-md:hidden">
                     <button
                       type="button"
                       onClick={(e) => {
@@ -348,7 +349,7 @@ export function Balancas() {
                       <span className="text-xs text-muted">Nunca calibrada</span>
                     )}
                   </Td>
-                  <Td className="whitespace-nowrap">
+                  <Td className="lg:whitespace-nowrap">
                     {b.proximaCalibracao ? (
                       <div>
                         <p className="tnum">{dataCurta(b.proximaCalibracao)}</p>

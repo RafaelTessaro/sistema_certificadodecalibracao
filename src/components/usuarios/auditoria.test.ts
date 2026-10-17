@@ -124,8 +124,19 @@ describe('autorDoRegistro (linha de baixo: quem fez)', () => {
     expect(autor({ acao: 'BLOQUEIO', detalhe: 'senha atual errada várias vezes na troca de senha' })).toBe('Maria Souza (maria)')
   })
 
-  it('ferramenta do servidor e cópia restaurada: no computador do servidor', () => {
+  it('ferramenta do servidor, cópia restaurada e atualização do sistema: no computador do servidor', () => {
     expect(autor({ acao: 'FERRAMENTA_LOCAL', alvo: 'u1', ip: 'local' })).toBe('No computador do servidor')
     expect(autor({ acao: 'COPIA_RESTAURADA', usuarioId: '', login: '', ip: 'local' })).toBe('No computador do servidor')
+    expect(autor({ acao: 'SISTEMA_ATUALIZADO', usuarioId: '', login: '', ip: 'local' })).toBe('No computador do servidor')
+  })
+
+  it('atualização do sistema: o detalhe diz o que mudou, para conferir', () => {
+    const detalhe =
+      '1 balança com indicador separado passou a ser identificada pelo indicador; os dados de antes ficaram como plataforma. Confira: IND-1.'
+    expect(descreverRegistro(registro({ acao: 'SISTEMA_ATUALIZADO', usuarioId: '', login: '', detalhe }))).toEqual({
+      titulo: 'A atualização do sistema ajustou cadastros',
+      detalhe,
+    })
+    expect(grupoDaAcao('SISTEMA_ATUALIZADO')).toBe('dados')
   })
 })

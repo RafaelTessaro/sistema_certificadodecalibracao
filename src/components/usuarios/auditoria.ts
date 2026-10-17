@@ -125,7 +125,8 @@ export interface AutorRegistro {
  * estava nele (a conta ajustada vai no detalhe).
  */
 export function autorDoRegistro(r: RegistroAuditoria, nomes: ReadonlyMap<string, string>): AutorRegistro {
-  if (r.acao === 'FERRAMENTA_LOCAL' || r.acao === 'COPIA_RESTAURADA') return { texto: 'No computador do servidor' }
+  if (r.acao === 'FERRAMENTA_LOCAL' || r.acao === 'COPIA_RESTAURADA' || r.acao === 'SISTEMA_ATUALIZADO')
+    return { texto: 'No computador do servidor' }
   const nome = nomes.get(r.usuarioId)
   if (r.acao === 'LOGIN_FALHOU' || (r.acao === 'BLOQUEIO' && r.detalhe !== BLOQUEIO_TROCA_SENHA)) {
     if (!r.login) return { texto: 'Usuário inexistente' }

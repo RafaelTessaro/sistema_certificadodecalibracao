@@ -10,6 +10,7 @@ import {
   dataIsoValida,
   descricaoBalanca,
   diasEntre,
+  enderecoCliente,
   hojeLocalIso,
   normalizarBalanca,
   normalizarCalibracao,
@@ -37,7 +38,6 @@ import type {
   Padrao,
   ResumoPainel,
   StatusCalibracao,
-  Unidade,
   Vencimento,
 } from '#shared/tipos.ts'
 import { type Banco, gravarMeta, lerMeta, transacao } from './db.ts'
@@ -339,32 +339,42 @@ export class Repositorio {
       if (!this.obterCliente(valor.clienteId)) throw new ErroApi(400, 'Cliente não encontrado. Escolha o cliente de novo.')
       const balanca: Balanca = { ...atual, ...valor, versao: atual.versao + 1, atualizadoEm: this.agora().toISOString() }
       this.gravarBalanca(balanca, false)
-      // Rascunhos abertos desta balança acompanham a troca de cliente
-      if (valor.clienteId !== atual.clienteId)
-        this.db
-          .prepare("UPDATE calibracoes SET cliente_id = ? WHERE balanca_id = ? AND status IN ('RASCUNHO','REVISAO')")
-          .run(valor.clienteId, id)
-      // ... e a troca da unidade da indicação: as cargas e leituras deles estão na unidade antiga
-      if (valor.unidade !== atual.unidade) this.converterAbertas(id, atual.unidade, valor.unidade, balanca.atualizadoEm)
+      if (valor.clienteId !== atual.clienteId || valor.unidade !== atual.unidade) this.acompanharAbertas(atual, balanca)
       this.mudou('balanca', id)
       return balanca
     })
   }
 
   /**
-   * Passa as cargas e leituras das calibrações abertas da balança para a nova unidade da indicação
-   * (6000 g → 6 kg), dentro da transação da troca. A versão sobe: uma tela com o rascunho antigo aberto
-   * recebe o aviso de que ele mudou, em vez de gravar por cima os números na unidade de antes. Os
+   * As calibrações abertas da balança acompanham, dentro da transação, a troca do cliente (a balança é de um
+   * cliente só: o rascunho passa a ser do novo, com o endereço dele quando era o do antigo) e a da unidade da
+   * indicação (as cargas e leituras vão para a nova unidade: 6000 g → 6 kg). Tudo numa gravação só de cada
+   * rascunho, para o JSON e as colunas não ficarem diferentes. A versão sobe: uma tela com o rascunho antigo
+   * aberto recebe o aviso de que ele mudou, em vez de gravar por cima o cliente ou os números de antes. Os
    * certificados emitidos têm a cópia congelada da balança e não mudam.
    */
-  private converterAbertas(balancaId: string, de: Unidade, para: Unidade, em: string) {
+  private acompanharAbertas(antes: Balanca, depois: Balanca) {
     const ids = this.db
       .prepare("SELECT id FROM calibracoes WHERE balanca_id = ? AND status IN ('RASCUNHO','REVISAO')")
-      .all(balancaId) as Array<{ id: string }>
+      .all(depois.id) as Array<{ id: string }>
+    const trocouCliente = antes.clienteId !== depois.clienteId
+    const clienteAntigo = trocouCliente ? this.obterCliente(antes.clienteId) : undefined
+    const clienteNovo = trocouCliente ? this.obterCliente(depois.clienteId) : undefined
     for (const { id } of ids) {
-      const k = this.obterCalibracao(id)
-      if (!k) continue
-      this.gravarCalibracao({ ...calibracaoEmOutraUnidade(k, de, para), versao: k.versao + 1, atualizadoEm: em }, false)
+      const atual = this.obterCalibracao(id)
+      if (!atual) continue
+      const k = calibracaoEmOutraUnidade(atual, antes.unidade, depois.unidade)
+      const enderecoAntigo = clienteAntigo && k.localEndereco === enderecoCliente(clienteAntigo)
+      this.gravarCalibracao(
+        {
+          ...k,
+          clienteId: depois.clienteId,
+          localEndereco: enderecoAntigo && clienteNovo ? enderecoCliente(clienteNovo) : k.localEndereco,
+          versao: atual.versao + 1,
+          atualizadoEm: depois.atualizadoEm,
+        },
+        false,
+      )
       this.mudou('calibracao', id)
     }
   }

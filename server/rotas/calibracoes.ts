@@ -3,6 +3,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import {
+  calibracaoEmOutraUnidade,
   calibracaoVazia,
   descricaoBalanca,
   enderecoCliente,
@@ -76,6 +77,19 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     if (!k) throw new ErroApi(404, 'Calibração não encontrada.')
     return k
   }
+  /**
+   * Os dados de entrada de uma calibração, com as cargas e leituras na unidade atual da balança, para
+   * servirem de base a outra (nova calibração, calibrar de novo, revisão). O certificado emitido guarda os
+   * números na unidade da balança no dia da emissão (a da cópia congelada); se o cadastro mudou de unidade
+   * depois (6000 g → 6 kg), copiar sem converter faria 6000 g valer 6000 kg. Os rascunhos já acompanham a
+   * troca quando ela acontece (ver `converterAbertas` no repositório).
+   */
+  const naUnidadeAtual = (k: Calibracao): CalibracaoInput => {
+    const entrada = entradaDe(k)
+    const de = k.emissao?.balanca.unidade
+    const para = repo.obterBalanca(k.balancaId)?.unidade
+    return de && para ? calibracaoEmOutraUnidade(entrada, de, para) : entrada
+  }
 
   app.get('/api/calibracoes', async (req) => {
     const q = req.query as Record<string, string | undefined>
@@ -121,7 +135,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     const anterior = balanca
       ? repo.listarCalibracoes({ balancaId: balanca.id, status: 'EMITIDO', limite: 1 }).itens[0]
       : undefined
-    const ultima = anterior ? repo.obterCalibracao(anterior.id) : undefined
+    const emitida = anterior ? repo.obterCalibracao(anterior.id) : undefined
+    const ultima = emitida ? naUnidadeAtual(emitida) : undefined
     const ativos = repo.listarPadroes()
     const hoje = hojeLocalIso()
     const padroesIds = ultima
@@ -187,7 +202,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     const original = obter(req.params.id)
     const motivo = String(corpo(req).motivo ?? '').trim()
     if (motivo.length < 5) throw new ErroApi(400, 'Explique o motivo da revisão (sai no certificado novo).')
-    const k = repo.criarCalibracao({ ...entradaDe(original), substituiId: original.id, motivoRevisao: motivo }, u)
+    const k = repo.criarCalibracao({ ...naUnidadeAtual(original), substituiId: original.id, motivoRevisao: motivo }, u)
     return reply.code(201).send({ calibracao: k })
   })
 
@@ -197,20 +212,22 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     const anterior = obter(req.params.id)
     const config = repo.obterConfig()
     const hoje = hojeLocalIso()
-    const cliente = repo.obterCliente(anterior.clienteId)
+    // O dono de hoje da balança (o cadastro pode ter passado para outro cliente depois do certificado)
+    const clienteId = repo.obterBalanca(anterior.balancaId)?.clienteId || anterior.clienteId
+    const cliente = repo.obterCliente(clienteId)
     const ativos = new Set(repo.listarPadroes().map((p) => p.id))
-    const entrada = entradaDe(anterior)
+    const entrada = naUnidadeAtual(anterior)
     const k = repo.criarCalibracao(
       {
-        ...calibracaoVazia(anterior.opcoes),
+        ...calibracaoVazia(entrada.opcoes),
         ...semLeituras(entrada),
-        clienteId: anterior.clienteId,
+        clienteId,
         balancaId: anterior.balancaId,
         local: anterior.local,
         localEndereco: cliente ? enderecoCliente(cliente) : anterior.localEndereco,
         padroesIds: anterior.padroesIds.filter((id) => ativos.has(id)),
-        opcoes: anterior.opcoes,
-        conformidade: anterior.conformidade,
+        opcoes: entrada.opcoes,
+        conformidade: entrada.conformidade,
         dataCalibracao: hoje,
         proximaCalibracao: config.mesesProximaPadrao ? somarMeses(hoje, config.mesesProximaPadrao) : '',
         proximaNoCertificado: anterior.proximaNoCertificado,

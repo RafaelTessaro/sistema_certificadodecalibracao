@@ -617,6 +617,7 @@ function FormularioBalanca({
                     unidade={f.un.max}
                     aoMudar={(u) => mudarUnidadeColuna('max', u)}
                     rotulo="Unidade da capacidade máxima (Max)"
+                    automatica={!f.unEscolhida.includes('max')}
                   />
                   <CabecalhoColuna
                     curto="e"
@@ -624,6 +625,7 @@ function FormularioBalanca({
                     unidade={f.un.e}
                     aoMudar={(u) => mudarUnidadeColuna('e', u)}
                     rotulo="Unidade da divisão de verificação (e)"
+                    automatica={!f.unEscolhida.includes('e')}
                   />
                   <CabecalhoColuna
                     curto="d"
@@ -631,6 +633,7 @@ function FormularioBalanca({
                     unidade={f.un.d}
                     aoMudar={(u) => mudarUnidadeColuna('d', u)}
                     rotulo="Unidade da divisão (d)"
+                    automatica={!f.unEscolhida.includes('d')}
                   />
                   {multi && <span className="max-sm:hidden" />}
                 </div>
@@ -697,6 +700,9 @@ function FormularioBalanca({
                                 tamanho="icon-sm"
                                 onClick={() => removerFaixa(i)}
                                 aria-label={`Remover faixa ${i + 1}`}
+                                title={`Remover faixa ${i + 1}`}
+                                // Fora do Tab, como o olho da senha: o Tab vai de d para o Max da linha seguinte
+                                tabIndex={-1}
                                 className="order-2 justify-self-end text-muted hover:text-danger sm:order-none sm:justify-self-center"
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -741,11 +747,23 @@ function FormularioBalanca({
               label="Carga mínima (Min)"
               htmlFor={`${ids}-min`}
               className="sm:col-span-2"
+              // A unidade fica no rótulo, antes do campo (como no cabeçalho da tabela): o Tab vai do campo
+              // direto para a classe
+              extra={
+                <SeletorUnidade
+                  valor={f.un.min}
+                  aoMudar={(u) => mudarUnidadeColuna('min', u)}
+                  rotulo="Unidade da carga mínima (Min)"
+                  noRotulo
+                />
+              }
               erro={campoInvalido(f.min) ? 'Número inválido.' : verErro(erroMin) ? erroMin : null}
               hint={
                 !f.min.trim() && minSugerido ? (
                   <button
                     type="button"
+                    // Atalho para o mouse, fora do Tab: quem usa o teclado digita o valor
+                    tabIndex={-1}
                     onClick={() => usarMinSugerido(minSugerido.valor)}
                     className="cursor-pointer text-left text-brand-ink hover:underline"
                   >
@@ -762,13 +780,7 @@ function FormularioBalanca({
                 aoMudar={(v) => set('min', v)}
                 invalido={campoInvalido(f.min) || verErro(erroMin)}
                 placeholder="0"
-                acessorio={
-                  <SeletorUnidade
-                    valor={f.un.min}
-                    aoMudar={(u) => mudarUnidadeColuna('min', u)}
-                    rotulo="Unidade da carga mínima (Min)"
-                  />
-                }
+                unidade={f.un.min}
               />
             </Field>
             <Field label="Classe de exatidão" className="sm:col-span-4" hint={DESCRICAO_CLASSE[f.classe]}>
@@ -1076,20 +1088,21 @@ function ResumoMetrologico({ valor, completo, avisos }: { valor: BalancaInput; c
 // ---- Unidade de cada coluna ------------------------------------------------------------------
 
 /**
- * Seletor compacto de unidade (mg, g, kg, t), dentro do campo ou no cabeçalho da coluna (`noCabecalho`).
- * Fica na ordem do Tab (dá para trocar a unidade só com o teclado): os do cabeçalho vêm antes dos campos
- * da tabela, então o Tab entre Max, e e d não é interrompido.
+ * Seletor compacto de unidade (mg, g, kg, t), no cabeçalho da coluna da tabela de faixas ou no rótulo do campo
+ * do Min. Fica na ordem do Tab (dá para trocar a unidade só com o teclado), sempre antes dos campos: o Tab
+ * entre Max, e e d, e do Min para a classe, não é interrompido.
  */
 function SeletorUnidade({
   valor,
   aoMudar,
   rotulo,
-  noCabecalho,
+  noRotulo,
 }: {
   valor: Unidade
   aoMudar: (u: Unidade) => void
   rotulo: string
-  noCabecalho?: boolean
+  /** Na linha do rótulo de um campo (20 px de altura): menor, para não passar da linha. */
+  noRotulo?: boolean
 }) {
   return (
     <span className="relative inline-flex shrink-0">
@@ -1099,10 +1112,8 @@ function SeletorUnidade({
         value={valor}
         onChange={(e) => aoMudar(e.target.value as Unidade)}
         className={cn(
-          'cursor-pointer appearance-none rounded-md pr-5 pl-2 text-xs font-medium text-ink-2 transition-colors outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-brand',
-          noCabecalho
-            ? 'h-6 border border-line-strong/70 bg-surface shadow-xs hover:border-line-strong'
-            : 'h-7 bg-surface-2 hover:bg-surface-3',
+          'cursor-pointer appearance-none rounded-md border border-line-strong/70 bg-surface pr-5 pl-2 font-medium text-ink-2 shadow-xs transition-colors outline-none hover:border-line-strong hover:text-ink focus-visible:ring-2 focus-visible:ring-brand',
+          noRotulo ? 'h-5 text-[11px] leading-none' : 'h-6 text-xs',
         )}
       >
         {UNIDADES.map((u) => (
@@ -1116,27 +1127,47 @@ function SeletorUnidade({
   )
 }
 
-/** Título da coluna da tabela de faixas (curto no celular) com a unidade em que ela é digitada. */
+/**
+ * Título da coluna da tabela de faixas (curto no celular) com a unidade em que ela é digitada. Quando a
+ * unidade muda sozinha (`automatica`: sugestão pelo tipo e pela capacidade, ex.: e e d passam para kg com o
+ * Max de 1 t ou mais), o seletor pisca em amarelo, para a troca não passar despercebida.
+ */
 function CabecalhoColuna({
   curto,
   longo,
   unidade,
   aoMudar,
   rotulo,
+  automatica,
 }: {
   curto: string
   longo: string
   unidade: Unidade
   aoMudar: (u: Unidade) => void
   rotulo: string
+  automatica: boolean
 }) {
+  const [inicial] = useState(unidade)
+  const piscar = automatica && unidade !== inicial
   return (
     <div className="flex min-w-0 items-center justify-between gap-1.5">
       <span aria-hidden className="truncate">
         <span className="sm:hidden">{curto}</span>
         <span className="max-sm:hidden">{longo}</span>
       </span>
-      <SeletorUnidade valor={unidade} aoMudar={aoMudar} rotulo={rotulo} noCabecalho />
+      <span className="relative inline-flex shrink-0">
+        <SeletorUnidade valor={unidade} aoMudar={aoMudar} rotulo={rotulo} />
+        {piscar && (
+          <motion.span
+            key={unidade}
+            aria-hidden
+            initial={{ opacity: 1 }}
+            animate={{ opacity: 0 }}
+            transition={{ duration: 2.4, ease: 'easeIn' }}
+            className="pointer-events-none absolute -inset-0.5 rounded-lg bg-warning-soft/60 ring-2 ring-warning"
+          />
+        )}
+      </span>
     </div>
   )
 }

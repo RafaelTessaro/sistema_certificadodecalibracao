@@ -61,6 +61,9 @@ describe('unidade legível das divisões', () => {
     expect(unidadeDivisaoSugerida('kg', 'OUTRA', 1000)).toBe('kg')
     expect(unidadeDivisaoSugerida('t', 'RODOVIARIA', 80)).toBe('kg')
     expect(unidadeDivisaoSugerida('g', 'ANALITICA', 220)).toBe('g')
+    // Tipos que não chegam a 1 t: Max de 1 000 kg ou mais é engano (33 000 digitado no lugar de 33), e/d ficam em g
+    expect(unidadeDivisaoSugerida('kg', 'BALCAO', 33000)).toBe('g')
+    expect(unidadeDivisaoSugerida('kg', 'PRECISAO', 6000)).toBe('g')
   })
 
   it('com valores, a maior unidade em que o menor deles fica ≥ 1', () => {
@@ -94,6 +97,28 @@ describe('balança 6/15/33 kg × 2/5/10 g (multi-intervalo)', () => {
 
   it('n = Max/e dentro da classe III: sem avisos', () => {
     expect(avisosBalanca({ ...b, classe: 'III' })).toEqual([])
+    expect(avisosBalanca({ ...b, classe: 'III', tipo: 'BALCAO' })).toEqual([])
+  })
+
+  it('o hábito de digitar em g com o Max em kg (6000/15 000/33 000 kg) numa balança de balcão: aviso', () => {
+    // Max digitado como 6000/15000/33000 com a coluna em kg; e e d também em kg (n continua válido)
+    const engano = {
+      ...b,
+      classe: 'III' as const,
+      faixas: b.faixas.map((f) => ({ max: f.max * 1000, e: f.e * 1000, d: f.d * 1000 })),
+    }
+    const avisos = avisosBalanca({ ...engano, tipo: 'BALCAO' }).map((a) => a.replace(/\s/g, ' '))
+    expect(avisos).toEqual([
+      'Max de 33 000 kg numa balança de balcão / bancada? Se a plaqueta diz 33 kg, digite 33 com o Max em kg.',
+    ])
+    // Numa rodoviária (ou sem o tipo), 33 t é normal
+    expect(avisosBalanca({ ...engano, tipo: 'RODOVIARIA' })).toEqual([])
+    expect(avisosBalanca(engano)).toEqual([])
+    // A mesma balança gravada em g não engana: 33 000 g = 33 kg
+    const emG = { ...b, unidade: 'g' as const, classe: 'III' as const, tipo: 'BALCAO' as const }
+    expect(avisosBalanca({ ...emG, faixas: b.faixas.map((f) => ({ max: f.max * 1000, e: f.e * 1000, d: f.d * 1000 })) })).toEqual(
+      [],
+    )
   })
 
   it('a mesma balança gravada em g dá o mesmo texto de divisão', () => {
@@ -216,6 +241,24 @@ describe('indicador × plataforma', () => {
       numeroSerie: '9091-118832',
       plataformaFabricante: 'Toledo do Brasil',
       plataformaModelo: '2180',
+      plataformaSerie: '',
+    })
+  })
+
+  it('indicador sem nº de série: o nº de série principal fica onde está', () => {
+    const r = semIndicadorLegado({
+      fabricante: 'Fabricante Plataforma',
+      numeroSerie: 'P-4',
+      indicadorFabricante: 'Alfa',
+      indicadorModelo: '3101C',
+      indicadorSerie: '',
+    })
+    expect(r).toEqual({
+      fabricante: 'Alfa',
+      modelo: '3101C',
+      numeroSerie: 'P-4',
+      plataformaFabricante: '',
+      plataformaModelo: '',
       plataformaSerie: '',
     })
   })

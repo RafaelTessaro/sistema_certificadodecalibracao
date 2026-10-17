@@ -496,8 +496,7 @@ export class ServicoUsuarios {
       if (id === autor.id && (mudouNivel || mudouAtivo))
         throw new ErroApi(409, MENSAGENS.propriaConta, { codigo: 'PROPRIA_CONTA' })
       this.verificarUltimoAdmin(atual, nivel === 'ADMIN' && ativo)
-      if (mudouLogin && this.linhaPorLogin(login))
-        throw new ErroApi(409, MENSAGENS.loginExistente, { codigo: 'LOGIN_EXISTENTE' })
+      if (mudouLogin && this.linhaPorLogin(login)) throw new ErroApi(409, MENSAGENS.loginExistente, { codigo: 'LOGIN_EXISTENTE' })
       this.db
         .prepare(
           `UPDATE usuarios SET nome = ?, login = ?, nivel = ?, ativo = ?, signatario = ?, cargo = ?, registro = ?, assinatura = ?,

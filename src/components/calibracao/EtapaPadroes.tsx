@@ -86,77 +86,83 @@ export function EtapaPadroes({ f, alterar, padroes, config }: ContextoEtapa) {
               ))}
             </div>
           )}
-          {/* Três grupos (início e fim lado a lado); as colunas 2fr/2fr/1fr deixam os cinco campos da mesma largura */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1fr)]">
-            <GrupoAmbiente
-              icone={<Thermometer className="h-3.5 w-3.5" />}
-              titulo="Temperatura"
-              extra={
-                deltaT !== null && (
-                  <span
-                    title="Variação da temperatura durante a calibração"
-                    className={cn(
-                      'tnum rounded-md px-1.5 text-[11px] leading-5 font-medium whitespace-nowrap',
-                      deltaT > 5 ? 'bg-warning-soft text-warning' : 'bg-surface-3 text-muted',
-                    )}
-                  >
-                    Δ {numeroCurto(deltaT)} °C
-                  </span>
-                )
-              }
-            >
-              <Field label="Início" htmlFor="amb-ti">
-                <CampoNumero
-                  id="amb-ti"
-                  valor={amb.temperaturaInicial}
-                  aoMudar={(v) => setAmb('temperaturaInicial', v)}
-                  unidade="°C"
-                  grade={{ grupo: 'amb', lin: 0, col: 0 }}
-                />
-              </Field>
-              <Field label="Fim" htmlFor="amb-tf">
-                <CampoNumero
-                  id="amb-tf"
-                  valor={amb.temperaturaFinal}
-                  aoMudar={(v) => setAmb('temperaturaFinal', v)}
-                  unidade="°C"
-                  grade={{ grupo: 'amb', lin: 1, col: 0 }}
-                />
-              </Field>
-            </GrupoAmbiente>
-            <GrupoAmbiente icone={<Droplets className="h-3.5 w-3.5" />} titulo="Umidade relativa">
-              <Field label="Início" htmlFor="amb-ui">
-                <CampoNumero
-                  id="amb-ui"
-                  valor={amb.umidadeInicial}
-                  aoMudar={(v) => setAmb('umidadeInicial', v)}
-                  unidade="%"
-                  grade={{ grupo: 'amb', lin: 0, col: 1 }}
-                />
-              </Field>
-              <Field label="Fim" htmlFor="amb-uf">
-                <CampoNumero
-                  id="amb-uf"
-                  valor={amb.umidadeFinal}
-                  aoMudar={(v) => setAmb('umidadeFinal', v)}
-                  unidade="%"
-                  grade={{ grupo: 'amb', lin: 1, col: 1 }}
-                />
-              </Field>
-            </GrupoAmbiente>
-            <GrupoAmbiente icone={<Gauge className="h-3.5 w-3.5" />} titulo="Pressão" colunas={1}>
-              {/* "Opcional" no rótulo (e não numa dica embaixo): os três grupos ficam da mesma altura */}
-              <Field label="Opcional" htmlFor="amb-p">
-                <CampoNumero
-                  id="amb-p"
-                  aria-label="Pressão atmosférica (opcional)"
-                  valor={amb.pressao}
-                  aoMudar={(v) => setAmb('pressao', v)}
-                  unidade="hPa"
-                  grade={{ grupo: 'amb', lin: 0, col: 2 }}
-                />
-              </Field>
-            </GrupoAmbiente>
+          {/* Três grupos (início e fim lado a lado). As colunas seguem a largura do cartão, não a da janela (com a
+              coluna "Resultados ao vivo" ao lado, o cartão é estreito mesmo numa tela larga), e os grupos só ficam
+              lado a lado quando cada campo tem uns 7,5rem ou mais, o bastante para "1013,2 hPa" e "-10,5 °C": um
+              grupo por linha; dois (a pressão embaixo, com o campo da largura dos outros); e, a partir de 56rem,
+              os três em 2fr/2fr/1fr */}
+          <div className="@container">
+            <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2 @4xl:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1fr)]">
+              <GrupoAmbiente
+                icone={<Thermometer className="h-3.5 w-3.5" />}
+                titulo="Temperatura"
+                extra={
+                  deltaT !== null && (
+                    <span
+                      title="Variação da temperatura durante a calibração"
+                      className={cn(
+                        'tnum rounded-md px-1.5 text-[11px] leading-5 font-medium whitespace-nowrap',
+                        deltaT > 5 ? 'bg-warning-soft text-warning' : 'bg-surface-3 text-muted',
+                      )}
+                    >
+                      Δ {numeroCurto(deltaT)} °C
+                    </span>
+                  )
+                }
+              >
+                <Field label="Início" htmlFor="amb-ti">
+                  <CampoNumero
+                    id="amb-ti"
+                    valor={amb.temperaturaInicial}
+                    aoMudar={(v) => setAmb('temperaturaInicial', v)}
+                    unidade="°C"
+                    grade={{ grupo: 'amb', lin: 0, col: 0 }}
+                  />
+                </Field>
+                <Field label="Fim" htmlFor="amb-tf">
+                  <CampoNumero
+                    id="amb-tf"
+                    valor={amb.temperaturaFinal}
+                    aoMudar={(v) => setAmb('temperaturaFinal', v)}
+                    unidade="°C"
+                    grade={{ grupo: 'amb', lin: 1, col: 0 }}
+                  />
+                </Field>
+              </GrupoAmbiente>
+              <GrupoAmbiente icone={<Droplets className="h-3.5 w-3.5" />} titulo="Umidade relativa">
+                <Field label="Início" htmlFor="amb-ui">
+                  <CampoNumero
+                    id="amb-ui"
+                    valor={amb.umidadeInicial}
+                    aoMudar={(v) => setAmb('umidadeInicial', v)}
+                    unidade="%"
+                    grade={{ grupo: 'amb', lin: 0, col: 1 }}
+                  />
+                </Field>
+                <Field label="Fim" htmlFor="amb-uf">
+                  <CampoNumero
+                    id="amb-uf"
+                    valor={amb.umidadeFinal}
+                    aoMudar={(v) => setAmb('umidadeFinal', v)}
+                    unidade="%"
+                    grade={{ grupo: 'amb', lin: 1, col: 1 }}
+                  />
+                </Field>
+              </GrupoAmbiente>
+              <GrupoAmbiente icone={<Gauge className="h-3.5 w-3.5" />} titulo="Pressão" colunas={1}>
+                {/* "Opcional" no rótulo (e não numa dica embaixo): os três grupos ficam da mesma altura */}
+                <Field label="Opcional" htmlFor="amb-p">
+                  <CampoNumero
+                    id="amb-p"
+                    aria-label="Pressão atmosférica (opcional)"
+                    valor={amb.pressao}
+                    aoMudar={(v) => setAmb('pressao', v)}
+                    unidade="hPa"
+                    grade={{ grupo: 'amb', lin: 0, col: 2 }}
+                  />
+                </Field>
+              </GrupoAmbiente>
+            </div>
           </div>
           {deltaT !== null && deltaT > 5 && (
             <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
@@ -175,7 +181,8 @@ const numeroCurto = (v: number) => String(Math.round(v * 10) / 10).replace('.', 
 
 /**
  * Grupo das condições ambientais: título com ícone e os campos lado a lado (início e fim). Na pressão, um
- * campo só: no celular ele fica com a largura dos outros (metade), no computador o grupo é que é mais estreito.
+ * campo só: com um ou dois grupos por linha ele fica com a largura dos outros (metade do grupo); com os três
+ * lado a lado, o grupo é que é mais estreito.
  */
 function GrupoAmbiente({
   icone,
@@ -200,7 +207,7 @@ function GrupoAmbiente({
         <span className="min-w-0 truncate text-[13px] font-semibold text-ink">{titulo}</span>
         {extra && <span className="ml-auto shrink-0">{extra}</span>}
       </div>
-      <div className={cn('grid grid-cols-2 gap-3', colunas === 1 && 'sm:grid-cols-1')}>{children}</div>
+      <div className={cn('grid grid-cols-2 gap-3', colunas === 1 && '@4xl:grid-cols-1')}>{children}</div>
     </fieldset>
   )
 }

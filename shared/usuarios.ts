@@ -220,7 +220,7 @@ export const GRUPOS_AUDITORIA: Record<GrupoAuditoria, readonly AcaoAuditoria[]> 
     'FERRAMENTA_LOCAL',
   ],
   certificados: ['CERTIFICADO_EMITIDO', 'CERTIFICADO_CANCELADO', 'CERTIFICADO_ENVIADO'],
-  dados: ['COPIA_RESTAURADA', 'BACKUP_BAIXADO'],
+  dados: ['COPIA_RESTAURADA', 'BACKUP_BAIXADO', 'SISTEMA_ATUALIZADO'],
   alteracoes: ['ALTERACAO'],
 }
 
@@ -248,6 +248,7 @@ export const ROTULO_ACAO_AUDITORIA: Record<AcaoAuditoria, string> = {
   FERRAMENTA_LOCAL: 'Ajuste de usuário no computador do servidor',
   COPIA_RESTAURADA: 'Restaurou uma cópia do banco de dados',
   BACKUP_BAIXADO: 'Baixou uma cópia de segurança',
+  SISTEMA_ATUALIZADO: 'A atualização do sistema ajustou cadastros',
   CERTIFICADO_EMITIDO: 'Emitiu um certificado',
   CERTIFICADO_CANCELADO: 'Cancelou um certificado',
   CERTIFICADO_ENVIADO: 'Enviou um certificado por e-mail',

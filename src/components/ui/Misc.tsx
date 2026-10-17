@@ -1,6 +1,6 @@
 import { Search, X } from 'lucide-react'
 import { AnimatePresence, animate, motion, useMotionValue, useTransform } from 'motion/react'
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent as TeclaReact, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '../../lib/cn'
 import { iniciais } from '../../lib/format'
@@ -67,6 +67,10 @@ export function EmptyState({
 /**
  * Controle segmentado com indicador animado (usado em filtros e abas). Tamanhos: `md` (40 px, filtros e abas),
  * `sm` (36 px, compacto) e `campo` (texto do `sm` na altura de um campo, 40 px: para ficar ao lado de campos).
+ *
+ * É uma parada só do Tab, na opção escolhida (tabindex itinerante); as setas ← e → (e Home/End) trocam a
+ * opção, como num grupo de abas. Assim, num formulário, o Tab vai de um campo para o seguinte em vez de
+ * passar por cada opção.
  */
 export function Segmented<T extends string>({
   opcoes,
@@ -82,22 +86,49 @@ export function Segmented<T extends string>({
   tamanho?: 'sm' | 'md' | 'campo'
 }) {
   const grupo = useId()
+  const botoes = useRef<Array<HTMLButtonElement | null>>([])
+  const escolhida = opcoes.findIndex((o) => o.valor === valor)
+  // Sem nenhuma escolhida (valor fora da lista), a parada do Tab fica na primeira
+  const parada = escolhida >= 0 ? escolhida : 0
+  const mover = (e: TeclaReact<HTMLButtonElement>, i: number) => {
+    const n = opcoes.length
+    const destino =
+      e.key === 'ArrowRight'
+        ? (i + 1) % n
+        : e.key === 'ArrowLeft'
+          ? (i - 1 + n) % n
+          : e.key === 'Home'
+            ? 0
+            : e.key === 'End'
+              ? n - 1
+              : -1
+    if (destino < 0 || e.altKey || e.ctrlKey || e.metaKey) return
+    e.preventDefault()
+    botoes.current[destino]?.focus()
+    if (destino !== escolhida) aoMudar(opcoes[destino].valor)
+  }
   return (
     <div
       role="tablist"
+      aria-orientation="horizontal"
       className={cn(
         'scroll-fino inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-xl bg-surface-3/70 p-1',
         className,
       )}
     >
-      {opcoes.map((o) => {
+      {opcoes.map((o, i) => {
         const ativo = o.valor === valor
         return (
           <button
             type="button"
             key={o.valor}
+            ref={(el) => {
+              botoes.current[i] = el
+            }}
             role="tab"
             aria-selected={ativo}
+            tabIndex={i === parada ? 0 : -1}
+            onKeyDown={(e) => mover(e, i)}
             onClick={() => aoMudar(o.valor)}
             className={cn(
               'relative flex cursor-pointer items-center gap-1.5 rounded-lg font-medium whitespace-nowrap transition-colors duration-150',
