@@ -2,8 +2,15 @@
 ;  bc-calibracao.nsi - Instalador único (setup.exe) do BC Calibração, o sistema
 ;  de certificados de calibração de balanças da Balanças.com.
 ;
+;  O mesmo setup serve para os dois papéis de um computador (o instalador
+;  pergunta na primeira tela, numa instalação nova):
+;    - Servidor: o sistema, o banco e o serviço do Windows, em UM computador;
+;    - Estação: os outros computadores. Só o programa "BC Calibracao.exe"
+;      (estacao\lancador.nsi), que acha o servidor na rede e abre o sistema
+;      numa janela própria do Edge, sem digitar endereço (ver estacao\estacao.nsh).
+;
 ;  Não rode o makensis à mão: use scripts/empacotar-windows.sh, que monta o
-;  payload (programa + Node portátil + WinSW) e chama:
+;  payload (programa + Node portátil + WinSW + programa da estação) e chama:
 ;
 ;    makensis -WX -DVERSAO=1.2.0 -DVERSAO_NUM=1.2.0.0 -DPAYLOAD=<pasta> -DSAIDA=<setup.exe> instalador/bc-calibracao.nsi
 ;
@@ -17,8 +24,9 @@
 ;    node\node.exe, node\LICENSE           <- só o node.exe do zip oficial win-x64
 ;    servico\WinSW.NET461.exe, servico\LICENSE-WinSW.txt
 ;    ferramentas\ (redefinir-senha.bat/.ps1, auxiliar-instalador.ps1, copiar-banco-antes.mjs)
+;    estacao\BC Calibracao.exe, estacao\descobrir-servidor.ps1   <- só para as estações
 ;
-;  O que o setup faz:
+;  O que o setup faz no SERVIDOR:
 ;    1. instala o programa em C:\Program Files\BC Calibracao (sem cedilha nem
 ;       til no caminho, para não haver problema de codificação em nenhum lugar);
 ;    2. guarda os dados em C:\ProgramData\BC Calibracao\dados (banco, backups,
@@ -37,6 +45,20 @@
 ;    7. gera o desinstalador, que pergunta se os dados também devem ser
 ;       apagados (o padrão é NÃO, com dupla confirmação).
 ;
+;  O que o setup faz numa ESTAÇÃO (nada de Node, serviço, Firewall ou dados):
+;    1. procura o servidor na rede (descobrir-servidor.ps1) e mostra a página
+;       "Servidor do BC Calibração" com o que achou; dá para escolher outro ou
+;       digitar o nome ou o IP. Guarda em HKLM\SOFTWARE\BC Calibracao Estacao;
+;    2. instala em C:\Program Files\BC Calibracao Estacao o BC Calibracao.exe,
+;       o descobrir-servidor.ps1 e o ícone;
+;    3. cria os atalhos "BC Calibração" (Área de Trabalho e Menu Iniciar) e
+;       "Procurar o servidor do BC Calibração" (Menu Iniciar), e o desinstalador
+;       próprio ("BC Calibração (estação)" em Aplicativos instalados).
+;  Num computador que já é o servidor, a estação é recusada; numa estação, o
+;  setup só atualiza a estação. Numa instalação nova, se já houver um servidor
+;  na rede, sugere Estação; escolher Servidor sempre pede confirmação, porque
+;  a procura não vê um servidor desligado, em outra porta ou em outra rede.
+;
 ;  Linha de comando (também para instalação silenciosa, /S):
 ;    BC-Calibracao-Setup-1.2.0.exe /S /PORTA=4850 /REDES=192.168.20.0/24,10.10.0.0/16
 ;      /PORTA=  porta TCP (1 a 65535; padrão 4850, ou a já instalada)
@@ -45,12 +67,20 @@
 ;               Não precisa de aspas: o valor vai até o próximo " /"
 ;      /CONTA=LocalSystem  roda o serviço como LocalSystem em vez de
 ;               LocalService (só se algo não funcionar com LocalService)
+;    BC-Calibracao-Setup-1.2.0.exe /S /ESTACAO [/SERVIDOR=SERVIDOR:4850] [/SEMVARREDURA]
+;      /ESTACAO     instala como estação (sem ele, /S instala o servidor,
+;                   a não ser que este computador já seja uma estação)
+;      /SERVIDOR=   nome ou IP do servidor, com :porta se não for a 4850
+;                   (implica /ESTACAO). Sem ele, o setup procura na rede
+;      /SEMVARREDURA  a estação não varre a rede atrás do servidor (só nome
+;                   e endereços conhecidos), para redes com alerta de varredura
 ;    Desinstalar.exe /S                mantém os dados
 ;    Desinstalar.exe /S /REMOVERDADOS  apaga também os dados
 ;  Código de saída: 0 = ok; 1 = cancelado pelo usuário; 2 = interrompido
 ;  (porta ou redes inválidas, porta ocupada no modo silencioso, versão mais
-;  nova já instalada, cópia do banco falhou); 3 = instalado, mas o serviço
-;  não foi registrado, não iniciou ou não respondeu.
+;  nova já instalada, cópia do banco falhou, estação pedida num computador que
+;  é o servidor, /SERVIDOR inválido); 3 = instalado, mas o serviço não foi
+;  registrado, não iniciou ou não respondeu.
 ;
 ;  Cuidados deste script (ninguém consegue testá-lo antes de rodar no Windows):
 ;    - o setup é um programa de 32 bits: as ferramentas do Windows (sc, net,
@@ -101,6 +131,10 @@ ShowUninstDetails show
 !define ARQ_BANCO     "bc-calibracao.db"
 !define CHAVE_APP     "Software\BC Calibracao"
 !define CHAVE_DESINST "Software\Microsoft\Windows\CurrentVersion\Uninstall\BCCalibracao"
+; Estação: programa (atalhos) e desinstalador próprios. A configuração fica em EST_CHAVE (estacao.nsh)
+!define PASTA_ESTACAO "BC Calibracao Estacao"
+!define LANCADOR_EXE  "BC Calibracao.exe"
+!define CHAVE_DESINST_ESTACAO "Software\Microsoft\Windows\CurrentVersion\Uninstall\BCCalibracaoEstacao"
 ; Ferramentas de 64 bits do Windows, vistas por um programa de 32 bits
 !define SYS           "$WINDIR\Sysnative"
 !define POWERSHELL    "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
@@ -117,6 +151,7 @@ BrandingText "${APP_NOME} ${VERSAO}"
 !include "x64.nsh"                 ; RunningX64
 !include "WinVer.nsh"              ; AtLeastBuild
 !include "nsDialogs.nsh"
+!include "Sections.nsh"            ; SelectSection / UnselectSection (servidor ou estação)
 
 Var PORTA             ; porta TCP do sistema
 Var PORTA_ANT         ; porta da instalação anterior (atualização)
@@ -140,6 +175,15 @@ Var APAGAR_DADOS      ; desinstalador: 1 = apagar a pasta de dados
 Var hPorta            ; controles da página de configuração
 Var hRedes
 Var hEndereco
+Var MODO              ; servidor | estacao | "" (ainda não escolhido: página "Tipo de instalação")
+Var MODO_FIXO         ; 1 = o modo veio do que já está instalado ou da linha de comando
+Var ESTACAO_INSTALADA ; 1 = este computador já é uma estação
+Var SERVIDOR_INFORMADO ; /SERVIDOR= da linha de comando
+Var SERVIDOR_CONFERIDO ; estação: 1 = o servidor escolhido respondeu
+Var EST_PROCURADO     ; 1 = a procura do servidor na rede já foi feita
+Var TEXTO_DESINST     ; texto da página de confirmação do desinstalador
+Var hTipoServidor     ; controles da página "Tipo de instalação"
+Var hTipoEstacao
 
 ; ------------------------------------------------------------------ Interface
 !define MUI_ICON   "${PAYLOAD}\bc-calibracao.ico"
@@ -150,7 +194,9 @@ Var hEndereco
 !define MUI_WELCOMEPAGE_TITLE "Instalação do ${APP_NOME}"
 !define MUI_WELCOMEPAGE_TEXT "$TEXTO_BOAS_VINDAS"
 !insertmacro MUI_PAGE_WELCOME
-Page custom PaginaConfigCriar PaginaConfigSair
+Page custom PaginaTipoCriar PaginaTipoSair          ; servidor ou estação (só numa instalação nova)
+Page custom PaginaConfigCriar PaginaConfigSair      ; servidor: porta e redes extras
+Page custom PaginaEstacaoCriar PaginaEstacaoSair    ; estação: qual é o servidor
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_TITLE "Instalação concluída"
 !define MUI_FINISHPAGE_TEXT "$TEXTO_FINAL"
@@ -162,19 +208,27 @@ Page custom PaginaConfigCriar PaginaConfigSair
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW FinalAoMostrar
 !insertmacro MUI_PAGE_FINISH
 
-!define MUI_UNCONFIRMPAGE_TEXT_TOP "O serviço, a regra do Firewall e os atalhos do ${APP_NOME} serão removidos. Em seguida o desinstalador pergunta se os dados (banco, certificados e backups) também devem ser apagados; o padrão é mantê-los."
+!define MUI_UNCONFIRMPAGE_TEXT_TOP "$TEXTO_DESINST"
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 
 !insertmacro MUI_LANGUAGE "PortugueseBR"
 
-; Arquivos usados no .onInit vêm primeiro no bloco de dados (compressão sólida)
+; Modo Estação: procura do servidor, página "Servidor do BC Calibração" e navegador (comum com o
+; programa das estações, estacao\lancador.nsi)
+!define EST_INSTALADOR
+!include "estacao\estacao.nsh"
+
+; Arquivos usados no .onInit e nas páginas vêm primeiro no bloco de dados (compressão sólida)
 ReserveFile "${PAYLOAD}\ferramentas\auxiliar-instalador.ps1"
 ReserveFile "${PAYLOAD}\ferramentas\copiar-banco-antes.mjs"
+ReserveFile "${PAYLOAD}\estacao\descobrir-servidor.ps1"
 ReserveFile /plugin nsDialogs.dll
 ReserveFile /plugin nsExec.dll
 ReserveFile /plugin System.dll
 ReserveFile /plugin UserInfo.dll
+ReserveFile /plugin Banner.dll
+ReserveFile /plugin NSISdl.dll
 
 ; Propriedades do .exe (aba "Detalhes" do Windows)
 VIProductVersion "${VERSAO_NUM}"
@@ -221,6 +275,13 @@ VIAddVersionKey /LANG=${LANG_PORTUGUESEBR} "LegalCopyright"  "© ${EMPRESA}"
   Delete "$INSTDIR\bc-calibracao.ico"
 !macroend
 
+; Apaga os arquivos do programa da ESTAÇÃO (a pasta só tem estes)
+!macro REMOVER_ESTACAO
+  Delete "$INSTDIR\${LANCADOR_EXE}"
+  Delete "$INSTDIR\descobrir-servidor.ps1"
+  Delete "$INSTDIR\bc-calibracao.ico"
+!macroend
+
 ; Espera o Windows apagar de fato o serviço (sc query devolve 1060 =
 ; ERROR_SERVICE_DOES_NOT_EXIST), até SEGUNDOS. Com a janela "Serviços" aberta,
 ; o serviço fica só "marcado para exclusão". Deixa em $0 o último código.
@@ -251,12 +312,8 @@ Function .onInit
     Abort
   ${EndIf}
 
-  ${IfNot} ${RunningX64}
-    MessageBox MB_ICONSTOP "O ${APP_NOME} exige o Windows de 64 bits." /SD IDOK
-    SetErrorLevel 2
-    Abort
-  ${EndIf}
-  ; Node 24: Windows 10 1607 / Windows Server 2016 (compilação 14393) ou mais novo
+  ; Windows 10 1607 / Windows Server 2016 (compilação 14393) ou mais novo: o Node 24 do servidor e o
+  ; PowerShell 5.1 que as estações usam para achar o servidor
   ${IfNot} ${AtLeastBuild} 14393
     MessageBox MB_ICONSTOP "O ${APP_NOME} exige o Windows 10 (versão 1607 ou mais nova), o Windows 11 ou o Windows Server 2016 ou mais novo." /SD IDOK
     SetErrorLevel 2
@@ -270,18 +327,11 @@ Function .onInit
     SetErrorLevel 2
     Abort
   ${EndIf}
-  ; O WinSW.NET461.exe precisa do .NET Framework 4.6.1 ou mais novo (Release >= 394254)
-  SetRegView 64
-  ReadRegDWORD $0 HKLM "SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" "Release"
-  ${If} $0 < 394254
-    MessageBox MB_ICONSTOP "O ${APP_NOME} precisa do .NET Framework 4.6.1 ou mais novo, que vem com o Windows atualizado. Instale o .NET Framework 4.8 pelo Windows Update e rode o instalador de novo." /SD IDOK
-    SetErrorLevel 2
-    Abort
-  ${EndIf}
 
+  SetRegView 64
   SetShellVarContext all            ; atalhos e $APPDATA para TODOS os usuários
   ; Pasta do programa fixa (ignora /D=): o serviço roda o código dela, então ela
-  ; precisa ficar onde só administradores gravam
+  ; precisa ficar onde só administradores gravam (a da estação também é fixa: AplicarModo)
   StrCpy $INSTDIR "$PROGRAMFILES64\${APP_PASTA}"
   StrCpy $DADOS_RAIZ "$APPDATA\${APP_PASTA}"   ; $APPDATA = C:\ProgramData (contexto "all")
   StrCpy $DADOS "$DADOS_RAIZ\dados"
@@ -291,32 +341,31 @@ Function .onInit
   StrCpy $SERVICO_EXISTIA 0
   StrCpy $COPIA_BANCO ""
   StrCpy $AVISOS ""
+  StrCpy $SERVIDOR_CONFERIDO 0
+  StrCpy $EST_PROCURADO 0
+  StrCpy $EST_QTD 0
 
   InitPluginsDir
   File "/oname=$PLUGINSDIR\auxiliar-instalador.ps1" "${PAYLOAD}\ferramentas\auxiliar-instalador.ps1"
   File "/oname=$PLUGINSDIR\copiar-banco-antes.mjs" "${PAYLOAD}\ferramentas\copiar-banco-antes.mjs"
+  File "/oname=$PLUGINSDIR\descobrir-servidor.ps1" "${PAYLOAD}\estacao\descobrir-servidor.ps1"
   StrCpy $AUXILIAR "$PLUGINSDIR\auxiliar-instalador.ps1"
+  StrCpy $EST_SCRIPT "$PLUGINSDIR\descobrir-servidor.ps1"
 
-  ; Já instalado? Então é uma atualização: mantém porta, redes e conta
+  ; O que já está instalado: o servidor (atualização) ou uma estação
   StrCpy $ATUALIZANDO 0
   ReadRegStr $VERSAO_ANT HKLM "${CHAVE_DESINST}" "DisplayVersion"
   ReadRegStr $0 HKLM "${CHAVE_DESINST}" "InstallLocation"
   ${If} $0 != ""
     StrCpy $ATUALIZANDO 1
-    ReadRegStr $1 HKLM "${CHAVE_APP}" "VersaoNumerica"
-    ${If} $1 == ""
-      StrCpy $1 $VERSAO_ANT
-    ${EndIf}
-    ${VersionCompare} "$1" "${VERSAO_NUM}" $2      ; 1 = a instalada é mais nova
-    ${If} $2 == 1
-      ${IfNot} ${Cmd} `MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "A versão instalada ($VERSAO_ANT) é mais nova que esta (${VERSAO}). Voltar para a versão mais antiga pode não funcionar com o banco de dados atual.$\r$\n$\r$\nContinuar mesmo assim?" /SD IDNO IDYES`
-        SetErrorLevel 2
-        Abort
-      ${EndIf}
-    ${EndIf}
+  ${EndIf}
+  StrCpy $ESTACAO_INSTALADA 0
+  ReadRegStr $0 HKLM "${CHAVE_DESINST_ESTACAO}" "InstallLocation"
+  ${If} $0 != ""
+    StrCpy $ESTACAO_INSTALADA 1
   ${EndIf}
 
-  ; Configuração anterior (também fica guardada quando se desinstala mantendo os dados)
+  ; Configuração anterior do servidor (também fica guardada quando se desinstala mantendo os dados)
   ReadRegStr $PORTA HKLM "${CHAVE_APP}" "Porta"
   ${If} $PORTA == ""
     StrCpy $PORTA "${PORTA_PADRAO}"
@@ -324,8 +373,10 @@ Function .onInit
   StrCpy $PORTA_ANT $PORTA
   ReadRegStr $REDES HKLM "${CHAVE_APP}" "RedesExtras"
   ReadRegStr $CONTA HKLM "${CHAVE_APP}" "ContaServico"
+  ; e a da estação (o servidor escolhido antes)
+  Call EstLerConfig
 
-  ; Linha de comando: /PORTA= /REDES= /CONTA=
+  ; Linha de comando: /PORTA= /REDES= /CONTA= (servidor); /ESTACAO /SERVIDOR= /SEMVARREDURA (estação)
   ${GetParameters} $R8
   StrCpy $R9 "/PORTA="
   Call LerOpcao
@@ -347,18 +398,114 @@ Function .onInit
   ${Else}
     StrCpy $CONTA "LocalService"
   ${EndIf}
+  StrCpy $R6 0                      ; 1 = a linha de comando pede estação
+  StrCpy $SERVIDOR_INFORMADO ""
+  StrCpy $R9 "/SERVIDOR="
+  Call LerOpcao
+  ${IfNot} ${Errors}
+    StrCpy $SERVIDOR_INFORMADO $R7
+    StrCpy $R6 1
+  ${EndIf}
+  ClearErrors
+  ${GetOptions} $R8 "/ESTACAO" $R7
+  ${IfNot} ${Errors}
+    StrCpy $R6 1
+  ${EndIf}
+  ClearErrors
+  ${GetOptions} $R8 "/SEMVARREDURA" $R7
+  ${IfNot} ${Errors}
+    StrCpy $EST_SEM_VARREDURA 1
+  ${EndIf}
+
+  ; Servidor ou estação? O que já está instalado manda; depois a linha de comando; /S sozinho é o
+  ; servidor, como sempre foi. Senão, a página "Tipo de instalação" pergunta.
+  StrCpy $MODO ""
+  ${If} $ATUALIZANDO == 1
+    ${If} $R6 == 1
+      MessageBox MB_ICONSTOP "Este computador é o servidor do ${APP_NOME}: o sistema e o banco de dados estão instalados nele, e ele não pode ser também uma estação.$\r$\n$\r$\nNeste computador, abra o sistema pelo atalho $\"${APP_NOME}$\" da Área de Trabalho." /SD IDOK
+      SetErrorLevel 2
+      Abort
+    ${EndIf}
+    StrCpy $MODO "servidor"
+  ${ElseIf} $ESTACAO_INSTALADA == 1
+  ${OrIf} $R6 == 1
+    StrCpy $MODO "estacao"
+  ${ElseIf} ${Silent}
+    StrCpy $MODO "servidor"
+  ${EndIf}
+  StrCpy $MODO_FIXO 0
+  ${If} $MODO != ""
+    StrCpy $MODO_FIXO 1
+  ${EndIf}
+
+  ${If} $MODO == "servidor"
+    Call PrepararServidor
+    ${If} $RESULTADO != "ok"
+      SetErrorLevel 2
+      Abort
+    ${EndIf}
+  ${ElseIf} $MODO == "estacao"
+    Call PrepararEstacao
+    ${If} $RESULTADO != "ok"
+      SetErrorLevel 2
+      Abort
+    ${EndIf}
+  ${Else}
+    StrCpy $TEXTO_BOAS_VINDAS "Este assistente instala o ${APP_NOME} ${VERSAO}.$\r$\n$\r$\nO sistema fica instalado em UM computador da empresa, o servidor. Os outros computadores, as estações, usam o sistema que está no servidor.$\r$\n$\r$\nNa próxima tela, escolha o que este computador vai ser.$\r$\n$\r$\nClique em Próximo para continuar."
+  ${EndIf}
+  Call AplicarModo
+FunctionEnd
+
+; Requisitos que só o servidor tem (o serviço e o Node). $RESULTADO = "ok" ou "parar" (já avisou).
+Function ConferirRequisitosServidor
+  StrCpy $RESULTADO "parar"
+  ${IfNot} ${RunningX64}
+    MessageBox MB_ICONSTOP "O servidor do ${APP_NOME} exige o Windows de 64 bits." /SD IDOK
+    Return
+  ${EndIf}
+  ; O WinSW.NET461.exe precisa do .NET Framework 4.6.1 ou mais novo (Release >= 394254)
+  ReadRegDWORD $0 HKLM "SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" "Release"
+  ${If} $0 < 394254
+    MessageBox MB_ICONSTOP "O servidor do ${APP_NOME} precisa do .NET Framework 4.6.1 ou mais novo, que vem com o Windows atualizado. Instale o .NET Framework 4.8 pelo Windows Update e rode o instalador de novo." /SD IDOK
+    Return
+  ${EndIf}
+  StrCpy $RESULTADO "ok"
+FunctionEnd
+
+; Servidor decidido no .onInit (atualização, ou /S): requisitos, versão, porta e redes da linha de
+; comando. Numa instalação nova com janelas, a porta e as redes são conferidas na página de
+; configuração. $RESULTADO = "ok" ou "parar" (já avisou).
+Function PrepararServidor
+  Call ConferirRequisitosServidor
+  ${If} $RESULTADO != "ok"
+    Return
+  ${EndIf}
+  StrCpy $RESULTADO "parar"
+  ; Atualização: a versão instalada é mais nova?
+  ${If} $ATUALIZANDO == 1
+    ReadRegStr $1 HKLM "${CHAVE_APP}" "VersaoNumerica"
+    ${If} $1 == ""
+      StrCpy $1 $VERSAO_ANT
+    ${EndIf}
+    ${VersionCompare} "$1" "${VERSAO_NUM}" $2      ; 1 = a instalada é mais nova
+    ${If} $2 == 1
+      ${IfNot} ${Cmd} `MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "A versão instalada ($VERSAO_ANT) é mais nova que esta (${VERSAO}). Voltar para a versão mais antiga pode não funcionar com o banco de dados atual.$\r$\n$\r$\nContinuar mesmo assim?" /SD IDNO IDYES`
+        Return
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
 
   Call ConferirPorta
   ${If} $RESULTADO != "ok"
     MessageBox MB_ICONSTOP "Porta inválida: $PORTA. Informe um número de 1 a 65535 (o padrão é ${PORTA_PADRAO})." /SD IDOK
-    SetErrorLevel 2
-    Abort
+    StrCpy $RESULTADO "parar"
+    Return
   ${EndIf}
   Call ConferirRedes
   ${If} $RESULTADO != "ok"
     MessageBox MB_ICONSTOP "A rede $\"$RESULTADO$\" informada em /REDES não foi entendida. Use, por exemplo: 192.168.20.0/24,10.10.0.0/16" /SD IDOK
-    SetErrorLevel 2
-    Abort
+    StrCpy $RESULTADO "parar"
+    Return
   ${EndIf}
   ; A página de configuração só aparece numa instalação nova e com janelas.
   ; Nos outros casos (/S, ou atualização com /PORTA=) a porta é conferida aqui.
@@ -371,8 +518,8 @@ Function .onInit
       Call PortaEmUso
       ${If} $RESULTADO != ""
         ${IfNot} ${Cmd} `MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "A porta $PORTA já está em uso pelo programa $\"$RESULTADO$\". Enquanto esse programa usar a porta, o ${APP_NOME} não vai abrir.$\r$\n$\r$\nUsar esta porta mesmo assim?" /SD IDNO IDYES`
-          SetErrorLevel 2
-          Abort
+          StrCpy $RESULTADO "parar"
+          Return
         ${EndIf}
       ${EndIf}
     ${EndIf}
@@ -381,7 +528,32 @@ Function .onInit
   ${If} $ATUALIZANDO == 1
     StrCpy $TEXTO_BOAS_VINDAS "Este assistente atualiza o ${APP_NOME} da versão $VERSAO_ANT para a ${VERSAO}.$\r$\n$\r$\nO sistema fica fora do ar por alguns instantes. Antes de trocar o programa, o instalador faz uma cópia do banco de dados em:$\r$\n$DADOS\backups$\r$\n$\r$\nOs dados, a porta ($PORTA) e as configurações continuam como estão.$\r$\n$\r$\nPeça para quem estiver usando o sistema salvar o que está fazendo e clique em Próximo."
   ${Else}
-    StrCpy $TEXTO_BOAS_VINDAS "Este assistente instala o ${APP_NOME} ${VERSAO} neste servidor.$\r$\n$\r$\nO sistema roda como serviço do Windows: inicia sozinho junto com o computador e é usado pelo navegador nos computadores da rede da empresa. Não é preciso instalar mais nada: o instalador já traz tudo.$\r$\n$\r$\nPrograma: $INSTDIR$\r$\nDados (banco, certificados e backups):$\r$\n$DADOS$\r$\n$\r$\nClique em Próximo para continuar."
+    StrCpy $TEXTO_BOAS_VINDAS "Este assistente instala o ${APP_NOME} ${VERSAO} neste servidor.$\r$\n$\r$\nO sistema roda como serviço do Windows: inicia sozinho junto com o computador e é usado nos computadores da rede da empresa. Não é preciso instalar mais nada: o instalador já traz tudo.$\r$\n$\r$\nPrograma: $INSTDIR$\r$\nDados (banco, certificados e backups):$\r$\n$DADOS$\r$\n$\r$\nClique em Próximo para continuar."
+  ${EndIf}
+  StrCpy $RESULTADO "ok"
+FunctionEnd
+
+; Estação: confere o /SERVIDOR= e monta o texto de boas-vindas. $RESULTADO = "ok" ou "parar".
+Function PrepararEstacao
+  StrCpy $RESULTADO "ok"
+  ${If} $SERVIDOR_INFORMADO != ""
+    StrCpy $R0 $SERVIDOR_INFORMADO
+    Call EstSeparar
+    ${If} $EST_RESPOSTA != "ok"
+      MessageBox MB_ICONSTOP "O servidor informado em /SERVIDOR não foi entendido: $SERVIDOR_INFORMADO$\r$\n$\r$\nUse o nome ou o IP do computador servidor, com a porta se ela não for a ${PORTA_PADRAO}. Por exemplo: /SERVIDOR=SERVIDOR ou /SERVIDOR=192.168.0.10:4851" /SD IDOK
+      StrCpy $RESULTADO "parar"
+      Return
+    ${EndIf}
+    StrCpy $EST_NOME ""             ; servidor escolhido por quem instala: vale o que responder nele,
+    StrCpy $EST_ID ""               ; sem perguntar se é o mesmo de antes
+    StrCpy $EST_IP ""
+    StrCpy $EST_CONHECIDO_NOME ""
+    StrCpy $EST_CONHECIDO_ID ""
+  ${EndIf}
+  ${If} $ESTACAO_INSTALADA == 1
+    StrCpy $TEXTO_BOAS_VINDAS "Este computador já é uma estação do ${APP_NOME}. Este assistente atualiza o programa da estação para a versão ${VERSAO}.$\r$\n$\r$\nNa tela seguinte, confira o servidor (dá para trocar). O servidor escolhido aqui passa a valer para todos os usuários deste computador.$\r$\n$\r$\nPara fazer deste computador o servidor, desinstale antes a estação: Configurações > Aplicativos > ${APP_NOME} (estação).$\r$\n$\r$\nClique em Próximo para continuar."
+  ${Else}
+    StrCpy $TEXTO_BOAS_VINDAS "Este assistente instala o ${APP_NOME} nesta estação: um ícone na Área de Trabalho e no Menu Iniciar que abre o sistema do servidor numa janela própria, sem digitar endereço no navegador.$\r$\n$\r$\nO servidor é encontrado sozinho na rede. Neste computador não fica banco de dados nem serviço, e o Firewall não é alterado.$\r$\n$\r$\nClique em Próximo para continuar."
   ${EndIf}
 FunctionEnd
 
@@ -506,9 +678,99 @@ Function PortaEmUso
   ${EndIf}
 FunctionEnd
 
+; ------------------------------------------- Página: servidor ou estação
+; Só numa instalação nova, com janelas e sem /ESTACAO ou /SERVIDOR=. Antes de mostrar, procura um
+; servidor na rede: se já houver um, a página sugere Estação (evita dois servidores sem querer). A
+; procura não vê tudo (servidor desligado, em outra porta ou em outra rede; PowerShell bloqueado), então
+; escolher Servidor sempre pede confirmação.
+Function PaginaTipoCriar
+  ${If} $MODO_FIXO == 1
+    Abort
+  ${EndIf}
+  ${If} $EST_PROCURADO != 1
+    StrCpy $EST_PROCURADO 1
+    Call EstProcurarComAviso
+  ${EndIf}
+  !insertmacro MUI_HEADER_TEXT "Tipo de instalação" "O que este computador vai ser no ${APP_NOME}?"
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateRadioButton} 0 0 100% 12u "&Servidor: o computador onde o sistema fica instalado"
+  Pop $hTipoServidor
+  ${NSD_CreateLabel} 13u 13u -13u 28u "Instala o sistema, o banco de dados e o serviço do Windows. Escolha em UM só computador, o que fica sempre ligado: os certificados, os clientes e os backups ficam guardados nele."
+  Pop $0
+  ${NSD_CreateRadioButton} 0 45u 100% 12u "&Estação: cada um dos outros computadores da empresa"
+  Pop $hTipoEstacao
+  ${NSD_CreateLabel} 13u 58u -13u 28u "Instala só um ícone que abre o sistema do servidor numa janela própria, sem digitar endereço no navegador. O servidor é encontrado sozinho na rede."
+  Pop $0
+  ${NSD_CreateLabel} 0 92u 100% 48u ""
+  Pop $1
+  ${If} $EST_QTD > 0
+    ReadINIStr $2 "${EST_RESULTADO}" "servidor1" "nome"
+    ReadINIStr $3 "${EST_RESULTADO}" "servidor1" "ip"
+    ${If} $2 == ""
+      StrCpy $2 $3
+    ${Else}
+      StrCpy $2 "$2 ($3)"
+    ${EndIf}
+    ${NSD_SetText} $1 "Já existe um servidor do ${APP_NOME} nesta rede: $2. Então este computador deve ser uma estação."
+    ${NSD_Check} $hTipoEstacao
+  ${ElseIf} $EST_SITUACAO == "nenhum"
+    ${NSD_SetText} $1 "Nenhum servidor do ${APP_NOME} respondeu nesta rede. Mas a procura não vê um servidor desligado, em outra porta (não a $EST_PORTA) ou em outra rede da empresa: se o sistema já está instalado em algum computador, escolha Estação. Se ainda não está, comece por este servidor e depois instale as estações."
+  ${Else}
+    ${NSD_SetText} $1 "Não foi possível procurar um servidor do ${APP_NOME} na rede a partir deste computador. Se o sistema já está instalado em algum computador da empresa, escolha Estação. Se ainda não está, comece por este servidor e depois instale as estações."
+  ${EndIf}
+  ${If} $MODO == "servidor"         ; voltou para esta página: mantém a escolha
+    ${NSD_Uncheck} $hTipoEstacao
+    ${NSD_Check} $hTipoServidor
+  ${ElseIf} $MODO == "estacao"
+    ${NSD_Uncheck} $hTipoServidor
+    ${NSD_Check} $hTipoEstacao
+  ${EndIf}
+  nsDialogs::Show
+FunctionEnd
+
+Function PaginaTipoSair
+  ${NSD_GetState} $hTipoServidor $0
+  ${NSD_GetState} $hTipoEstacao $1
+  ${If} $0 == ${BST_CHECKED}
+    ${If} $EST_QTD > 0
+      ${IfNot} ${Cmd} `MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "Já existe um servidor do ${APP_NOME} nesta rede. A empresa deve ter um servidor só: com dois, cada computador pode acabar gravando os certificados num lugar diferente.$\r$\n$\r$\nInstalar outro servidor mesmo assim? (Quase sempre a resposta certa é Não, e a opção certa é Estação.)" IDYES`
+        Abort
+      ${EndIf}
+    ${Else}
+      ; Nada achado não prova que não há servidor: confirma também (Não é o padrão)
+      ${If} $EST_SITUACAO == "nenhum"
+        StrCpy $2 "A procura não achou nenhum servidor do ${APP_NOME} nesta rede, mas ela não vê um servidor desligado, em outra porta ou em outra rede da empresa."
+      ${Else}
+        StrCpy $2 "Não foi possível procurar se já existe um servidor do ${APP_NOME} na rede."
+      ${EndIf}
+      ${IfNot} ${Cmd} `MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "$2$\r$\n$\r$\nA empresa deve ter um servidor só: com dois, cada computador pode acabar gravando os certificados num lugar diferente. Se o ${APP_NOME} já está instalado em outro computador da empresa, clique em Não e escolha Estação.$\r$\n$\r$\nInstalar o servidor neste computador?" IDYES`
+        Abort
+      ${EndIf}
+    ${EndIf}
+    Call ConferirRequisitosServidor
+    ${If} $RESULTADO != "ok"
+      Abort
+    ${EndIf}
+    StrCpy $MODO "servidor"
+  ${ElseIf} $1 == ${BST_CHECKED}
+    StrCpy $MODO "estacao"
+    Call PrepararEstacao
+  ${Else}
+    MessageBox MB_ICONEXCLAMATION "Escolha Servidor ou Estação."
+    Abort
+  ${EndIf}
+  Call AplicarModo
+FunctionEnd
+
 ; ------------------------------------------- Página: porta e redes extras
 Function PaginaConfigCriar
   ${If} $ATUALIZANDO == 1
+  ${OrIf} $MODO != "servidor"
     Abort                           ; numa atualização, mantém a configuração anterior
   ${EndIf}
   !insertmacro MUI_HEADER_TEXT "Acesso pela rede" "Porta do sistema e redes da empresa que podem acessá-lo."
@@ -570,6 +832,53 @@ Function PaginaConfigSair
     ${IfNot} ${Cmd} `MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "A porta $PORTA já está em uso pelo programa $\"$RESULTADO$\". Enquanto esse programa usar a porta, o ${APP_NOME} não vai abrir.$\r$\n$\r$\nUsar esta porta mesmo assim?" IDYES`
       Abort
     ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+; ------------------------------------------- Página: servidor da estação
+; Procura o servidor na rede (só uma vez; "Procurar de novo" refaz) e mostra a página comum
+; (estacao\estacao.nsh): lista do que achou, campo com o nome ou IP e o botão "Procurar de novo".
+Function PaginaEstacaoCriar
+  ${If} $MODO != "estacao"
+    Abort
+  ${EndIf}
+  ${If} $EST_PROCURADO != 1
+    StrCpy $EST_PROCURADO 1
+    Call EstProcurarComAviso
+  ${EndIf}
+  Call EstPaginaCriar
+  ${If} $EST_RESPOSTA == "erro"
+    Abort
+  ${EndIf}
+  ${If} $SERVIDOR_INFORMADO != ""   ; /SERVIDOR= com janelas: é o que vem preenchido
+    ${NSD_SetText} $hEstCampo $SERVIDOR_INFORMADO
+  ${EndIf}
+  nsDialogs::Show
+FunctionEnd
+
+; Testa o endereço escolhido. Servidor desligado agora não impede a instalação: o programa tenta
+; de novo (e procura na rede) quando for aberto.
+Function PaginaEstacaoSair
+  StrCpy $SERVIDOR_CONFERIDO 0
+  Call EstPaginaSair
+  ${If} $EST_RESPOSTA == "ficar"
+    Abort
+  ${ElseIf} $EST_RESPOSTA == "vazio"
+    ${IfNot} ${Cmd} `MessageBox MB_YESNO|MB_ICONQUESTION "Instalar sem informar o servidor?$\r$\n$\r$\nO ${APP_NOME} procura o servidor na rede sozinho quando for aberto." IDYES`
+      Abort
+    ${EndIf}
+    StrCpy $EST_URL ""
+    StrCpy $EST_ENDERECO ""
+    StrCpy $EST_PORTA "${EST_PORTA_PADRAO}"
+    StrCpy $EST_NOME ""
+    StrCpy $EST_ID ""
+    StrCpy $EST_IP ""
+  ${ElseIf} $EST_RESPOSTA != "ok"
+    ${IfNot} ${Cmd} `MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "O ${APP_NOME} não respondeu em $EST_URL.$\r$\n$\r$\nConfira o nome ou o IP e se o computador servidor está ligado. Se ele só estiver desligado agora, pode continuar: o programa tenta de novo (e procura na rede) quando for aberto.$\r$\n$\r$\nUsar este endereço mesmo assim?" IDYES`
+      Abort
+    ${EndIf}
+  ${Else}
+    StrCpy $SERVIDOR_CONFERIDO 1
   ${EndIf}
 FunctionEnd
 
@@ -688,6 +997,62 @@ Section "${APP_NOME}" SecPrincipal
     SetErrorLevel 3
   ${EndIf}
 SectionEnd
+
+; ============================================================ Seção da estação
+; Só o programa que abre o sistema do servidor (BC Calibracao.exe), o script que acha o servidor e
+; o ícone. Nada de Node, serviço, Firewall ou dados: a estação não abre nenhuma porta.
+Section "-Estação" SecEstacao
+  SetShellVarContext all
+  SetRegView 64
+
+  ; 1) Servidor: no modo silencioso, /SERVIDOR= ou a procura na rede (com janelas, foi a página)
+  ${If} ${Silent}
+    Call DefinirServidorSilencioso
+  ${EndIf}
+
+  ; 2) Programa
+  DetailPrint "Instalando o programa da estação em $INSTDIR..."
+  SetOutPath "$INSTDIR"
+  File "${PAYLOAD}\estacao\${LANCADOR_EXE}"
+  File "${PAYLOAD}\estacao\descobrir-servidor.ps1"
+  File "${PAYLOAD}\bc-calibracao.ico"
+
+  ; 3) Servidor para todos os usuários deste computador (HKLM). O programa guarda o que cada usuário
+  ;    achou depois no HKCU dele, mas a Geracao nova gravada aqui faz todos voltarem a este servidor
+  ;    (ver estacao\estacao.nsh): rodar o setup de novo, ou /S /SERVIDOR=, troca o de todo mundo
+  Call EstGravarConfig
+  ${If} $EST_SEM_VARREDURA == 1
+    WriteRegStr HKLM "${EST_CHAVE}" "SemVarredura" "1"
+  ${EndIf}
+
+  ; 4) Atalhos para todos os usuários
+  DetailPrint "Criando os atalhos..."
+  Delete "$DESKTOP\${APP_NOME}.lnk"
+  CreateShortCut "$DESKTOP\${APP_NOME}.lnk" "$INSTDIR\${LANCADOR_EXE}" "" "$INSTDIR\bc-calibracao.ico" 0 SW_SHOWNORMAL "" "Abre o ${APP_NOME} (certificados de calibração) numa janela própria"
+  RMDir /r "$SMPROGRAMS\${APP_NOME}"
+  CreateDirectory "$SMPROGRAMS\${APP_NOME}"
+  CreateShortCut "$SMPROGRAMS\${APP_NOME}\${APP_NOME}.lnk" "$INSTDIR\${LANCADOR_EXE}" "" "$INSTDIR\bc-calibracao.ico" 0 SW_SHOWNORMAL "" "Abre o ${APP_NOME} (certificados de calibração) numa janela própria"
+  CreateShortCut "$SMPROGRAMS\${APP_NOME}\Procurar o servidor do ${APP_NOME}.lnk" "$INSTDIR\${LANCADOR_EXE}" "/CONFIGURAR" "$INSTDIR\bc-calibracao.ico" 0 SW_SHOWNORMAL "" "Procura o servidor do ${APP_NOME} na rede ou permite digitar o nome ou o IP dele"
+
+  ; 5) Desinstalador e "Aplicativos instalados"
+  Call GravarRegistroEstacao
+
+  ; 6) Texto da página final
+  Call MontarTextoFinalEstacao
+SectionEnd
+
+; Servidor ou estação: escolhe a seção e a pasta (as duas fixas, ignorando /D=)
+Function AplicarModo
+  ${If} $MODO == "estacao"
+    StrCpy $INSTDIR "$PROGRAMFILES64\${PASTA_ESTACAO}"
+    !insertmacro UnselectSection ${SecPrincipal}
+    !insertmacro SelectSection ${SecEstacao}
+  ${Else}
+    StrCpy $INSTDIR "$PROGRAMFILES64\${APP_PASTA}"
+    !insertmacro SelectSection ${SecPrincipal}
+    !insertmacro UnselectSection ${SecEstacao}
+  ${EndIf}
+FunctionEnd
 
 ; -------------------------------------------- Funções da instalação
 ; Instalação interrompida depois de parar o serviço antigo: volta a deixá-lo
@@ -947,6 +1312,61 @@ Function GravarRegistro
   WriteRegDWORD HKLM "${CHAVE_DESINST}" "EstimatedSize" $0
 FunctionEnd
 
+; Estação: desinstalador próprio, que só remove a estação (o /ESTACAO avisa o desinstalador)
+Function GravarRegistroEstacao
+  WriteUninstaller "$INSTDIR\Desinstalar.exe"
+  WriteRegStr HKLM "${EST_CHAVE}" "Pasta" "$INSTDIR"
+  WriteRegStr HKLM "${EST_CHAVE}" "Versao" "${VERSAO}"
+  WriteRegStr HKLM "${EST_CHAVE}" "VersaoNumerica" "${VERSAO_NUM}"
+  WriteRegStr   HKLM "${CHAVE_DESINST_ESTACAO}" "DisplayName"          "${APP_NOME} (estação)"
+  WriteRegStr   HKLM "${CHAVE_DESINST_ESTACAO}" "DisplayVersion"       "${VERSAO}"
+  WriteRegStr   HKLM "${CHAVE_DESINST_ESTACAO}" "Publisher"            "${EMPRESA}"
+  WriteRegStr   HKLM "${CHAVE_DESINST_ESTACAO}" "InstallLocation"      "$INSTDIR"
+  WriteRegStr   HKLM "${CHAVE_DESINST_ESTACAO}" "DisplayIcon"          "$INSTDIR\bc-calibracao.ico"
+  WriteRegStr   HKLM "${CHAVE_DESINST_ESTACAO}" "UninstallString"      '"$INSTDIR\Desinstalar.exe" /ESTACAO'
+  WriteRegStr   HKLM "${CHAVE_DESINST_ESTACAO}" "QuietUninstallString" '"$INSTDIR\Desinstalar.exe" /S /ESTACAO'
+  WriteRegDWORD HKLM "${CHAVE_DESINST_ESTACAO}" "NoModify" 1
+  WriteRegDWORD HKLM "${CHAVE_DESINST_ESTACAO}" "NoRepair" 1
+  ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+  WriteRegDWORD HKLM "${CHAVE_DESINST_ESTACAO}" "EstimatedSize" $0
+FunctionEnd
+
+; Estação no modo silencioso: o /SERVIDOR= (testado, mas guardado mesmo sem resposta) ou a procura na
+; rede. Sem nenhum dos dois, a estação fica sem servidor e o programa procura quando for aberto.
+Function DefinirServidorSilencioso
+  StrCpy $SERVIDOR_CONFERIDO 0
+  ${If} $SERVIDOR_INFORMADO != ""
+    Call EstTestar
+    ${If} $EST_RESPOSTA == "ok"
+      StrCpy $SERVIDOR_CONFERIDO 1
+      DetailPrint "Servidor: $EST_URL ($EST_NOME, versão $EST_VERSAO)."
+    ${ElseIf} $EST_RESPOSTA == "fora"
+      DetailPrint "O servidor $EST_URL leva para fora da rede local e foi ignorado. O programa procura o servidor quando for aberto."
+      StrCpy $EST_URL ""
+      StrCpy $EST_ENDERECO ""
+      StrCpy $EST_PORTA "${EST_PORTA_PADRAO}"
+    ${Else}
+      DetailPrint "O servidor $EST_URL não respondeu agora; o endereço foi guardado mesmo assim."
+    ${EndIf}
+    Return
+  ${EndIf}
+  DetailPrint "Procurando o servidor do ${APP_NOME} na rede..."
+  Call EstDescobrir
+  ${If} $EST_SITUACAO == "ok"
+    Call EstUsarAchado
+    ${If} $EST_RESPOSTA == "ok"
+      StrCpy $SERVIDOR_CONFERIDO 1
+      DetailPrint "Servidor: $EST_URL ($EST_NOME, versão $EST_VERSAO)."
+      Return
+    ${EndIf}
+  ${EndIf}
+  ${If} $EST_URL != ""
+    DetailPrint "O servidor guardado antes ($EST_URL) foi mantido: a procura deu $\"$EST_SITUACAO$\"."
+  ${Else}
+    DetailPrint "Nenhum servidor definido (procura: $EST_SITUACAO). O programa procura o servidor quando for aberto."
+  ${EndIf}
+FunctionEnd
+
 Function IniciarServico
   DetailPrint "Iniciando o serviço ${APP_NOME}..."
   nsExec::ExecToLog /OEM '"${SYS}\net.exe" start ${SERVICO}'
@@ -994,7 +1414,7 @@ Function MontarTextoFinal
   ${Else}
     StrCpy $TEXTO_FINAL "O ${APP_NOME} já está funcionando como serviço do Windows e inicia sozinho junto com o computador.$\r$\n$\r$\n"
   ${EndIf}
-  StrCpy $R3 "Neste servidor: http://localhost:$PORTA$\r$\nNos outros computadores da rede:$\r$\nhttp://$NOMEPC:$PORTA$R2"
+  StrCpy $R3 "Neste servidor: http://localhost:$PORTA$\r$\nNos outros computadores: rode este mesmo instalador e escolha $\"Estação$\" (ou abra no navegador):$\r$\nhttp://$NOMEPC:$PORTA$R2"
   StrCpy $TEXTO_FINAL "$TEXTO_FINAL$R3"
   ${If} $ATUALIZANDO == 0
     StrCpy $TEXTO_FINAL "$TEXTO_FINAL$\r$\n$\r$\nNo primeiro acesso, abra o sistema NESTE servidor: ele pede para criar o administrador."
@@ -1011,10 +1431,44 @@ Function MontarTextoFinal
   ${EndIf}
 FunctionEnd
 
+; Texto da página final da estação: como abrir, qual servidor e os avisos (sem Edge nem Chrome)
+Function MontarTextoFinalEstacao
+  StrCpy $AVISOS ""
+  Call EstAcharNavegador
+  ${If} $R0 == ""
+    StrCpy $AVISOS "$AVISOS$\r$\n- O Microsoft Edge não foi encontrado neste computador. Instale-o (é gratuito) para o sistema abrir em janela própria; sem ele, o sistema abre no navegador padrão."
+    DetailPrint "Atenção: o Microsoft Edge (nem o Google Chrome) não foi encontrado."
+  ${EndIf}
+  StrCpy $TEXTO_FINAL "O ${APP_NOME} está pronto nesta estação. Para abrir, use o ícone $\"${APP_NOME}$\" da Área de Trabalho ou do Menu Iniciar: o sistema abre numa janela própria, sem digitar endereço.$\r$\n$\r$\n"
+  ${If} $EST_URL == ""
+    StrCpy $R3 "Servidor: ainda não definido. O programa procura o servidor na rede quando for aberto."
+  ${Else}
+    StrCpy $R2 $EST_ENDERECO
+    ${If} $EST_NOME != ""
+    ${AndIf} $EST_NOME != $EST_ENDERECO
+      StrCpy $R2 "$EST_NOME ($EST_ENDERECO)"
+    ${EndIf}
+    StrCpy $R3 "Servidor: $R2, $EST_URL"
+    ${If} $SERVIDOR_CONFERIDO != 1
+      StrCpy $R3 "$R3$\r$\n(não respondeu agora; o programa tenta de novo e procura na rede quando for aberto)"
+    ${EndIf}
+  ${EndIf}
+  StrCpy $TEXTO_FINAL "$TEXTO_FINAL$R3"
+  StrCpy $TEXTO_FINAL "$TEXTO_FINAL$\r$\n$\r$\nSe o servidor mudar de IP, o programa o encontra sozinho. Para escolher outro servidor: Menu Iniciar > ${APP_NOME} > Procurar o servidor do ${APP_NOME}."
+  ${If} $AVISOS != ""
+    StrCpy $TEXTO_FINAL "$TEXTO_FINAL$\r$\n$\r$\nAtenção:$AVISOS"
+  ${EndIf}
+  DetailPrint "----"
+  DetailPrint "Servidor da estação: $EST_URL"
+FunctionEnd
+
 ; A caixa "Abrir no navegador" deixa só 60u para o texto da página final: aqui
 ; o texto ganha o dobro da altura e a caixa desce para logo abaixo dele. Se
 ; algo falhar, a página só fica como o MUI a desenhou.
 Function FinalAoMostrar
+  ${If} $MODO == "estacao"
+    SendMessage $mui.FinishPage.Run ${WM_SETTEXT} 0 "STR:Abrir o ${APP_NOME} agora"
+  ${EndIf}
   System::Call "*(i 0, i 0, i 0, i 0) p .r0"
   ${If} $0 <> 0
     System::Call "user32::GetWindowRect(p $mui.FinishPage.Text, p r0)"
@@ -1036,8 +1490,13 @@ FunctionEnd
 
 ; Abre o navegador como o usuário logado: o explorer.exe repassa o endereço
 ; para a sessão normal, em vez de abrir um navegador "como administrador".
+; Na estação, do mesmo jeito, abre o programa da estação como o usuário.
 Function AbrirNavegador
-  Exec '"$WINDIR\explorer.exe" "http://localhost:$PORTA/"'
+  ${If} $MODO == "estacao"
+    Exec '"$WINDIR\explorer.exe" "$INSTDIR\${LANCADOR_EXE}"'
+  ${Else}
+    Exec '"$WINDIR\explorer.exe" "http://localhost:$PORTA/"'
+  ${EndIf}
 FunctionEnd
 
 ; ================================================================ Desinstalador
@@ -1054,11 +1513,51 @@ Function un.onInit
   StrCpy $DADOS_RAIZ "$APPDATA\${APP_PASTA}"
   StrCpy $DADOS "$DADOS_RAIZ\dados"
   StrCpy $AUXILIAR "$INSTDIR\ferramentas\auxiliar-instalador.ps1"
+  ; Desinstalador da estação? O registro passa /ESTACAO; rodado direto da pasta, a pasta diz
+  StrCpy $MODO "servidor"
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/ESTACAO" $R1
+  ${IfNot} ${Errors}
+    StrCpy $MODO "estacao"
+  ${ElseIf} ${FileExists} "$INSTDIR\${LANCADOR_EXE}"
+  ${OrIf} $INSTDIR == "$PROGRAMFILES64\${PASTA_ESTACAO}"
+    StrCpy $MODO "estacao"
+  ${EndIf}
+  ${If} $MODO == "estacao"
+    StrCpy $TEXTO_DESINST "O programa e os atalhos do ${APP_NOME} serão removidos desta estação. O sistema e os dados, que ficam no servidor, não são afetados."
+  ${Else}
+    StrCpy $TEXTO_DESINST "O serviço, a regra do Firewall e os atalhos do ${APP_NOME} serão removidos. Em seguida o desinstalador pergunta se os dados (banco, certificados e backups) também devem ser apagados; o padrão é mantê-los."
+  ${EndIf}
+FunctionEnd
+
+; Estação: programa, atalhos e configuração. Do usuário que desinstala, também o servidor guardado e a
+; pasta da janela do sistema (%LOCALAPPDATA%\BC Calibracao); as dos outros usuários ficam, mas o
+; servidor que eles guardaram não volta a valer numa reinstalação: a Geracao do HKLM será outra.
+Function un.RemoverEstacao
+  DetailPrint "Removendo os atalhos..."
+  Delete "$DESKTOP\${APP_NOME}.lnk"
+  RMDir /r "$SMPROGRAMS\${APP_NOME}"
+  DetailPrint "Removendo o programa da estação..."
+  !insertmacro REMOVER_ESTACAO
+  Delete "$INSTDIR\Desinstalar.exe"
+  RMDir "$INSTDIR"
+  DeleteRegKey HKLM "${CHAVE_DESINST_ESTACAO}"
+  DeleteRegKey HKLM "${EST_CHAVE}"
+  SetShellVarContext current
+  DeleteRegKey HKCU "${EST_CHAVE}"
+  RMDir /r "$LOCALAPPDATA\BC Calibracao"
+  SetShellVarContext all
 FunctionEnd
 
 Section "Uninstall"
   SetShellVarContext all
   SetRegView 64
+
+  ${If} $MODO == "estacao"
+    Call un.RemoverEstacao
+    Return
+  ${EndIf}
 
   ; Dados: o padrão é MANTER. Pergunta antes de remover qualquer coisa.
   ; /S mantém; /S /REMOVERDADOS apaga.

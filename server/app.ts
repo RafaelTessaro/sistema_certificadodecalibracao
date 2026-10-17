@@ -11,6 +11,7 @@ import type { Contexto } from './contexto.ts'
 import { abrirBanco } from './db.ts'
 import { criarModuloEmail, type CriarTransporte } from './email.ts'
 import { ErroApi } from './erros.ts'
+import { idDaInstalacao, novaInstancia } from './identidade.ts'
 import { Repositorio } from './repositorio.ts'
 import { rotasCadastros } from './rotas/cadastros.ts'
 import { rotasCalibracoes } from './rotas/calibracoes.ts'
@@ -197,19 +198,27 @@ export async function criarApp(opcoes: OpcoesApp) {
     return reply.code(status).send({ erro: 'Requisição inválida.' })
   })
 
-  // Completa só para o próprio computador (os scripts usam 127.0.0.1); pela rede, só o essencial
+  // Completa só para o próprio computador (os scripts usam 127.0.0.1); pela rede, só o essencial.
+  // Para o programa das estações achar o servidor (ver identidade.ts): `nome` (nome do computador, já
+  // público na rede pelo NetBIOS/LLMNR e aceito no cabeçalho Host) dá um endereço que sobrevive a uma
+  // troca de IP; `id` e `instancia` distinguem este servidor de outro com o mesmo nome.
+  const idInstalacao = idDaInstalacao(pastaDados, (mensagem) => app.log.warn(mensagem))
+  const instancia = novaInstancia()
   app.get('/api/saude', async (req) =>
     ehLoopback(ipDe(req))
       ? {
           ok: true,
           app: 'bc-calibracao',
           versao: VERSAO_APP,
+          nome: hostname(),
+          id: idInstalacao,
+          instancia,
           revisao: repo.revisao(),
           build: tempoReal.build,
           conectados: tempoReal.conectados,
           horario: new Date().toISOString(),
         }
-      : { ok: true, app: 'bc-calibracao', versao: VERSAO_APP },
+      : { ok: true, app: 'bc-calibracao', versao: VERSAO_APP, nome: hostname(), id: idInstalacao, instancia },
   )
 
   // Tempo real: avisa as telas abertas quando algo muda (SSE)

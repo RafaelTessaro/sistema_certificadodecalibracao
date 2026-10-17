@@ -37,7 +37,7 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
 
 ## Instalação no servidor (Windows)
 
-Use o instalador **`BC-Calibracao-Setup-<versão>.exe`**. Ele já traz tudo o que é preciso, então **não é necessário instalar Node, banco de dados nem mais nada**.
+Use o instalador **`BC-Calibracao-Setup-<versão>.exe`** e escolha **Servidor** na primeira tela. Ele já traz tudo o que é preciso, então **não é necessário instalar Node, banco de dados nem mais nada**.
 O instalador:
 
 - copia o programa para `C:\Program Files\BC Calibracao`;
@@ -61,9 +61,16 @@ Detalhes, atualização e desinstalação estão em [`instalador/LEIA-ME.md`](in
 4. Em **Usuários**, cadastre os técnicos. Marque como **signatário** quem pode autorizar a emissão e envie a assinatura digitalizada de cada um.
 5. Em **Padrões**, cadastre os pesos e os instrumentos com os dados dos certificados de calibração deles.
 
-### Acesso pelos outros computadores
+### Acesso pelos outros computadores (estações)
 
-No navegador, abra `http://IP-DO-SERVIDOR:4850`, por exemplo `http://192.168.0.10:4850`. O endereço aparece na tela do servidor e em **Configurações**.
+Em cada um dos outros computadores, rode **o mesmo instalador** e escolha **Estação**. Ele:
+
+- acha o servidor sozinho na rede e mostra qual achou (se não achar, é só digitar o nome ou o IP dele);
+- cria o ícone **BC Calibração** na Área de Trabalho e no Menu Iniciar.
+
+O ícone abre o sistema numa **janela própria** (pelo Microsoft Edge, sem abas nem barra de endereço), sem ninguém precisar digitar IP. Se o servidor mudar de IP, o programa o encontra de novo sozinho; ele nunca troca de servidor sem perguntar. A estação não instala banco nem serviço e não abre nenhuma porta. Detalhes em [`instalador/LEIA-ME.md`](instalador/LEIA-ME.md#estações-os-outros-computadores).
+
+Também dá para usar sem instalar nada: no navegador, abra `http://IP-DO-SERVIDOR:4850`, por exemplo `http://192.168.0.10:4850`. O endereço aparece na tela do servidor e em **Configurações**.
 
 O acesso é recusado de fora da rede local em três camadas:
 
@@ -101,7 +108,7 @@ No GitHub, o workflow **Instalador Windows** também gera o instalador.
 | `shared/` | Tipos, regras de cadastro, textos do certificado, permissões e o **motor metrológico** (`shared/metrologia`) usado igual no navegador e no servidor |
 | `server/` | Fastify + SQLite embutido do Node (`node:sqlite`), geração do PDF (`server/pdf`), e-mail, backup, consultas de CNPJ/CEP e controle de acesso |
 | `src/` | Interface em React + Tailwind |
-| `instalador/` | Script do NSIS, serviço (WinSW) e ferramentas do instalador |
+| `instalador/` | Script do NSIS, serviço (WinSW), ferramentas do instalador e o programa das estações (`instalador/estacao`) |
 | `docs/pesquisa/` | Pesquisa que embasou o sistema, com as fontes: normas, cálculo de incerteza, modelos de certificado, design e instalador |
 
 ## Sobre o certificado (não RBC)

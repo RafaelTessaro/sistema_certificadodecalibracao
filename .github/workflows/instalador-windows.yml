@@ -110,6 +110,8 @@ jobs:
 
           **Primeiro acesso:** abra http://localhost:PORTA no próprio servidor para criar o administrador.
 
+          **Outros computadores:** rode o mesmo setup e escolha "Estação": ele acha o servidor na rede e cria o ícone que abre o sistema numa janela própria, sem digitar endereço.
+
           Linha de comando, instalação silenciosa: \`BC-Calibracao-Setup-$versao.exe /S /PORTA=4850 /REDES=192.168.20.0/24\`. Detalhes em instalador/LEIA-ME.md.
 
           SHA-256: \`$sha\`

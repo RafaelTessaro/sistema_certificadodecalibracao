@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Gera o instalador único do Windows: pacotes/BC-Calibracao-Setup-<versão>.exe
-# (programa + interface compilada + dependências de produção + Node.js portátil + WinSW).
+# (programa + interface compilada + dependências de produção + Node.js portátil + WinSW + o programa
+# das estações). O mesmo setup instala o servidor ou uma estação (o instalador pergunta).
 # No servidor basta dar dois cliques no setup: não precisa de internet nem de outros programas.
 # Detalhes em instalador/LEIA-ME.md.
 #
@@ -16,7 +17,9 @@
 #   4. baixa o WinSW.NET461.exe e confere o SHA-256 fixado abaixo;
 #      (os downloads ficam em pacotes/cache/ e são reaproveitados)
 #   5. sobe o servidor do payload com o Node daqui e confere /api/saude e a página inicial;
-#   6. roda o makensis (avisos viram erro) e grava o .exe e o .sha256 em pacotes/.
+#   6. roda o makensis (avisos viram erro): primeiro o programa das estações
+#      (instalador/estacao/lancador.nsi -> payload/estacao/BC Calibracao.exe), depois o setup, e grava
+#      o .exe e o .sha256 em pacotes/.
 #
 # Variáveis:
 #   PULAR_BUILD=1          não roda npm ci/npm run build e põe no pacote uma interface PROVISÓRIA
@@ -114,7 +117,7 @@ fi
 # ---- 2. Payload ----------------------------------------------------------------------------------
 echo "Montando $payload..."
 rm -rf "$payload"
-mkdir -p "$payload/node" "$payload/servico" "$payload/ferramentas" "$cache"
+mkdir -p "$payload/node" "$payload/servico" "$payload/ferramentas" "$payload/estacao" "$cache"
 
 # Código do servidor e do domínio, sem testes nem dados de teste
 tar -C "$raiz" --exclude='*.test.ts' --exclude='*.test.mjs' --exclude='*.test.js' \
@@ -165,6 +168,8 @@ longo="$(cd "$payload" && find . -type f | awk 'length($0) - 2 + 31 > 240 { prin
 
 cp "$raiz"/instalador/ferramentas/* "$payload/ferramentas/"
 cp "$raiz/instalador/bc-calibracao.ico" "$payload/"
+# Estação: o script que acha o servidor (o BC Calibracao.exe é compilado no passo 6)
+cp "$raiz/instalador/estacao/descobrir-servidor.ps1" "$payload/estacao/"
 
 commit="${GITHUB_SHA:-$(git -C "$raiz" rev-parse HEAD 2>/dev/null || echo desconhecido)}"
 alteracoes=false
@@ -265,6 +270,14 @@ locales="$(locale -a 2>/dev/null || true)"
 locale_utf8="$(grep -iE '^c\.utf-?8$' <<<"$locales" | head -n1 || true)"
 [ -n "$locale_utf8" ] || locale_utf8="$(grep -iE '\.utf-?8$' <<<"$locales" | head -n1 || true)"
 [ -n "$locale_utf8" ] || locale_utf8="C.UTF-8"
+# Programa das estações (vai dentro do setup)
+lancador="$payload/estacao/BC Calibracao.exe"
+rm -f "$lancador"
+LC_ALL="$locale_utf8" "$makensis" -V2 -WX -INPUTCHARSET UTF8 \
+  "-DVERSAO=$versao" "-DVERSAO_NUM=$versao_num" "-DICONE=$payload/bc-calibracao.ico" "-DSAIDA=$lancador" \
+  "$raiz/instalador/estacao/lancador.nsi"
+[ -s "$lancador" ] || falhar "o makensis não gerou $lancador."
+echo "Programa das estações gerado: $lancador ($(du -h "$lancador" | cut -f1))"
 rm -f "$saida" "$saida.sha256"
 LC_ALL="$locale_utf8" "$makensis" -V2 -WX -INPUTCHARSET UTF8 \
   "-DVERSAO=$versao" "-DVERSAO_NUM=$versao_num" "-DPAYLOAD=$payload" "-DSAIDA=$saida" \
