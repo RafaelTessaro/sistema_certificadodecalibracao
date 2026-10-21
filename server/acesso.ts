@@ -96,6 +96,10 @@ export const TABELA_ACESSO: Record<string, RegraAcesso> = {
   'POST /api/lembretes': 'logado',
   'GET /api/verificar/:codigo': 'publico', // autenticidade (QR code): só o essencial do certificado
 
+  // rotas/folhaCampo.ts (o GET também reserva o nº da folha, registrado com quem imprimiu em `folhas_campo`)
+  'GET /api/calibracoes/:id/folha-campo': 'logado',
+  'GET /api/folha-campo': 'logado',
+
   // email.ts
   'GET /api/email/config': 'logado', // resposta reduzida para quem não tem `configuracoes`
   'PUT /api/email/config': 'configuracoes',

@@ -50,6 +50,9 @@ describe('planoDaFolha', () => {
     expect(p.excentricidade.posicoes).toHaveLength(6)
     // Tolerância do cliente: a mesma EMA em toda a faixa
     expect(new Set(p.pontos.map((x) => x.ema))).toEqual(new Set([60]))
+    // Os pontos param na metade de Max: o certificado só cobre até 40 t, e a folha avisa antes de sair
+    expect(p.avisos).toHaveLength(1)
+    expect(p.avisos[0]).toMatch(/^Os pontos vão só até 40\s000 kg \(50 % de Max\)/)
   })
 
   it('avisa antes de sair: pesos que não fecham a carga e padrão vencido', () => {

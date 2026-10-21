@@ -14,6 +14,7 @@ import {
   ETAPAS_SISTEMA,
   gerarFolhaCampoPdf,
   nomeArquivoFolhaCampo,
+  ROTEIRO_DIGITACAO,
   VERIFICACOES_FOLHA,
 } from './folhaCampo.ts'
 
@@ -67,7 +68,28 @@ describe('gerarFolhaCampoPdf', () => {
 
   it('nome do arquivo', () => {
     expect(nomeArquivoFolhaCampo('FC-2026-00042')).toBe('Folha-de-campo-FC-2026-00042.pdf')
+    expect(nomeArquivoFolhaCampo('OS 2026/0456')).toBe('Folha-de-campo-OS-2026-0456.pdf')
     expect(nomeArquivoFolhaCampo('')).toBe('Folha-de-campo-em-branco.pdf')
+  })
+
+  it('lista de pesos só quebra entre as peças, nunca entre o número e a unidade', () => {
+    const json = JSON.stringify(definicaoFolhaCampo(folhaPlataforma()))
+    expect(json).toContain('7\u00a0×\u00a020\u00a0kg + 10\u00a0kg'.replace(/\\u00a0/g, '\u00a0'))
+    expect(json).not.toMatch(/"7 × 20 kg \+ 10 kg"/)
+  })
+
+  it('sem número, a folha sai com a linha para escrever o nº e sem QR', () => {
+    const d = { ...folhaEmBranco(), numero: '' }
+    const doc = definicaoFolhaCampo(d) as { header: (p: number, t: number) => unknown }
+    const svgs = (doc: { header: (p: number, t: number) => unknown }) => JSON.stringify(doc.header(1, 4)).split('<svg').length - 1
+    expect(JSON.stringify(doc.header(1, 4))).toContain('Nº ____')
+    // Só o logo; com número, o logo e o QR
+    expect(svgs(doc)).toBe(1)
+    expect(svgs(definicaoFolhaCampo(folhaEmBranco()) as typeof doc)).toBe(2)
+  })
+
+  it('o roteiro de digitação cobre as etapas 1 a 7 do assistente, na ordem da tela', () => {
+    expect(ROTEIRO_DIGITACAO.map((r) => r.etapa)).toEqual(Object.values(ETAPAS_SISTEMA).slice(0, 7))
   })
 
   it('usa os mesmos rótulos do assistente (validação da transcrição, ISO/IEC 17025 7.11)', () => {
@@ -84,8 +106,8 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', () => {
   /** Em toda página: título, nº da folha, "Página i de N", código do formulário e a identificação da tarefa. */
   function conferirPaginas(texto: string, numero: string, identificacao: string[]) {
     const paginas = paginasDe(texto)
-    expect(paginas.length).toBeGreaterThanOrEqual(3)
-    expect(paginas.length).toBeLessThanOrEqual(6)
+    expect(paginas.length).toBeGreaterThanOrEqual(4)
+    expect(paginas.length).toBeLessThanOrEqual(5)
     paginas.forEach((p, i) => {
       const t = corrido(p)
       expect(t).toContain('FOLHA DE CAMPO — CALIBRAÇÃO DE BALANÇA')
@@ -93,8 +115,12 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', () => {
       expect(t).toContain(`Página ${i + 1} de ${paginas.length}`)
       expect(t).toContain(`${FORMULARIO_FOLHA_CAMPO.codigo} rev. ${FORMULARIO_FOLHA_CAMPO.revisao}`)
       expect(t).toContain('não é certificado de calibração')
+      // Folha solta ou digitalizada sozinha: quem imprimiu e quando, rubrica e data em toda página
+      expect(t).toMatch(/Impressa em \d\d\/\d\d\/\d{4}, às \d\d:\d\d por /)
+      expect(t).toMatch(/RUBRICA .*DATA/)
       for (const x of identificacao) expect(t).toContain(x)
     })
+    return paginas
   }
 
   /** Comum a todas as folhas: roteiro completo, regra de correção, assinaturas e nada de "certificado". */
@@ -128,9 +154,23 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', () => {
     expect(t).toContain('MARCA DE REPARO Nº')
     expect(t).toContain('SELOS RETIRADOS')
     expect(t).toContain('SELOS COLOCADOS')
+    expect(t).toContain('HORA DO AJUSTE')
+    expect(t).toContain('HORA DO INÍCIO')
+    expect(t).toContain('SELOS / LACRES ENCONTRADOS')
+    expect(t).toContain('FOTOS TIRADAS')
+    expect(t).toContain('LIGADA DESDE')
+    expect(t).toContain('PESOS NO LOCAL HÁ (MIN)')
+    expect(t).toContain('Instrumento usado')
+    // Conclusão com os mesmos campos da tela
+    expect(t).toContain('O CLIENTE PEDIU DECLARAÇÃO DE')
+    expect(t).toMatch(/LIMITE \(ERRO MÁXIMO/)
+    expect(t).toContain('REGRA DE DECISÃO')
+    expect(t).toContain('O CLIENTE PEDIU A DATA NO CERTIFICADO?')
     expect(t).toContain('OBSERVAÇÕES (SAEM NO CERTIFICADO)')
     expect(t).toContain('TÉCNICO QUE EXECUTOU')
     expect(t).toContain('CERTIFICADO Nº (PREENCHIDO NO ESCRITÓRIO)')
+    expect(t).toContain('PARA DIGITAR, NA ORDEM DO SISTEMA')
+    expect(t).toContain('Grampeie as folhas')
     // Nada de número de certificado, aprovação ou "validade" numa folha de campo
     expect(t).not.toContain('CERTIFICADO DE CALIBRAÇÃO Nº')
     expect(t).not.toMatch(/\baprovad[oa]\b|\breprovad[oa]\b/i)
@@ -140,15 +180,22 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', () => {
   it('plataforma 300 kg: cadastro para conferir, pontos e pesos do último certificado, EMA', async () => {
     const e = EXEMPLOS[0]
     const texto = textoDoPdf(await pdfDe(e))
-    conferirPaginas(texto, 'FC-2026-00042', ['OS-2026-0512', 'Frigorífico Vale do Corumbataí', '9091-118832'])
+    const paginas = conferirPaginas(texto, 'FC-2026-00042', ['OS-2026-0512', 'Frigorífico Vale do Corumbataí', '9091-118832'])
+    // Duas folhas, frente e verso
+    expect(paginas).toHaveLength(4)
     conferirComum(texto)
     const t = corrido(texto)
     expect(t).toContain('FRIGORÍFICO VALE DO CORUMBATAÍ LTDA')
     expect(t).toContain('Avenida Brasil, 2450')
     expect(t).toContain('Carlos Eduardo Lima')
     expect(t).toMatch(/confere ou, se diferente/)
-    expect(t).toContain('Portaria Inmetro/Dimel nº 0236/2009')
-    expect(t).toContain('Toledo do Brasil 2180 · nº 2180-0041273')
+    expect(t).toContain('Portaria Inmetro/Dimel nº')
+    expect(t).toContain('0236/2009')
+    expect(t).toContain('Processo / produção')
+    expect(t).toContain('Toledo do Brasil 2180 · nº')
+    // Recados de acesso na chegada (página 1), não no fim
+    expect(corrido(paginas[0])).toContain('Procurar a Juliana na portaria 2')
+    expect(corrido(paginas[0])).toContain('prevista: 21/10/2026')
     // Padrões: o que separar antes de sair
     expect(t).toContain('PP20-01 a 15')
     expect(t).toContain('15 × 20 kg')
@@ -160,20 +207,25 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', () => {
     expect(t).toContain('Portaria Inmetro 157/2022 — em serviço')
     expect(t).toContain('Método previsto: crescente e decrescente')
     expect(t).toContain('Indicação ↓')
-    // Repetibilidade com 150 kg (5 leituras previstas, mínimo 3) e excentricidade com 100 kg em 5 posições
+    // Repetibilidade com 150 kg (5 leituras previstas, mínimo 3) e excentricidade com 100 kg em 5 posições,
+    // as cargas nas casas de d
     expect(t).toContain('Coloque 150 kg no centro da plataforma')
+    expect(t).toMatch(/CARGA APLICADA \(KG\).*150,00/)
+    expect(t).toMatch(/CARGA USADA \(KG\).*100,00/)
+    expect(t).toContain('previsto: TH-01')
     expect(t).toContain('Faça as 5 leituras previstas (mínimo 3')
     expect(t).toContain('Zere vazia e coloque 100 kg em cada posição')
     for (const p of ['Centro', 'Frente esquerda', 'Trás esquerda', 'Trás direita', 'Frente direita']) expect(t).toContain(p)
     expect(t).toContain('FRENTE · INDICADOR')
     expect(t).toContain('a normal (d = 50 g)')
-    expect(t).toContain('Procurar a Juliana na portaria 2')
     expect(t).toContain('21/10/2027')
+    expect(t).toContain('1 · Cliente e OS ← passos 2 e 10')
   })
 
   it('balcão multi-intervalo: pontos sugeridos pelo sistema, d de cada intervalo e EMA por intervalo', async () => {
     const texto = textoDoPdf(await pdfDe(EXEMPLOS[1]))
-    conferirPaginas(texto, 'FC-2026-00043', ['OS-2026-0519', 'Supermercado Bom Preço', 'UR33-204718'])
+    const paginas = conferirPaginas(texto, 'FC-2026-00043', ['OS-2026-0519', 'Supermercado Bom Preço', 'UR33-204718'])
+    expect(paginas).toHaveLength(4)
     conferirComum(texto)
     const t = corrido(texto)
     expect(t).toContain('pontos, cargas e posições sugeridos pelo sistema')
@@ -184,7 +236,11 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', () => {
     expect(t).toContain('8,250')
     expect(t).toContain('33,00')
     expect(t).toContain('32,96 a 33,04')
-    expect(t).toContain('Uso comercial')
+    expect(t).toContain('Balança de uso comercial (venda por peso)')
+    expect(t).toContain('Marca de verificação Inmetro/IPEM: ano'.toUpperCase())
+    // Repetibilidade em 12 linhas (5 previstas), com a carga nas casas de d do intervalo (16,5 kg: d = 10 g)
+    expect(t).toContain('16,50')
+    expect(t).toContain('Linhas 6 a 12: opcionais')
   })
 
   it('rodoviária 80 t: substituição, posições de ida e volta e tolerância do cliente', async () => {
@@ -202,6 +258,9 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', () => {
     expect(t).toContain('Tolerância do cliente')
     expect(t).toContain('39 940 a 40 060')
     expect(t).toContain('Faça as 3 leituras previstas (mínimo 3, por ser carga de 100 kg ou mais)')
+    // Os pontos param em 40 t de 80 t: o técnico confirma com o cliente antes de sair
+    expect(t).toContain('Resolva antes de sair')
+    expect(t).toContain('Os pontos vão só até 40 000 kg (50 % de Max)')
   })
 
   it('em branco: identificação e pontos para escrever, opções de unidade, classe e receptor', async () => {
@@ -209,7 +268,9 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', () => {
     conferirPaginas(texto, 'FC-2026-00045', ['OS', 'CLIENTE', 'BALANÇA'])
     conferirComum(texto)
     const t = corrido(texto)
-    expect(t).toContain('folha em branco, para balança ainda não cadastrada')
+    expect(t).toContain('Folha em branco, para balança ainda não cadastrada')
+    expect(t).toContain('FINALIDADE (*)')
+    expect(t).toContain('banda de guarda')
     expect(t).toContain('cadastre a balança antes')
     expect(t).toContain('UNIDADE DA INDICAÇÃO')
     expect(t).toContain('não marcada')

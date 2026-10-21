@@ -3,7 +3,6 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import {
-  calibracaoEmOutraUnidade,
   calibracaoVazia,
   descricaoBalanca,
   enderecoCliente,
@@ -14,57 +13,18 @@ import {
   normalizarCalibracao,
   somarMeses,
 } from '#shared/dominio.ts'
-import type { Calibracao, CalibracaoInput, StatusCalibracao } from '#shared/tipos.ts'
+import type { Calibracao, StatusCalibracao } from '#shared/tipos.ts'
 import { emitirCertificado, padroesDa, pdfDaCalibracao, pendenciasDa, previa } from '../certificados.ts'
 import type { Contexto } from '../contexto.ts'
 import type { criarModuloEmail } from '../email.ts'
 import { destinatarios } from '../email.ts'
 import { ErroApi } from '../erros.ts'
+import { naUnidadeAtual as naUnidadeAtualDe, rascunhoInicial, semLeituras } from '../rascunhos.ts'
 
 type ComId = FastifyRequest<{ Params: { id: string } }>
 type Corpo = Record<string, unknown>
 const corpo = (req: FastifyRequest): Corpo => (req.body && typeof req.body === 'object' ? (req.body as Corpo) : {})
 const versaoDe = (c: Corpo) => (typeof c.versao === 'number' ? c.versao : undefined)
-
-/** Só os dados de entrada (o que a tela edita) de uma calibração gravada. */
-function entradaDe(k: Calibracao): CalibracaoInput {
-  const {
-    id: _id,
-    versao: _v,
-    status: _s,
-    numero: _n,
-    ano: _a,
-    sequencia: _q,
-    revisao: _r,
-    emissao: _e,
-    cancelamento: _c,
-    criadoPor: _p,
-    criadoEm: _ce,
-    atualizadoEm: _ae,
-    ...entrada
-  } = k
-  return entrada
-}
-
-/** Os ensaios sem as leituras (mesmos pontos, cargas e pesos), para uma nova calibração da mesma balança. */
-function semLeituras(k: CalibracaoInput): Pick<CalibracaoInput, 'repetibilidade' | 'excentricidade' | 'indicacao'> {
-  return {
-    repetibilidade: k.repetibilidade.map((r) => ({ ...r, leituras: r.leituras.map(() => null) })),
-    excentricidade: {
-      ...k.excentricidade,
-      posicoes: k.excentricidade.posicoes.map((p) => ({ ...p, leitura: null, referencia: null })),
-    },
-    indicacao: {
-      ...k.indicacao,
-      retornoZero: null,
-      pontos: k.indicacao.pontos.map((p) => ({ ...p, crescente: null, decrescente: null })),
-      substituicao: {
-        ...k.indicacao.substituicao,
-        etapas: k.indicacao.substituicao.etapas.map(() => ({ leituraPadroes: null, leituraSubstituicao: null })),
-      },
-    },
-  }
-}
 
 export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, email: ReturnType<typeof criarModuloEmail>) {
   const { repo } = ctx
@@ -77,19 +37,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     if (!k) throw new ErroApi(404, 'Calibração não encontrada.')
     return k
   }
-  /**
-   * Os dados de entrada de uma calibração, com as cargas e leituras na unidade atual da balança, para
-   * servirem de base a outra (nova calibração, calibrar de novo, revisão). O certificado emitido guarda os
-   * números na unidade da balança no dia da emissão (a da cópia congelada); se o cadastro mudou de unidade
-   * depois (6000 g → 6 kg), copiar sem converter faria 6000 g valer 6000 kg. Os rascunhos já acompanham a
-   * troca quando ela acontece (ver `converterAbertas` no repositório).
-   */
-  const naUnidadeAtual = (k: Calibracao): CalibracaoInput => {
-    const entrada = entradaDe(k)
-    const de = k.emissao?.balanca.unidade
-    const para = repo.obterBalanca(k.balancaId)?.unidade
-    return de && para ? calibracaoEmOutraUnidade(entrada, de, para) : entrada
-  }
+  const naUnidadeAtual = (k: Calibracao) => naUnidadeAtualDe(ctx, k)
 
   app.get('/api/calibracoes', async (req) => {
     const q = req.query as Record<string, string | undefined>
@@ -116,6 +64,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       envios: repo.listarEnvios({ calibracaoId: k.id }),
       pendencias: aberta ? pendenciasDa(ctx, k) : [],
       revisoes: repo.revisoesDe(k.id),
+      folhaCampo: repo.folhaCampoDaCalibracao(k.id),
     }
   })
 
@@ -125,41 +74,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
    */
   app.post('/api/calibracoes', async (req, reply) => {
     const u = autor(req)
-    const c = corpo(req)
-    const config = repo.obterConfig()
-    const base = calibracaoVazia(config.opcoesPadrao)
-    const balancaId = typeof c.balancaId === 'string' ? c.balancaId : ''
-    const balanca = balancaId ? repo.obterBalanca(balancaId) : undefined
-    const clienteId = typeof c.clienteId === 'string' && c.clienteId ? c.clienteId : (balanca?.clienteId ?? '')
-    const cliente = clienteId ? repo.obterCliente(clienteId) : undefined
-    const anterior = balanca
-      ? repo.listarCalibracoes({ balancaId: balanca.id, status: 'EMITIDO', limite: 1 }).itens[0]
-      : undefined
-    const emitida = anterior ? repo.obterCalibracao(anterior.id) : undefined
-    const ultima = emitida ? naUnidadeAtual(emitida) : undefined
-    const ativos = repo.listarPadroes()
-    const hoje = hojeLocalIso()
-    const padroesIds = ultima
-      ? ultima.padroesIds.filter((id) => ativos.some((p) => p.id === id))
-      : ativos.filter((p) => p.tipo !== 'OUTRO').map((p) => p.id)
-    const k = repo.criarCalibracao(
-      {
-        ...base,
-        ...(ultima ? { ...semLeituras(ultima), opcoes: ultima.opcoes, conformidade: ultima.conformidade } : {}),
-        ...c,
-        clienteId,
-        balancaId,
-        dataCalibracao: typeof c.dataCalibracao === 'string' && c.dataCalibracao ? c.dataCalibracao : hoje,
-        localEndereco:
-          typeof c.localEndereco === 'string' && c.localEndereco ? c.localEndereco : cliente ? enderecoCliente(cliente) : '',
-        tecnicoId: u.id,
-        padroesIds,
-        proximaCalibracao: config.mesesProximaPadrao ? somarMeses(hoje, config.mesesProximaPadrao) : '',
-        proximaNoCertificado: ultima?.proximaNoCertificado ?? false,
-        substituiId: '',
-      },
-      u,
-    )
+    const k = repo.criarCalibracao(rascunhoInicial(ctx, corpo(req), u.id), u)
     return reply.code(201).send({ calibracao: k })
   })
 

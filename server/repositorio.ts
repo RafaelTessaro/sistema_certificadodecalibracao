@@ -34,6 +34,7 @@ import type {
   Configuracoes,
   EmissaoCertificado,
   Envio,
+  FolhaCampoImpressa,
   MensagemTempoReal,
   Padrao,
   ResumoPainel,
@@ -819,6 +820,82 @@ export class Repositorio {
         .prepare(`INSERT INTO calibracoes (${nomes.join(', ')}, id, criado_em) VALUES (${nomes.map(() => '?').join(', ')}, ?, ?)`)
         .run(...valores, k.id, k.criadoEm)
     else this.db.prepare(`UPDATE calibracoes SET ${nomes.map((n) => `${n} = ?`).join(', ')} WHERE id = ?`).run(...valores, k.id)
+  }
+
+  // ---- Folhas de campo ---------------------------------------------------------------
+
+  /**
+   * Nº da folha de campo que vai ser impressa: a mesma `chave` reimprime com o mesmo nº (a de uma
+   * calibração é 'calibracao:<id>'); chave nova reserva o próximo do ano, FC-AAAA-NNNNN (nunca reutilizado).
+   */
+  reservarFolhaCampo(e: {
+    chave: string
+    calibracaoId?: string
+    balancaId?: string
+    clienteId?: string
+    por: string
+  }): FolhaCampoImpressa & { nova: boolean } {
+    return transacao(this.db, () => {
+      const agora = this.agora().toISOString()
+      const existente = this.db.prepare('SELECT numero FROM folhas_campo WHERE chave = ?').get(e.chave) as
+        | { numero: string }
+        | undefined
+      if (existente) {
+        this.db
+          .prepare('UPDATE folhas_campo SET impressoes = impressoes + 1, ultima_em = ? WHERE numero = ?')
+          .run(agora, existente.numero)
+        return { ...this.folhaCampo(existente.numero)!, nova: false }
+      }
+      const ano = Number(this.hoje().slice(0, 4))
+      const { ultima } = this.db.prepare('SELECT MAX(sequencia) AS ultima FROM folhas_campo WHERE ano = ?').get(ano) as {
+        ultima: number | null
+      }
+      const sequencia = (ultima ?? 0) + 1
+      const numero = `FC-${ano}-${String(sequencia).padStart(5, '0')}`
+      this.db
+        .prepare(
+          `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, impressa_por, impressa_em, ultima_em)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          numero,
+          ano,
+          sequencia,
+          e.chave,
+          e.calibracaoId ?? '',
+          e.balancaId ?? '',
+          e.clienteId ?? '',
+          e.por.slice(0, 120),
+          agora,
+          agora,
+        )
+      // A tela da calibração passa a mostrar o nº da folha
+      if (e.calibracaoId) this.mudou('calibracao', e.calibracaoId)
+      return { ...this.folhaCampo(numero)!, nova: true }
+    })
+  }
+
+  private folhaCampo(numero: string): FolhaCampoImpressa | undefined {
+    const l = this.db
+      .prepare('SELECT numero, impressa_em, impressa_por, impressoes, ultima_em FROM folhas_campo WHERE numero = ?')
+      .get(numero) as Record<string, string | number> | undefined
+    return l
+      ? {
+          numero: String(l.numero),
+          impressaEm: String(l.impressa_em),
+          impressaPor: String(l.impressa_por),
+          impressoes: Number(l.impressoes),
+          ultimaEm: String(l.ultima_em),
+        }
+      : undefined
+  }
+
+  /** A folha de campo de uma calibração (a primeira, se houver mais de uma), ou null se nunca foi impressa. */
+  folhaCampoDaCalibracao(calibracaoId: string): FolhaCampoImpressa | null {
+    const l = this.db
+      .prepare('SELECT numero FROM folhas_campo WHERE calibracao_id = ? ORDER BY ano, sequencia LIMIT 1')
+      .get(calibracaoId) as { numero: string } | undefined
+    return (l && this.folhaCampo(l.numero)) || null
   }
 
   // ---- Envios por e-mail ------------------------------------------------------------

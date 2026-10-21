@@ -153,6 +153,28 @@ const MIGRACOES: Migracao[] = [
   // 2: a balança passa a ser identificada pelo indicador (é o nº de série dele que vale) e a plataforma com
   // plaqueta própria vira o dado opcional (ver `semIndicadorLegado`).
   balancaPeloIndicador,
+
+  // 3: folhas de campo impressas (o registro de dados brutos levado ao cliente). Cada folha ganha um nº
+  // FC-AAAA-NNNNN, que sai em toda página; a mesma `chave` reimprime com o mesmo nº (a da calibração é
+  // 'calibracao:<id>': uma folha por calibração, a mesma em toda reimpressão).
+  `
+  CREATE TABLE folhas_campo (
+    numero        TEXT PRIMARY KEY,             -- FC-2026-00042
+    ano           INTEGER NOT NULL,
+    sequencia     INTEGER NOT NULL,
+    chave         TEXT NOT NULL,
+    calibracao_id TEXT NOT NULL DEFAULT '',
+    balanca_id    TEXT NOT NULL DEFAULT '',
+    cliente_id    TEXT NOT NULL DEFAULT '',
+    impressa_por  TEXT NOT NULL DEFAULT '',     -- nome de quem imprimiu a primeira vez
+    impressa_em   TEXT NOT NULL,                -- ISO
+    impressoes    INTEGER NOT NULL DEFAULT 1,
+    ultima_em     TEXT NOT NULL                 -- ISO da última impressão
+  );
+  CREATE UNIQUE INDEX folhas_campo_sequencia ON folhas_campo(ano, sequencia);
+  CREATE UNIQUE INDEX folhas_campo_chave ON folhas_campo(chave);
+  CREATE INDEX folhas_campo_calibracao ON folhas_campo(calibracao_id);
+  `,
 ]
 
 /**

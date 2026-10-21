@@ -617,6 +617,17 @@ export interface Vencimento {
   lembreteEm: string
 }
 
+/** Folha de campo impressa: o registro de dados brutos levado ao cliente (nº FC-AAAA-NNNNN em toda página). */
+export interface FolhaCampoImpressa {
+  numero: string
+  /** Primeira impressão (ISO) e quem imprimiu. */
+  impressaEm: string
+  impressaPor: string
+  /** Quantas vezes foi impressa (a reimpressão mantém o número). */
+  impressoes: number
+  ultimaEm: string
+}
+
 export interface Envio {
   id: ID
   calibracaoId: ID

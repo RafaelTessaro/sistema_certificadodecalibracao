@@ -1127,15 +1127,8 @@ function passoBalancaEmBranco(n: number): No[] {
     ],
     [grade(linhas, 4)],
     [
-      {
-        stack: [
-          subtitulo('Características metrológicas, conforme a plaqueta', [0, 5, 0, 3]),
-          grade(metrologia, [116, 178, '*']),
-          { stack: [faixas], margin: [0, 4, 0, 0] },
-          outros,
-          selos(null),
-        ],
-      },
+      { stack: [subtitulo('Características metrológicas, conforme a plaqueta', [0, 5, 0, 3]), grade(metrologia, [116, 178, '*'])] },
+      { stack: [{ stack: [faixas], margin: [0, 4, 0, 0] }, outros, selos(null)] },
     ],
   )
 }
@@ -1362,7 +1355,8 @@ function tabelaPontos(ctx: Contexto, reserva: number): NoObjeto {
     linhas.push(cel)
   }
   const inicio = linhas.length
-  const total = plano ? reserva : 9
+  // Em branco: o zero e mais 7 linhas (0, 25, 50, 75 e 100 % de Max e as cargas onde muda o EMA)
+  const total = plano ? reserva : 8
   for (let i = 0; i < total; i++) {
     const zeroEmBranco = !plano && i === 0
     const cel: CelulaTabela[] = [nro(plano ? '+' : String(inicio + i + 1))]
@@ -1414,9 +1408,9 @@ function passoIndicacao(ctx: Contexto, n: number, passoAjuste: number): No[] {
         ...primeiro,
       ]
     : [
-        'Escolha as cargas: ',
+        'Cargas: ',
         { text: '0, 25, 50, 75 e 100 % de Max', bold: true },
-        ', mais as cargas onde muda o erro máximo admissível (500e e 2000e na classe III); vá até pelo menos 90 % de Max. Zere, aplique e anote a indicação estável. ',
+        ' e onde muda o EMA (500e e 2000e na classe III), até pelo menos 90 % de Max. Zere, aplique e anote a indicação estável. ',
         ...primeiro,
       ]
   const digitar = nota(
@@ -1766,7 +1760,7 @@ function passoEncerramento(ctx: Contexto, n: number): No[] {
             marcar(
               'Regra de decisão',
               [{ rotulo: 'banda de guarda' }, { rotulo: 'aceitação simples' }],
-              { tamanho: 7.4, espaco: 8 },
+              { tamanho: 7.4, vertical: true },
             ),
           ],
         ]

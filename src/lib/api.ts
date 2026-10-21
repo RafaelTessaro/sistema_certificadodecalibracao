@@ -1,3 +1,4 @@
+import { novoId } from '#shared/id.ts'
 import type {
   AlteracaoUsuario,
   Balanca,
@@ -13,6 +14,7 @@ import type {
   EntradaLogin,
   Envio,
   EstadoSessao,
+  FolhaCampoImpressa,
   GrupoAuditoria,
   MensagemTempoReal,
   NovoUsuario,
@@ -76,6 +78,8 @@ export interface DetalheCalibracao {
   pendencias: string[]
   /** Revisões feitas a partir deste certificado (a que o substituiu e a que está em andamento). */
   revisoes: Array<{ id: string; numero: string; status: StatusCalibracao }>
+  /** Folha de campo já impressa desta calibração (null = ainda não). */
+  folhaCampo: FolhaCampoImpressa | null
 }
 
 export interface FiltroCalibracoesTela {
@@ -240,6 +244,17 @@ export const api = {
   recalibrar: (id: string) => requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/recalibrar`, {}),
   /** PDF do certificado emitido (ou a prévia de um rascunho, com marca d'água). */
   urlPdf: (id: string, baixar = false) => `/api/calibracoes/${enc(id)}/pdf${baixar ? '?baixar=1' : ''}`,
+  /**
+   * Folha de campo de uma calibração (o checklist impresso para preencher no cliente), com o plano do
+   * rascunho; de uma emitida, a reimpressão. A reimpressão mantém o nº FC da folha.
+   */
+  urlFolhaCampo: (id: string) => `/api/calibracoes/${enc(id)}/folha-campo`,
+  /**
+   * Folha de campo sem calibração: da balança (com o plano da última calibração dela), só do cliente ou,
+   * sem nada, em branco. A chave nova a cada chamada reserva um nº; se o navegador pedir o PDF de novo, o nº é o mesmo.
+   */
+  urlFolhaCampoAvulsa: (f: { balancaId?: string; clienteId?: string } = {}) =>
+    `/api/folha-campo${consulta({ balancaId: f.balancaId, clienteId: f.clienteId, chave: novoId() })}`,
   /** Prévia do certificado com os dados ainda não salvos. */
   previa: async (id: string, dados: CalibracaoInput): Promise<Blob> => {
     const resp = await fetch(`/api/calibracoes/${enc(id)}/previa`, {
