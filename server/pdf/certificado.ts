@@ -5,9 +5,6 @@
 // para laboratório NÃO acreditado: sem RBC, sem marcas do Inmetro e sem "validade"
 // (docs/pesquisa/01-normas-certificado.md §3, §6 e §8). Layout em docs/pesquisa/03 §5 e 04 §5.
 
-import { createRequire } from 'node:module'
-import { resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   casasDecimais,
   emaInstrumento,
@@ -49,84 +46,30 @@ import type {
   Verificacao,
 } from '#shared/tipos.ts'
 import { diagramaExcentricidade, graficoErros, type PontoGrafico, type TrechoEma, type ValorGrafico } from './graficos.ts'
-import { assinaturaRodapeSvg, COR, LOGO_SVG, TIMBRADO } from './marca.ts'
+import {
+  A4,
+  BASE_RODAPE,
+  colunasMarca,
+  dataHoraBrasilia,
+  fundoTimbrado,
+  inteiro,
+  MODULO,
+  type No,
+  type NoObjeto,
+  pdfmake,
+  quebraAntes,
+  TOPO_CABECALHO,
+} from './base.ts'
+import { COR, TIMBRADO } from './marca.ts'
 import type { DadosCertificadoPdf } from './tipos.ts'
-
-// ---- pdfmake (servidor) --------------------------------------------------------------------------
-
-/** Nó do documento do pdfmake (o pacote não traz tipos). */
-type No = string | NoObjeto | No[]
-interface NoObjeto {
-  [chave: string]: unknown
-}
-
-interface PdfMakeServidor {
-  setFonts(fontes: Record<string, Record<string, string>>): void
-  setUrlAccessPolicy(politica: (url: string) => boolean): void
-  setLocalAccessPolicy(politica: (caminho: string) => boolean): void
-  createPdf(documento: NoObjeto): { getBuffer(): Promise<Buffer> }
-}
-
-const requerer = createRequire(import.meta.url)
-const PASTA_FONTES = fileURLToPath(new URL('./fontes/', import.meta.url))
-const fonte = (arquivo: string) => resolve(PASTA_FONTES, arquivo)
-
-/**
- * Inter estática: Regular/SemiBold no texto; Medium/Bold nos rótulos e números.
- * Poppins (a geométrica do logotipo oficial, SIL OFL) só no cabeçalho: ExtraBold na palavra-marca,
- * como no timbrado da empresa, e SemiBold no número do certificado.
- */
-const FONTES = {
-  Inter: {
-    normal: fonte('Inter-Regular.ttf'),
-    bold: fonte('Inter-SemiBold.ttf'),
-    italics: fonte('Inter-Italic.ttf'),
-    bolditalics: fonte('Inter-SemiBold.ttf'),
-  },
-  InterMedio: {
-    normal: fonte('Inter-Medium.ttf'),
-    bold: fonte('Inter-Bold.ttf'),
-    italics: fonte('Inter-Italic.ttf'),
-    bolditalics: fonte('Inter-Bold.ttf'),
-  },
-  Poppins: {
-    normal: fonte('Poppins-SemiBold.ttf'),
-    bold: fonte('Poppins-ExtraBold.ttf'),
-    italics: fonte('Poppins-SemiBold.ttf'),
-    bolditalics: fonte('Poppins-ExtraBold.ttf'),
-  },
-}
-
-let motorPdf: PdfMakeServidor | null = null
-function pdfmake(): PdfMakeServidor {
-  motorPdf ??= requerer('pdfmake') as PdfMakeServidor
-  // O pdfmake é um objeto único no processo: fontes e políticas são reafirmadas a cada geração.
-  motorPdf.setFonts(FONTES)
-  motorPdf.setUrlAccessPolicy(() => false)
-  motorPdf.setLocalAccessPolicy((caminho) =>
-    resolve(caminho).startsWith(PASTA_FONTES.endsWith(sep) ? PASTA_FONTES : PASTA_FONTES + sep),
-  )
-  return motorPdf
-}
 
 // ---- Página e tipografia -------------------------------------------------------------------------
 
-const A4 = { largura: 595.28, altura: 841.89 }
 const MARGEM_X = 45
 /** Largura útil (≈ 178 mm). */
 const LARGURA = A4.largura - 2 * MARGEM_X
 
-// Timbrado: um módulo de 30 pt rege tudo — diâmetro do logo e distância do cabeçalho e do fio de base
-// às bordas (10,6 mm: a laser de escritório não imprime os 4–5 mm finais). Sem fio sob o cabeçalho:
-// como no papel timbrado oficial, a separação é feita pelo branco.
-const MODULO = 30
-/** Topo do logo e do bloco do documento, a partir da borda superior. */
-const TOPO_CABECALHO = MODULO
 const MARGEM_TOPO = TOPO_CABECALHO + MODULO + 24
-/** Linha de base do rodapé (fio grafite e trapézio verde), a partir da borda superior. */
-const BASE_RODAPE = A4.altura - MODULO
-/** Altura do trapézio verde que fecha o fio de base. */
-const ALTURA_ASSINATURA = 4.5
 /** Texto do rodapé: corpo, entrelinha e respiro entre a última linha de base e o fio de base. */
 const RODAPE = { tamanho: 7, entrelinha: 9, respiro: 9 }
 const NUM: NoObjeto = { fontFeatures: ['tnum'] }
@@ -177,49 +120,12 @@ function lerNumero(s: string): number {
 const vazio = (s: string | null | undefined) => !s || !s.trim()
 const ou = (s: string | null | undefined, alternativa = '—') => (vazio(s) ? alternativa : s!.trim())
 
-/** Data e hora no fuso de Brasília (a empresa fica em Rio Claro/SP), independentes do fuso do servidor. */
-function dataHoraBrasilia(iso: string): { data: string; hora: string } | null {
-  const d = new Date(iso)
-  if (!iso || Number.isNaN(d.getTime())) return null
-  const partes = Object.fromEntries(
-    new Intl.DateTimeFormat('pt-BR', {
-      timeZone: 'America/Sao_Paulo',
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    })
-      .formatToParts(d)
-      .map((p) => [p.type, p.value]),
-  )
-  return { data: `${partes.day}/${partes.month}/${partes.year}`, hora: `${partes.hour}:${partes.minute}` }
-}
-
 const UNIDADE_EM_GRAMAS: Record<Unidade, number> = { mg: 0.001, g: 1, kg: 1000, t: 1_000_000 }
 
 // ---- Blocos de layout -----------------------------------------------------------------------------
 
 function fio(cor: string = COR.fio, largura = 0.5, margem: number[] = [0, 3, 0, 7]): NoObjeto {
   return { canvas: [{ type: 'line', x1: 0, y1: 0, x2: LARGURA, y2: 0, lineWidth: largura, lineColor: cor }], margin: margem }
-}
-
-/** Tira as dicas de quebra (headlineLevel) de dentro de um bloco inteiro: lá dentro elas criariam páginas em branco. */
-function semDicaDeQuebra(no: unknown): void {
-  if (Array.isArray(no)) {
-    for (const x of no) semDicaDeQuebra(x)
-    return
-  }
-  if (!no || typeof no !== 'object') return
-  delete (no as NoObjeto).headlineLevel
-  for (const v of Object.values(no)) if (v && typeof v === 'object') semDicaDeQuebra(v)
-}
-
-/** Bloco que não se divide entre páginas (precisa caber numa página). */
-function inteiro(conteudo: No[]): NoObjeto {
-  semDicaDeQuebra(conteudo)
-  return { stack: conteudo, unbreakable: true }
 }
 
 /** Bloco inteiro quando pequeno; senão, divisível (com o cabeçalho das tabelas repetido). */
@@ -447,7 +353,6 @@ function leitura(ctx: Contexto, valor: number, carga: number): string {
 }
 
 const empresaNome = (e: EmissaoCertificado) => e.empresa.razaoSocial || e.empresa.nomeFantasia
-const marcaNome = (e: EmissaoCertificado) => e.empresa.nomeFantasia || e.empresa.razaoSocial
 
 // ---- 1. Dados da calibração -------------------------------------------------------------------------
 
@@ -1491,27 +1396,10 @@ function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
  * ISO/IEC 17025 (7.8.2.1) pede em cada folha, num lugar só. Tudo encosta no módulo de 30 pt.
  */
 function cabecalho(ctx: Contexto) {
-  const { e } = ctx
-  const marca = marcaNome(e).toUpperCase()
-  const { nomeFantasia, razaoSocial } = e.empresa
-  const razao =
-    !vazio(nomeFantasia) && !vazio(razaoSocial) && razaoSocial.trim() !== nomeFantasia.trim() ? razaoSocial.trim() : ''
   return (pagina: number, total: number): NoObjeto => ({
     margin: [MARGEM_X, TOPO_CABECALHO, MARGEM_X, 0],
     columns: [
-      { svg: LOGO_SVG, width: MODULO, height: MODULO },
-      {
-        width: '*',
-        // Bloco centrado no logo; a razão social, espacejada, fica quase da largura da palavra-marca
-        // (no timbrado oficial as linhas do bloco são justificadas na mesma medida)
-        margin: [9, razao ? 3.3 : 8, 0, 0],
-        stack: [
-          { text: marca, font: 'Poppins', bold: true, fontSize: 11, lineHeight: 0.9, color: TIMBRADO.grafite },
-          ...(razao
-            ? [{ text: razao, font: 'InterMedio', fontSize: 5.9, characterSpacing: 0.38, color: TIMBRADO.secundario }]
-            : []),
-        ],
-      },
+      ...colunasMarca(ctx.e.empresa),
       {
         width: 'auto',
         alignment: 'right',
@@ -1593,17 +1481,8 @@ function rodape(ctx: Contexto): { no: () => NoObjeto; margemBase: number } {
   }
 }
 
-/** Assinatura do rodapé (fio grafite e trapézio verde), desenhada uma vez e repetida no fundo de cada página. */
-const ASSINATURA_SVG = assinaturaRodapeSvg(LARGURA, { altura: ALTURA_ASSINATURA })
-
-function fundo(): NoObjeto {
-  return {
-    svg: ASSINATURA_SVG,
-    width: LARGURA,
-    height: ALTURA_ASSINATURA,
-    absolutePosition: { x: MARGEM_X, y: BASE_RODAPE - ALTURA_ASSINATURA },
-  }
-}
+/** Assinatura do rodapé (fio grafite e trapézio verde), repetida no fundo de cada página. */
+const fundo = fundoTimbrado(MARGEM_X, LARGURA)
 
 function marcaDagua(texto: string): NoObjeto | undefined {
   const t = texto.trim()
@@ -1617,17 +1496,6 @@ function marcaDagua(texto: string): NoObjeto | undefined {
     font: 'InterMedio',
     angle: -50,
   }
-}
-
-/** Título sozinho no pé da página vai para a próxima (headlineLevel = espaço mínimo, em pt, abaixo dele). */
-function quebraAntes(no: {
-  headlineLevel?: unknown
-  startPosition?: { pageInnerHeight: number; verticalRatio: number }
-}): boolean {
-  const minimo = typeof no.headlineLevel === 'number' ? no.headlineLevel : 0
-  if (!minimo || !no.startPosition) return false
-  const restante = no.startPosition.pageInnerHeight * (1 - no.startPosition.verticalRatio)
-  return restante < minimo
 }
 
 // ---- Documento ---------------------------------------------------------------------------------------

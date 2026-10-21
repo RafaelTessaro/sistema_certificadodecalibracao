@@ -2,6 +2,7 @@
 // converte os pesos padrão para a unidade da balança e monta a entrada do cálculo.
 // Usado no navegador (cálculo ao vivo) e no servidor (emissão e PDF).
 
+import { massaLegivel } from './dominio.ts'
 import { calcular, emaPeso } from './metrologia/index.ts'
 import type { EntradaCalculo, PecaCalculo, ResultadoCalculo } from './metrologia/tipos.ts'
 import type { Balanca, CalibracaoInput, EnsaioIndicacao, Padrao, PecaCarga, PesoPadrao, Unidade } from './tipos.ts'
@@ -73,6 +74,20 @@ export function montarCarga(
   }
   const falta = restante > tolerancia ? deGramas(restante, unidade) : 0
   return { pecas, falta, total: deGramas(alvoG - Math.max(restante, 0), unidade) }
+}
+
+/** Peças de uma carga em texto: "20 kg + 10 kg + 5 kg" (agrupa iguais: "2 × 5 kg"), do maior para o menor. */
+export function descreverPecas(pecas: PecaCarga[], padroes: Padrao[]): string {
+  const porId = new Map(padroes.flatMap((p) => p.pesos.map((w) => [`${p.id}:${w.id}`, w.nominal])))
+  const grupos = new Map<number, number>()
+  for (const x of pecas) {
+    const g = porId.get(`${x.padraoId}:${x.pesoId}`)
+    if (g !== undefined) grupos.set(g, (grupos.get(g) ?? 0) + x.quantidade)
+  }
+  return [...grupos.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([g, n]) => `${n > 1 ? `${n} × ` : ''}${massaLegivel(g)}`)
+    .join(' + ')
 }
 
 function indicacaoParaCalculo(ensaio: EnsaioIndicacao, padroes: Padrao[], unidade: Unidade): EntradaCalculo['indicacao'] {

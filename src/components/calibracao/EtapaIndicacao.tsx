@@ -1,6 +1,6 @@
 import { CircleCheck, CircleX, Hand, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
-import { cargaDasPecas } from '#shared/calibracao.ts'
+import { cargaDasPecas, descreverPecas } from '#shared/calibracao.ts'
 import { massaLegivel, METODOS_CARREGAMENTO } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
 import { formatarNumero, sugerirPontos } from '#shared/metrologia/index.ts'
@@ -422,20 +422,6 @@ function tomLeitura(r: ResultadoPonto | undefined, lado: 'crescente' | 'decresce
   if (r.carga > 0 && Math.abs(o.erro) > 0.1 * r.carga) return 'erro'
   if (r.conformidade === 'NAO_CONFORME') return 'atencao'
   return 'normal'
-}
-
-/** "20 kg + 10 kg + 5 kg" (agrupa iguais: "2 × 5 kg"). */
-export function descreverPecas(pecas: PecaCarga[], padroes: Padrao[]): string {
-  const porId = new Map(padroes.flatMap((p) => p.pesos.map((w) => [`${p.id}:${w.id}`, w.nominal])))
-  const grupos = new Map<number, number>()
-  for (const x of pecas) {
-    const g = porId.get(`${x.padraoId}:${x.pesoId}`)
-    if (g !== undefined) grupos.set(g, (grupos.get(g) ?? 0) + x.quantidade)
-  }
-  return [...grupos.entries()]
-    .sort((a, b) => b[0] - a[0])
-    .map(([g, n]) => `${n > 1 ? `${n} × ` : ''}${massaLegivel(g)}`)
-    .join(' + ')
 }
 
 /** Escolha manual das peças de um ponto. */

@@ -276,19 +276,21 @@ function lugares(rotulos: string[], reconhecer: (r: string) => Lugar | null, pad
   return rotulos.length === padrao.length ? padrao : null
 }
 
-function rotuloFrente(cx: number, y: number) {
-  return texto(cx, y, 'FRENTE', { tamanho: 5.8, cor: COR.rotulo, ancora: 'middle', negrito: true })
+function rotuloFrente(cx: number, y: number, rotulo = 'FRENTE') {
+  return texto(cx, y, rotulo, { tamanho: 5.8, cor: COR.rotulo, ancora: 'middle', negrito: true })
 }
 
 /**
  * Diagrama das posições do ensaio de excentricidade (vista de cima, frente embaixo), com as posições
  * numeradas na ordem da tabela e a de maior desvio destacada. `null` quando o receptor não tem diagrama.
+ * `frente`: legenda do lado de baixo (padrão "FRENTE"; a folha de campo diz qual lado é a frente).
  */
 export function diagramaExcentricidade(
   receptor: string,
   rotulos: string[],
   posicaoMaior: number,
   apoios: number,
+  { frente = 'FRENTE' }: { frente?: string } = {},
 ): Diagrama | null {
   if (!rotulos.length) return null
   const fundo = `fill="${COR.fundoCabecalho}" stroke="#9AA09C" stroke-width="0.8"`
@@ -309,7 +311,10 @@ export function diagramaExcentricidade(
       TD: [px + pw - 17, py + 15],
       FD: [px + pw - 17, py + ph - 15],
     }
-    const partes = [`<rect x="${px}" y="${py}" width="${pw}" height="${ph}" rx="4" ${fundo}/>`, rotuloFrente(px + pw / 2, H - 9)]
+    const partes = [
+      `<rect x="${px}" y="${py}" width="${pw}" height="${ph}" rx="4" ${fundo}/>`,
+      rotuloFrente(px + pw / 2, H - 9, frente),
+    ]
     ls.forEach((l, i) => partes.push(posicaoNumerada(pos[l][0], pos[l][1], i + 1, i === posicaoMaior)))
     return { svg: svg(W, H, partes), largura: W, altura: H }
   }
@@ -330,7 +335,7 @@ export function diagramaExcentricidade(
       D: [cx + a, cy],
       E: [cx - a, cy],
     }
-    const partes = [`<circle cx="${cx}" cy="${cy}" r="${raio}" ${fundo}/>`, rotuloFrente(cx, H - 9)]
+    const partes = [`<circle cx="${cx}" cy="${cy}" r="${raio}" ${fundo}/>`, rotuloFrente(cx, H - 9, frente)]
     ls.forEach((l, i) => partes.push(posicaoNumerada(pos[l][0], pos[l][1], i + 1, i === posicaoMaior)))
     return { svg: svg(W, H, partes), largura: W, altura: H }
   }
@@ -354,7 +359,10 @@ export function diagramaExcentricidade(
         .reverse()
         .map((x): [number, number] => [x, py + ph - 15]),
     ]
-    const partes = [`<rect x="${px}" y="${py}" width="${pw}" height="${ph}" rx="4" ${fundo}/>`, rotuloFrente(px + pw / 2, H - 9)]
+    const partes = [
+      `<rect x="${px}" y="${py}" width="${pw}" height="${ph}" rx="4" ${fundo}/>`,
+      rotuloFrente(px + pw / 2, H - 9, frente),
+    ]
     coords.forEach(([x, y], i) => partes.push(posicaoNumerada(x, y, i + 1, i === posicaoMaior)))
     return { svg: svg(W, H, partes), largura: W, altura: H }
   }
