@@ -5,7 +5,7 @@
 // posições"): as linhas do papel batem com as da tela na hora de digitar. Puro (navegador e servidor).
 
 import { cargaDasPecas, descreverPecas, montarCarga } from './calibracao.ts'
-import { converterMassa, situacaoValidade, type SituacaoValidade } from './dominio.ts'
+import { converterMassa, numeroBr, situacaoValidade, type SituacaoValidade } from './dominio.ts'
 import {
   cargaExcentricidade,
   emaInstrumento,
@@ -151,8 +151,14 @@ export function planoDaFolha(
   if (semFechar.length && pesos.length)
     avisos.push(
       `Os pesos previstos não fecham ${semFechar.length === 1 ? 'a carga' : 'as cargas'} de ${semFechar
-        .map((p) => `${p.carga} ${u}`)
+        .map((p) => `${numeroBr(p.carga)} ${u}`)
         .join(', ')}: leve mais pesos ou use cargas de substituição.`,
+    )
+  // O certificado só cobre a faixa ensaiada: pontos parando bem antes de Max precisam ser combinados
+  const maiorCarga = Math.max(0, ...pontos.map((p) => p.carga))
+  if (max > 0 && pontos.length && maiorCarga < 0.9 * max * (1 - TOL))
+    avisos.push(
+      `Os pontos vão só até ${numeroBr(maiorCarga)} ${u} (${Math.round((maiorCarga / max) * 100)} % de Max) e o certificado só vale até essa carga: confirme com o cliente.`,
     )
 
   // ---- Repetibilidade

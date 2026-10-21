@@ -36,7 +36,13 @@ import {
   TIPOS_BALANCA,
 } from '#shared/dominio.ts'
 import { FORMULARIO_FOLHA_CAMPO, padroesPrevistos, planoDaFolha, type PlanoFolha } from '#shared/folhaCampo.ts'
-import { casasDecimais, faixasOrdenadas, formatarNumero, posicoesExcentricidade } from '#shared/metrologia/index.ts'
+import {
+  casasDecimais,
+  faixaDoValor,
+  faixasOrdenadas,
+  formatarNumero,
+  posicoesExcentricidade,
+} from '#shared/metrologia/index.ts'
 import type {
   Balanca,
   CalibracaoInput,
@@ -112,11 +118,13 @@ const T = {
 
 /**
  * Altura mínima do conteúdo das linhas de leitura e das caixas de escrever; com o padding, a linha
- * de leitura fica com ≈ 8,1 mm e a caixa de escrever, com ≈ 7,6 mm (ISO 7 mm no mínimo para a escrita
- * à mão em prancheta).
+ * de leitura fica com ≈ 7,6 mm e a caixa de escrever, com ≈ 7,6 mm (7 mm no mínimo para a escrita à
+ * mão em prancheta).
  */
-const ALTURA_LEITURA = 20
+const ALTURA_LEITURA = 18.5
 const ALTURA_ESCRITA = 19
+/** Valor que veio do sistema: rótulo e uma linha de valor (a correção vai na linha de baixo). */
+const ALTURA_PREVISTO = 17
 /** Lado das caixas de marcar (≈ 3,9 mm). */
 const LADO_CAIXA = 11
 
@@ -201,7 +209,7 @@ function opcoes(lista: Opcao[], o: { tamanho?: number; espaco?: number; vertical
         defaultBorder: false,
         paddingLeft: (i: number) => (i % 2 ? 3.5 : 0),
         paddingRight: () => 0,
-        paddingTop: (i: number) => (i ? 3 : 0),
+        paddingTop: (i: number) => (i ? 2.2 : 0),
         paddingBottom: () => 0,
       },
     }
@@ -270,7 +278,7 @@ function previsto(titulo: string, valor: No, o: { confere?: boolean; span?: numb
       stack: [cabeca, { text: valor, fontSize: 8.7, color: T.previstoTexto, lineHeight: 1.1, margin: [0, 1.2, 0, 0] }],
       fillColor: T.previsto,
     },
-    altura: ALTURA_ESCRITA,
+    altura: ALTURA_PREVISTO,
     span: o.span ?? 1,
   }
 }
@@ -326,7 +334,7 @@ function marcar(
  * Conferência logo abaixo de um valor previsto: "□ confere" ou, se estiver diferente, o valor certo
  * escrito no espaço branco ao lado.
  */
-function corrigir(span = 1, altura = 16): Celula {
+function corrigir(span = 1, altura = 14): Celula {
   return {
     no: {
       table: {
@@ -424,11 +432,13 @@ interface Coluna {
 }
 
 type Alinhamento = 'left' | 'right' | 'center'
-type CelulaTabela = { tipo: 'previsto' | 'escrever' | 'numero'; no?: No; alinhamento?: Alinhamento }
+type CelulaTabela = { tipo: 'previsto' | 'escrever' | 'numero' | 'dica'; no?: No; alinhamento?: Alinhamento }
 
 const pre = (no: No, alinhamento?: Alinhamento): CelulaTabela => ({ tipo: 'previsto', no, alinhamento })
 const livre = (): CelulaTabela => ({ tipo: 'escrever' })
 const nro = (n: No): CelulaTabela => ({ tipo: 'numero', no: n })
+/** Caixa de escrever com o previsto em letra miúda no canto ("previsto: TH-01"). */
+const dica = (n: No): CelulaTabela => ({ tipo: 'dica', no: n })
 
 /** Tabela de leituras: unidade no cabeçalho, linhas altas, previsto em cinza e escrita em branco. */
 function tabelaLeituras(colunas: Coluna[], linhas: CelulaTabela[][], o: { altura?: number; margem?: number[] } = {}): NoObjeto {
@@ -476,6 +486,8 @@ function tabelaLeituras(colunas: Coluna[], linhas: CelulaTabela[][], o: { altura
     l.map((cel, i) => {
       const alinhamento = cel.alinhamento ?? colunas[i].alinhamento ?? 'left'
       if (cel.tipo === 'escrever') return { text: '', fillColor: '#FFFFFF' }
+      if (cel.tipo === 'dica')
+        return { text: cel.no ?? '', fontSize: 6.2, lineHeight: 1.1, color: T.suave, fillColor: '#FFFFFF' }
       if (cel.tipo === 'numero')
         return {
           text: cel.no ?? '',
@@ -562,8 +574,8 @@ function linhasGuia(quantas: number, titulo: string, dica = '', previstoTexto = 
 }
 
 /** Instrução curta do passo (o que fazer, na ordem), alinhada ao título. */
-function instrucao(texto: No, margem: number[] = [25, 0, 0, 5]): NoObjeto {
-  return { text: texto, fontSize: 7.9, lineHeight: 1.26, color: T.instrucao, margin: margem }
+function instrucao(texto: No, margem: number[] = [21, 0, 0, 4]): NoObjeto {
+  return { text: texto, fontSize: 7.8, lineHeight: 1.2, color: T.instrucao, margin: margem }
 }
 
 /** Nota pequena (regras, avisos de digitação). */
@@ -580,37 +592,37 @@ function subtitulo(texto: string, margem: number[] = [0, 7, 0, 3]): NoObjeto {
 function tituloPasso(n: number, titulo: string, sistema: string): NoObjeto {
   return {
     table: {
-      widths: [17, '*', 'auto'],
+      widths: [14, '*', 'auto'],
       body: [
         [
           {
             text: String(n),
             font: 'Poppins',
-            fontSize: 10,
+            fontSize: 8.8,
             color: '#FFFFFF',
             fillColor: COR.marcaTexto,
             alignment: 'center',
-            margin: [0, 2.2, 0, 0],
+            margin: [0, 1.3, 0, 0],
           },
           {
             text: titulo.toUpperCase(),
             font: 'InterMedio',
             bold: true,
-            fontSize: 9.2,
+            fontSize: 8.8,
             characterSpacing: 0.35,
             color: T.texto,
-            margin: [8, 3.7, 0, 0],
+            margin: [7, 2.3, 0, 0],
           },
           {
             text: [{ text: 'NO SISTEMA  ', font: 'InterMedio', fontSize: 5.7, characterSpacing: 0.4 }, { text: sistema }],
             fontSize: 6.9,
             color: T.rotulo,
             alignment: 'right',
-            margin: [6, 5.2, 0, 0],
+            margin: [6, 3.6, 0, 0],
           },
         ],
       ],
-      heights: [17],
+      heights: [14],
     },
     layout: {
       hLineWidth: (i: number) => (i === 1 ? 0.9 : 0),
@@ -621,7 +633,7 @@ function tituloPasso(n: number, titulo: string, sistema: string): NoObjeto {
       paddingTop: () => 0,
       paddingBottom: () => 0,
     },
-    margin: [0, 0, 0, 4],
+    margin: [0, 0, 0, 3.5],
   }
 }
 
@@ -636,7 +648,7 @@ const eSolta = (p: Parte): p is { solta: No } => !!p && typeof p === 'object' &&
  */
 function passo(n: number, titulo: string, sistema: string, texto: No | null, primeira: No[], resto: Parte[] = []): No[] {
   const cabeca = inteiro([tituloPasso(n, titulo, sistema), ...(texto ? [instrucao(texto)] : []), ...primeira])
-  return [{ ...cabeca, margin: [0, 9, 0, 0] }, ...resto.map((p): No => (eSolta(p) ? p.solta : inteiro([p])))]
+  return [{ ...cabeca, margin: [0, 7, 0, 0] }, ...resto.map((p): No => (eSolta(p) ? p.solta : inteiro([p])))]
 }
 
 // ---- Contexto -----------------------------------------------------------------------------------------------
@@ -665,6 +677,12 @@ function divisaoTexto(valor: number, unidade: Balanca['unidade']): string {
 
 /** Carga nas casas da divisão (o técnico vê quantos dígitos a leitura tem). */
 const cargaTexto = (carga: number, d: number) => num(carga, Math.max(casasDecimais(d), casasDecimais(carga)))
+
+/** Carga nas casas da divisão daquela carga (multi-intervalo: a do intervalo parcial), como na tabela de pontos. */
+function cargaNaDivisao(ctx: Contexto, carga: number): string {
+  const b = ctx.b
+  return b && b.faixas.length ? cargaTexto(carga, faixaDoValor(carga, b).d) : numeroBr(carga)
+}
 
 /** "do prato" (balanças pequenas e prato redondo) ou "da plataforma". */
 function centro(b: Balanca | null): string {
@@ -696,10 +714,37 @@ const e2 = (a: string, b: string) => `${a} · ${b}`
 /** Marca de campo obrigatório para emitir. */
 const OBRIG = ' ●'
 
+/** Números dos passos da folha (as instruções e o roteiro de digitação citam uns aos outros). */
+const N = {
+  padroes: 1,
+  chegada: 2,
+  balanca: 3,
+  verificacao: 4,
+  indicacao: 5,
+  ajuste: 6,
+  repetibilidade: 7,
+  excentricidade: 8,
+  encerramento: 9,
+  assinaturas: 10,
+} as const
+
+/**
+ * Roteiro de digitação: de quais passos da folha sai cada etapa do assistente, na ordem da tela
+ * (a folha segue a ordem do serviço no local; o escritório digita na ordem do sistema).
+ */
+export const ROTEIRO_DIGITACAO: Array<{ etapa: string; passos: string }> = [
+  { etapa: E.cliente, passos: `${N.chegada} e ${N.assinaturas}` },
+  { etapa: E.balanca, passos: `${N.balanca}, ${N.verificacao} e ${N.ajuste}` },
+  { etapa: E.padroes, passos: `${N.padroes}, ${N.verificacao} e ${N.encerramento}` },
+  { etapa: E.repetibilidade, passos: `${N.repetibilidade}` },
+  { etapa: E.excentricidade, passos: `${N.excentricidade}` },
+  { etapa: E.indicacao, passos: `${N.indicacao}` },
+  { etapa: E.conclusao, passos: `${N.verificacao} (divisão) e ${N.encerramento}` },
+]
+
 // ---- Introdução (página 1) -----------------------------------------------------------------------------
 
-function introducao(ctx: Contexto): No[] {
-  const { d } = ctx
+function introducao(): No[] {
   const amostra = (fundo: string): NoObjeto => ({
     canvas: [{ type: 'rect', x: 0, y: 0, w: 15, h: 9, lineWidth: 0.6, lineColor: T.borda, color: fundo }],
     margin: [0, 0.6, 0, 0],
@@ -708,35 +753,28 @@ function introducao(ctx: Contexto): No[] {
   const regras: No[] = [
     {
       text: [
-        titulo('COMO ANOTAR'),
-        'Direto nesta folha, na hora da leitura, com caneta azul ou preta (nada de lápis, rascunho ou corretivo). ',
-        'Escreva a indicação como no mostrador: todos os dígitos, zeros à direita e sinal; vírgula decimal, 0 fechado, 7 cortado.',
+        titulo('COMO ANOTAR E CORRIGIR'),
+        'Caneta azul ou preta, nesta folha e na hora da leitura (nada de lápis, rascunho ou corretivo); a indicação como no mostrador, com todos os dígitos, zeros à direita e sinal. ',
+        { text: 'Para corrigir: ', bold: true },
+        'um risco só sobre o valor errado (ele continua legível), o certo ao lado, rubrica e data. Leitura duvidosa: repita e anote as duas. Não se aplica: N/A. Grampeie as folhas.',
       ],
-    },
-    {
-      text: [
-        titulo('PARA CORRIGIR'),
-        'Um risco só sobre o valor errado (ele continua legível), o certo ao lado, rubrica e data. ',
-        'Leitura duvidosa: repita e anote as duas. Não se aplica: traço ou N/A. Grampeie as folhas.',
-      ],
-      margin: [0, 2, 0, 0],
     },
   ]
   // Legenda numa linha: o que cada fundo quer dizer
   const item = (desenho: NoObjeto, texto: No): No[] => [desenho, { text: texto, fontSize: 6.7, lineHeight: 1.12 }]
   const legenda: NoObjeto = {
     table: {
-      widths: [15, '*', 15, 'auto', 15, '*', 8, 'auto'],
+      widths: [15, 'auto', 15, 'auto', 15, 'auto', 8, 'auto'],
       body: [
         [
-          ...item(amostra(T.previsto), [{ text: 'Veio do sistema: ', bold: true }, 'confira; diferente, escreva o certo embaixo']),
+          ...item(amostra(T.previsto), [{ text: 'Veio do sistema: ', bold: true }, 'confira']),
           ...item(amostra('#FFFFFF'), [{ text: 'Escreva no local', bold: true }]),
           ...item({ ...caixa(true, 9), margin: [3, 0.6, 0, 0] }, [
             { text: 'Opção prevista: ', bold: true },
-            'marque com X a que foi usada',
+            'marque com X a usada',
           ]),
           { text: '●', color: COR.marcaTexto, fontSize: 7, margin: [0, -0.4, 0, 0] },
-          { text: [{ text: 'Obrigatório para emitir', bold: true }, ' · (*) informado pelo cliente'], fontSize: 6.7 },
+          { text: [{ text: 'Obrigatório para emitir', bold: true }, ' · (*) dado do cliente'], fontSize: 6.7 },
         ],
       ],
     },
@@ -748,12 +786,6 @@ function introducao(ctx: Contexto): No[] {
       paddingBottom: () => 0,
     },
   }
-  const origem = ctx.plano
-    ? ctx.plano.origem === 'RASCUNHO'
-      ? 'pontos, cargas e posições planejados no sistema'
-      : 'pontos, cargas e posições sugeridos pelo sistema'
-    : 'folha em branco, para balança ainda não cadastrada'
-  const impresso = ctx.impresso
   return [
     {
       table: {
@@ -770,19 +802,9 @@ function introducao(ctx: Contexto): No[] {
         vLineColor: () => T.borda,
         paddingLeft: () => 7,
         paddingRight: () => 7,
-        paddingTop: (i: number) => (i ? 4 : 5),
-        paddingBottom: (i: number) => (i ? 3.5 : 4.5),
+        paddingTop: (i: number) => (i ? 3.5 : 4.5),
+        paddingBottom: (i: number) => (i ? 3 : 4),
       },
-    },
-    {
-      text: [
-        impresso ? `Impressa em ${impresso.data}, às ${impresso.hora}` : 'Impressa',
-        vazio(d.impressoPor) ? '' : ` por ${d.impressoPor.trim()}`,
-        ` · ${origem}.`,
-      ],
-      fontSize: 6.4,
-      color: T.suave,
-      margin: [0, 3, 0, 0],
     },
   ]
 }
@@ -804,24 +826,27 @@ function passoPadroes(ctx: Contexto, n: number): No[] {
     livre(),
     livre(),
     pre({ text: p.identificacao || '—', bold: true }),
-    pre({ text: [{ text: p.descricao || p.tipo }, ...(p.classe ? [{ text: ` · classe ${p.classe}`, color: T.suave }] : [])] }),
-    pre(plano ? separar || (p.tipo === 'PESOS' ? '—' : 'levar') : '', 'left'),
-    pre(p.certificado || '—'),
+    pre({
+      text: [{ text: p.descricao || p.tipo }, ...(p.classe ? [{ text: ` · ${p.classe}`, color: T.suave }] : [])],
+      fontSize: 7.4,
+    }),
+    pre(plano ? semQuebra(separar) || (p.tipo === 'PESOS' ? '—' : 'levar') : '', 'left'),
+    pre({ text: p.certificado || '—', fontSize: 7.4 }),
     pre(validade(p, situacao), 'right'),
   ])
   linhas.push([livre(), livre(), livre(), livre(), livre(), livre(), livre()])
   const tabela = tabelaLeituras(
     [
-      { titulo: 'Levado', largura: 28, alinhamento: 'center' },
-      { titulo: 'Usado', largura: 28, alinhamento: 'center' },
-      { titulo: 'Identificação', largura: 72 },
+      { titulo: 'Levado', largura: 26, alinhamento: 'center' },
+      { titulo: 'Usado', largura: 24, alinhamento: 'center' },
+      { titulo: 'Identificação', largura: 70 },
       { titulo: 'Descrição', largura: '*' },
-      { titulo: plano ? 'Separar (peças previstas)' : 'Peças usadas', largura: 96 },
-      { titulo: 'Certificado nº', largura: 76 },
-      { titulo: 'Próxima calibração', largura: 66, alinhamento: 'right' },
+      { titulo: plano ? 'Separar (peças previstas)' : 'Peças usadas', largura: 90 },
+      { titulo: 'Certificado nº', largura: 72 },
+      { titulo: 'Próxima calibração', largura: 64, alinhamento: 'right' },
     ],
     linhas,
-    { altura: 18 },
+    { altura: 15 },
   )
   const avisos = plano?.avisos ?? []
   const aviso: No[] = avisos.length
@@ -844,8 +869,8 @@ function passoPadroes(ctx: Contexto, n: number): No[] {
       ]
     : []
   const texto: No = plano
-    ? 'Separe os padrões e as peças previstas e marque “levado”; no cliente, marque “usado”. Não use padrão vencido.'
-    : 'Marque os padrões levados e, no cliente, os usados. Padrão fora da lista: escreva na linha em branco.'
+    ? `Separe os padrões e as peças previstas (${plano.origem === 'RASCUNHO' ? 'pontos, cargas e posições planejados no sistema' : 'pontos, cargas e posições sugeridos pelo sistema'}) e marque “levado”; no cliente, “usado”.`
+    : 'Folha em branco, para balança ainda não cadastrada: marque os padrões levados e, no cliente, os usados.'
   return passo(n, 'Antes de sair: padrões', E.padroes, texto, [tabela, ...aviso])
 }
 
@@ -932,9 +957,7 @@ function selos(b: Balanca | null): NoObjeto {
           tamanho: 7.4,
           espaco: 8,
         }),
-        escrever(legal ? 'Marca de verificação Inmetro/IPEM: ano' : 'Marca de verificação Inmetro/IPEM (se houver): ano', {
-          altura: 25,
-        }),
+        escrever(legal ? 'Marca de verificação Inmetro/IPEM: ano' : 'Marca Inmetro/IPEM (se houver): ano', { altura: 25 }),
         marcar('Fotos tiradas', [{ rotulo: 'plaqueta' }, { rotulo: 'mostrador' }], { tamanho: 7.4, espaco: 8 }),
       ],
     ],
@@ -1003,10 +1026,8 @@ function passoBalanca(ctx: Contexto, n: number): No[] {
       ['Finalidade (*)', finalidade || '—'],
     ],
   ]
-  const celulas: Celula[][] = linhas.flatMap((linha) => [
-    linha.map(([r, v]) => previsto(r, v)),
-    linha.map(() => corrigir()),
-  ])
+  const celulas = (ls: Linha[]): Celula[][] =>
+    ls.flatMap((linha) => [linha.map(([r, v]) => previsto(r, v)), linha.map(() => corrigir())])
   const legal = b.finalidade === 'COMERCIAL' || b.finalidade === 'SAUDE'
   return passo(
     n,
@@ -1015,18 +1036,24 @@ function passoBalanca(ctx: Contexto, n: number): No[] {
     [
       'Confira cada dado com a plaqueta do ',
       { text: 'indicador', bold: true },
-      ' (o mostrador) e marque “confere”. Diferente? Escreva o certo embaixo e avise o cliente antes de continuar.',
+      ' (o mostrador). Diferente? Escreva o certo embaixo e avise o cliente.',
     ],
+    // A identificação fica com o título; as características metrológicas e os selos podem ir para a página seguinte
+    [grade(celulas(linhas.slice(0, 2)), 4)],
     [
-      grade(celulas, 4),
-      selos(b),
-      ...(legal
-        ? [
-            nota(
-              `Balança de uso ${b.finalidade === 'COMERCIAL' ? 'comercial (venda por peso)' : 'na saúde'}: a calibração não substitui a verificação do Inmetro/IPEM. Selos violados ou marca vencida: anote nas observações.`,
-            ),
-          ]
-        : []),
+      {
+        stack: [
+          grade(celulas(linhas.slice(2)), 4, [0, 3, 0, 0]),
+          selos(b),
+          ...(legal
+            ? [
+                nota(
+                  `Balança de uso ${b.finalidade === 'COMERCIAL' ? 'comercial (venda por peso)' : 'na saúde'}: a calibração não substitui a verificação do Inmetro/IPEM. Selos violados ou marca vencida: anote nas observações.`,
+                ),
+              ]
+            : []),
+        ],
+      },
     ],
   )
 }
@@ -1133,6 +1160,7 @@ function instrumentosAmbiente(ctx: Contexto): Padrao[] {
 
 function tabelaAmbiente(ctx: Contexto, momento: 'Início' | 'Fim'): No[] {
   const instrumentos = instrumentosAmbiente(ctx)
+  const previstos = instrumentos.map((p) => p.identificacao).join(', ')
   return [
     tabelaLeituras(
       [
@@ -1143,28 +1171,8 @@ function tabelaAmbiente(ctx: Contexto, momento: 'Início' | 'Fim'): No[] {
         { titulo: 'Pressão (opcional)', unidade: 'hPa', largura: '*' },
         { titulo: 'Instrumento usado', largura: 128 },
       ],
-      [
-        [
-          nro(momento),
-          livre(),
-          livre(),
-          livre(),
-          livre(),
-          {
-            tipo: 'escrever',
-            no: undefined,
-          },
-        ],
-      ],
+      [[nro(momento), livre(), livre(), livre(), livre(), previstos ? dica(`previsto: ${previstos}`) : livre()]],
     ),
-    ...(instrumentos.length
-      ? [
-          nota(
-            `Instrumentos previstos: ${instrumentos.map((p) => `${p.identificacao} (${p.descricao || p.tipo})`).join(', ')}.`,
-            [0, 2, 0, 0],
-          ),
-        ]
-      : []),
   ]
 }
 
@@ -1182,7 +1190,7 @@ function passoVerificacao(ctx: Contexto, n: number): No[] {
     opcoes([{ rotulo: 'Ligado' }, { rotulo: 'Desligado' }, { rotulo: 'Não possui' }], { tamanho: 7.8, espaco: 10 }),
   ])
   const lista: NoObjeto = {
-    table: { widths: [12, '*', 'auto'], body: linhas, heights: 17 },
+    table: { widths: [12, '*', 'auto'], body: linhas, heights: 13 },
     layout: {
       hLineWidth: (i: number, no: { table: { body: unknown[] } }) => (i === 0 || i === no.table.body.length ? 0.8 : 0.4),
       hLineColor: (i: number, no: { table: { body: unknown[] } }) =>
@@ -1190,8 +1198,8 @@ function passoVerificacao(ctx: Contexto, n: number): No[] {
       vLineWidth: () => 0,
       paddingLeft: (i: number) => (i === 0 ? 2 : 4),
       paddingRight: () => 2,
-      paddingTop: () => 3.2,
-      paddingBottom: () => 1,
+      paddingTop: () => 2.2,
+      paddingBottom: () => 0.6,
     },
   }
   const ds = b
@@ -1202,23 +1210,35 @@ function passoVerificacao(ctx: Contexto, n: number): No[] {
     : null
   const d = ds ? `${ds.valores.map((x) => numeroBr(x)).join('/')} ${ds.unidade}` : ''
   const dTeste = ctx.k?.opcoes.divisaoTeste ?? 0
-  const leituras = grade(
+  // Antes da primeira leitura: aquecimento, aclimatação dos pesos, onde a balança está e a divisão usada
+  const condicoes = grade(
     [
       [
         escrever('Ligada desde', { formato: '____:____' }),
-        marcar('Divisão usada nas leituras (modo serviço)', [
-          { rotulo: d ? `a normal (d = ${d})` : 'a normal (d da plaqueta)', prevista: !!b && !(dTeste > 0) },
-          {
-            rotulo:
-              b && dTeste > 0
-                ? `modo serviço, d = ${divisaoTexto(dTeste, b.unidade)} (com a concordância do cliente)`
-                : 'modo serviço, d = __________ (com a concordância do cliente)',
-            prevista: !!b && dTeste > 0,
-          },
-        ]),
+        escrever('Pesos no local há (min)', { dica: 'aclimatação' }),
+        marcar('Onde a balança está', [{ rotulo: 'local fechado' }, { rotulo: 'ao ar livre (sol, vento, chuva: anote)' }], {
+          tamanho: 7.4,
+          span: 2,
+        }),
+      ],
+      [
+        marcar(
+          `Divisão usada nas leituras (modo serviço) — no sistema: ${E.conclusao}`,
+          [
+            { rotulo: d ? `a normal (d = ${d})` : 'a normal (d da plaqueta)', prevista: !!b && !(dTeste > 0) },
+            {
+              rotulo:
+                b && dTeste > 0
+                  ? `modo serviço, d = ${divisaoTexto(dTeste, b.unidade)} (com a concordância do cliente)`
+                  : 'modo serviço, d = __________ (com a concordância do cliente)',
+              prevista: !!b && dTeste > 0,
+            },
+          ],
+          { span: 4 },
+        ),
       ],
     ],
-    [92, '*'],
+    [84, 96, '*', '*'],
     [0, 5, 0, 0],
   )
   return passo(
@@ -1226,35 +1246,15 @@ function passoVerificacao(ctx: Contexto, n: number): No[] {
     'Verificação antes de calibrar e ambiente no início',
     e2(E.balanca, E.padroes),
     [
-      `Ligue a balança e deixe aquecer pelo tempo do fabricante. Limpe, nivele e aplique uma carga perto de Max${maxTexto} pelo menos uma vez. `,
-      'Algum “Não”? Conte o que houve nas observações; se a balança não tiver condição de uso, ',
+      `Aqueça, limpe, nivele e pré-carregue perto de Max${maxTexto}. Algum “Não”? Anote nas observações; sem condição de uso, `,
       { text: 'não calibre', bold: true },
-      ' e combine com o cliente.',
+      '.',
     ],
-    [lista, leituras],
     [
-      {
-        stack: [
-          subtitulo('Ambiente no início — perto da balança, depois de uns 15 min no local'),
-          ...tabelaAmbiente(ctx, 'Início'),
-          grade(
-            [
-              [
-                marcar(
-                  'Onde a balança está',
-                  [{ rotulo: 'local fechado' }, { rotulo: 'ao ar livre: sol, vento ou chuva? Anote nas observações' }],
-                  {
-                    tamanho: 7.4,
-                  },
-                ),
-                escrever('Pesos no local há (min)', { dica: 'aclimatação antes das leituras' }),
-              ],
-            ],
-            ['*', 132],
-            [0, 5, 0, 0],
-          ),
-        ],
-      },
+      lista,
+      condicoes,
+      subtitulo('Ambiente no início — perto da balança, depois de uns 15 min no local', [0, 5, 0, 2.5]),
+      ...tabelaAmbiente(ctx, 'Início'),
     ],
   )
 }
@@ -1262,10 +1262,10 @@ function passoVerificacao(ctx: Contexto, n: number): No[] {
 // ---- 5. Erro de indicação: "como encontrado" e "depois do ajuste" nas mesmas linhas ----------------------
 
 const INSTRUCAO_METODO: Record<MetodoCarregamento, string> = {
-  CRESCENTE_DECRESCENTE: 'suba de ponto em ponto até a maior carga (↑) e desça sem descarregar (↓)',
-  DESCONTINUO: 'aplique cada carga e retire tudo antes da seguinte, conferindo o zero',
-  CONTINUO: 'vá somando os pesos de ponto em ponto, sem descarregar',
-  DECRESCENTE: 'comece pela maior carga e vá retirando os pesos (↓)',
+  CRESCENTE_DECRESCENTE: 'suba até a maior carga (↑) e desça sem descarregar (↓)',
+  DESCONTINUO: 'retire tudo e confira o zero entre uma carga e outra',
+  CONTINUO: 'vá somando os pesos, sem descarregar',
+  DECRESCENTE: 'comece pela maior carga e vá retirando (↓)',
 }
 
 const ORDEM_METODOS: MetodoCarregamento[] = ['CRESCENTE_DECRESCENTE', 'DESCONTINUO', 'CONTINUO', 'DECRESCENTE']
@@ -1327,7 +1327,7 @@ function tabelaPontos(ctx: Contexto, reserva: number): NoObjeto {
       ? { text: 'sem carga (zero)', color: T.suave, fontSize: 7.2 }
       : {
           text: [
-            { text: p.pesos || '—' },
+            { text: semQuebra(p.pesos) || '—' },
             ...(p.falta > 0
               ? [{ text: `\nfaltam ${num(p.falta, casasDecimais(p.falta))} ${ctx.u}`, bold: true, fontSize: 7 }]
               : []),
@@ -1381,12 +1381,13 @@ function retornoZero(ctx: Contexto): NoObjeto {
   return grade(
     [
       [
-        escrever(`Indicação no retorno ao zero${u}`, { dica: 'como encontrado, ao retirar toda a carga' }),
-        escrever(`Retorno ao zero depois do ajuste${u}`, { dica: 'só se ajustou' }),
+        escrever('Hora do início', { formato: '____:____' }),
+        escrever(`Indicação no retorno ao zero${u}`),
+        escrever(`Retorno ao zero depois do ajuste${u}`),
         escrever('Pesos diferentes do previsto? Em que pontos e quais'),
       ],
     ],
-    [138, 138, '*'],
+    [62, 128, 128, '*'],
     [0, 4, 0, 0],
   )
 }
@@ -1397,21 +1398,17 @@ function notaEma(ctx: Contexto): No[] {
   return [
     nota([
       { text: 'Faixa aceitável: ', bold: true },
-      `carga ± EMA pelo critério “${CRITERIOS_EMA[c.criterio].label}”${c.criterio === 'CLIENTE' ? ` (±${numeroBr(c.toleranciaCliente)} ${ctx.u})` : ''}. É só uma referência para decidir o ajuste: a declaração de conformidade do certificado considera também a incerteza (regra: ${REGRAS_DECISAO[c.regra].label}).`,
+      `carga ± EMA (${CRITERIOS_EMA[c.criterio].label}${c.criterio === 'CLIENTE' ? `, ±${numeroBr(c.toleranciaCliente)} ${ctx.u}` : ''}), só para decidir o ajuste; a conformidade do certificado considera também a incerteza.`,
     ]),
   ]
 }
 
 function passoIndicacao(ctx: Contexto, n: number, passoAjuste: number): No[] {
   const { plano } = ctx
-  const primeiro: No[] = [
-    { text: 'Primeiro, sem ajustar a balança, anote só as colunas ' },
-    { text: '“como encontrado”', bold: true },
-    { text: '.' },
-  ]
+  const primeiro: No[] = [{ text: 'Sem ajustar, anote só ' }, { text: '“como encontrado”', bold: true }, { text: '.' }]
   const texto: No = plano
     ? [
-        'Zere a balança vazia. Aplique as cargas na ordem da tabela, com os pesos indicados, e anote a indicação estável. ',
+        'Zere vazia, aplique as cargas na ordem da tabela e anote a indicação estável. ',
         { text: `Método previsto: ${METODOS_CARREGAMENTO[plano.metodo].label.toLowerCase()}`, bold: true },
         ` — ${INSTRUCAO_METODO[plano.metodo]}. `,
         ...primeiro,
@@ -1425,11 +1422,12 @@ function passoIndicacao(ctx: Contexto, n: number, passoAjuste: number): No[] {
   const digitar = nota(
     [
       { text: 'Na digitação: ', bold: true, color: T.texto },
-      `sem ajuste, as colunas “como encontrado” vão para a etapa “Erro de indicação”. Com ajuste (passo ${passoAjuste}), elas vão para a aba “Antes do ajuste (como encontrado)” e as colunas “depois do ajuste”, para a aba “Depois do ajuste”.`,
+      `sem ajuste, “como encontrado” vai na etapa ${E.indicacao}; com ajuste (passo ${passoAjuste}), nas abas “Antes do ajuste” e “Depois do ajuste”.`,
     ],
     [0, 3, 0, 0],
   )
-  const tabela = tabelaPontos(ctx, 2)
+  // Linhas de reserva (ponto a mais, carga diferente): duas, ou uma quando a tabela já é longa
+  const tabela = tabelaPontos(ctx, (plano?.pontos.length ?? 0) >= 7 ? 1 : 2)
   const longa = !!plano && plano.pontos.length > 11
   return passo(
     n,
@@ -1458,7 +1456,7 @@ function tabelaSubstituicao(ctx: Contexto): No {
   return {
     stack: [
       subtitulo(
-        `Cargas de substituição — ${numeroBr(s.carga)} ${u} de pesos padrão em cada etapa (${s.pesos || '—'})`,
+        `Cargas de substituição — ${numeroBr(s.carga)} ${u} de pesos padrão em cada etapa (${semQuebra(s.pesos) || '—'})`,
         [0, 8, 0, 2],
       ),
       nota(
@@ -1486,7 +1484,7 @@ function passoAjuste(ctx: Contexto, n: number, indicacao: number): No[] {
   // O rascunho novo sempre começa com "não houve ajuste/reparo": só marca como previsto o que foi combinado
   const realizado = k && k.ajuste.realizado !== 'NAO' ? k.ajuste.realizado : null
   const r = k?.reparo
-  const ajuste = grade(
+  const grid = grade(
     [
       [
         marcar(
@@ -1496,43 +1494,31 @@ function passoAjuste(ctx: Contexto, n: number, indicacao: number): No[] {
             { rotulo: AJUSTES.INTERNO, prevista: realizado === 'INTERNO' },
             { rotulo: AJUSTES.EXTERNO, prevista: realizado === 'EXTERNO' },
           ],
-          { vertical: true },
+          { span: 3, espaco: 16 },
         ),
-        escrever(`Como foi o ajuste${OBRIG}`, { dica: 'no externo: o peso usado e a identificação dele', altura: 44 }),
+        escrever('Hora do ajuste', { formato: '____:____', altura: 25 }),
       ],
-    ],
-    [150, '*'],
-  )
-  const reparo = grade(
-    [
+      [escrever(`Como foi o ajuste${OBRIG} (no externo: o peso usado e a identificação dele)`, { span: 4 })],
       [
-        {
-          ...marcar(
-            'Reparo ou manutenção',
-            [{ rotulo: 'não houve' }, { rotulo: 'houve (OS obrigatória)', prevista: !!r?.houve }],
-            { vertical: true },
-          ),
-          linhas: 2,
-        },
+        marcar('Reparo ou manutenção', [{ rotulo: 'não houve' }, { rotulo: 'houve (OS obrigatória)', prevista: !!r?.houve }]),
         r?.houve && !vazio(r.descricao)
           ? previsto('Serviço realizado', r.descricao, { confere: true, span: 3 })
-          : escrever('Serviço realizado', { span: 3 }),
+          : escrever('Serviço realizado', { span: 3, altura: 25 }),
       ],
-      [escrever('Marca de reparo nº'), escrever('Selos retirados'), escrever('Selos colocados')],
+      [escrever('Marca de reparo nº'), escrever('Selos retirados'), escrever('Selos colocados', { span: 2 })],
     ],
-    [150, '*', '*', '*'],
-    [0, 4, 0, 0],
+    [190, '*', '*', 100],
   )
   return passo(
     n,
     'Ajuste e reparo',
     E.balanca,
     [
-      `Indicação fora da faixa aceitável, ou o cliente pediu ajuste? Ajuste com os meios do cliente e marque abaixo. `,
-      { text: `Depois, refaça as cargas do passo ${indicacao} nas colunas “depois do ajuste”`, bold: true },
-      ' (e o retorno ao zero) antes da repetibilidade.',
+      'Fora da faixa aceitável ou a pedido do cliente: ajuste e ',
+      { text: `refaça as cargas do passo ${indicacao} nas colunas “depois do ajuste”`, bold: true },
+      '.',
     ],
-    [ajuste, reparo],
+    [grid],
   )
 }
 
@@ -1543,9 +1529,10 @@ function blocoRepetibilidade(ctx: Contexto, r: PlanoFolha['repetibilidade'][numb
   const uc = unidadeColuna(ctx)
   const n = r ? r.leituras : 5
   const minimo = r ? r.minimo : 5
-  // Carga de 100 kg ou mais (mínimo 3): 6 linhas bastam; nas menores, 10 (com 10 leituras, k = 2)
-  const total = Math.max(minimo === 3 ? 6 : 10, n % 2 ? n + 1 : n)
-  const metade = Math.ceil(total / 2)
+  // Três blocos lado a lado. Carga de 100 kg ou mais (mínimo 3): 6 linhas bastam; nas menores, 12 (com 10
+  // leituras ou mais, k = 2)
+  const total = Math.max(minimo === 3 ? 6 : 12, Math.ceil(n / 3) * 3)
+  const terco = total / 3
   const linhasDe = (de: number, ate: number): CelulaTabela[][] =>
     Array.from({ length: ate - de }, (_, i) => [nro(String(de + i + 1)), livre(), livre()])
   const colunas: Coluna[] = [
@@ -1558,10 +1545,10 @@ function blocoRepetibilidade(ctx: Contexto, r: PlanoFolha['repetibilidade'][numb
     [
       [
         comCarga
-          ? previsto(`Carga aplicada (${u})`, { text: numeroBr(r!.carga), bold: true })
+          ? previsto(`Carga aplicada (${u})`, { text: cargaNaDivisao(ctx, r!.carga), bold: true })
           : escrever(`Carga aplicada${u ? ` (${u})` : ''}`, { dica: 'cerca de Max/2' }),
         comCarga
-          ? previsto('Pesos previstos (não precisa ser padrão: uma peça só é o ideal)', r!.pesos || '—', { span: 2 })
+          ? previsto('Pesos previstos (não precisa ser padrão: uma peça só é o ideal)', semQuebra(r!.pesos) || '—', { span: 2 })
           : escrever('Pesos ou carga usada', { span: 2 }),
         escrever('Hora', { formato: '____:____' }),
       ],
@@ -1573,11 +1560,11 @@ function blocoRepetibilidade(ctx: Contexto, r: PlanoFolha['repetibilidade'][numb
     ...(titulo ? [subtitulo(titulo, [0, 2, 0, 3])] : []),
     cabeca,
     {
-      columns: [
-        { width: '*', stack: [tabelaLeituras(colunas, linhasDe(0, metade))] },
-        { width: '*', stack: [tabelaLeituras(colunas, linhasDe(metade, total))] },
-      ],
-      columnGap: 10,
+      columns: [0, 1, 2].map((i) => ({
+        width: '*',
+        stack: [tabelaLeituras(colunas, linhasDe(i * terco, (i + 1) * terco))],
+      })),
+      columnGap: 8,
       margin: [0, 5, 0, 0],
     },
     nota(
@@ -1618,14 +1605,19 @@ function passoRepetibilidade(ctx: Contexto, n: number): No[] {
 
 // ---- 8. Excentricidade ------------------------------------------------------------------------------------------
 
-function opcoesMetodoEcc(previsto: MetodoExcentricidade | null): NoObjeto {
-  return opcoes(
-    ([1, 2, 3, 4] as const).map((m) => ({
-      rotulo: { text: [{ text: `${m}. `, bold: true }, METODOS_EXCENTRICIDADE[m]] },
-      prevista: previsto === m,
-    })),
-    { vertical: true, tamanho: 7.2 },
-  )
+function opcoesMetodoEcc(previsto: MetodoExcentricidade | null, colunas = 1): NoObjeto {
+  const op = (m: MetodoExcentricidade): Opcao => ({
+    rotulo: { text: [{ text: `${m}. `, bold: true }, METODOS_EXCENTRICIDADE[m]] },
+    prevista: previsto === m,
+  })
+  if (colunas === 1) return opcoes(([1, 2, 3, 4] as const).map(op), { vertical: true, tamanho: 7.2 })
+  return {
+    columns: [
+      { width: '*', ...opcoes([op(1), op(2)], { vertical: true, tamanho: 7.2 }) },
+      { width: '*', ...opcoes([op(3), op(4)], { vertical: true, tamanho: 7.2 }) },
+    ],
+    columnGap: 10,
+  }
 }
 
 function passoExcentricidade(ctx: Contexto, n: number): No[] {
@@ -1650,14 +1642,16 @@ function passoExcentricidade(ctx: Contexto, n: number): No[] {
   const diagrama = diagramaExcentricidade(b ? receptor : 'RETANGULAR', rotulos, -1, b?.apoios ?? 4, {
     frente: 'FRENTE · INDICADOR',
   })
-  const larguraEsquerda = receptor === 'RODOVIARIA' ? 186 : 176
-  const larguraDiagrama = receptor === 'RODOVIARIA' ? 186 : receptor === 'APOIOS' || receptor === 'TANQUE' ? 168 : 150
+  // Rodoviária: o desenho comprido ocupa a largura de cima e a tabela vem embaixo, em largura total
+  const larga = receptor === 'RODOVIARIA'
+  const larguraEsquerda = larga ? 250 : 176
+  const larguraDiagrama = larga ? 250 : receptor === 'APOIOS' || receptor === 'TANQUE' ? 168 : 100
   const tabela = tabelaLeituras(
     [
       { titulo: 'Nº', largura: 16, alinhamento: 'center' },
-      { titulo: 'Posição', largura: '*' },
-      { titulo: 'Zero ou centro antes', unidade: `${uc} · métodos 3 e 4`, largura: 84 },
-      { titulo: 'Indicação', unidade: uc, largura: 84 },
+      { titulo: 'Posição', largura: larga ? 160 : '*' },
+      { titulo: 'Zero ou centro antes', unidade: `${uc} · métodos 3 e 4`, largura: larga ? '*' : 84 },
+      { titulo: 'Indicação', unidade: uc, largura: larga ? '*' : 84 },
     ],
     [
       ...rotulos.map((r, i): CelulaTabela[] => [nro(String(i + 1)), pre(r), livre(), livre()]),
@@ -1671,9 +1665,11 @@ function passoExcentricidade(ctx: Contexto, n: number): No[] {
     [
       [
         comCarga
-          ? previsto(`Carga usada (${u})`, { text: numeroBr(ecc!.carga), bold: true })
+          ? previsto(`Carga usada (${u})`, { text: cargaNaDivisao(ctx, ecc!.carga), bold: true })
           : escrever(`Carga usada${u ? ` (${u})` : ''}`, { dica: 'Max/3 até 500 kg · Max/5 até 3 t · Max/10 acima' }),
-        comCarga ? previsto('Pesos previstos', ecc!.pesos || '—', { span: 2 }) : escrever('Pesos ou carga usada', { span: 2 }),
+        comCarga
+          ? previsto('Pesos previstos', semQuebra(ecc!.pesos) || '—', { span: 2 })
+          : escrever('Pesos ou carga usada', { span: 2 }),
         escrever('Hora', { formato: '____:____' }),
       ],
       ...(comCarga ? [[corrigir(1), escrever('Se usou outra carga, descreva', { span: 3, altura: 16 })]] : []),
@@ -1686,30 +1682,42 @@ function passoExcentricidade(ctx: Contexto, n: number): No[] {
     ' (nº do desenho = nº da linha). Frente = lado do indicador.',
   ]
   const metodo = ecc ? ecc.metodo : null
-  return passo(n, 'Excentricidade', E.excentricidade, texto, [
-    cabeca,
+  const desenho: No = diagrama
+    ? {
+        svg: diagrama.svg,
+        width: larguraDiagrama,
+        height: (larguraDiagrama * diagrama.altura) / diagrama.largura,
+        margin: [(larguraEsquerda - larguraDiagrama) / 2, 0, 0, 0],
+      }
+    : { text: 'Desenhe as posições aqui', fontSize: 7, color: T.suave, margin: [0, 30, 0, 30] }
+  const comoFoi = (colunas: number): No[] => [
     {
-      columns: [
+      text: [rotulo('Como foi feito'), { text: '  · 2 e 4: sem zero automático', fontSize: 6.2, color: T.suave }],
+      margin: [0, larga ? 2 : 4, 0, 3],
+    },
+    opcoesMetodoEcc(metodo, colunas),
+  ]
+  const corpo: No[] = larga
+    ? [
         {
-          width: larguraEsquerda,
-          margin: [0, 5, 12, 0],
-          stack: [
-            diagrama
-              ? {
-                  svg: diagrama.svg,
-                  width: larguraDiagrama,
-                  height: (larguraDiagrama * diagrama.altura) / diagrama.largura,
-                  margin: [(larguraEsquerda - larguraDiagrama) / 2, 0, 0, 0],
-                }
-              : { text: 'Desenhe as posições aqui', fontSize: 7, color: T.suave, margin: [0, 30, 0, 30] },
-            rotulo('Como foi feito', { margin: [0, 5, 0, 3] }),
-            opcoesMetodoEcc(metodo),
-            nota('Nos métodos 2 e 4, desligue o zero automático.', [0, 3, 0, 0]),
+          columns: [
+            { width: larguraEsquerda, margin: [0, 5, 16, 0], stack: [desenho] },
+            { width: '*', margin: [0, 5, 0, 0], stack: comoFoi(1) },
           ],
         },
-        { width: '*', stack: [tabela], margin: [0, 5, 0, 0] },
-      ],
-    },
+        { ...tabela, margin: [0, 5, 0, 0] },
+      ]
+    : [
+        {
+          columns: [
+            { width: larguraEsquerda, margin: [0, 5, 12, 0], stack: [desenho, ...comoFoi(1)] },
+            { width: '*', stack: [tabela], margin: [0, 5, 0, 0] },
+          ],
+        },
+      ]
+  return passo(n, 'Excentricidade', E.excentricidade, texto, [
+    cabeca,
+    ...corpo,
     ...(b
       ? []
       : [
@@ -1726,50 +1734,78 @@ function passoExcentricidade(ctx: Contexto, n: number): No[] {
 function passoEncerramento(ctx: Contexto, n: number): No[] {
   const { k, u } = ctx
   const c = k?.conformidade
-  const conformidade: Celula = c?.solicitada
-    ? previsto(
-        'Declaração de conformidade (o cliente pediu)',
-        {
-          text: [
-            { text: CRITERIOS_EMA[c.criterio].label, bold: true },
-            c.criterio === 'CLIENTE' ? ` · ±${numeroBr(c.toleranciaCliente)} ${u}` : '',
-            ` · ${REGRAS_DECISAO[c.regra].label}`,
-          ],
-        },
-        { span: 2 },
-      )
-    : marcar(
-        'O cliente pediu declaração de conformidade?',
-        [{ rotulo: 'não', prevista: !!k }, { rotulo: 'sim — limite: _____________________ (tolerância do cliente ± ______)' }],
-        { span: 2 },
-      )
-  const proximaPrevista = !!k?.proximaNoCertificado && !!k.proximaCalibracao
-  const proxima: Celula = proximaPrevista
-    ? previsto('Próxima calibração no certificado (*)', formatarDataBr(k!.proximaCalibracao))
-    : marcar('Próxima calibração no certificado (*)', [{ rotulo: 'não', prevista: !!k }, { rotulo: 'sim: ___/___/_____' }])
-  // Só o que veio do sistema ganha a linha "confere / se diferente"; as perguntas em aberto ocupam as duas
-  const conformidadePrevista = !!c?.solicitada
-  const algumPrevisto = conformidadePrevista || proximaPrevista
-  const duas = (cel: Celula, previstaCel: boolean): Celula => ({ ...cel, linhas: algumPrevisto && !previstaCel ? 2 : 1 })
-  const perguntas = grade(
+  const pediu = !!c?.solicitada
+  // Declaração de conformidade com os mesmos campos da tela (Conclusão): o cliente pediu? limite,
+  // tolerância do cliente e regra de decisão. O que veio do sistema ganha "confere ou, se diferente".
+  const perguntaConformidade = marcar(
+    'O cliente pediu declaração de conformidade?',
     [
-      [duas(conformidade, conformidadePrevista), duas(proxima, proximaPrevista)],
-      ...(algumPrevisto ? [[...(conformidadePrevista ? [corrigir(2)] : []), ...(proximaPrevista ? [corrigir(1)] : [])]] : []),
+      { rotulo: 'não', prevista: !!k && !pediu },
+      { rotulo: 'sim', prevista: pediu },
     ],
-    ['*', '*', 150],
+    { tamanho: 7.6 },
   )
+  const conformidade: Celula[][] =
+    pediu && c
+      ? [
+          [
+            { ...perguntaConformidade, linhas: 2 },
+            previsto('Limite (erro máximo admissível)', { text: CRITERIOS_EMA[c.criterio].label, bold: true }, {
+              span: c.criterio === 'CLIENTE' ? 1 : 2,
+            }),
+            ...(c.criterio === 'CLIENTE' ? [previsto('Tolerância do cliente (±)', `${numeroBr(c.toleranciaCliente)} ${u}`)] : []),
+            previsto('Regra de decisão', REGRAS_DECISAO[c.regra].label),
+          ],
+          [corrigir(c.criterio === 'CLIENTE' ? 1 : 2), ...(c.criterio === 'CLIENTE' ? [corrigir()] : []), corrigir()],
+        ]
+      : [
+          [
+            perguntaConformidade,
+            escrever('Limite (erro máximo admissível)', { altura: 25 }),
+            escrever(`Tolerância do cliente (±)${u ? ` (${u})` : ''}`, { altura: 25 }),
+            marcar(
+              'Regra de decisão',
+              [{ rotulo: 'banda de guarda' }, { rotulo: 'aceitação simples' }],
+              { tamanho: 7.4, espaco: 8 },
+            ),
+          ],
+        ]
+  const dataPrevista = !!k?.proximaCalibracao
+  const noCertificado = !!k?.proximaNoCertificado
+  const proxima: Celula[][] = [
+    [
+      dataPrevista
+        ? previsto('Próxima calibração (data)', formatarDataBr(k!.proximaCalibracao))
+        : escrever('Próxima calibração (data)', { formato: '____/____/________', altura: 25 }),
+      {
+        ...marcar(
+          'O cliente pediu a data no certificado? (*)',
+          [
+            { rotulo: 'não: fica só como lembrete interno', prevista: !!k && !noCertificado },
+            { rotulo: 'sim: a data sai no certificado', prevista: noCertificado },
+          ],
+          { span: 3, tamanho: 7.6, espaco: 14 },
+        ),
+        linhas: dataPrevista ? 2 : 1,
+      },
+    ],
+    ...(dataPrevista ? [[corrigir()]] : []),
+  ]
   return passo(
     n,
     'Encerramento: ambiente no fim e conclusão',
     e2(E.padroes, E.conclusao),
-    'Terminadas as leituras, meça o ambiente de novo, no mesmo lugar e com o mesmo instrumento. Depois, confirme com o cliente o que deve sair no certificado.',
-    [...tabelaAmbiente(ctx, 'Fim'), { ...perguntas, margin: [0, 6, 0, 0] }],
+    'Terminadas as leituras, meça o ambiente de novo, no mesmo lugar e com o mesmo instrumento. Depois, confirme com o cliente o que sai no certificado.',
+    [
+      ...tabelaAmbiente(ctx, 'Fim'),
+      { ...grade([...conformidade, ...proxima], ['*', '*', '*', 150]), margin: [0, 6, 0, 0] },
+    ],
     [
       {
         stack: [
           {
             ...linhasGuia(
-              4,
+              3,
               'Observações (saem no certificado)',
               'itens “Não” da verificação, ΔT acima de 5 °C, faixa ou carga diferentes do previsto, ensaio não feito e o motivo',
             ),
@@ -1781,16 +1817,8 @@ function passoEncerramento(ctx: Contexto, n: number): No[] {
         stack: [
           {
             columns: [
-              { width: '*', ...linhasGuia(2, 'Opiniões e interpretações (opcional)', 'recomendações ao cliente') },
-              {
-                width: '*',
-                ...linhasGuia(
-                  2,
-                  'Anotações internas',
-                  'não saem no certificado',
-                  vazio(k?.anotacoesInternas) ? '' : k!.anotacoesInternas.trim(),
-                ),
-              },
+              { width: '*', ...linhasGuia(1, 'Opiniões e interpretações (opcional)', 'recomendações ao cliente') },
+              { width: '*', ...linhasGuia(1, 'Anotações internas', 'não saem no certificado') },
             ],
             columnGap: 8,
             margin: [0, 5, 0, 0],
@@ -1801,6 +1829,7 @@ function passoEncerramento(ctx: Contexto, n: number): No[] {
   )
 }
 
+
 // ---- 11. Assinaturas e escritório ---------------------------------------------------------------------------
 
 function passoAssinaturas(ctx: Contexto, n: number): No[] {
@@ -1809,15 +1838,15 @@ function passoAssinaturas(ctx: Contexto, n: number): No[] {
     [
       [
         tecnico ? previsto('Técnico que executou', tecnico) : escrever('Técnico que executou (nome)'),
-        escrever('Assinatura', { altura: 32 }),
-        escrever('Data', { formato: '___/___/_____' }),
-        escrever('Hora de término', { formato: '____:____' }),
+        escrever('Assinatura', { altura: 28 }),
+        escrever('Data', { formato: '___/___/_____', altura: 28 }),
+        escrever('Hora de término', { formato: '____:____', altura: 28 }),
       ],
       [
-        escrever('Acompanhado pelo cliente (nome e função)', { altura: 32 }),
-        escrever('Assinatura', { altura: 32, dica: 'ciente das condições e acordos desta folha (não dos resultados)' }),
-        escrever('Data', { formato: '___/___/_____' }),
-        { no: { text: '' }, altura: 32, span: 1 },
+        escrever('Acompanhado pelo cliente (nome e função)', { altura: 28 }),
+        escrever('Assinatura', { altura: 28, dica: 'ciente das condições e acordos desta folha (não dos resultados)' }),
+        escrever('Data', { formato: '___/___/_____', altura: 28 }),
+        { no: { text: '' }, altura: 28, span: 1 },
       ],
     ],
     [150, '*', 80, 70],
@@ -1848,6 +1877,26 @@ function passoAssinaturas(ctx: Contexto, n: number): No[] {
           { stack: [rotulo('Conferido com a folha por')] },
           { stack: [rotulo('Em'), { text: '___/___/_____', fontSize: 7.2, color: T.suave, margin: [0, 8, 0, 0] }] },
           { stack: [rotulo('Certificado nº (preenchido no escritório)')] },
+        ],
+        [
+          {
+            colSpan: 5,
+            text: [
+              { text: 'PARA DIGITAR, NA ORDEM DO SISTEMA  ', font: 'InterMedio', fontSize: 5.9, characterSpacing: 0.3 },
+              ...ROTEIRO_DIGITACAO.flatMap((r, i) => [
+                ...(i ? [{ text: '  ·  ', color: T.linha }] : []),
+                { text: r.etapa, bold: true },
+                ` ← ${r.passos.includes(' ') ? 'passos' : 'passo'} ${r.passos}`,
+              ]),
+            ],
+            fontSize: 6.4,
+            lineHeight: 1.25,
+            color: T.instrucao,
+          },
+          {},
+          {},
+          {},
+          {},
         ],
         [
           {
@@ -1995,8 +2044,13 @@ function cabecalho(ctx: Contexto) {
   })
 }
 
-function rodape() {
+function rodape(ctx: Contexto) {
   const f = FORMULARIO_FOLHA_CAMPO
+  const { impresso, d } = ctx
+  const quem = [
+    impresso ? `Impressa em ${impresso.data}, às ${impresso.hora}` : 'Impressa',
+    vazio(d.impressoPor) ? '' : ` por ${d.impressoPor.trim()}`,
+  ].join('')
   return (): NoObjeto => ({
     margin: [MARGEM_X, BASE_RODAPE - 22 - (A4.altura - MARGEM_BASE), MARGEM_X, 0],
     columns: [
@@ -2006,10 +2060,10 @@ function rodape() {
           {
             text: [
               { text: `${f.codigo} rev. ${f.revisao}`, bold: true, color: TIMBRADO.texto },
-              ' · Folha de campo — registro de dados brutos (ISO/IEC 17025, 7.5) · não é certificado de calibração',
+              ' · registro de dados brutos (ISO/IEC 17025, 7.5) · não é certificado de calibração',
             ],
           },
-          { text: `Guarde o original (ou a cópia digitalizada) com a OS · ref. ${f.referencia}` },
+          { text: `${quem} · guarde o original com a OS` },
         ],
         fontSize: 6.2,
         lineHeight: 1.25,
@@ -2037,20 +2091,8 @@ function rodape() {
 export function definicaoFolhaCampo(d: DadosFolhaCampo): NoObjeto {
   const ctx = contexto(d)
   // Números dos passos (as instruções citam uns aos outros)
-  const N = {
-    padroes: 1,
-    chegada: 2,
-    balanca: 3,
-    verificacao: 4,
-    indicacao: 5,
-    ajuste: 6,
-    repetibilidade: 7,
-    excentricidade: 8,
-    encerramento: 9,
-    assinaturas: 10,
-  }
   const conteudo: No[] = [
-    ...introducao(ctx),
+    ...introducao(),
     ...passoPadroes(ctx, N.padroes),
     ...passoChegada(ctx, N.chegada),
     ...passoBalanca(ctx, N.balanca),
@@ -2082,14 +2124,14 @@ export function definicaoFolhaCampo(d: DadosFolhaCampo): NoObjeto {
       ]
         .filter(Boolean)
         .join(' — '),
-      keywords: `folha de campo; ${d.numero}`,
+      keywords: `folha de campo; ${d.numero}; ${FORMULARIO_FOLHA_CAMPO.codigo}; ${FORMULARIO_FOLHA_CAMPO.referencia}`,
       creator: 'BC Calibração',
       producer: 'BC Calibração',
       creationDate: quando,
       modDate: quando,
     },
     header: cabecalho(ctx),
-    footer: rodape(),
+    footer: rodape(ctx),
     background: fundoTimbrado(MARGEM_X, LARGURA),
     content: conteudo,
     defaultStyle: { font: 'Inter', fontSize: 8.4, lineHeight: 1.15, color: T.texto },
