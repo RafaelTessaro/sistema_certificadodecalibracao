@@ -4,7 +4,7 @@
 // as mesmas sugestões do assistente ("Sugerir pontos", "Começar com a carga sugerida", "Preparar
 // posições"): as linhas do papel batem com as da tela na hora de digitar. Puro (navegador e servidor).
 
-import { cargaDasPecas, descreverPecas, montarCarga } from './calibracao.ts'
+import { cargaDaEtapa, cargaDasPecas, descreverPecas, diferencaDoPonto, montarCarga, montarPonto } from './calibracao.ts'
 import { converterMassa, numeroBr, situacaoValidade, type SituacaoValidade } from './dominio.ts'
 import {
   cargaExcentricidade,
@@ -19,6 +19,7 @@ import type {
   Balanca,
   CalibracaoInput,
   Conformidade,
+  CriterioEma,
   MetodoCarregamento,
   MetodoExcentricidade,
   Padrao,
@@ -48,11 +49,31 @@ export interface PontoPlanejado extends CargaPlanejada {
   /** Divisão e divisão de verificação na carga (multi-intervalo: as do intervalo parcial). */
   d: number
   e: number
-  /** EMA na carga (só quando o cliente pediu a declaração de conformidade e há classe/tolerância). */
+  /** EMA na carga, pelo critério de `PlanoFolha.faixaAceitavel` (null sem classe nem tolerância). */
   ema: number | null
   /** Substituições por baixo dos pesos (rodoviárias); 0 = só pesos padrão. */
   nivelSubstituicao: number
+  /**
+   * Com substituição: as etapas por baixo e os pesos por cima passam da carga do ponto (nível alto demais
+   * ou peças escolhidas à mão a mais), na unidade da balança; 0 = não passam (o que falta vai em `falta`).
+   */
+  excesso: number
 }
+
+/**
+ * Critério da coluna "faixa aceitável" (carga ± EMA), só para decidir o ajuste no local: o da declaração de
+ * conformidade, quando o cliente pediu; sem pedido, o EMA em serviço da Portaria 157 (o critério padrão do
+ * sistema), quando a balança tem classe.
+ */
+export interface FaixaAceitavel {
+  criterio: CriterioEma
+  toleranciaCliente: number
+  /** Veio da declaração de conformidade pedida pelo cliente (senão, é só a referência para o ajuste). */
+  daConformidade: boolean
+}
+
+/** Critério de decisão do ajuste quando o cliente não pediu declaração de conformidade. */
+export const CRITERIO_AJUSTE: Exclude<CriterioEma, 'CLIENTE'> = 'PORTARIA_SERVICO'
 
 export interface PadraoPlanejado {
   padrao: Padrao
@@ -70,8 +91,10 @@ export interface PlanoFolha {
   max: number
   metodo: MetodoCarregamento
   pontos: PontoPlanejado[]
-  /** Conformidade pedida pelo cliente (para imprimir a EMA), ou null. */
+  /** Conformidade pedida pelo cliente, ou null. */
   conformidade: Conformidade | null
+  /** Critério da faixa aceitável dos pontos (null: sem classe e sem conformidade pedida, não há EMA). */
+  faixaAceitavel: FaixaAceitavel | null
   repetibilidade: Array<CargaPlanejada & { leituras: number; minimo: number }>
   excentricidade: {
     aplicavel: boolean
@@ -81,7 +104,10 @@ export interface PlanoFolha {
   } & CargaPlanejada
   substituicao: { ativa: boolean; etapas: number } & CargaPlanejada
   padroes: PadraoPlanejado[]
-  /** Avisos para resolver antes de sair (padrão vencido, pesos que não fecham a carga…). */
+  /**
+   * Avisos para resolver antes de sair (padrão vencido, pesos que não fecham a carga dos pontos, da
+   * repetibilidade ou da excentricidade…).
+   */
   avisos: string[]
 }
 
@@ -95,6 +121,21 @@ export function padroesPrevistos(calibracao: Pick<CalibracaoInput, 'padroesIds'>
     return ids.map((id) => porId.get(id)).filter((p): p is Padrao => !!p)
   }
   return padroes.filter((p) => p.ativo && p.tipo !== 'OUTRO')
+}
+
+/**
+ * Validade de cada padrão na data prevista e os avisos dos vencidos: vale com plano (balança cadastrada),
+ * na folha só do cliente e na em branco (a data é a da visita ou, sem ela, a da impressão).
+ */
+export function validadeDosPadroes(
+  padroes: Padrao[],
+  data: string,
+): { itens: Array<{ padrao: Padrao; situacao: SituacaoValidade }>; avisos: string[] } {
+  const itens = padroes.map((padrao) => ({ padrao, situacao: situacaoValidade(padrao.validade, data) }))
+  const avisos = itens
+    .filter((x) => x.situacao === 'VENCIDO')
+    .map((x) => `${x.padrao.identificacao}: calibração vencida em ${x.padrao.validade.split('-').reverse().join('/')}.`)
+  return { itens, avisos }
 }
 
 function cargaPlanejada(carga: number, unidade: Unidade, pesos: Padrao[], pecas?: PecaCarga[]): CargaPlanejada {
@@ -124,6 +165,11 @@ export function planoDaFolha(
   const previstos = padroesPrevistos(calibracao, padroes)
   const pesos = previstos.filter((p) => p.tipo === 'PESOS' && p.ativo)
   const conformidade = calibracao?.conformidade.solicitada ? calibracao.conformidade : null
+  const faixaAceitavel: FaixaAceitavel | null = conformidade
+    ? { criterio: conformidade.criterio, toleranciaCliente: conformidade.toleranciaCliente, daConformidade: true }
+    : balanca.classe
+      ? { criterio: CRITERIO_AJUSTE, toleranciaCliente: 0, daConformidade: false }
+      : null
   const avisos: string[] = []
 
   // ---- Erro de indicação
@@ -131,21 +177,30 @@ export function planoDaFolha(
   const doRascunho = !!ensaio?.pontos.length
   const sub = ensaio?.substituicao
   const substituicaoAtiva = !!sub?.ativa
-  const cargaEtapa = substituicaoAtiva ? cargaDasPecas(sub!.pecas, pesos, u) : 0
+  const cargaEtapa = ensaio ? cargaDaEtapa(ensaio, pesos, u) : 0
   const pontosBase = doRascunho
     ? ensaio!.pontos.map((p) => ({ carga: p.carga, pecas: p.pecasManuais ? p.pecas : undefined, nivel: p.nivelSubstituicao }))
     : sugerirPontos(balanca).map((carga) => ({ carga, pecas: undefined as PecaCarga[] | undefined, nivel: 0 }))
   const pontos: PontoPlanejado[] = pontosBase.map((p) => {
     const faixa = faixas.length ? faixaDoValor(p.carga, balanca) : { d: 0, e: 0 }
     const nivel = substituicaoAtiva && cargaEtapa > 0 ? p.nivel : 0
-    const base = cargaPlanejada(p.carga, u, pesos, p.pecas)
-    // Com substituição, a carga do ponto é nível × carga da etapa + os pesos por cima (como no cálculo)
-    const falta =
-      nivel > 0
-        ? Math.max(0, Number((p.carga - nivel * cargaEtapa - cargaDasPecas(base.pecas, pesos, u)).toPrecision(12)))
-        : base.falta
-    const ema = conformidade ? emaInstrumento(p.carga, balanca, conformidade.criterio, conformidade.toleranciaCliente) : null
-    return { ...base, falta, d: faixa.d, e: faixa.e, ema, nivelSubstituicao: nivel }
+    // Com substituição, a carga do ponto é nível × carga da etapa + os pesos por cima (como no cálculo): as
+    // peças automáticas completam só o resto (como o editor monta, `montagemDoPonto`)
+    const pecas = p.pecas ?? montarPonto(p.carga, nivel, cargaEtapa, u, pesos).pecas
+    const base = cargaPlanejada(p.carga, u, pesos, p.carga > 0 ? pecas : undefined)
+    const diferenca = p.carga > 0 ? diferencaDoPonto(p.carga, nivel * cargaEtapa, cargaDasPecas(pecas, pesos, u)) : 0
+    const ema = faixaAceitavel
+      ? emaInstrumento(p.carga, balanca, faixaAceitavel.criterio, faixaAceitavel.toleranciaCliente)
+      : null
+    return {
+      ...base,
+      falta: diferenca < 0 ? -diferenca : 0,
+      excesso: nivel > 0 && diferenca > 0 ? diferenca : 0,
+      d: faixa.d,
+      e: faixa.e,
+      ema,
+      nivelSubstituicao: nivel,
+    }
   })
   const semFechar = pontos.filter((p) => p.falta > 0)
   if (semFechar.length && pesos.length)
@@ -153,6 +208,11 @@ export function planoDaFolha(
       `Os pesos previstos não fecham ${semFechar.length === 1 ? 'a carga' : 'as cargas'} de ${semFechar
         .map((p) => `${numeroBr(p.carga)} ${u}`)
         .join(', ')}: leve mais pesos ou use cargas de substituição.`,
+    )
+  // Etapas por baixo que, com os pesos por cima, passam da carga do ponto: o cálculo usaria a soma
+  for (const p of pontos.filter((x) => x.excesso > 0))
+    avisos.push(
+      `Ponto de ${numeroBr(p.carga)} ${u}: ${p.nivelSubstituicao} ${p.nivelSubstituicao === 1 ? 'substituição' : 'substituições'} de ${numeroBr(cargaEtapa)} ${u}${p.pecas.length ? ' e os pesos por cima' : ''} somam ${numeroBr(Number((p.carga + p.excesso).toPrecision(12)))} ${u}; acerte o nível ou a carga no sistema.`,
     )
   // O certificado só cobre a faixa ensaiada: pontos parando bem antes de Max precisam ser combinados
   const maiorCarga = Math.max(0, ...pontos.map((p) => p.carga))
@@ -191,6 +251,22 @@ export function planoDaFolha(
     ...cargaPlanejada(aplicavel ? ecc?.carga || cargaExcentricidade(max, u) : 0, u, pesos),
   }
 
+  // Repetibilidade e excentricidade com pesos que não fecham a carga: o técnico conferiria a carga
+  // prevista aplicando menos (e a da excentricidade entra no cálculo)
+  const faltaTexto = (c: CargaPlanejada) => `${numeroBr(c.carga)} ${u} (faltam ${numeroBr(c.falta)} ${u})`
+  if (pesos.length) {
+    repetibilidade.forEach((r, i) => {
+      if (r.falta > 0)
+        avisos.push(
+          `Repetibilidade${repetibilidade.length > 1 ? ` (ensaio ${i + 1})` : ''}: os pesos previstos não fecham ${faltaTexto(r)}; complete com outra peça (não precisa ser padrão) ou mude a carga no sistema.`,
+        )
+    })
+    if (excentricidade.falta > 0)
+      avisos.push(
+        `Excentricidade: os pesos previstos não fecham ${faltaTexto(excentricidade)}; leve mais pesos ou mude a carga no sistema.`,
+      )
+  }
+
   // ---- Substituição
   const maiorNivel = Math.max(0, ...pontos.map((p) => p.nivelSubstituicao))
   const substituicao = {
@@ -203,10 +279,9 @@ export function planoDaFolha(
   const usadas = new Map<string, PecaCarga>()
   for (const c of [...pontos, ...repetibilidade, excentricidade, substituicao])
     for (const x of c.pecas) usadas.set(`${x.padraoId}:${x.pesoId}`, x)
-  const padroesPlano = previstos.map((p): PadraoPlanejado => {
-    const situacao = situacaoValidade(p.validade, dataPrevista)
-    if (situacao === 'VENCIDO')
-      avisos.push(`${p.identificacao}: calibração vencida em ${p.validade.split('-').reverse().join('/')}.`)
+  const validades = validadeDosPadroes(previstos, dataPrevista)
+  avisos.push(...validades.avisos)
+  const padroesPlano = validades.itens.map(({ padrao: p, situacao }): PadraoPlanejado => {
     const pecas = [...usadas.values()].filter((x) => x.padraoId === p.id)
     return { padrao: p, situacao, separar: p.tipo === 'PESOS' ? descreverPecas(pecas, [p]) : '' }
   })
@@ -219,6 +294,7 @@ export function planoDaFolha(
     metodo: ensaio?.metodo ?? 'CRESCENTE_DECRESCENTE',
     pontos,
     conformidade,
+    faixaAceitavel,
     repetibilidade,
     excentricidade,
     substituicao,

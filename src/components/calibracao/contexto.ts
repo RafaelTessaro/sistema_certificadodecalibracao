@@ -1,5 +1,13 @@
 import type { ResultadoCalculo } from '#shared/metrologia/tipos.ts'
-import type { Balanca, CalibracaoInput, Cliente, Configuracoes, Padrao, StatusCalibracao } from '#shared/tipos.ts'
+import type {
+  Balanca,
+  CalibracaoInput,
+  Cliente,
+  Configuracoes,
+  FolhaCampoImpressa,
+  Padrao,
+  StatusCalibracao,
+} from '#shared/tipos.ts'
 import type { MembroEquipe } from '../../lib/api'
 
 /** Tudo o que as etapas da calibração precisam para mostrar e alterar os dados. */
@@ -19,6 +27,12 @@ export interface ContextoEtapa {
   status: StatusCalibracao
   /** Reabre o cadastro da balança (para corrigir Max, d, classe… sem sair da calibração). */
   editarBalanca: () => void
+  /** Folha de campo da calibração (impressa por ela ou avulsa e ligada), ou null. */
+  folhaCampo: FolhaCampoImpressa | null
+  /** Liga à calibração a folha avulsa preenchida no cliente, pelo nº; true se ligou. */
+  vincularFolha: (numero: string) => Promise<boolean>
+  /** Imprime uma folha nova (nº novo, plano atual) no lugar da que a calibração tem (pede confirmação). */
+  novaFolha: () => void
 }
 
 export type IdEtapa =

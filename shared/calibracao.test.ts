@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cargaDasPecas, entradaDoCalculo, montarCarga } from './calibracao.ts'
+import { cargaDasPecas, entradaDoCalculo, montarCarga, montarPonto } from './calibracao.ts'
 import { BALANCA_VAZIA, calibracaoVazia, PADRAO_VAZIO } from './dominio.ts'
 import type { Balanca, EnsaioIndicacao, Padrao } from './tipos.ts'
 
@@ -39,6 +39,20 @@ describe('cargas', () => {
     expect(m.pecas).toHaveLength(4)
     expect(m.total).toBe(2000)
     expect(m.falta).toBe(200)
+  })
+
+  it('pesos de um ponto com substituição: só o que as etapas por baixo não cobrem; e quanto passa ou falta', () => {
+    // Etapa de 5 t (os 10 × 500 kg): 7,5 t com 1 etapa = 5 t por baixo + 5 × 500 kg por cima
+    const um = montarPonto(7500, 1, 5000, 'kg', [pesos])
+    expect(cargaDasPecas(um.pecas, [pesos], 'kg')).toBe(2500)
+    expect(um.diferenca).toBe(0)
+    // Sem substituição, os pesos fazem a carga inteira (e faltam 2,5 t)
+    const sem = montarPonto(7500, 0, 5000, 'kg', [pesos])
+    expect(cargaDasPecas(sem.pecas, [pesos], 'kg')).toBe(5000)
+    expect(sem.diferenca).toBe(-2500)
+    // 2 etapas (10 t) já passam da carga de 7,5 t: nenhum peso por cima, e passam 2,5 t
+    expect(montarPonto(7500, 2, 5000, 'kg', [pesos])).toEqual({ pecas: [], diferenca: 2500 })
+    expect(montarPonto(0, 1, 5000, 'kg', [pesos])).toEqual({ pecas: [], diferenca: 0 })
   })
 
   it('ponto com cargas de substituição: a carga é nível × etapa + os pesos por cima', () => {

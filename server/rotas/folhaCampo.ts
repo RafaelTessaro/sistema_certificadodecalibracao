@@ -1,11 +1,16 @@
 // Folha de campo em PDF (o roteiro impresso levado ao cliente e preenchido à caneta; ver
 // server/pdf/folhaCampo.ts):
-// - de uma calibração: com o plano do rascunho (pontos, cargas, padrões, OS…); a de um certificado já
-//   emitido é a reimpressão da folha planejada, com os cadastros congelados na emissão. Uma folha por
-//   calibração: a reimpressão mantém o nº;
+// - de uma calibração: com o plano do rascunho (pontos, cargas, padrões, OS…). Uma folha por calibração
+//   (numa revisão, a do certificado revisado); a de um certificado já emitido só existe se a calibração
+//   teve folha (um nº novo depois da emissão não seria o registro dela). `?nova=<chave>`: folha nova, com
+//   nº novo, para a calibração em andamento cujo plano mudou antes da visita;
 // - de uma balança (com o plano da última calibração dela, como o rascunho teria), só do cliente ou em
 //   branco, para uma balança ainda não cadastrada. Cada pedido reserva um nº; a mesma `chave` (que a tela
-//   gera a cada clique) devolve o mesmo nº, se o navegador pedir o PDF de novo.
+//   gera a cada clique) devolve o mesmo nº, se o navegador pedir o PDF de novo. Depois da visita, o nº do
+//   papel é ligado à calibração digitada (PUT .../folha-campo).
+// A reimpressão de um nº é sempre o PDF da primeira impressão, guardado no banco, byte a byte: dois papéis
+// com o mesmo nº controlado nunca têm conteúdo diferente (a folha avulsa ligada a uma calibração sai como
+// foi a campo, em branco; a de um certificado emitido, com o plano de antes da visita).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
@@ -20,6 +25,12 @@ import { type DadosFolhaCampo, gerarFolhaCampoPdf, nomeArquivoFolhaCampo } from 
 export function nomeArquivoDaFolha(os: string, numero: string): string {
   const t = os.trim()
   return nomeArquivoFolhaCampo(t ? (/^OS\b/i.test(t) ? t : `OS-${t}`) : numero)
+}
+
+/** "FC-2026-00042", "fc 2026 42", "2026-42" → "FC-2026-00042"; '' se não for um nº de folha. */
+export function numeroDaFolha(v: unknown): string {
+  const m = typeof v === 'string' ? /^\s*(?:FC[\s-]*)?(\d{4})[\s-]+(\d{1,5})\s*$/i.exec(v) : null
+  return m ? `FC-${m[1]}-${m[2].padStart(5, '0')}` : ''
 }
 
 /** Content-Disposition com o nome em ASCII (cabeçalho HTTP) e o original em UTF-8 (RFC 6266). */
@@ -54,6 +65,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       chave: string
       calibracao: CalibracaoInput | null
       calibracaoId?: string
+      nova?: boolean
       cliente: Cliente | null
       balanca: Balanca | null
       padroes: DadosFolhaCampo['padroes']
@@ -64,10 +76,13 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     const folha = repo.reservarFolhaCampo({
       chave: e.chave,
       calibracaoId: e.calibracaoId,
+      nova: e.nova,
       balancaId: e.balanca?.id,
       clienteId: e.cliente?.id,
       por: u.nome,
     })
+    // Reimpressão: o arquivo da primeira impressão
+    if (folha.pdf) return { pdf: folha.pdf, numero: folha.numero }
     const pdf = await gerarFolhaCampoPdf({
       numero: folha.numero,
       empresa: repo.obterConfig().empresa,
@@ -76,31 +91,59 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       calibracao: e.calibracao,
       padroes: e.padroes,
       tecnico: e.tecnico,
-      impressoEm: repo.agora().toISOString(),
-      impressoPor: u.nome,
+      // A data e quem imprimiu são os da reserva do nº (a primeira impressão)
+      impressoEm: folha.impressaEm,
+      impressoPor: folha.impressaPor || u.nome,
     })
-    return { pdf, numero: folha.numero }
+    return { pdf: repo.guardarPdfFolhaCampo(folha.numero, pdf), numero: folha.numero }
   }
 
-  /** Folha de uma calibração (rascunho, em revisão ou já emitida). */
+  /** Folha de uma calibração (rascunho, em revisão ou já emitida); `?nova=<chave>`: folha nova (nº novo). */
   app.get('/api/calibracoes/:id/folha-campo', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     const k: Calibracao | undefined = repo.obterCalibracao(req.params.id)
     if (!k) throw new ErroApi(404, 'Calibração não encontrada.')
+    const q = req.query as Record<string, unknown>
+    const nova = typeof q.nova === 'string' ? q.nova.trim() : ''
+    if (nova && !/^[A-Za-z0-9-]{8,64}$/.test(nova)) throw new ErroApi(400, 'Chave da folha inválida.')
+    if (nova && k.status !== 'RASCUNHO' && k.status !== 'REVISAO')
+      throw new ErroApi(409, 'Folha nova só para uma calibração em andamento (rascunho ou em revisão).')
+    // Certificado emitido, cancelado ou substituído sem folha: um nº reservado agora, depois da emissão,
+    // passaria por registro de dados brutos de uma calibração que não o usou (ISO/IEC 17025, 7.5)
+    if (k.status !== 'RASCUNHO' && k.status !== 'REVISAO' && !repo.folhaCampoDaCalibracao(k.id))
+      throw new ErroApi(
+        409,
+        'Esta calibração foi concluída sem folha de campo impressa pelo sistema: não há folha para reimprimir.',
+      )
     // Emitida: os cadastros como estavam na emissão (os mesmos do certificado)
     const cliente = k.emissao?.cliente ?? repo.obterCliente(k.clienteId) ?? null
     const balanca = k.emissao?.balanca ?? repo.obterBalanca(k.balancaId) ?? null
     const padroes = k.emissao?.padroes ?? padroesDa(ctx, k)
     const tecnico = k.emissao?.tecnico.nome ?? ctx.usuarios.obter(k.tecnicoId)?.nome ?? ''
     const { pdf, numero } = await gerar(req, {
-      chave: `calibracao:${k.id}`,
+      chave: nova ? `calibracao:${k.id}:${nova}` : `calibracao:${k.id}`,
       calibracao: entradaDe(k),
       calibracaoId: k.id,
+      nova: !!nova,
       cliente,
       balanca,
       padroes,
       tecnico,
     })
     return enviarPdf(reply, pdf, nomeArquivoDaFolha(k.ordemServico, numero), numero)
+  })
+
+  /**
+   * Liga à calibração em andamento a folha avulsa preenchida no cliente, pelo nº impresso nela
+   * ("FC-2026-00042"; aceita minúsculas, espaços e o nº sem os zeros à esquerda).
+   */
+  app.put('/api/calibracoes/:id/folha-campo', async (req: FastifyRequest<{ Params: { id: string } }>) => {
+    quem(req)
+    const k = repo.obterCalibracao(req.params.id)
+    if (!k) throw new ErroApi(404, 'Calibração não encontrada.')
+    const corpo = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>
+    const numero = numeroDaFolha(corpo.numero)
+    if (!numero) throw new ErroApi(400, 'Informe o nº da folha de campo como está no alto dela (ex.: FC-2026-00042).')
+    return { folhaCampo: repo.vincularFolhaCampo(numero, k) }
   })
 
   /**

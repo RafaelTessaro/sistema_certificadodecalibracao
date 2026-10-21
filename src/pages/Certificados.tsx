@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Download, FileBadge2, FilePlus2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, FileBadge2, FilePlus2, Printer } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { STATUS_CALIBRACAO } from '#shared/dominio.ts'
@@ -10,6 +10,7 @@ import { EmptyState, PageHeader, SearchInput, Segmented } from '../components/ui
 import { api } from '../lib/api'
 import { useConsulta } from '../lib/consulta'
 import { exportarCSV } from '../lib/csv'
+import { abrirFolhaCampo } from '../lib/folhaCampo'
 import { dataCurta, numero } from '../lib/format'
 import { EsqueletoTabela } from './Clientes'
 
@@ -87,6 +88,13 @@ export function Certificados() {
           <>
             <Button icone={<Download className="h-4 w-4" />} onClick={exportar} disabled={!itens.length}>
               Exportar
+            </Button>
+            <Button
+              icone={<Printer className="h-4 w-4" />}
+              onClick={() => void abrirFolhaCampo(api.urlFolhaCampoAvulsa())}
+              title="Folha de campo sem cliente nem balança, para preencher à mão (balança ainda não cadastrada)"
+            >
+              Folha em branco
             </Button>
             <Button variante="primary" icone={<FilePlus2 className="h-4 w-4" />} onClick={() => navegar('/calibracoes/nova')}>
               Nova calibração

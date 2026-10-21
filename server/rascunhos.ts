@@ -71,12 +71,9 @@ export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, 
   const base = calibracaoVazia(config.opcoesPadrao)
   const balancaId = typeof pedido.balancaId === 'string' ? pedido.balancaId : ''
   const balanca = balancaId ? repo.obterBalanca(balancaId) : undefined
-  const clienteId =
-    typeof pedido.clienteId === 'string' && pedido.clienteId ? pedido.clienteId : (balanca?.clienteId ?? '')
+  const clienteId = typeof pedido.clienteId === 'string' && pedido.clienteId ? pedido.clienteId : (balanca?.clienteId ?? '')
   const cliente = clienteId ? repo.obterCliente(clienteId) : undefined
-  const anterior = balanca
-    ? repo.listarCalibracoes({ balancaId: balanca.id, status: 'EMITIDO', limite: 1 }).itens[0]
-    : undefined
+  const anterior = balanca ? repo.listarCalibracoes({ balancaId: balanca.id, status: 'EMITIDO', limite: 1 }).itens[0] : undefined
   const emitida = anterior ? repo.obterCalibracao(anterior.id) : undefined
   const ultima = emitida ? naUnidadeAtual(ctx, emitida) : undefined
   const ativos = repo.listarPadroes()

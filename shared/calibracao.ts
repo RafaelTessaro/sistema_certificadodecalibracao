@@ -76,6 +76,37 @@ export function montarCarga(
   return { pecas, falta, total: deGramas(alvoG - Math.max(restante, 0), unidade) }
 }
 
+/** Carga de pesos padrão de cada etapa de substituição (0 quando o ensaio não usa substituição). */
+export function cargaDaEtapa(ensaio: Pick<EnsaioIndicacao, 'substituicao'>, padroes: Padrao[], unidade: Unidade): number {
+  return ensaio.substituicao.ativa ? cargaDasPecas(ensaio.substituicao.pecas, padroes, unidade) : 0
+}
+
+/**
+ * Pesos por cima de um ponto do erro de indicação. Com substituição (nível > 0), as etapas por baixo já
+ * somam nível × carga da etapa e os pesos só completam o resto (é assim que o cálculo soma a carga do
+ * ponto); sem, os pesos fazem a carga inteira. `diferenca`: (etapas + pesos) − carga, na unidade da
+ * balança: > 0 passa da carga (nível alto demais), < 0 falta.
+ */
+export function montarPonto(
+  carga: number,
+  nivel: number,
+  cargaEtapa: number,
+  unidade: Unidade,
+  padroes: Padrao[],
+): { pecas: PecaCarga[]; diferenca: number } {
+  if (!(carga > 0)) return { pecas: [], diferenca: 0 }
+  const etapas = nivel > 0 && cargaEtapa > 0 ? nivel * cargaEtapa : 0
+  const resto = Math.max(0, Number((carga - etapas).toPrecision(12)))
+  const m = resto > 0 ? montarCarga(resto, unidade, padroes) : { pecas: [], total: 0 }
+  return { pecas: m.pecas, diferenca: diferencaDoPonto(carga, etapas, m.total) }
+}
+
+/** (etapas + pesos) − carga, sem o ruído binário e com zero quando a diferença é só arredondamento. */
+export function diferencaDoPonto(carga: number, etapas: number, pesos: number): number {
+  const d = Number((etapas + pesos - carga).toPrecision(12))
+  return Math.abs(d) > Math.abs(carga) * 1e-9 ? d : 0
+}
+
 /** Peças de uma carga em texto: "20 kg + 10 kg + 5 kg" (agrupa iguais: "2 × 5 kg"), do maior para o menor. */
 export function descreverPecas(pecas: PecaCarga[], padroes: Padrao[]): string {
   const porId = new Map(padroes.flatMap((p) => p.pesos.map((w) => [`${p.id}:${w.id}`, w.nominal])))
@@ -91,7 +122,7 @@ export function descreverPecas(pecas: PecaCarga[], padroes: Padrao[]): string {
 }
 
 function indicacaoParaCalculo(ensaio: EnsaioIndicacao, padroes: Padrao[], unidade: Unidade): EntradaCalculo['indicacao'] {
-  const etapa = ensaio.substituicao.ativa ? cargaDasPecas(ensaio.substituicao.pecas, padroes, unidade) : 0
+  const etapa = cargaDaEtapa(ensaio, padroes, unidade)
   return {
     metodo: ensaio.metodo,
     retornoZero: ensaio.retornoZero,

@@ -1,6 +1,6 @@
 import { CircleCheck, CircleX, Hand, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
-import { cargaDasPecas, descreverPecas } from '#shared/calibracao.ts'
+import { cargaDasPecas, cargaDaEtapa, descreverPecas, diferencaDoPonto } from '#shared/calibracao.ts'
 import { massaLegivel, METODOS_CARREGAMENTO } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
 import { formatarNumero, sugerirPontos } from '#shared/metrologia/index.ts'
@@ -12,7 +12,7 @@ import { Card, CardHeader } from '../ui/Card'
 import { Field, Select } from '../ui/Form'
 import { Modal } from '../ui/Modal'
 import { Segmented } from '../ui/Misc'
-import { pecasPara } from './cargas'
+import { montagemDoPonto, pecasPara, recomporEnsaio } from './cargas'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
 import { casasDe } from './util'
@@ -55,7 +55,10 @@ export function EtapaIndicacao(ctx: ContextoEtapa) {
         titulo={abaAtual === 'antes' ? 'Erro de indicação antes do ajuste' : 'Erro de indicação'}
         grupo={`ind-${abaAtual}`}
       />
-      {abaAtual === 'depois' && (rodoviaria || f.indicacao.substituicao.ativa) && <Substituicao ctx={ctx} />}
+      {/* Cada aba tem as suas etapas de substituição (com ajuste, a cadeia é refeita depois dele) */}
+      {(rodoviaria || ensaio.substituicao.ativa) && (
+        <Substituicao key={`sub-${abaAtual}`} ctx={ctx} ensaio={ensaio} setEnsaio={setEnsaio} antes={abaAtual === 'antes'} />
+      )}
       {abaAtual === 'depois' && (
         <Card>
           <CardHeader titulo="Retorno ao zero" descricao="Indicação depois de retirar toda a carga (opcional)" />
@@ -110,12 +113,21 @@ function TabelaPontos({
   const setPontos = (mudar: (l: PontoIndicacao[]) => PontoIndicacao[]) => setEnsaio((e) => ({ ...e, pontos: mudar(e.pontos) }))
   const setPonto = (id: string, mudar: (p: PontoIndicacao) => PontoIndicacao) =>
     setPontos((l) => l.map((p) => (p.id === id ? mudar(p) : p)))
-  const mudarCarga = (p: PontoIndicacao, carga: number | null) =>
-    setPonto(p.id, (x) => ({
-      ...x,
-      carga: carga ?? 0,
-      pecas: x.pecasManuais ? x.pecas : carga ? pecasPara(carga, balanca, pesos).pecas : [],
+  /**
+   * Muda um ponto e, se as peças dele são automáticas, remonta os pesos: com substituição, só o que as
+   * etapas por baixo não cobrem (a carga do ponto, no cálculo, é nível × etapa + os pesos por cima).
+   */
+  const mudarPonto = (id: string, mudar: (p: PontoIndicacao) => PontoIndicacao) =>
+    setEnsaio((e) => ({
+      ...e,
+      pontos: e.pontos.map((p) => {
+        if (p.id !== id) return p
+        const x = mudar(p)
+        return x.pecasManuais ? x : { ...x, pecas: montagemDoPonto(x, e, balanca, pesos).pecas }
+      }),
     }))
+  const mudarCarga = (p: PontoIndicacao, carga: number | null) => mudarPonto(p.id, (x) => ({ ...x, carga: carga ?? 0 }))
+  const cargaEtapa = cargaDaEtapa(ensaio, pesos, u)
   const sugerir = () => {
     const cargas = sugerirPontos(balanca)
     setEnsaio((e) => ({
@@ -204,8 +216,13 @@ function TabelaPontos({
             <tbody>
               {ensaio.pontos.map((p, i) => {
                 const r = porId.get(p.id)
-                const montagem = !p.pecasManuais && p.carga > 0 ? pecasPara(p.carga, balanca, pesos) : null
-                const falta = montagem && montagem.falta > 0
+                // Etapas por baixo + pesos por cima ≠ carga do ponto: faltam pesos ou o nível passa da carga
+                const nivel = substituicao ? p.nivelSubstituicao : 0
+                const diferenca =
+                  p.carga > 0 && pesos.length && (!p.pecasManuais || nivel > 0)
+                    ? diferencaDoPonto(p.carga, nivel * cargaEtapa, cargaDasPecas(p.pecas, pesos, u))
+                    : 0
+                const falta = diferenca !== 0
                 return (
                   <tr key={p.id} className="border-t border-line align-top">
                     {/* Linha alinhada pelo topo: textos com leading-9 ficam no meio dos campos (36 px) */}
@@ -249,7 +266,10 @@ function TabelaPontos({
                                 <span className="whitespace-nowrap">{grupo}</span>
                               </Fragment>
                             ))}
-                          {falta && ` · faltam ${formatarNumero(montagem!.falta, casas)} ${u}`}
+                          {falta &&
+                            (diferenca < 0
+                              ? ` · faltam ${formatarNumero(-diferenca, casas)} ${u}`
+                              : ` · passa ${formatarNumero(diferenca, casas)} ${u} da carga`)}
                           {/* Ícone em vez de "· à mão": a descrição cabe numa linha e a linha fica da altura dos campos */}
                           {p.pecasManuais && (
                             <span className="whitespace-nowrap text-muted">
@@ -266,7 +286,7 @@ function TabelaPontos({
                         <Select
                           className="h-9 w-28 text-[13px]"
                           value={p.nivelSubstituicao}
-                          onChange={(e) => setPonto(p.id, (x) => ({ ...x, nivelSubstituicao: Number(e.target.value) }))}
+                          onChange={(e) => mudarPonto(p.id, (x) => ({ ...x, nivelSubstituicao: Number(e.target.value) }))}
                           aria-label="Cargas de substituição por baixo"
                         >
                           {Array.from({ length: ensaio.substituicao.etapas.length + 1 }, (_, n) => (
@@ -382,12 +402,7 @@ function TabelaPontos({
         aoFechar={() => setEditandoPecas(null)}
         aoSalvar={(pecas, manual) => {
           if (!editandoPecas) return
-          const id = editandoPecas.id
-          setPonto(id, (x) => ({
-            ...x,
-            pecasManuais: manual,
-            pecas: manual ? pecas : x.carga ? pecasPara(x.carga, balanca, pesos).pecas : [],
-          }))
+          mudarPonto(editandoPecas.id, (x) => ({ ...x, pecasManuais: manual, pecas: manual ? pecas : x.pecas }))
           setEditandoPecas(null)
         }}
       />
@@ -529,20 +544,35 @@ function PecasModal({
   )
 }
 
-/** Cargas de substituição (balanças rodoviárias): pesos padrão + material de substituição em etapas. */
-function Substituicao({ ctx }: { ctx: ContextoEtapa }) {
-  const { f, alterar, balanca, selecionados } = ctx
-  const sub = f.indicacao.substituicao
+/**
+ * Cargas de substituição (balanças rodoviárias): pesos padrão + material de substituição em etapas. Do
+ * ensaio da aba aberta: "antes do ajuste" (como encontrado) e "depois do ajuste" têm as suas etapas.
+ */
+function Substituicao({
+  ctx,
+  ensaio,
+  setEnsaio,
+  antes,
+}: {
+  ctx: ContextoEtapa
+  ensaio: EnsaioIndicacao
+  setEnsaio: (m: (e: EnsaioIndicacao) => EnsaioIndicacao) => void
+  antes: boolean
+}) {
+  const { balanca, selecionados } = ctx
+  const sub = ensaio.substituicao
   const u = balanca.unidade
   const pesos = selecionados.filter((p) => p.tipo === 'PESOS')
   const cargaPadroes = cargaDasPecas(sub.pecas, pesos, u)
+  const grupo = antes ? 'sub-antes' : 'sub'
+  // A carga da etapa (e ligar ou desligar a substituição) muda os pesos por cima dos pontos automáticos
   const set = (mudar: (s: typeof sub) => typeof sub) =>
-    alterar((x) => ({ ...x, indicacao: { ...x.indicacao, substituicao: mudar(x.indicacao.substituicao) } }))
+    setEnsaio((e) => recomporEnsaio({ ...e, substituicao: mudar(e.substituicao) }, balanca, pesos))
   return (
     <Card>
       <CardHeader
         icone={<Truck className="h-4 w-4" />}
-        titulo="Cargas de substituição"
+        titulo={antes ? 'Cargas de substituição antes do ajuste' : 'Cargas de substituição'}
         descricao="Para balanças grandes: os pesos padrão são trocados por material (caminhão, lastro) que dá a mesma indicação, em etapas."
         acoes={
           <label className="flex cursor-pointer items-center gap-2 text-[13px] font-medium text-ink-2">
@@ -602,7 +632,7 @@ function Substituicao({ ctx }: { ctx: ContextoEtapa }) {
                       aoMudar={(v) =>
                         set((s) => ({ ...s, etapas: s.etapas.map((x, j) => (j === i ? { ...x, leituraPadroes: v } : x)) }))
                       }
-                      grade={{ grupo: 'sub', lin: i, col: 0 }}
+                      grade={{ grupo, lin: i, col: 0 }}
                       unidade={u}
                     />
                   </td>
@@ -614,7 +644,7 @@ function Substituicao({ ctx }: { ctx: ContextoEtapa }) {
                       aoMudar={(v) =>
                         set((s) => ({ ...s, etapas: s.etapas.map((x, j) => (j === i ? { ...x, leituraSubstituicao: v } : x)) }))
                       }
-                      grade={{ grupo: 'sub', lin: i, col: 1 }}
+                      grade={{ grupo, lin: i, col: 1 }}
                       unidade={u}
                     />
                   </td>

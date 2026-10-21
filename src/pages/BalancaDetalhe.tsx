@@ -9,6 +9,7 @@ import {
   Layers,
   MapPin,
   Pencil,
+  Printer,
   Ruler,
   Scale,
   Trash2,
@@ -40,6 +41,7 @@ import { EmptyState, PageHeader, StatCard } from '../components/ui/Misc'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
+import { abrirFolhaCampo } from '../lib/folhaCampo'
 import { dataCurta } from '../lib/format'
 import { usePode } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
@@ -103,6 +105,11 @@ export function BalancaDetalhe() {
   const ultima = emitidos[0]
   const proxima = ultima?.proximaCalibracao ?? ''
   const novaCalibracao = () => navegar(`/calibracoes/nova?balanca=${balanca.id}`)
+  // Com uma calibração em andamento, a folha é a dela (o mesmo nº em toda reimpressão); sem, sai com o
+  // plano da última calibração da balança, sem criar rascunho
+  const emAndamento = calibracoes.find((k) => k.status === 'RASCUNHO' || k.status === 'REVISAO')
+  const imprimirFolha = () =>
+    void abrirFolhaCampo(emAndamento ? api.urlFolhaCampo(emAndamento.id) : api.urlFolhaCampoAvulsa({ balancaId: balanca.id }))
 
   const excluir = async () => {
     const ok = await confirmar({
@@ -168,7 +175,8 @@ export function BalancaDetalhe() {
           </span>
         }
         acoes={
-          <>
+          // Em telas largas, os botões ficam numa linha só
+          <div className="flex flex-wrap items-center gap-2 xl:min-w-max xl:flex-nowrap">
             {podeExcluir && (
               <Button variante="ghost" icone={<Trash2 className="h-4 w-4" />} onClick={() => void excluir()}>
                 Excluir
@@ -176,6 +184,17 @@ export function BalancaDetalhe() {
             )}
             <Button icone={<Pencil className="h-4 w-4" />} onClick={() => setEditando(true)}>
               Editar
+            </Button>
+            <Button
+              icone={<Printer className="h-4 w-4" />}
+              onClick={imprimirFolha}
+              title={
+                emAndamento
+                  ? 'Folha de campo da calibração em andamento desta balança'
+                  : 'O checklist para levar ao cliente, com os pontos e os padrões da última calibração'
+              }
+            >
+              Imprimir folha de campo
             </Button>
             <Button
               variante="primary"
@@ -186,7 +205,7 @@ export function BalancaDetalhe() {
             >
               Nova calibração
             </Button>
-          </>
+          </div>
         }
       />
 

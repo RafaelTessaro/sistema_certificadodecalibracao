@@ -11,6 +11,7 @@ import {
   FileCheck2,
   Loader2,
   Plus,
+  Printer,
   Repeat,
   Scale,
   ScanEye,
@@ -23,7 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { calcularCalibracao } from '#shared/calibracao.ts'
 import { capacidadeTexto, pendenciasEmissao, TIPOS_BALANCA } from '#shared/dominio.ts'
-import type { Balanca, Calibracao, CalibracaoInput, Cliente, Configuracoes, Padrao } from '#shared/tipos.ts'
+import type { Balanca, Calibracao, CalibracaoInput, Cliente, Configuracoes, FolhaCampoImpressa, Padrao } from '#shared/tipos.ts'
 import { BalancaFormModal } from '../components/BalancaFormModal'
 import { recomporCargas } from '../components/calibracao/cargas'
 import type { ContextoEtapa, IdEtapa } from '../components/calibracao/contexto'
@@ -42,12 +43,13 @@ import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Combobox } from '../components/ui/Combobox'
 import { confirmar } from '../components/ui/Feedback'
-import { Field, Input, SemRotulo } from '../components/ui/Form'
+import { Field, Input } from '../components/ui/Form'
 import { Modal } from '../components/ui/Modal'
 import { EmptyState, PageHeader } from '../components/ui/Misc'
 import { api, ErroApi, type MembroEquipe } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
+import { abrirFolhaCampo } from '../lib/folhaCampo'
 import { dataCurta, hojeISO } from '../lib/format'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
@@ -65,7 +67,8 @@ function NovaCalibracao() {
   const [clienteId, setClienteId] = useState(params.get('cliente') ?? '')
   const [balancaId, setBalancaId] = useState(params.get('balanca') ?? '')
   const [os, setOs] = useState('')
-  const [criando, setCriando] = useState(false)
+  const [data, setData] = useState(() => hojeISO())
+  const [criando, setCriando] = useState<'comecar' | 'folha' | null>(null)
   const [novoCliente, setNovoCliente] = useState<string | null>(null)
   const [novaBalanca, setNovaBalanca] = useState(false)
   const { dados: clientes } = useConsulta('clientes:false', () => api.clientes().then((r) => r.clientes), ['cliente'])
@@ -84,15 +87,28 @@ function NovaCalibracao() {
     if (balancaInicial && !clienteId) setClienteId(balancaInicial.balanca.clienteId)
   }, [balancaInicial, clienteId])
 
-  const comecar = async () => {
-    setCriando(true)
-    try {
-      const r = await api.criarCalibracao({ clienteId, balancaId, ordemServico: os })
+  /** Cria o rascunho; com `folha`, já abre a folha de campo dele numa aba nova (para levar à visita). */
+  const comecar = async (folha: boolean) => {
+    setCriando(folha ? 'folha' : 'comecar')
+    let id = ''
+    const criarRascunho = async () => {
+      const r = await api.criarCalibracao({ clienteId, balancaId, ordemServico: os, dataCalibracao: data || hojeISO() })
+      id = r.calibracao.id
       useTempoReal.getState().mudou('calibracao')
-      navegar(`/calibracoes/${r.calibracao.id}/editar`, { replace: true })
+      return api.urlFolhaCampo(id)
+    }
+    try {
+      if (folha) await abrirFolhaCampo(criarRascunho)
+      else await criarRascunho()
+      if (folha)
+        toast.sucesso(
+          'Folha de campo aberta em outra aba',
+          'O rascunho já está criado: depois da visita, é só digitar aqui o que foi anotado.',
+        )
+      navegar(`/calibracoes/${id}/editar`, { replace: true })
     } catch (e) {
-      avisarErro('Não foi possível começar a calibração', e)
-      setCriando(false)
+      avisarErro(folha ? 'Não foi possível criar a calibração e a folha de campo' : 'Não foi possível começar a calibração', e)
+      setCriando(null)
     }
   }
 
@@ -102,6 +118,15 @@ function NovaCalibracao() {
         voltar={<Voltar para="/certificados" rotulo="Certificados" />}
         titulo="Nova calibração"
         descricao="Escolha o cliente e a balança. Depois é só seguir as etapas."
+        acoes={
+          <Button
+            icone={<Printer className="h-4 w-4" />}
+            onClick={() => void abrirFolhaCampo(api.urlFolhaCampoAvulsa())}
+            title="Folha de campo sem cliente nem balança, para preencher à mão"
+          >
+            Folha em branco
+          </Button>
+        }
       />
       <div className="mx-auto flex max-w-3xl flex-col gap-6">
         <Card>
@@ -178,29 +203,56 @@ function NovaCalibracao() {
               </button>
             ))}
           </div>
+          {clienteId && (
+            <div className="flex flex-col gap-2 border-t border-line px-5 py-3 text-[13px] text-muted sm:flex-row sm:items-center sm:justify-between">
+              <span>A balança ainda não está cadastrada?</span>
+              <button
+                type="button"
+                onClick={() => void abrirFolhaCampo(api.urlFolhaCampoAvulsa({ clienteId }))}
+                className="inline-flex cursor-pointer items-center gap-1.5 self-start font-medium text-brand-ink hover:underline sm:self-auto"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                Folha de campo com o cliente e a balança em branco
+              </button>
+            </div>
+          )}
         </Card>
 
         <Card className={cn(!balancaId && 'pointer-events-none opacity-50')}>
-          <CardHeader icone={<ClipboardList className="h-4 w-4" />} titulo="3. Ordem de serviço" />
-          <div className="flex flex-col gap-4 px-5 pb-5 sm:flex-row sm:items-start">
+          <CardHeader icone={<ClipboardList className="h-4 w-4" />} titulo="3. Ordem de serviço e data" />
+          <div className="grid grid-cols-1 gap-4 px-5 pb-5 sm:grid-cols-2">
             <Field
               label="Nº da OS no sistema da empresa"
               htmlFor="nova-os"
-              className="sm:w-64"
               hint="Para saber a qual OS este certificado pertence."
             >
               <Input id="nova-os" value={os} onChange={(e) => setOs(e.target.value)} placeholder="Opcional" />
             </Field>
-            <SemRotulo className="sm:ml-auto">
+            <Field label="Data da calibração" htmlFor="nova-data" hint="Visita marcada para outro dia? Informe a data prevista.">
+              <Input id="nova-data" type="date" value={data} onChange={(e) => setData(e.target.value)} />
+            </Field>
+          </div>
+          <div className="flex flex-col gap-3 border-t border-line px-5 py-4 sm:flex-row sm:items-center">
+            <p className="text-[13px] text-muted sm:mr-auto">
+              Vai ao cliente antes de digitar? Leve a folha de campo: o checklist com tudo o que o certificado pede.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:shrink-0">
+              <Button
+                icone={criando === 'folha' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                disabled={!clienteId || !balancaId || !!criando}
+                onClick={() => void comecar(true)}
+              >
+                Criar e imprimir folha de campo
+              </Button>
               <Button
                 variante="primary"
-                icone={criando ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                disabled={!clienteId || !balancaId || criando}
-                onClick={() => void comecar()}
+                icone={criando === 'comecar' ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                disabled={!clienteId || !balancaId || !!criando}
+                onClick={() => void comecar(false)}
               >
                 Começar calibração
               </Button>
-            </SemRotulo>
+            </div>
           </div>
         </Card>
       </div>
@@ -292,6 +344,7 @@ function EditorCalibracao({ id }: { id: string }) {
   const [pendenciasServidor, setPendenciasServidor] = useState<string[]>([])
   const [editandoBalanca, setEditandoBalanca] = useState(false)
   const [previa, setPrevia] = useState<{ url: string } | { carregando: true } | null>(null)
+  const [folha, setFolha] = useState<FolhaCampoImpressa | null>(null)
   const versao = useRef<number | undefined>(undefined)
   const sujo = useRef(false)
   const fRef = useRef<CalibracaoInput | null>(null)
@@ -319,6 +372,7 @@ function EditorCalibracao({ id }: { id: string }) {
           equipe: e.equipe,
         })
         setF(entradaDe(k))
+        setFolha(d.folhaCampo)
         setPendenciasServidor(d.pendencias)
         // Retoma na primeira etapa ainda sem dados
         if (k.indicacao.pontos.some((x) => x.crescente !== null)) setEtapa('revisao')
@@ -445,6 +499,19 @@ function EditorCalibracao({ id }: { id: string }) {
     )
   if (!dados || !f || !balanca) return <CarregandoEditor />
 
+  // Folha avulsa (em branco, do cliente ou da balança) preenchida no cliente: o nº do papel passa a ser o da calibração
+  const vincularFolha = async (numero: string) => {
+    try {
+      const r = await api.vincularFolhaCampo(id, numero)
+      setFolha(r.folhaCampo)
+      toast.sucesso(`Folha de campo ${r.folhaCampo.numero} ligada a esta calibração`)
+      return true
+    } catch (e) {
+      avisarErro('Não foi possível ligar a folha de campo', e)
+      return false
+    }
+  }
+
   const ctx: ContextoEtapa = {
     f,
     alterar,
@@ -457,6 +524,9 @@ function EditorCalibracao({ id }: { id: string }) {
     equipe: dados.equipe,
     status: dados.calibracao.status,
     editarBalanca: () => setEditandoBalanca(true),
+    folhaCampo: folha,
+    vincularFolha,
+    novaFolha: () => void imprimirFolha(true),
   }
   const indice = ETAPAS.findIndex((e) => e.id === etapa)
   const completa = (e: IdEtapa) => etapaCompleta(e, ctx)
@@ -474,6 +544,35 @@ function EditorCalibracao({ id }: { id: string }) {
     } catch (e) {
       setPrevia(null)
       avisarErro('Não foi possível gerar a prévia', e)
+    }
+  }
+
+  // Folha de campo: grava o que falta e abre o PDF em outra aba. O nº da folha é reservado quando o PDF é
+  // gerado; a tela o mostra ao voltar para a aba (ou em alguns segundos). Com folha, imprime de novo a mesma
+  // (o arquivo da primeira impressão); `nova`: outra, com nº novo e o plano atual, no lugar dela
+  const imprimirFolha = async (nova = false) => {
+    if (
+      nova &&
+      folha &&
+      !(await confirmar({
+        titulo: 'Imprimir uma folha de campo nova?',
+        descricao: `Sai outra folha, com nº novo e o plano atual, e a ${folha.numero} deixa de ser a desta calibração (o registro da impressão dela continua). Use só se a ${folha.numero} ainda não foi a campo; se ela foi preenchida no cliente, é ela que vale.`,
+        confirmar: 'Imprimir folha nova',
+      }))
+    )
+      return
+    try {
+      const abriu = await abrirFolhaCampo(async () => ((await salvar()) ? api.urlFolhaCampo(id, { nova }) : null))
+      if (!abriu || (folha && !nova)) return
+      const atualizar = () =>
+        void api
+          .calibracao(id)
+          .then((d) => setFolha(d.folhaCampo))
+          .catch(() => {})
+      window.addEventListener('focus', atualizar, { once: true })
+      setTimeout(atualizar, 4000)
+    } catch (e) {
+      avisarErro('Não foi possível abrir a folha de campo', e)
     }
   }
 
@@ -544,18 +643,31 @@ function EditorCalibracao({ id }: { id: string }) {
             {dados.cliente.nome} · {[balanca.fabricante, balanca.modelo].filter(Boolean).join(' ') || TIPOS_BALANCA[balanca.tipo]}{' '}
             {capacidadeTexto(balanca)}
             {f.ordemServico && ` · OS ${f.ordemServico}`}
+            {folha && <span className="tnum"> · Folha de campo {folha.numero}</span>}
           </span>
         }
         acoes={
-          <>
+          // Em telas largas, os botões ficam numa linha só (quem quebra é a descrição, à esquerda)
+          <div className="flex flex-wrap items-center gap-2 xl:min-w-max xl:flex-nowrap">
             <IndicadorSalvo estado={salvo} aoTentar={() => void salvar()} />
             <Button variante="ghost" icone={<Trash2 className="h-4 w-4" />} onClick={() => void excluir()}>
               Excluir
             </Button>
+            <Button
+              icone={<Printer className="h-4 w-4" />}
+              onClick={() => void imprimirFolha()}
+              title={
+                folha
+                  ? `Imprime de novo a folha ${folha.numero}, igual à primeira impressão (para outra, com o plano atual: “Imprimir folha nova”, na etapa 1)`
+                  : 'O checklist para levar ao cliente e preencher à mão, com os pontos, as cargas e os padrões desta calibração'
+              }
+            >
+              Imprimir folha de campo
+            </Button>
             <Button icone={<ScanEye className="h-4 w-4" />} onClick={() => void verPrevia()}>
               Prévia
             </Button>
-          </>
+          </div>
         }
       />
 

@@ -98,6 +98,7 @@ export const TABELA_ACESSO: Record<string, RegraAcesso> = {
 
   // rotas/folhaCampo.ts (o GET também reserva o nº da folha, registrado com quem imprimiu em `folhas_campo`)
   'GET /api/calibracoes/:id/folha-campo': 'logado',
+  'PUT /api/calibracoes/:id/folha-campo': 'logado', // liga a folha avulsa preenchida no cliente à calibração
   'GET /api/folha-campo': 'logado',
 
   // email.ts

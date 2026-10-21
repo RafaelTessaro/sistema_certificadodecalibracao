@@ -41,6 +41,7 @@ import { Modal } from '../components/ui/Modal'
 import { api, type DetalheCalibracao } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
+import { abrirFolhaCampo } from '../lib/folhaCampo'
 import { dataCurta, dataHora } from '../lib/format'
 import { usePode } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
@@ -74,7 +75,7 @@ export function CalibracaoDetalhe() {
 function Certificado({ dados }: { dados: DetalheCalibracao }) {
   const navegar = useNavigate()
   const podeCancelar = usePode('cancelarCertificado')
-  const { calibracao: k, cliente, balanca, padroes, envios, revisoes } = dados
+  const { calibracao: k, cliente, balanca, padroes, envios, revisoes, folhaCampo } = dados
   const emissao = k.emissao
   const [enviando, setEnviando] = useState(false)
   const [pedido, setPedido] = useState<'revisar' | 'cancelar' | null>(null)
@@ -100,6 +101,16 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
 
   const itensMenu: Array<{ label: string; icone?: ReactNode; aoClicar: () => void; perigo?: boolean } | 'sep'> = [
     { label: 'Calibrar de novo esta balança', icone: <Repeat className="h-4 w-4" />, aoClicar: recalibrar },
+    // Só a reimpressão da folha que a calibração teve: uma folha nova depois da emissão não seria o registro dela
+    ...(folhaCampo
+      ? [
+          {
+            label: `Reimprimir folha de campo (${folhaCampo.numero})`,
+            icone: <Printer className="h-4 w-4" />,
+            aoClicar: () => void abrirFolhaCampo(api.urlFolhaCampo(k.id)),
+          },
+        ]
+      : []),
   ]
   if (emitido && !revisaoAberta)
     itensMenu.push({
@@ -259,6 +270,21 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
               <Dado rotulo="Local">{LOCAIS[k.local]?.replace(/^(Nas|No) /, '')}</Dado>
               <Dado rotulo="Executado por">{emissao?.tecnico.nome}</Dado>
               <Dado rotulo="Autorizado por">{emissao?.signatario.nome}</Dado>
+              {folhaCampo && (
+                <Dado rotulo="Folha de campo" largo>
+                  <button
+                    type="button"
+                    onClick={() => void abrirFolhaCampo(api.urlFolhaCampo(k.id))}
+                    className="tnum inline-flex cursor-pointer items-center gap-1.5 font-medium text-brand-ink hover:underline"
+                    title="Imprime de novo a folha de campo, igual à primeira impressão (sem as leituras)"
+                  >
+                    {folhaCampo.numero}
+                    <Printer className="h-3.5 w-3.5" />
+                  </button>
+                  <span className="text-muted"> · impressa em {dataHora(folhaCampo.impressaEm)}</span>
+                  {folhaCampo.impressaPor && <span className="text-muted"> por {folhaCampo.impressaPor}</span>}
+                </Dado>
+              )}
               <Dado rotulo="Próxima calibração" largo>
                 {k.proximaCalibracao ? (
                   <>

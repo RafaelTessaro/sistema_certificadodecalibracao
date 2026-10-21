@@ -20,6 +20,12 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
   8. Revisão
 
   O cálculo de erro, incerteza (k e νeff) e conformidade é feito **ao vivo** pelo método EURAMET cg-18.
+- **Folha de campo** para levar ao cliente e preencher à caneta (o registro de dados brutos da ISO/IEC 17025, 7.5):
+  - roteiro na ordem do serviço no local (padrões, chegada, plaqueta, verificação e ambiente, erro de indicação, ajuste, repetibilidade, excentricidade, encerramento e assinaturas), e cada passo diz em que etapa do sistema é digitado;
+  - já vem com o que o sistema sabe: cliente, endereço, OS, balança (cada dado com "confere ou escreva o certo"), os pontos com os pesos de cada carga, a faixa aceitável, a carga e as posições da excentricidade e os padrões a separar, com aviso de padrão vencido ou de pesos que não fecham a carga (dos pontos, da repetibilidade ou da excentricidade);
+  - nº **FC-AAAA-NNNNN**, com QR, rubrica e data em toda página; a reimpressão mantém o nº e é o arquivo da primeira impressão, byte a byte (o PDF fica guardado); o nº aparece na calibração (e na revisão dela, que usa a folha do certificado revisado);
+  - imprime pelo assistente da calibração, ao criar a calibração (antes da visita), pela balança, ou **em branco**, para uma balança ainda não cadastrada; a folha avulsa (em branco, do cliente ou da balança) é ligada depois à calibração digitada pelo nº dela, na etapa 1 (Cliente e OS), onde também sai uma **folha nova** (nº novo) quando o plano mudou antes da visita; a folha de um rascunho excluído fica livre para ser ligada à calibração refeita;
+  - certificado emitido só reimprime a folha que a calibração teve (nenhum nº novo depois da emissão).
 - **Certificado em PDF** com:
   - número único, "Página X de Y" e "Fim do certificado";
   - rastreabilidade, incerteza expandida com k e νeff, condições ambientais e resultados antes e depois do ajuste;

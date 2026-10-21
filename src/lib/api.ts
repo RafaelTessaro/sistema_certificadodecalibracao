@@ -246,9 +246,15 @@ export const api = {
   urlPdf: (id: string, baixar = false) => `/api/calibracoes/${enc(id)}/pdf${baixar ? '?baixar=1' : ''}`,
   /**
    * Folha de campo de uma calibração (o checklist impresso para preencher no cliente), com o plano do
-   * rascunho; de uma emitida, a reimpressão. A reimpressão mantém o nº FC da folha.
+   * rascunho; de uma emitida que teve folha, a reimpressão. A reimpressão mantém o nº FC e é igual à primeira
+   * impressão. `nova`: folha nova, com nº novo e o plano atual (o plano mudou antes da visita); a chave nova a
+   * cada chamada faz o navegador receber o mesmo nº se pedir o PDF de novo.
    */
-  urlFolhaCampo: (id: string) => `/api/calibracoes/${enc(id)}/folha-campo`,
+  urlFolhaCampo: (id: string, o: { nova?: boolean } = {}) =>
+    `/api/calibracoes/${enc(id)}/folha-campo${o.nova ? consulta({ nova: novoId() }) : ''}`,
+  /** Liga à calibração a folha avulsa (em branco, do cliente ou da balança) preenchida no cliente, pelo nº dela. */
+  vincularFolhaCampo: (id: string, numero: string) =>
+    requisitar<{ folhaCampo: FolhaCampoImpressa }>('PUT', `/api/calibracoes/${enc(id)}/folha-campo`, { numero }),
   /**
    * Folha de campo sem calibração: da balança (com o plano da última calibração dela), só do cliente ou,
    * sem nada, em branco. A chave nova a cada chamada reserva um nº; se o navegador pedir o PDF de novo, o nº é o mesmo.

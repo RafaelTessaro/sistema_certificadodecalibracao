@@ -175,6 +175,10 @@ const MIGRACOES: Migracao[] = [
   CREATE UNIQUE INDEX folhas_campo_chave ON folhas_campo(chave);
   CREATE INDEX folhas_campo_calibracao ON folhas_campo(calibracao_id);
   `,
+
+  // 4: o PDF da primeira impressão de cada folha de campo. A reimpressão (o mesmo nº) devolve esse arquivo,
+  // byte a byte: dois papéis com o mesmo nº controlado nunca têm conteúdo diferente (ISO/IEC 17025, 7.5).
+  `ALTER TABLE folhas_campo ADD COLUMN pdf BLOB;`,
 ]
 
 /**

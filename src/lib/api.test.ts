@@ -122,6 +122,15 @@ describe('rotas de sessão e usuários', () => {
 describe('calibrações', () => {
   afterEach(() => vi.unstubAllGlobals())
 
+  it('folha de campo: da calibração e avulsa (balança, cliente ou em branco), com uma chave nova a cada vez', () => {
+    expect(api.urlFolhaCampo('k/1')).toBe('/api/calibracoes/k%2F1/folha-campo')
+    const branco = api.urlFolhaCampoAvulsa()
+    expect(branco).toMatch(/^\/api\/folha-campo\?chave=[0-9a-f-]{36}$/)
+    expect(api.urlFolhaCampoAvulsa()).not.toBe(branco)
+    expect(api.urlFolhaCampoAvulsa({ balancaId: 'b 1' })).toMatch(/^\/api\/folha-campo\?balancaId=b\+1&chave=[0-9a-f-]{36}$/)
+    expect(api.urlFolhaCampoAvulsa({ clienteId: 'c1' })).toMatch(/^\/api\/folha-campo\?clienteId=c1&chave=/)
+  })
+
   it('PDF para ver ou baixar; emitir com o signatário e a versão', async () => {
     expect(api.urlPdf('k/1')).toBe('/api/calibracoes/k%2F1/pdf')
     expect(api.urlPdf('k1', true)).toBe('/api/calibracoes/k1/pdf?baixar=1')

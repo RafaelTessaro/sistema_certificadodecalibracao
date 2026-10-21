@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { BALANCA_VAZIA, CLIENTE_VAZIO, PADRAO_VAZIO } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
-import { nomeArquivoDaFolha } from './rotas/folhaCampo.ts'
+import { nomeArquivoDaFolha, numeroDaFolha } from './rotas/folhaCampo.ts'
 
 let t: AppComLogin
 let cliente: Cliente
@@ -77,11 +77,9 @@ const rascunho = async (os = 'OS 2026/0456', cookie = t.cookieAdmin): Promise<Ca
 
 const temPdftotext = !spawnSync('pdftotext', ['-v'], { stdio: 'ignore' }).error
 const textoDoPdf = (pdf: Buffer) =>
-  spawnSync('pdftotext', ['-layout', '-enc', 'UTF-8', '-', '-'], { input: pdf })
-    .stdout.toString('utf8')
-    .replace(/\s+/g, ' ')
+  spawnSync('pdftotext', ['-layout', '-enc', 'UTF-8', '-', '-'], { input: pdf }).stdout.toString('utf8').replace(/\s+/g, ' ')
 
-describe('folha de campo de uma calibração', () => {
+describe('folha de campo de uma calibração', { timeout: 30_000 }, () => {
   it('sai em PDF, inline, com o nome pela OS e o nº FC reservado uma vez só', async () => {
     const k = await rascunho()
     const r = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieComum })
@@ -127,8 +125,11 @@ describe('folha de campo de uma calibração', () => {
     expect(texto).toMatch(/30,00/)
   })
 
-  it('a de um certificado emitido é a reimpressão da folha planejada', async () => {
+  it('a de um certificado emitido é a reimpressão da folha planejada, com o mesmo nº', async () => {
     const k = await rascunho()
+    // Impressa antes da visita
+    const antes = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieComum })
+    expect(antes.statusCode, antes.body).toBe(200)
     const peca = (pesoId: string) => ({ padraoId: pesos.id, pesoId, quantidade: 1 })
     const ponto = (id: string, carga: number, pecas: string[], leitura: number) => ({
       id,
@@ -166,7 +167,10 @@ describe('folha de campo de uma calibração', () => {
         ],
       },
     }
-    const salvo = await t.chamar('PUT', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin, payload: { ...dados, versao: k.versao } })
+    const salvo = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...dados, versao: k.versao },
+    })
     expect(salvo.statusCode, salvo.body).toBe(200)
     const emitida = await t.chamar('POST', `/api/calibracoes/${k.id}/emitir`, {
       cookie: t.cookieAdmin,
@@ -180,6 +184,7 @@ describe('folha de campo de uma calibração', () => {
     })
     const r = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieComum })
     expect(r.statusCode, r.body).toBe(200)
+    expect(r.headers['x-folha-campo']).toBe(antes.headers['x-folha-campo'])
     if (temPdftotext) {
       const texto = textoDoPdf(r.rawPayload)
       expect(texto).toContain('TL-2231')
@@ -188,6 +193,43 @@ describe('folha de campo de uma calibração', () => {
       expect(texto).not.toContain(emitida.json().calibracao.numero)
       expect(texto).not.toContain('20,01')
     }
+  })
+
+  it('certificado emitido sem folha: 409, sem reservar nº (não vira registro da calibração)', async () => {
+    const k = await rascunho()
+    const peca = { padraoId: pesos.id, pesoId: 'p10a', quantidade: 1 }
+    const dados: CalibracaoInput = {
+      ...k,
+      ambiente: { temperaturaInicial: 22, temperaturaFinal: 22.4, umidadeInicial: 50, umidadeFinal: 52, pressao: null },
+      repetibilidade: [{ id: 'r1', carga: 10, leituras: [10, 10, 10, 10, 10] }],
+      excentricidade: { aplicavel: false, motivo: 'Prato pequeno', carga: 0, metodo: 1, posicoes: [] },
+      indicacao: {
+        metodo: 'CONTINUO',
+        retornoZero: 0,
+        substituicao: { ativa: false, pecas: [], etapas: [] },
+        pontos: [
+          { id: 'a', carga: 10, pecas: [peca], pecasManuais: true, crescente: 10, decrescente: null, nivelSubstituicao: 0 },
+        ],
+      },
+    }
+    const salvo = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...dados, versao: k.versao },
+    })
+    expect(salvo.statusCode, salvo.body).toBe(200)
+    const emitida = await t.chamar('POST', `/api/calibracoes/${k.id}/emitir`, {
+      cookie: t.cookieAdmin,
+      payload: { versao: salvo.json().calibracao.versao },
+    })
+    expect(emitida.statusCode, emitida.body).toBe(200)
+    const r = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
+    expect(r.statusCode).toBe(409)
+    expect(r.json().erro).toMatch(/sem folha de campo/)
+    expect((await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().folhaCampo).toBeNull()
+    // O próximo nº continua sendo o 1: nada foi reservado
+    expect((await t.chamar('GET', '/api/folha-campo', { cookie: t.cookieAdmin })).headers['x-folha-campo']).toBe(
+      `FC-${ano}-00001`,
+    )
   })
 
   it('calibração que não existe: 404; sem sessão: 401', async () => {
@@ -202,7 +244,7 @@ describe('folha de campo de uma calibração', () => {
   })
 })
 
-describe('folha de campo sem calibração', () => {
+describe('folha de campo sem calibração', { timeout: 30_000 }, () => {
   it('em branco: PDF com nº novo a cada pedido; a mesma chave devolve o mesmo nº', async () => {
     const a = await t.chamar('GET', '/api/folha-campo', { cookie: t.cookieComum })
     expect(a.statusCode, a.body).toBe(200)
@@ -259,7 +301,228 @@ describe('folha de campo sem calibração', () => {
   })
 })
 
-describe('nome do arquivo', () => {
+describe('folha avulsa ligada à calibração digitada', { timeout: 30_000 }, () => {
+  const ligar = (id: string, numero: unknown, cookie = t.cookieComum) =>
+    t.chamar('PUT', `/api/calibracoes/${id}/folha-campo`, { cookie, payload: { numero } })
+
+  it('em branco: o nº do papel passa a ser o da calibração, no detalhe e na reimpressão', async () => {
+    const avulsa = await t.chamar('GET', '/api/folha-campo', { cookie: t.cookieComum })
+    const numero = avulsa.headers['x-folha-campo'] as string
+    const k = await rascunho()
+    // Como o técnico digitaria: minúsculas, espaços e sem os zeros à esquerda
+    const r = await ligar(k.id, `fc ${ano} 1`)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().folhaCampo).toMatchObject({ numero })
+    expect((await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().folhaCampo).toMatchObject({
+      numero,
+    })
+    // Imprimir pela calibração reimprime com o nº que está no papel, sem reservar outro
+    const pelaCalibracao = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
+    expect(pelaCalibracao.headers['x-folha-campo']).toBe(numero)
+    // Ligar de novo o mesmo nº: nada muda
+    expect((await ligar(k.id, numero)).statusCode).toBe(200)
+  })
+
+  it('troca a folha impressa pelo assistente pela que foi usada no local', async () => {
+    const k = await rascunho()
+    const doAssistente = (await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })).headers[
+      'x-folha-campo'
+    ]
+    const daBalanca = (await t.chamar('GET', `/api/folha-campo?balancaId=${balanca.id}`, { cookie: t.cookieAdmin })).headers[
+      'x-folha-campo'
+    ] as string
+    expect(daBalanca).not.toBe(doAssistente)
+    expect((await ligar(k.id, daBalanca)).statusCode).toBe(200)
+    expect((await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().folhaCampo.numero).toBe(
+      daBalanca,
+    )
+    expect(
+      (await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })).headers['x-folha-campo'],
+    ).toBe(daBalanca)
+  })
+
+  it('recusa nº inválido (400), que não existe (404), de outra calibração, balança ou cliente e calibração concluída (409)', async () => {
+    const k = await rascunho()
+    expect((await ligar(k.id, '')).statusCode).toBe(400)
+    expect((await ligar(k.id, 'abc')).statusCode).toBe(400)
+    expect((await ligar(k.id, 42)).statusCode).toBe(400)
+    expect((await ligar(k.id, `FC-${ano}-00999`)).statusCode).toBe(404)
+    expect((await ligar('nao-existe', `FC-${ano}-00001`)).statusCode).toBe(404)
+
+    // Já é de outra calibração
+    const outra = await rascunho('OS 2')
+    const daOutra = (await t.chamar('GET', `/api/calibracoes/${outra.id}/folha-campo`, { cookie: t.cookieAdmin })).headers[
+      'x-folha-campo'
+    ]
+    const r = await ligar(k.id, daOutra)
+    expect(r.statusCode).toBe(409)
+    expect(r.json().erro).toMatch(/outra calibração/)
+
+    // Impressa para outra balança ou outro cliente
+    const outroCliente = (await criar('/api/clientes', { ...CLIENTE_VAZIO, tipo: 'PF', nome: 'Outro Cliente' }))
+      .cliente as Cliente
+    const outraBalanca = (
+      await criar('/api/balancas', {
+        ...BALANCA_VAZIA,
+        clienteId: cliente.id,
+        numeroSerie: 'X-1',
+        faixas: [{ max: 15, e: 0.005, d: 0.005 }],
+      })
+    ).balanca as Balanca
+    const daOutraBalanca = (await t.chamar('GET', `/api/folha-campo?balancaId=${outraBalanca.id}`, { cookie: t.cookieAdmin }))
+      .headers['x-folha-campo']
+    expect((await ligar(k.id, daOutraBalanca)).json().erro).toMatch(/outra balança/)
+    const doOutroCliente = (await t.chamar('GET', `/api/folha-campo?clienteId=${outroCliente.id}`, { cookie: t.cookieAdmin }))
+      .headers['x-folha-campo']
+    expect((await ligar(k.id, doOutroCliente)).json().erro).toMatch(/outro cliente/)
+
+    // Sem sessão
+    expect((await t.chamar('PUT', `/api/calibracoes/${k.id}/folha-campo`, { payload: { numero: daOutra } })).statusCode).toBe(401)
+  })
+
+  it('o nº como o técnico digita', () => {
+    expect(numeroDaFolha('FC-2026-00042')).toBe('FC-2026-00042')
+    expect(numeroDaFolha(' fc 2026 42 ')).toBe('FC-2026-00042')
+    expect(numeroDaFolha('2026-42')).toBe('FC-2026-00042')
+    expect(numeroDaFolha('FC-2026')).toBe('')
+    expect(numeroDaFolha('FC-2026-123456')).toBe('')
+    expect(numeroDaFolha(null)).toBe('')
+  })
+})
+
+/** Preenche o rascunho com leituras que passam na conferência e emite o certificado. */
+async function emitir(k: Calibracao): Promise<Calibracao> {
+  const peca = (pesoId: string) => ({ padraoId: pesos.id, pesoId, quantidade: 1 })
+  const ponto = (id: string, carga: number, pecas: string[], leitura: number) => ({
+    id,
+    carga,
+    pecas: pecas.map(peca),
+    pecasManuais: true,
+    crescente: leitura,
+    decrescente: leitura,
+    nivelSubstituicao: 0,
+  })
+  const dados: CalibracaoInput = {
+    ...k,
+    ambiente: { temperaturaInicial: 22.1, temperaturaFinal: 22.6, umidadeInicial: 55, umidadeFinal: 57, pressao: null },
+    repetibilidade: [{ id: 'r1', carga: 15, leituras: [15, 15, 15.01, 15, 15, 15] }],
+    excentricidade: { aplicavel: false, motivo: 'Prato pequeno', carga: 0, metodo: 1, posicoes: [] },
+    indicacao: {
+      metodo: 'CRESCENTE_DECRESCENTE',
+      retornoZero: 0,
+      substituicao: { ativa: false, pecas: [], etapas: [] },
+      pontos: [ponto('a', 10, ['p10a'], 10), ponto('b', 30, ['p10a', 'p10b', 'p10c'], 30.01)],
+    },
+  }
+  const salvo = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+    cookie: t.cookieAdmin,
+    payload: { ...dados, versao: k.versao },
+  })
+  expect(salvo.statusCode, salvo.body).toBe(200)
+  const r = await t.chamar('POST', `/api/calibracoes/${k.id}/emitir`, {
+    cookie: t.cookieAdmin,
+    payload: { versao: salvo.json().calibracao.versao },
+  })
+  expect(r.statusCode, r.body).toBe(200)
+  return r.json().calibracao
+}
+
+describe('nº controlado da folha: reimpressão, rascunho excluído, revisão e folha nova', { timeout: 60_000 }, () => {
+  const folhaDe = (id: string, query = '') =>
+    t.chamar('GET', `/api/calibracoes/${id}/folha-campo${query}`, { cookie: t.cookieAdmin })
+  const ligar = (id: string, numero: string) =>
+    t.chamar('PUT', `/api/calibracoes/${id}/folha-campo`, { cookie: t.cookieAdmin, payload: { numero } })
+  const detalhe = async (id: string) => (await t.chamar('GET', `/api/calibracoes/${id}`, { cookie: t.cookieAdmin })).json()
+
+  it('a reimpressão é o arquivo da primeira impressão, byte a byte, mesmo com o plano mudado depois', async () => {
+    const k = await rascunho()
+    const primeira = await folhaDe(k.id)
+    // O plano muda depois de impressa (outra OS): o papel com este nº continua sendo o da primeira impressão
+    const mudado = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...k, ordemServico: 'OS OUTRA', versao: k.versao },
+    })
+    expect(mudado.statusCode, mudado.body).toBe(200)
+    const segunda = await folhaDe(k.id)
+    expect(segunda.headers['x-folha-campo']).toBe(primeira.headers['x-folha-campo'])
+    expect(segunda.rawPayload.equals(primeira.rawPayload)).toBe(true)
+    // Emitido: a mesma folha, ainda igual à que foi a campo (não remontada com os dados finais)
+    await emitir((await detalhe(k.id)).calibracao)
+    expect((await folhaDe(k.id)).rawPayload.equals(primeira.rawPayload)).toBe(true)
+  })
+
+  it('folha avulsa ligada: imprimir pela calibração devolve a folha como foi a campo (em branco), com o mesmo nº', async () => {
+    const avulsa = await t.chamar('GET', '/api/folha-campo', { cookie: t.cookieAdmin })
+    const numero = avulsa.headers['x-folha-campo'] as string
+    const k = await rascunho()
+    expect((await ligar(k.id, numero)).statusCode).toBe(200)
+    const pelaCalibracao = await folhaDe(k.id)
+    expect(pelaCalibracao.headers['x-folha-campo']).toBe(numero)
+    expect(pelaCalibracao.rawPayload.equals(avulsa.rawPayload)).toBe(true)
+  })
+
+  it('rascunho excluído: a folha dele pode ser ligada à calibração refeita', async () => {
+    const k = await rascunho()
+    const numero = (await folhaDe(k.id)).headers['x-folha-campo'] as string
+    expect((await t.chamar('DELETE', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).statusCode).toBe(204)
+    const refeita = await rascunho()
+    const r = await ligar(refeita.id, numero)
+    expect(r.statusCode, r.body).toBe(200)
+    expect((await detalhe(refeita.id)).folhaCampo).toMatchObject({ numero })
+    // E a reimpressão pela calibração refeita é o mesmo nº, sem reservar outro
+    expect((await folhaDe(refeita.id)).headers['x-folha-campo']).toBe(numero)
+  })
+
+  it('revisão de certificado: usa a folha do original (a mesma visita), sem reservar nº novo', async () => {
+    const k = await rascunho()
+    const original = await folhaDe(k.id)
+    const numero = original.headers['x-folha-campo'] as string
+    await emitir((await detalhe(k.id)).calibracao)
+    const rev = await t.chamar('POST', `/api/calibracoes/${k.id}/revisar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Corrigir o endereço' },
+    })
+    expect(rev.statusCode, rev.body).toBe(201)
+    const revisao = rev.json().calibracao as Calibracao
+    expect((await detalhe(revisao.id)).folhaCampo).toMatchObject({ numero })
+    // Imprimir pela revisão: a folha do original, a mesma
+    const pelaRevisao = await folhaDe(revisao.id)
+    expect(pelaRevisao.headers['x-folha-campo']).toBe(numero)
+    expect(pelaRevisao.rawPayload.equals(original.rawPayload)).toBe(true)
+    // Ligar o nº do original à revisão: aceito (é a mesma visita); o original continua com ela
+    expect((await ligar(revisao.id, numero)).statusCode).toBe(200)
+    expect((await detalhe(k.id)).folhaCampo).toMatchObject({ numero })
+    // Nenhum nº novo foi reservado
+    expect((await t.chamar('GET', '/api/folha-campo', { cookie: t.cookieAdmin })).headers['x-folha-campo']).toBe(
+      `FC-${ano}-00002`,
+    )
+  })
+
+  it('folha nova (plano mudou antes da visita): nº novo; a de antes fica livre para ser ligada de novo', async () => {
+    const k = await rascunho()
+    const antes = (await folhaDe(k.id)).headers['x-folha-campo'] as string
+    const chave = 'a1b2c3d4-0000-4000-8000-000000000001'
+    const nova = await folhaDe(k.id, `?nova=${chave}`)
+    expect(nova.statusCode, nova.body).toBe(200)
+    const numero = nova.headers['x-folha-campo'] as string
+    expect(numero).not.toBe(antes)
+    // O navegador pedindo de novo (a mesma chave): o mesmo nº e o mesmo arquivo
+    const deNovo = await folhaDe(k.id, `?nova=${chave}`)
+    expect(deNovo.headers['x-folha-campo']).toBe(numero)
+    expect(deNovo.rawPayload.equals(nova.rawPayload)).toBe(true)
+    expect((await detalhe(k.id)).folhaCampo).toMatchObject({ numero })
+    expect((await folhaDe(k.id)).headers['x-folha-campo']).toBe(numero)
+    // A de antes foi a campo, afinal: liga de novo
+    expect((await ligar(k.id, antes)).statusCode).toBe(200)
+    expect((await detalhe(k.id)).folhaCampo).toMatchObject({ numero: antes })
+    // Chave inválida (400) e calibração emitida (409)
+    expect((await folhaDe(k.id, '?nova=x')).statusCode).toBe(400)
+    await emitir((await detalhe(k.id)).calibracao)
+    expect((await folhaDe(k.id, `?nova=${chave.replace(/1$/, '2')}`)).statusCode).toBe(409)
+  })
+})
+
+describe('nome do arquivo', { timeout: 30_000 }, () => {
   it('pela OS (sem repetir "OS") e, sem OS, pelo nº da folha', () => {
     expect(nomeArquivoDaFolha('OS-2026-0456', 'FC-2026-00001')).toBe('Folha-de-campo-OS-2026-0456.pdf')
     expect(nomeArquivoDaFolha('4471', 'FC-2026-00001')).toBe('Folha-de-campo-OS-4471.pdf')

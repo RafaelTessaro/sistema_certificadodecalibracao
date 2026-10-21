@@ -60,7 +60,7 @@ describe('migração 2: balança identificada pelo indicador', () => {
     const db = bancoV1()
     inserirBalanca(db, 'b1', PLATAFORMA_ANTIGA)
     migrar(db)
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(3)
+    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(4)
 
     const l = linha(db, 'b1')
     const b = JSON.parse(l.dados)

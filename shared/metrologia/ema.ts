@@ -48,6 +48,27 @@ const MULTIPLICADORES: Record<Exclude<CriterioEma, 'CLIENTE'>, readonly [number,
 }
 
 /**
+ * Trechos do EMA de uma classe, em múltiplos de e (para a tabela impressa da folha de campo em branco):
+ * [{ ate: 500, multiplo: 2 }, { ate: null, multiplo: 4 }] — `ate` em e (null = acima do anterior); trechos
+ * vizinhos com o mesmo múltiplo saem juntos.
+ */
+export function trechosEma(
+  classe: Exclude<ClasseExatidao, ''>,
+  criterio: Exclude<CriterioEma, 'CLIENTE'>,
+): Array<{ ate: number | null; multiplo: number }> {
+  const [l1, l2] = LIMIARES_EMA[classe]
+  const m = MULTIPLICADORES[criterio]
+  const trechos = [
+    { ate: l1 as number | null, multiplo: m[0] },
+    { ate: l2 as number | null, multiplo: m[1] },
+    { ate: null, multiplo: m[2] },
+  ]
+  return trechos
+    .filter((t, i) => i === trechos.length - 1 || t.multiplo !== trechos[i + 1].multiplo)
+    .map((t, i, lista) => (i === lista.length - 1 ? { ...t, ate: null } : t))
+}
+
+/**
  * EMA do instrumento na carga m (unidade da balança), pelo critério escolhido.
  * Em multi-intervalo usa o e da faixa parcial onde m está; fronteiras inclusivas no limite superior
  * (m = 500e ainda é 0,5e na classe III). Classe '' dá null, exceto no critério CLIENTE, que devolve a
