@@ -1,8 +1,9 @@
-import { Building2, ExternalLink, Link2, Loader2, MapPin, Printer } from 'lucide-react'
+import { Building2, ExternalLink, FilePlus2, Link2, Loader2, MapPin } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { enderecoCliente, enderecoEmpresa, LOCAIS } from '#shared/dominio.ts'
 import type { FolhaCampoImpressa, LocalCalibracao } from '#shared/tipos.ts'
+import { TEXTO_FOLHA_NOVA } from '../../lib/folhaCampo'
 import { dataHora } from '../../lib/format'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
@@ -87,7 +88,13 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
           </Field>
 
           {/* Recomeça do nº ligado sempre que ele muda (ao ligar ou ao imprimir pelo assistente) */}
-          <CampoFolhaCampo key={folhaCampo?.numero ?? ''} folha={folhaCampo} vincular={vincularFolha} nova={novaFolha} />
+          <CampoFolhaCampo
+            key={folhaCampo?.numero ?? ''}
+            folha={folhaCampo}
+            revisao={!!f.substituiId}
+            vincular={vincularFolha}
+            nova={novaFolha}
+          />
 
           <Field label="Onde a calibração foi feita" className="sm:col-span-6">
             <Segmented
@@ -140,20 +147,28 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
 /**
  * Nº da folha de campo: a impressa pela calibração ou a avulsa (em branco, do cliente ou da balança)
  * preenchida no cliente, ligada aqui pelo nº do alto do papel; a reimpressão passa a usar esse nº. Com
- * folha, "Imprimir folha nova" tira outra, com nº novo e o plano atual (o plano mudou antes da visita).
+ * folha própria, "Folha nova (novo nº)" tira outra, com os dados atuais (o plano mudou antes da visita): a
+ * de antes fica registrada como não usada. Numa revisão, a folha é a do certificado revisado.
  */
 function CampoFolhaCampo({
   folha,
+  revisao,
   vincular,
   nova,
 }: {
   folha: FolhaCampoImpressa | null
+  /** Revisão de certificado: sem folha, o revisado foi feito sem ela (não há folha para imprimir). */
+  revisao: boolean
   vincular: (numero: string) => Promise<boolean>
   nova: () => void
 }) {
   const [numero, setNumero] = useState(folha?.numero ?? '')
   const [ligando, setLigando] = useState(false)
   const pode = !!numero.trim() && numero.trim().toUpperCase() !== folha?.numero && !ligando
+  const impressa = folha ? `impressa em ${dataHora(folha.impressaEm)}${folha.impressaPor ? ` por ${folha.impressaPor}` : ''}` : ''
+  const naoUsadas = folha?.substituidas?.length
+    ? ` Substitui a ${folha.substituidas.join(', ')} (não usada${folha.substituidas.length > 1 ? 's' : ''}).`
+    : ''
   const ligar = async () => {
     if (!pode) return
     setLigando(true)
@@ -166,9 +181,13 @@ function CampoFolhaCampo({
       htmlFor="k-folha"
       className="sm:col-span-6"
       hint={
-        folha
-          ? `Impressa em ${dataHora(folha.impressaEm)}${folha.impressaPor ? ` por ${folha.impressaPor}` : ''}. Se no cliente foi preenchida outra folha (em branco ou da balança), informe o nº dela.`
-          : 'Foi preenchida no cliente uma folha avulsa (em branco, do cliente ou da balança)? Informe o nº do alto dela: a calibração fica com esse nº.'
+        !folha && revisao
+          ? 'O certificado revisado foi feito sem folha de campo impressa pelo sistema: a revisão é a mesma visita, sem folha para imprimir. Se houve nova visita com uma folha avulsa, informe o nº do alto dela.'
+          : !folha
+            ? 'Foi preenchida no cliente uma folha avulsa (em branco, do cliente ou da balança)? Informe o nº do alto dela: a calibração fica com esse nº.'
+            : folha.herdada
+              ? `Do certificado revisado (a mesma visita), ${impressa}.`
+              : `${impressa.charAt(0).toUpperCase()}${impressa.slice(1)}.${naoUsadas} Se no cliente foi preenchida outra folha (em branco ou da balança), informe o nº dela.`
       }
     >
       <div className="flex flex-col gap-2 sm:flex-row">
@@ -190,14 +209,14 @@ function CampoFolhaCampo({
         >
           Ligar à calibração
         </Button>
-        {folha && (
+        {folha && !folha.herdada && (
           <Button
             variante="ghost"
-            icone={<Printer className="h-4 w-4" />}
+            icone={<FilePlus2 className="h-4 w-4" />}
             onClick={nova}
-            title="Outra folha, com nº novo e o plano atual: para quando o plano mudou e a folha impressa ainda não foi a campo"
+            title={`${TEXTO_FOLHA_NOVA}: para quando o plano mudou e a ${folha.numero} ainda não foi a campo`}
           >
-            Imprimir folha nova
+            Folha nova (novo nº)
           </Button>
         )}
       </div>

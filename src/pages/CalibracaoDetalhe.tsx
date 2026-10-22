@@ -41,7 +41,7 @@ import { Modal } from '../components/ui/Modal'
 import { api, type DetalheCalibracao } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
-import { abrirFolhaCampo } from '../lib/folhaCampo'
+import { abrirFolhaCampo, textoReimprimir } from '../lib/folhaCampo'
 import { dataCurta, dataHora } from '../lib/format'
 import { usePode } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
@@ -105,7 +105,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
     ...(folhaCampo
       ? [
           {
-            label: `Reimprimir folha de campo (${folhaCampo.numero})`,
+            label: `Reimprimir a folha de campo ${folhaCampo.numero}`,
             icone: <Printer className="h-4 w-4" />,
             aoClicar: () => void abrirFolhaCampo(api.urlFolhaCampo(k.id)),
           },
@@ -276,13 +276,25 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
                     type="button"
                     onClick={() => void abrirFolhaCampo(api.urlFolhaCampo(k.id))}
                     className="tnum inline-flex cursor-pointer items-center gap-1.5 font-medium text-brand-ink hover:underline"
-                    title="Imprime de novo a folha de campo, igual à primeira impressão (sem as leituras)"
+                    title={`${textoReimprimir(folhaCampo)}, a que foi a campo (sem as leituras)`}
                   >
                     {folhaCampo.numero}
                     <Printer className="h-3.5 w-3.5" />
                   </button>
                   <span className="text-muted"> · impressa em {dataHora(folhaCampo.impressaEm)}</span>
                   {folhaCampo.impressaPor && <span className="text-muted"> por {folhaCampo.impressaPor}</span>}
+                  {folhaCampo.herdada && <span className="text-muted"> · do certificado revisado</span>}
+                  {folhaCampo.passouPara && (
+                    <span className="mt-0.5 block text-xs text-muted">
+                      Passou para a calibração refeita a partir deste papel: {folhaCampo.passouPara}
+                    </span>
+                  )}
+                  {!!folhaCampo.substituidas?.length && (
+                    <span className="mt-0.5 block text-xs text-muted">
+                      Substitui a <span className="tnum">{folhaCampo.substituidas.join(', ')}</span> (não usada
+                      {folhaCampo.substituidas.length > 1 ? 's' : ''})
+                    </span>
+                  )}
                 </Dado>
               )}
               <Dado rotulo="Próxima calibração" largo>

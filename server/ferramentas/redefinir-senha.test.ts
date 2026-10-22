@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { abrirBanco, type Banco } from '../db.ts'
+import { Repositorio } from '../repositorio.ts'
 import { conferirSenha, PARAMETROS_LEVES } from '../senha.ts'
 import { ServicoUsuarios } from '../usuarios.ts'
 
@@ -310,6 +311,7 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
         auditoria: auditoriaAtual,
         loginsCopia: ['antigo'],
         loginsAtuais: ['admin', 'maria'],
+        folhasCampo: 0,
       })
       // Tudo gravado no próprio .db: o script move só ele
       expect(existsSync(`${restaurado}-wal`)).toBe(false)
@@ -335,6 +337,7 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
         aviso: 'O banco atual não tinha contas; as contas voltaram como estavam na cópia.',
         loginsCopia: ['antigo'],
         loginsAtuais: [],
+        folhasCampo: 0,
       })
       await comBanco(restaurado, (db) => {
         expect((db.prepare('SELECT login FROM usuarios').all() as Linha[]).map((l) => l.login)).toEqual(['antigo'])
@@ -354,6 +357,7 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
         aviso: 'As contas voltaram como estavam na cópia, como pedido.',
         loginsCopia: ['antigo'],
         loginsAtuais: ['admin', 'maria'],
+        folhasCampo: 0,
       })
       expect(await contar(restaurado, 'SELECT COUNT(*) AS n FROM sessoes')).toBe(0)
       expect(await contar(restaurado, 'SELECT COUNT(*) AS n FROM usuarios')).toBe(1)
@@ -362,6 +366,47 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
       expect(await contar(banco, 'SELECT COUNT(*) AS n FROM usuarios')).toBe(2)
       // Só o transplantar aceita a opção
       expect(rodar(['situacao', banco, '--contas-da-copia']).status).toBe(2)
+    })
+
+    it('as folhas de campo impressas depois da cópia passam para ela: a numeração FC não volta para trás', async () => {
+      const ano = new Date().getFullYear()
+      const folha = (db: Banco, seq: number, calibracaoId = '') =>
+        db
+          .prepare(
+            `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, impressa_por, impressa_em, ultima_em,
+               pdf_arquivo, pdf_sha256) VALUES (?, ?, ?, ?, ?, 'Ana', 'x', 'x', ?, 'abc')`,
+          )
+          .run(`FC-${ano}-0000${seq}`, ano, seq, `avulsa:${seq}`, calibracaoId, `${ano}/FC-${ano}-0000${seq}.pdf`)
+      // A cópia tem só a FC-1; hoje há a FC-1, a FC-2 e a FC-3, esta ligada a uma calibração que a cópia não tem
+      await comBanco(restaurado, (db) => folha(db, 1))
+      await comBanco(banco, (db) => {
+        folha(db, 1)
+        folha(db, 2)
+        folha(db, 3, 'k-depois-da-copia')
+      })
+      const r = rodar(['transplantar', banco, restaurado])
+      expect(r.status).toBe(0)
+      expect(r.json).toMatchObject({ transplantado: true, folhasCampo: 2 })
+      await comBanco(restaurado, (db) => {
+        expect(db.prepare('SELECT numero, calibracao_id, pdf_arquivo FROM folhas_campo ORDER BY sequencia').all()).toEqual(
+          [1, 2, 3].map((n) => ({
+            numero: `FC-${ano}-0000${n}`,
+            calibracao_id: '',
+            pdf_arquivo: `${ano}/FC-${ano}-0000${n}.pdf`,
+          })),
+        )
+        expect(
+          db.prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' ORDER BY id DESC LIMIT 1").get(),
+        ).toEqual({
+          detalhe: `2 folhas de campo impressas depois da cópia (FC-${ano}-00002 a FC-${ano}-00003) continuam registradas: os nºs não se repetem`,
+        })
+        // A próxima folha impressa com a cópia de volta é a 4, nunca uma que já está no papel
+        expect(new Repositorio(db).reservarFolhaCampo({ chave: 'avulsa:depois', por: 'Ana' }).numero).toBe(`FC-${ano}-00004`)
+      })
+      // Com as contas da cópia (trocar de computador), as folhas passam do mesmo jeito; repetir não duplica
+      const r2 = rodar(['transplantar', banco, restaurado, '--contas-da-copia'])
+      expect(r2.json).toMatchObject({ transplantado: false, folhasCampo: 0 })
+      expect(await contar(restaurado, 'SELECT COUNT(*) AS n FROM folhas_campo')).toBe(4)
     })
 
     it('banco atual ausente ou estragado: as contas da cópia voltam, sem sessões, com aviso', async () => {

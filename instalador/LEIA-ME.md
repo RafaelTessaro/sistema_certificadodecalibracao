@@ -27,7 +27,7 @@ Numa instalação nova, antes da tela "Tipo de instalação", o setup procura um
 | Item | Onde / como |
 |---|---|
 | Programa | `C:\Program Files\BC Calibracao` (caminho fixo, só ASCII): `server\`, `shared\`, `dist\`, `node_modules\`, `node\node.exe`, `servico\BCCalibracao.exe` (WinSW) e `.xml`, `ferramentas\` |
-| Dados | `C:\ProgramData\BC Calibracao\dados`: banco `bc-calibracao.db`, `backups\`, `certificados\`, `email.json` e `id-da-instalacao.txt` (a identidade do servidor para as estações; vai junto se a pasta for levada para outro computador). É a `PASTA_DADOS` do servidor |
+| Dados | `C:\ProgramData\BC Calibracao\dados`: banco `bc-calibracao.db`, `backups\`, `certificados\` (PDF de cada certificado emitido), `folhas-campo\` (PDF de cada folha de campo impressa, por ano: o registro do que foi a campo; a numeração FC parte dela e do banco), `email.json` e `id-da-instalacao.txt` (a identidade do servidor para as estações; vai junto se a pasta for levada para outro computador). É a `PASTA_DADOS` do servidor. As cópias de `backups\` são só do banco: a cópia de segurança externa precisa da pasta `dados` inteira |
 | Registros | `C:\ProgramData\BC Calibracao\logs`: `BCCalibracao.out.log`, `.err.log` e `.wrapper.log`, girando a cada 10 MB (guarda 8) |
 | Permissões | `C:\ProgramData\BC Calibracao` só para SYSTEM e Administradores (controle total) e LocalService (modificar). O dono passa a ser Administradores e as permissões avulsas são desfeitas a cada instalação |
 | Serviço | `BCCalibracao` ("BC Calibração"), WinSW com `node.exe server\iniciar.mjs`, `PORTA`, `HOST=0.0.0.0` e `PASTA_DADOS`. Início automático; reinicia após 10 s, 30 s e 60 s em caso de falha |
@@ -97,11 +97,19 @@ Desinstalar.exe /S /REMOVERDADOS   (apaga os dados)
 
 - **Trocar a porta:** rode o setup de novo com `/PORTA=NNNN`. A porta fica no XML do serviço, e as variáveis do serviço valem mais que o `.env`.
 - **Nomes extras** (ex.: `http://calibracao:4850`, criado no roteador): crie `C:\Program Files\BC Calibracao\.env` com `HOSTS_PERMITIDOS=calibracao` e reinicie o serviço. IPs, `localhost` e o nome do computador sempre funcionam.
-- **Voltar o banco anterior a uma atualização:**
+- **Voltar uma cópia do banco** (o `antes-da-versao-X.db` de uma atualização ou uma cópia da pasta `backups\`), num prompt de comando como administrador:
   1. pare o serviço: `net stop BCCalibracao`;
-  2. apague `bc-calibracao.db-wal` e `bc-calibracao.db-shm`;
-  3. copie o `antes-da-versao-X.db` por cima de `bc-calibracao.db`;
-  4. reinstale a versão anterior.
+  2. copie a cópia para `dados\restaurar.db` (a de `backups\` fica como está);
+  3. passe para ela as contas e as folhas de campo de hoje, **antes** de pôr a cópia no lugar. As folhas impressas depois da cópia já estão no papel, com os técnicos: continuam registradas (e ligadas às calibrações que a cópia tem), e os nºs delas nunca se repetem:
+     ```
+     cd "C:\Program Files\BC Calibracao"
+     node\node.exe server\ferramentas\redefinir-senha.mjs transplantar "C:\ProgramData\BC Calibracao\dados\bc-calibracao.db" "C:\ProgramData\BC Calibracao\dados\restaurar.db"
+     ```
+     A resposta diz quantas folhas passaram (`folhasCampo`). Com `--contas-da-copia`, as contas voltam como estavam na cópia (trocar o servidor de computador). Se o banco atual não puder ser lido, a ferramenta avisa e segue sem as folhas: elas voltam sozinhas pela pasta `folhas-campo\` quando o serviço sobe, como folhas livres (ao ligar o papel à calibração, o sistema pede confirmação, porque não sabe para qual balança a folha foi impressa);
+  4. renomeie `bc-calibracao.db` para `bc-calibracao.db.antes-de-restaurar`, apague `bc-calibracao.db-wal` e `bc-calibracao.db-shm` e renomeie `restaurar.db` para `bc-calibracao.db`;
+  5. inicie o serviço (`net start BCCalibracao`) ou, se a cópia é de antes de uma atualização, reinstale a versão anterior.
+
+  Não apague nem troque a pasta `folhas-campo\` (nem a `certificados\`): voltar uma cópia mexe só no banco.
 - **Pasta dos certificados e backups:** o Windows diz que você não tem permissão e oferece "Continuar". Clicar dá à sua conta acesso permanente à pasta; a próxima atualização desfaz isso.
 
 ## Não testado

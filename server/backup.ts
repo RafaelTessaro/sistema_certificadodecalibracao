@@ -24,8 +24,9 @@ const MANTER: Record<MotivoBackup, number> = { diario: 30, manual: 20, 'antes-re
 /**
  * Cópias de segurança automáticas do banco (arquivos .db completos e conferidos).
  * Usa a API de backup do SQLite em etapas: o servidor continua respondendo durante a cópia
- * (o VACUUM INTO travaria tudo enquanto copia). A pasta dados/certificados (PDFs emitidos)
- * também precisa ir para o backup externo da empresa.
+ * (o VACUUM INTO travaria tudo enquanto copia). As pastas dados/certificados (PDFs emitidos) e
+ * dados/folhas-campo (PDF de cada folha de campo impressa, ≈ 100 KB cada) ficam fora do banco, e
+ * das cópias dele, e também precisam ir para o backup externo da empresa.
  */
 export class BackupsAutomaticos {
   private db: Banco

@@ -32,6 +32,7 @@ import { posicoesExcentricidade } from '#shared/metrologia/index.ts'
 import type { ClasseExatidao, Faixa, Unidade } from '#shared/tipos.ts'
 import { BalancaFormModal } from '../components/BalancaFormModal'
 import { CertificadosTabela } from '../components/CertificadosTabela'
+import { type EscolhaFolha, FolhaCampoModal } from '../components/FolhaCampoModal'
 import { PrazoBadge } from '../components/Selos'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
@@ -41,7 +42,7 @@ import { EmptyState, PageHeader, StatCard } from '../components/ui/Misc'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
-import { abrirFolhaCampo } from '../lib/folhaCampo'
+import { abrirFolhaCampo, TEXTO_FOLHA_NOVA, textoReimprimir } from '../lib/folhaCampo'
 import { dataCurta } from '../lib/format'
 import { usePode } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
@@ -69,6 +70,7 @@ export function BalancaDetalhe() {
   const navegar = useNavigate()
   const podeExcluir = usePode('excluirBalanca')
   const [editando, setEditando] = useState(false)
+  const [escolhaFolha, setEscolhaFolha] = useState(false)
   const { dados, carregando, erro } = useConsulta(`balanca-detalhe:${id}`, () => api.balanca(id), [
     'balanca',
     'cliente',
@@ -89,6 +91,14 @@ export function BalancaDetalhe() {
         .sort((a, b) => b.dataCalibracao.localeCompare(a.dataCalibracao) || b.dataEmissao.localeCompare(a.dataEmissao)),
     [calibracoes],
   )
+  // Com uma calibração em andamento, a folha é a dela (o mesmo nº em toda reimpressão); sem, sai com o
+  // plano da última calibração da balança, sem criar rascunho
+  const emAndamento = calibracoes.find((k) => k.status === 'RASCUNHO' || k.status === 'REVISAO')
+  const { dados: folhaEmAndamento = null } = useConsulta(
+    emAndamento ? `folha-campo:${emAndamento.id}` : null,
+    () => api.calibracao(emAndamento!.id).then((d) => d.folhaCampo),
+    ['calibracao'],
+  )
 
   if (carregando) return <div className="h-64 animate-pulse rounded-2xl bg-surface-2" />
   if (!balanca)
@@ -105,11 +115,17 @@ export function BalancaDetalhe() {
   const ultima = emitidos[0]
   const proxima = ultima?.proximaCalibracao ?? ''
   const novaCalibracao = () => navegar(`/calibracoes/nova?balanca=${balanca.id}`)
-  // Com uma calibração em andamento, a folha é a dela (o mesmo nº em toda reimpressão); sem, sai com o
-  // plano da última calibração da balança, sem criar rascunho
-  const emAndamento = calibracoes.find((k) => k.status === 'RASCUNHO' || k.status === 'REVISAO')
-  const imprimirFolha = () =>
-    void abrirFolhaCampo(emAndamento ? api.urlFolhaCampo(emAndamento.id) : api.urlFolhaCampoAvulsa({ balancaId: balanca.id }))
+  // Já com folha própria, a janela pergunta: reimprimir a mesma ou folha nova (nº novo, dados atuais). A
+  // revisão de um certificado feito sem folha não tem folha (é a mesma visita): sai a avulsa da balança, para
+  // uma visita nova (o nº dela é ligado à revisão depois)
+  const folha = emAndamento ? folhaEmAndamento : null
+  const daCalibracao = !!emAndamento && !(emAndamento.substituiId && !folha)
+  const imprimirFolha = (escolha: EscolhaFolha = 'reimprimir') =>
+    void abrirFolhaCampo(
+      daCalibracao
+        ? api.urlFolhaCampo(emAndamento.id, { nova: escolha === 'nova' })
+        : api.urlFolhaCampoAvulsa({ balancaId: balanca.id }),
+    )
 
   const excluir = async () => {
     const ok = await confirmar({
@@ -187,11 +203,17 @@ export function BalancaDetalhe() {
             </Button>
             <Button
               icone={<Printer className="h-4 w-4" />}
-              onClick={imprimirFolha}
+              onClick={() => (folha && !folha.herdada ? setEscolhaFolha(true) : imprimirFolha())}
               title={
-                emAndamento
-                  ? 'Folha de campo da calibração em andamento desta balança'
-                  : 'O checklist para levar ao cliente, com os pontos e os padrões da última calibração'
+                !emAndamento
+                  ? 'O checklist para levar ao cliente, com os pontos e os padrões da última calibração'
+                  : !daCalibracao
+                    ? 'Folha avulsa desta balança, para uma visita nova: a revisão em andamento não tem folha (o certificado revisado foi feito sem ela)'
+                    : !folha
+                      ? 'Folha de campo da calibração em andamento desta balança'
+                      : folha.herdada
+                        ? `${textoReimprimir(folha)}, do certificado revisado`
+                        : `${textoReimprimir(folha)} ou ${TEXTO_FOLHA_NOVA.toLowerCase()} (calibração em andamento)`
               }
             >
               Imprimir folha de campo
@@ -437,6 +459,14 @@ export function BalancaDetalhe() {
       </div>
 
       <BalancaFormModal aberto={editando} balanca={balanca} aoFechar={() => setEditando(false)} />
+      <FolhaCampoModal
+        folha={escolhaFolha && folha && !folha.herdada ? folha : null}
+        aoFechar={() => setEscolhaFolha(false)}
+        aoEscolher={(e) => {
+          setEscolhaFolha(false)
+          imprimirFolha(e)
+        }}
+      />
     </>
   )
 }

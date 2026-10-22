@@ -21,6 +21,12 @@ declare module 'fastify' {
     sessaoId: string | null
     /** A sessão do cookie foi aberta com "Manter conectado neste computador". */
     sessaoPersistente: boolean
+    /**
+     * O que a rota quer acrescentar ao registro de atividades (vai depois da chave da rota, após " | ";
+     * nunca valores digitados pela pessoa). Num GET, faz a leitura ser registrada como alteração (ex.: a
+     * folha de campo nova, que reserva um nº no lugar de outro).
+     */
+    detalheAuditoria: string
   }
   interface FastifyContextConfig {
     acesso?: RegraAcesso
@@ -96,7 +102,8 @@ export const TABELA_ACESSO: Record<string, RegraAcesso> = {
   'POST /api/lembretes': 'logado',
   'GET /api/verificar/:codigo': 'publico', // autenticidade (QR code): só o essencial do certificado
 
-  // rotas/folhaCampo.ts (o GET também reserva o nº da folha, registrado com quem imprimiu em `folhas_campo`)
+  // rotas/folhaCampo.ts (o GET também reserva o nº da folha, registrado com quem imprimiu em `folhas_campo`;
+  // a folha nova, no lugar de outra, vai também para o registro de atividades)
   'GET /api/calibracoes/:id/folha-campo': 'logado',
   'PUT /api/calibracoes/:id/folha-campo': 'logado', // liga a folha avulsa preenchida no cliente à calibração
   'GET /api/folha-campo': 'logado',
@@ -216,6 +223,7 @@ export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal }: De
   app.decorateRequest('usuario', null)
   app.decorateRequest('sessaoId', null)
   app.decorateRequest('sessaoPersistente', false)
+  app.decorateRequest('detalheAuditoria', '')
 
   app.addHook('onRoute', (rota) => {
     const url = rota.url ?? ''
@@ -311,8 +319,10 @@ export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal }: De
     let acao = ACAO_DA_ROTA[chave]
     if (acao === 'BACKUP_BAIXADO' && req.method === 'HEAD') return
     let detalhe = chave
+    const extra = req.detalheAuditoria
     if (!acao) {
-      if (req.method === 'GET' || req.method === 'HEAD' || foraDaAuditoria(url) || SO_LEITURA.has(chave)) return
+      const leitura = (req.method === 'GET' || req.method === 'HEAD') && !extra
+      if (leitura || foraDaAuditoria(url) || SO_LEITURA.has(chave)) return
       acao = 'ALTERACAO'
       // Na alteração parcial, os nomes dos campos enviados (nunca os valores)
       if (req.method === 'PATCH') {
@@ -323,6 +333,7 @@ export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal }: De
         if (campos.length) detalhe += ` | ${campos.join(',')}`
       }
     }
+    if (extra) detalhe += ` | ${extra}`
     try {
       usuarios.registrar(acao, { usuario: req.usuario, ip: ipDe(req), alvo: idDaRota(req), detalhe })
     } catch (e) {

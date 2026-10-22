@@ -37,6 +37,9 @@ const ROTAS: Record<string, readonly [Verbo, string, TipoLink?]> = {
   'POST /api/calibracoes/:id/revisar': [['Abriu', 'abrir'], 'uma revisão de certificado', 'calibracao'],
   'POST /api/calibracoes/:id/recalibrar': [INICIAR, 'uma nova calibração a partir de outra', 'calibracao'],
   'POST /api/calibracoes/:id/email': [ENVIAR, 'um certificado por e-mail', 'calibracao'],
+  // Só a folha nova (nº novo no lugar de outro) vai para o registro; a reimpressão, não
+  'GET /api/calibracoes/:id/folha-campo': [['Imprimiu', 'imprimir'], 'uma folha de campo nova para uma calibração', 'calibracao'],
+  'PUT /api/calibracoes/:id/folha-campo': [['Ligou', 'ligar'], 'uma folha de campo a uma calibração', 'calibracao'],
   'POST /api/lembretes': [ENVIAR, 'um lembrete de calibração a um cliente'],
   'PUT /api/config': [ALTERAR, 'as configurações'],
   'PUT /api/email/config': [ALTERAR, 'a configuração do e-mail'],
@@ -53,6 +56,9 @@ const ROTAS: Record<string, readonly [Verbo, string, TipoLink?]> = {
   'DELETE /api/usuarios/:id/sessoes': [['Encerrou', 'encerrar'], 'as sessões de um usuário'],
   'GET /api/auditoria': [VER, 'o registro de atividades'],
 }
+
+/** Gravações cujo detalhe (depois de " | ") aparece na segunda linha: os nºs das folhas de campo. */
+const COM_DETALHE = new Set(['GET /api/calibracoes/:id/folha-campo', 'PUT /api/calibracoes/:id/folha-campo'])
 
 /** Ações próprias dos certificados: o alvo é a calibração (a frase leva a ela). */
 const ACOES_DO_CERTIFICADO = new Set<AcaoAuditoria>(['CERTIFICADO_EMITIDO', 'CERTIFICADO_CANCELADO', 'CERTIFICADO_ENVIADO'])
@@ -90,7 +96,9 @@ function frasePassada(detalhe: string): { frase: string; tipo?: TipoLink } {
 export function descreverRegistro(r: RegistroAuditoria, nomes?: ReadonlyMap<string, string>): DescricaoRegistro {
   if (r.acao === 'ALTERACAO') {
     const { frase, tipo } = frasePassada(r.detalhe)
-    return { titulo: frase, detalhe: '', ...(tipo && r.alvo ? { link: { tipo, id: r.alvo } } : {}) }
+    const [chave, ...resto] = r.detalhe.split(' | ')
+    const detalhe = COM_DETALHE.has(chave) ? resto.join(' | ') : ''
+    return { titulo: frase, detalhe, ...(tipo && r.alvo ? { link: { tipo, id: r.alvo } } : {}) }
   }
   const titulo = ROTULO_ACAO_AUDITORIA[r.acao] ?? r.acao
   if (r.acao === 'ACESSO_NEGADO') {

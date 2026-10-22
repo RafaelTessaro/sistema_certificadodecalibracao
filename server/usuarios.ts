@@ -29,6 +29,7 @@ import type {
 import { type Banco, transacao } from './db.ts'
 import { ErroApi } from './erros.ts'
 import { type ChavesTentativa, LimiteTentativas, REGRAS_TENTATIVAS } from './limiteTentativas.ts'
+import { impressaPara } from './repositorio.ts'
 import {
   conferirSenha,
   gerarHashSenha,
@@ -923,4 +924,94 @@ export function transplantarUsuarios(origem: Banco, destino: Banco): { usuarios:
     gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe: 'as contas e senhas atuais foram mantidas' })
   })
   return { usuarios: usuarios.length, auditoria: auditoria.length }
+}
+
+/**
+ * Restauração de uma cópia .db: as folhas de campo de `origem` (o banco atual) que faltam em `destino` (a
+ * cópia que vai voltar) passam para ela. São registros de impressão, como o registro de atividades: os nºs
+ * impressos depois da cópia já estão no papel, com os técnicos, e nunca podem ser emitidos de novo para
+ * outro conteúdo. A folha de uma calibração que não existe na cópia fica livre (sem calibração), e o PDF
+ * vai junto (o caminho na pasta folhas-campo, que a restauração não apaga, ou o próprio arquivo, se estava
+ * no banco). A calibração que fica com duas folhas vigentes (a da cópia e a impressa depois dela, que no
+ * banco atual a substituiu) volta a ter uma só, como o banco atual estava (`conciliarVigentes`). Devolve
+ * quantas passaram; o registro de atividades da cópia guarda quais.
+ */
+export function transplantarFolhasCampo(origem: Banco, destino: Banco): number {
+  const colunas = (db: Banco) =>
+    (db.prepare('PRAGMA table_info(folhas_campo)').all() as Array<{ name: string }>).map((c) => c.name)
+  const comuns = colunas(origem).filter((c) => colunas(destino).includes(c))
+  if (!comuns.includes('numero')) return 0
+  const linhas = origem.prepare(`SELECT ${comuns.join(', ')} FROM folhas_campo ORDER BY ano, sequencia`).all() as Array<
+    Record<string, string | number | Uint8Array | null>
+  >
+  let passaram: string[] = []
+  transacao(destino, () => {
+    const existe = destino.prepare('SELECT 1 FROM folhas_campo WHERE numero = ? OR chave = ? OR (ano = ? AND sequencia = ?)')
+    const calibracao = destino.prepare('SELECT 1 FROM calibracoes WHERE id = ?')
+    const inserir = destino.prepare(
+      `INSERT INTO folhas_campo (${comuns.join(', ')}) VALUES (${comuns.map(() => '?').join(', ')})`,
+    )
+    passaram = []
+    for (const l of linhas) {
+      if (existe.get(l.numero, l.chave, l.ano, l.sequencia)) continue
+      const linha = { ...l }
+      if (linha.calibracao_id && !calibracao.get(linha.calibracao_id)) {
+        linha.calibracao_id = ''
+        if ('substituida_por' in linha) linha.substituida_por = ''
+        if ('substituida_em' in linha) linha.substituida_em = ''
+      }
+      inserir.run(...comuns.map((c) => linha[c] ?? null))
+      passaram.push(String(l.numero))
+    }
+    const conciliadas = comuns.includes('substituida_por') ? conciliarVigentes(origem, destino, passaram) : []
+    if (passaram.length) {
+      const faixa = passaram.length === 1 ? passaram[0] : `${passaram[0]} a ${passaram.at(-1)}`
+      const uma = conciliadas.length === 1
+      const trocadas = conciliadas.length
+        ? `; ${conciliadas.join(', ')}, da cópia, ${uma ? 'ficou' : 'ficaram'} como no banco atual (${uma ? 'trocada pela impressa' : 'trocadas pelas impressas'} depois)`
+        : ''
+      gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', {
+        ip: 'local',
+        detalhe: `${passaram.length === 1 ? 'a folha de campo impressa' : `${passaram.length} folhas de campo impressas`} depois da cópia (${faixa}) continua${passaram.length === 1 ? '' : 'm'} registrada${passaram.length === 1 ? '' : 's'}: os nºs não se repetem${trocadas}`,
+      })
+    }
+  })
+  return passaram.length
+}
+
+/**
+ * Depois da passagem das folhas impressas depois da cópia: a calibração da cópia com outra folha vigente
+ * além da que passou (no banco atual, a da cópia já tinha sido trocada por ela) volta a ter uma só, a que
+ * passou. A da cópia fica como estava no banco atual (substituída, livre ou noutra calibração que existe na
+ * cópia); sem ela no banco atual, como `Repositorio.substituirFolhas` a deixaria (a impressa para a
+ * calibração fica substituída; a avulsa, livre). Devolve os nºs das folhas da cópia que mudaram.
+ */
+function conciliarVigentes(origem: Banco, destino: Banco, passaram: string[]): string[] {
+  const vigente = destino.prepare(
+    "SELECT calibracao_id, impressa_em FROM folhas_campo WHERE numero = ? AND calibracao_id <> '' AND substituida_por = ''",
+  )
+  const outras = destino.prepare(
+    "SELECT numero, chave FROM folhas_campo WHERE calibracao_id = ? AND substituida_por = '' AND numero <> ? ORDER BY ano, sequencia",
+  )
+  const noAtual = origem.prepare('SELECT calibracao_id, substituida_por, substituida_em FROM folhas_campo WHERE numero = ?')
+  const existe = destino.prepare('SELECT 1 FROM calibracoes WHERE id = ?')
+  const gravar = destino.prepare(
+    'UPDATE folhas_campo SET calibracao_id = ?, substituida_por = ?, substituida_em = ? WHERE numero = ?',
+  )
+  const mudaram: string[] = []
+  for (const n of passaram) {
+    const t = vigente.get(n) as { calibracao_id: string; impressa_em: string } | undefined
+    if (!t) continue
+    for (const o of outras.all(t.calibracao_id, n) as Array<{ numero: string; chave: string }>) {
+      if (passaram.includes(o.numero)) continue
+      const a = noAtual.get(o.numero) as { calibracao_id: string; substituida_por: string; substituida_em: string } | undefined
+      if (a && (a.calibracao_id !== t.calibracao_id || a.substituida_por)) {
+        const dela = a.calibracao_id && existe.get(a.calibracao_id) ? a.calibracao_id : ''
+        gravar.run(dela, dela ? a.substituida_por : '', dela ? a.substituida_em : '', o.numero)
+      } else if (impressaPara(o.chave, t.calibracao_id)) gravar.run(t.calibracao_id, n, t.impressa_em, o.numero)
+      else gravar.run('', '', '', o.numero)
+      mudaram.push(o.numero)
+    }
+  }
+  return mudaram
 }

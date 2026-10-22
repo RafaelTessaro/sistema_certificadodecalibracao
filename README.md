@@ -23,9 +23,11 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
 - **Folha de campo** para levar ao cliente e preencher à caneta (o registro de dados brutos da ISO/IEC 17025, 7.5):
   - roteiro na ordem do serviço no local (padrões, chegada, plaqueta, verificação e ambiente, erro de indicação, ajuste, repetibilidade, excentricidade, encerramento e assinaturas), e cada passo diz em que etapa do sistema é digitado;
   - já vem com o que o sistema sabe: cliente, endereço, OS, balança (cada dado com "confere ou escreva o certo"), os pontos com os pesos de cada carga, a faixa aceitável, a carga e as posições da excentricidade e os padrões a separar, com aviso de padrão vencido ou de pesos que não fecham a carga (dos pontos, da repetibilidade ou da excentricidade);
-  - nº **FC-AAAA-NNNNN**, com QR, rubrica e data em toda página; a reimpressão mantém o nº e é o arquivo da primeira impressão, byte a byte (o PDF fica guardado); o nº aparece na calibração (e na revisão dela, que usa a folha do certificado revisado);
-  - imprime pelo assistente da calibração, ao criar a calibração (antes da visita), pela balança, ou **em branco**, para uma balança ainda não cadastrada; a folha avulsa (em branco, do cliente ou da balança) é ligada depois à calibração digitada pelo nº dela, na etapa 1 (Cliente e OS), onde também sai uma **folha nova** (nº novo) quando o plano mudou antes da visita; a folha de um rascunho excluído fica livre para ser ligada à calibração refeita;
-  - certificado emitido só reimprime a folha que a calibração teve (nenhum nº novo depois da emissão).
+  - nº **FC-AAAA-NNNNN**, com QR, rubrica e data em toda página; o mesmo nº é sempre o mesmo documento: a reimpressão é o arquivo da primeira impressão, byte a byte (o PDF fica em `dados/folhas-campo/<ano>/`, com o sha256 no banco: copie essa pasta junto com a de certificados), e a folha em branco ligada depois a uma calibração reimprime em branco, como foi a campo; o nº aparece na calibração (e na revisão dela, que usa a folha do certificado revisado, sem nº novo);
+  - imprime pelo assistente da calibração, ao criar a calibração (antes da visita), pela balança, ou **em branco**, para uma balança ainda não cadastrada; a folha avulsa (em branco, do cliente ou da balança) é ligada depois à calibração digitada pelo nº dela, na etapa 1 (Cliente e OS); a folha de um rascunho excluído fica livre para ser ligada à calibração refeita, e a de um certificado cancelado (ou de uma revisão cancelada) passa para ela pelo administrador, continua aparecendo no cancelado e volta para ele se a refeita for excluída; a avulsa ligada por engano e trocada fica livre de novo; a de outra calibração que vale, não (a mensagem diz qual); impressa para outra balança (cadastro duplicado e excluído, rascunho refeito com a balança certa), só confirmando;
+  - calibração que já tem folha pergunta ao imprimir: **reimprimir** a mesma ou **folha nova (novo nº)**, com os dados atuais (o plano mudou antes da visita); a de antes continua registrada como substituída (não usada) e a troca vai para o registro de atividades;
+  - certificado emitido só reimprime a folha que a calibração teve (nenhum nº novo depois da emissão), e a revisão de um certificado feito sem folha também não ganha nº novo (é a mesma visita);
+  - rodoviária sem cargas de substituição no plano: a folha sugere as etapas (os pesos previstos em cada uma) e o nº de substituições de cada ponto, como o cálculo soma.
 - **Certificado em PDF** com:
   - número único, "Página X de Y" e "Fim do certificado";
   - rastreabilidade, incerteza expandida com k e νeff, condições ambientais e resultados antes e depois do ajuste;
@@ -38,7 +40,7 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
   - signatário, quem autoriza a emissão, com a assinatura digitalizada.
 
   Há também o registro de atividades.
-- **Backup** automático todo dia, cópia manual e restauração.
+- **Backup** automático todo dia, cópia manual e restauração. As cópias são do banco; os PDFs dos certificados e das folhas de campo ficam nas pastas `certificados` e `folhas-campo` da pasta de dados (copie a pasta inteira). Para voltar uma cópia antiga, siga o [LEIA-ME do instalador](instalador/LEIA-ME.md#depois-de-instalado): com `redefinir-senha.mjs transplantar` antes de pôr a cópia no lugar, as folhas de campo impressas depois dela continuam registradas, ligadas às calibrações; sem ele (ou com o banco atual estragado), elas voltam pela pasta `folhas-campo` quando o servidor sobe, como folhas livres, e o papel é ligado à calibração confirmando. A numeração FC nunca volta para trás.
 - **Modo claro e escuro**, e funciona no celular e no tablet da oficina.
 
 ## Instalação no servidor (Windows)

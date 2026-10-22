@@ -484,6 +484,10 @@ export function unidadeDivisaoPadrao(unidade: Unidade): Unidade {
   return unidade === 't' ? 'kg' : unidade === 'kg' ? 'g' : unidade
 }
 
+/** Rodoviária ou ferroviária: o erro de indicação pode precisar de cargas de substituição. */
+export const ehRodoviaria = (b: Pick<Balanca, 'receptor' | 'tipo'>) =>
+  b.receptor === 'RODOVIARIA' || b.tipo === 'RODOVIARIA' || b.tipo === 'FERROVIARIA'
+
 /** Tipos em que e e d vêm em kg na plaqueta mesmo com a indicação em kg (e = 0,5 a 50 kg). */
 export const TIPOS_DIVISAO_EM_KG: readonly TipoBalanca[] = ['PISO', 'RODOVIARIA', 'FERROVIARIA', 'TRANSPALETEIRA']
 

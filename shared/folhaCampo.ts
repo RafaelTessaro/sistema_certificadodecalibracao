@@ -5,7 +5,14 @@
 // posições"): as linhas do papel batem com as da tela na hora de digitar. Puro (navegador e servidor).
 
 import { cargaDaEtapa, cargaDasPecas, descreverPecas, diferencaDoPonto, montarCarga, montarPonto } from './calibracao.ts'
-import { converterMassa, numeroBr, situacaoValidade, type SituacaoValidade } from './dominio.ts'
+import {
+  converterMassa,
+  ehRodoviaria,
+  METODOS_CARREGAMENTO,
+  numeroBr,
+  situacaoValidade,
+  type SituacaoValidade,
+} from './dominio.ts'
 import {
   cargaExcentricidade,
   emaInstrumento,
@@ -70,6 +77,11 @@ export interface FaixaAceitavel {
   toleranciaCliente: number
   /** Veio da declaração de conformidade pedida pelo cliente (senão, é só a referência para o ajuste). */
   daConformidade: boolean
+  /**
+   * O cliente pediu a conformidade pela tolerância dele, que ainda não foi informada (vem na visita): a
+   * faixa é a do EMA em serviço, só para decidir o ajuste, e a tolerância fica para escrever no local.
+   */
+  toleranciaPendente: boolean
 }
 
 /** Critério de decisão do ajuste quando o cliente não pediu declaração de conformidade. */
@@ -81,6 +93,13 @@ export interface PadraoPlanejado {
   situacao: SituacaoValidade
   /** Peças deste jogo que as cargas previstas usam: "15 × 20 kg" ('' se nenhuma ou se não é jogo de pesos). */
   separar: string
+  /**
+   * Vai inteiro na lista "antes de sair": o jogo de pesos com peças a separar, o termo-higrômetro do
+   * ambiente e outro instrumento escolhido. Os demais (sem calibração anterior, o rascunho prevê todos os
+   * ativos) e o barômetro (a pressão é opcional) vão numa linha só, para não encher a folha de linhas que o
+   * plano não usa.
+   */
+  naFolha: boolean
 }
 
 export interface PlanoFolha {
@@ -89,7 +108,14 @@ export interface PlanoFolha {
   unidade: Unidade
   /** Maior capacidade (Max), na unidade da balança. */
   max: number
+  /**
+   * Como as cargas vão ser aplicadas (o ensaio final, "depois do ajuste" quando há ajuste). Com cargas de
+   * substituição, o "crescente e decrescente" de um rascunho vira "crescente contínuo": para descer, seria
+   * preciso tirar o material de substituição (descarregar o caminhão ou o lastro).
+   */
   metodo: MetodoCarregamento
+  /** O do ensaio "como encontrado" (no sistema, cada aba do erro de indicação tem o seu): o mesmo, sem ajuste previsto. */
+  metodoComoEncontrado: MetodoCarregamento
   pontos: PontoPlanejado[]
   /** Conformidade pedida pelo cliente, ou null. */
   conformidade: Conformidade | null
@@ -102,7 +128,12 @@ export interface PlanoFolha {
     metodo: MetodoExcentricidade
     posicoes: string[]
   } & CargaPlanejada
-  substituicao: { ativa: boolean; etapas: number } & CargaPlanejada
+  /**
+   * Cargas de substituição (rodoviárias): as do rascunho (`ativa`) ou, numa rodoviária sem elas no plano
+   * cujos pesos previstos não chegam às cargas dos pontos, as sugeridas pela folha (`sugerida`: a carga de
+   * cada etapa são os pesos previstos e o nível de cada ponto, o que falta, em etapas). `etapas`: quantas.
+   */
+  substituicao: { ativa: boolean; sugerida: boolean; etapas: number } & CargaPlanejada
   padroes: PadraoPlanejado[]
   /**
    * Avisos para resolver antes de sair (padrão vencido, pesos que não fecham a carga dos pontos, da
@@ -112,6 +143,28 @@ export interface PlanoFolha {
 }
 
 const TOL = 1e-9
+
+/**
+ * Substituição sugerida para uma rodoviária sem ela no plano, quando os pesos previstos não fecham alguma
+ * carga: cada etapa leva os pesos previstos (os maiores, numa carga redonda: 20 × 500 kg = 10 000 kg) e
+ * cada ponto fica com as etapas por baixo e o resto em pesos por cima (o modelo do cálculo: nível × carga
+ * da etapa + pesos). null quando os pesos fecham todas as cargas (ou não há pesos).
+ */
+function substituicaoSugerida(cargas: number[], unidade: Unidade, pesos: Padrao[]): { carga: number; pecas: PecaCarga[] } | null {
+  const todas = pesos.flatMap((p) => p.pesos.map((w) => ({ padraoId: p.id, pesoId: w.id, quantidade: 1 })))
+  if (!todas.length || !cargas.some((c) => c > 0 && montarCarga(c, unidade, pesos).falta > 0)) return null
+  const total = cargaDasPecas(todas, pesos, unidade)
+  const maior = Math.max(...todas.map((x) => cargaDasPecas([x], pesos, unidade)))
+  // Etapa redonda, em múltiplos da maior peça (as pequenas ficam para completar por cima)
+  const redonda = maior > 0 ? Number((Math.floor(total / maior + TOL) * maior).toPrecision(12)) : 0
+  const m = montarCarga(redonda > 0 ? redonda : total, unidade, pesos)
+  const carga = Number((redonda > 0 && m.falta === 0 ? redonda : total).toPrecision(12))
+  return carga > 0 ? { carga, pecas: m.falta === 0 ? m.pecas : todas } : null
+}
+
+/** Etapas por baixo de uma carga que os pesos (`etapa`) não alcançam sozinhos: ⌈(carga − etapa) / etapa⌉. */
+export const nivelSugerido = (carga: number, etapa: number) =>
+  etapa > 0 && carga > etapa * (1 + TOL) ? Math.ceil(Number(((carga - etapa) / etapa).toPrecision(12))) : 0
 
 /** Padrões previstos: os escolhidos no rascunho ou, sem escolha, todos os ativos (menos "outro"), como no POST. */
 export function padroesPrevistos(calibracao: Pick<CalibracaoInput, 'padroesIds'> | null, padroes: Padrao[]): Padrao[] {
@@ -165,11 +218,20 @@ export function planoDaFolha(
   const previstos = padroesPrevistos(calibracao, padroes)
   const pesos = previstos.filter((p) => p.tipo === 'PESOS' && p.ativo)
   const conformidade = calibracao?.conformidade.solicitada ? calibracao.conformidade : null
-  const faixaAceitavel: FaixaAceitavel | null = conformidade
-    ? { criterio: conformidade.criterio, toleranciaCliente: conformidade.toleranciaCliente, daConformidade: true }
-    : balanca.classe
-      ? { criterio: CRITERIO_AJUSTE, toleranciaCliente: 0, daConformidade: false }
-      : null
+  // Tolerância do cliente pedida, mas ainda sem o valor (vem na visita): sem ela não há EMA, e a faixa para
+  // decidir o ajuste fica com o critério padrão, quando a balança tem classe
+  const toleranciaPendente = conformidade?.criterio === 'CLIENTE' && !(conformidade.toleranciaCliente > 0)
+  const faixaAceitavel: FaixaAceitavel | null =
+    conformidade && !toleranciaPendente
+      ? {
+          criterio: conformidade.criterio,
+          toleranciaCliente: conformidade.toleranciaCliente,
+          daConformidade: true,
+          toleranciaPendente: false,
+        }
+      : balanca.classe
+        ? { criterio: CRITERIO_AJUSTE, toleranciaCliente: 0, daConformidade: false, toleranciaPendente }
+        : null
   const avisos: string[] = []
 
   // ---- Erro de indicação
@@ -177,13 +239,27 @@ export function planoDaFolha(
   const doRascunho = !!ensaio?.pontos.length
   const sub = ensaio?.substituicao
   const substituicaoAtiva = !!sub?.ativa
-  const cargaEtapa = ensaio ? cargaDaEtapa(ensaio, pesos, u) : 0
   const pontosBase = doRascunho
     ? ensaio!.pontos.map((p) => ({ carga: p.carga, pecas: p.pecasManuais ? p.pecas : undefined, nivel: p.nivelSubstituicao }))
     : sugerirPontos(balanca).map((carga) => ({ carga, pecas: undefined as PecaCarga[] | undefined, nivel: 0 }))
+  // Rodoviária sem a substituição no plano e com pesos que não chegam às cargas: a folha sugere as etapas
+  const subSugerida =
+    !substituicaoAtiva && ehRodoviaria(balanca)
+      ? substituicaoSugerida(
+          pontosBase.filter((p) => !p.pecas).map((p) => p.carga),
+          u,
+          pesos,
+        )
+      : null
+  const cargaEtapa = substituicaoAtiva ? cargaDaEtapa(ensaio!, pesos, u) : (subSugerida?.carga ?? 0)
   const pontos: PontoPlanejado[] = pontosBase.map((p) => {
     const faixa = faixas.length ? faixaDoValor(p.carga, balanca) : { d: 0, e: 0 }
-    const nivel = substituicaoAtiva && cargaEtapa > 0 ? p.nivel : 0
+    const nivel =
+      substituicaoAtiva && cargaEtapa > 0
+        ? p.nivel
+        : subSugerida && !p.pecas && montarCarga(p.carga, u, pesos).falta > 0
+          ? nivelSugerido(p.carga, cargaEtapa)
+          : 0
     // Com substituição, a carga do ponto é nível × carga da etapa + os pesos por cima (como no cálculo): as
     // peças automáticas completam só o resto (como o editor monta, `montagemDoPonto`)
     const pecas = p.pecas ?? montarPonto(p.carga, nivel, cargaEtapa, u, pesos).pecas
@@ -203,6 +279,18 @@ export function planoDaFolha(
     }
   })
   const semFechar = pontos.filter((p) => p.falta > 0)
+  const maiorNivel = Math.max(0, ...pontos.map((p) => p.nivelSubstituicao))
+  // Com substituição, as cargas só sobem: descer de um ponto para o de baixo pediria tirar material de
+  // substituição. O "crescente e decrescente" (o padrão de um rascunho novo) vira "crescente contínuo"; o do
+  // último certificado também, com aviso (o sistema ainda está com o outro)
+  const metodoDe = (m: MetodoCarregamento) => (maiorNivel > 0 && m === 'CRESCENTE_DECRESCENTE' ? 'CONTINUO' : m)
+  const metodoRascunho = ensaio?.metodo ?? 'CRESCENTE_DECRESCENTE'
+  const metodo = metodoDe(metodoRascunho)
+  const metodoComoEncontrado = metodoDe(calibracao?.comoEncontrado?.metodo ?? metodoRascunho)
+  if (subSugerida && maiorNivel > 0)
+    avisos.push(
+      `Os pesos previstos não chegam às cargas acima de ${numeroBr(cargaEtapa)} ${u}: a folha sugere ${maiorNivel === 1 ? 'uma etapa' : `até ${maiorNivel} etapas`} de substituição de ${numeroBr(cargaEtapa)} ${u} (${descreverPecas(subSugerida.pecas, pesos)}); combine o material (caminhão, lastro) com o cliente.`,
+    )
   if (semFechar.length && pesos.length)
     avisos.push(
       `Os pesos previstos não fecham ${semFechar.length === 1 ? 'a carga' : 'as cargas'} de ${semFechar
@@ -219,6 +307,10 @@ export function planoDaFolha(
   if (max > 0 && pontos.length && maiorCarga < 0.9 * max * (1 - TOL))
     avisos.push(
       `Os pontos vão só até ${numeroBr(maiorCarga)} ${u} (${Math.round((maiorCarga / max) * 100)} % de Max) e o certificado só vale até essa carga: confirme com o cliente.`,
+    )
+  if (doRascunho && metodo !== metodoRascunho)
+    avisos.push(
+      `Com cargas de substituição, as cargas só sobem: a folha prevê “${METODOS_CARREGAMENTO[metodo].label}” (no sistema está “${METODOS_CARREGAMENTO[metodoRascunho].label}”); acerte no sistema.`,
     )
 
   // ---- Repetibilidade
@@ -267,12 +359,17 @@ export function planoDaFolha(
       )
   }
 
-  // ---- Substituição
-  const maiorNivel = Math.max(0, ...pontos.map((p) => p.nivelSubstituicao))
+  // ---- Substituição (a do rascunho ou a sugerida)
+  const comSugestao = !!subSugerida && maiorNivel > 0
   const substituicao = {
     ativa: substituicaoAtiva,
-    etapas: substituicaoAtiva ? Math.max(sub!.etapas.length, maiorNivel) : 0,
-    ...(substituicaoAtiva ? cargaPlanejada(cargaEtapa, u, pesos, sub!.pecas) : cargaPlanejada(0, u, pesos)),
+    sugerida: comSugestao,
+    etapas: substituicaoAtiva ? Math.max(sub!.etapas.length, maiorNivel) : maiorNivel,
+    ...(substituicaoAtiva
+      ? cargaPlanejada(cargaEtapa, u, pesos, sub!.pecas)
+      : comSugestao
+        ? cargaPlanejada(cargaEtapa, u, pesos, subSugerida.pecas)
+        : cargaPlanejada(0, u, pesos)),
   }
 
   // ---- Padrões: validade na data prevista e peças a separar (união das peças de todas as cargas)
@@ -280,18 +377,31 @@ export function planoDaFolha(
   for (const c of [...pontos, ...repetibilidade, excentricidade, substituicao])
     for (const x of c.pecas) usadas.set(`${x.padraoId}:${x.pesoId}`, x)
   const validades = validadeDosPadroes(previstos, dataPrevista)
-  avisos.push(...validades.avisos)
+  // Um termo-higrômetro basta para o ambiente: o primeiro em dia (sem nenhum em dia, o primeiro)
+  const termos = validades.itens.filter((x) => x.padrao.tipo === 'TERMOHIGROMETRO')
+  const ambiente = (termos.find((x) => x.situacao !== 'VENCIDO') ?? termos[0])?.padrao
   const padroesPlano = validades.itens.map(({ padrao: p, situacao }): PadraoPlanejado => {
     const pecas = [...usadas.values()].filter((x) => x.padraoId === p.id)
-    return { padrao: p, situacao, separar: p.tipo === 'PESOS' ? descreverPecas(pecas, [p]) : '' }
+    const separar = p.tipo === 'PESOS' ? descreverPecas(pecas, [p]) : ''
+    // O barômetro fica na linha dos outros: a pressão é opcional e não entra no cálculo
+    const naFolha = p.tipo === 'PESOS' ? !!separar : p.tipo === 'OUTRO' || p === ambiente
+    return { padrao: p, situacao, separar, naFolha }
   })
+  // Vencido só importa no que vai a campo (o que o plano não usa sai na linha dos outros, marcado)
+  avisos.push(
+    ...validadeDosPadroes(
+      padroesPlano.filter((x) => x.naFolha).map((x) => x.padrao),
+      dataPrevista,
+    ).avisos,
+  )
   if (!pesos.length) avisos.push('Nenhum jogo de pesos padrão previsto: escolha os pesos antes de sair.')
 
   return {
     origem: doRascunho ? 'RASCUNHO' : 'SUGESTAO',
     unidade: u,
     max,
-    metodo: ensaio?.metodo ?? 'CRESCENTE_DECRESCENTE',
+    metodo,
+    metodoComoEncontrado,
     pontos,
     conformidade,
     faixaAceitavel,

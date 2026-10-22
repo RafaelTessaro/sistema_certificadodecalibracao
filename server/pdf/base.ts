@@ -65,6 +65,53 @@ export function pdfmake(): PdfMakeServidor {
   return motorPdf
 }
 
+interface FonteMedida {
+  unitsPerEm: number
+  layout(texto: string): { advanceWidth: number }
+}
+/** O fontkit é o leitor de fontes do pdfkit (dependência do pdfmake): medir com ele é medir como o PDF desenha. */
+const fontkit = createRequire(requerer.resolve('pdfkit'))('fontkit') as { openSync(caminho: string): FonteMedida }
+const fontesAbertas = new Map<string, FonteMedida>()
+
+/**
+ * Largura (pt) de um texto numa linha só, como o pdfmake mede: por trechos separados por espaço, e o
+ * espaçamento entre as letras. Para encurtar com reticências o que não pode quebrar (ex.: a faixa de
+ * identificação da folha de campo).
+ */
+export function larguraTexto(
+  texto: string,
+  o: { fonte?: keyof typeof FONTES; negrito?: boolean; tamanho: number; espacamento?: number },
+): number {
+  const arquivo = FONTES[o.fonte ?? 'Inter'][o.negrito ? 'bold' : 'normal']
+  let f = fontesAbertas.get(arquivo)
+  if (!f) {
+    f = fontkit.openSync(arquivo)
+    fontesAbertas.set(arquivo, f)
+  }
+  const unidades = (texto.match(/[^ \t]*[ \t]?/g) ?? []).reduce(
+    (soma, trecho) => soma + (trecho ? f.layout(trecho).advanceWidth : 0),
+    0,
+  )
+  return (unidades / f.unitsPerEm) * o.tamanho + (o.espacamento ?? 0) * Math.max(0, texto.length - 1)
+}
+
+/** O texto inteiro, se couber em `largura` (pt); senão, o começo dele com "…" (cortado antes de um espaço, se der). */
+export function caberNaLargura(texto: string, largura: number, o: Parameters<typeof larguraTexto>[1]): string {
+  const t = texto.trim()
+  if (larguraTexto(t, o) <= largura) return t
+  let [baixo, alto] = [0, t.length]
+  while (baixo < alto) {
+    const meio = Math.ceil((baixo + alto) / 2)
+    if (larguraTexto(`${t.slice(0, meio).trimEnd()}…`, o) <= largura) baixo = meio
+    else alto = meio - 1
+  }
+  const corte = t.slice(0, baixo)
+  // Prefere cortar entre palavras quando isso não joga fora mais de um terço do que cabe
+  const espaco = corte.lastIndexOf(' ')
+  const final = espaco > corte.length * 0.66 ? corte.slice(0, espaco) : corte
+  return final ? `${final.replace(/[\s,;:·—–-]+$/, '')}…` : ''
+}
+
 // ---- Página e timbrado ---------------------------------------------------------------------------
 
 export const A4 = { largura: 595.28, altura: 841.89 }

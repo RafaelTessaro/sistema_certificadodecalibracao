@@ -38,6 +38,7 @@ import { EtapaRepetibilidade } from '../components/calibracao/EtapaRepetibilidad
 import { EtapaRevisao } from '../components/calibracao/EtapaRevisao'
 import { PainelResultados } from '../components/calibracao/PainelResultados'
 import { ClienteFormModal } from '../components/ClienteFormModal'
+import { type EscolhaFolha, FolhaCampoModal } from '../components/FolhaCampoModal'
 import { StatusCalibracaoBadge } from '../components/Selos'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
@@ -49,7 +50,7 @@ import { EmptyState, PageHeader } from '../components/ui/Misc'
 import { api, ErroApi, type MembroEquipe } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
-import { abrirFolhaCampo } from '../lib/folhaCampo'
+import { abrirFolhaCampo, TEXTO_FOLHA_NOVA, textoReimprimir } from '../lib/folhaCampo'
 import { dataCurta, hojeISO } from '../lib/format'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
@@ -345,6 +346,8 @@ function EditorCalibracao({ id }: { id: string }) {
   const [editandoBalanca, setEditandoBalanca] = useState(false)
   const [previa, setPrevia] = useState<{ url: string } | { carregando: true } | null>(null)
   const [folha, setFolha] = useState<FolhaCampoImpressa | null>(null)
+  /** Janela "reimprimir ou folha nova" aberta (com a opção que vem selecionada), ou null. */
+  const [escolhaFolha, setEscolhaFolha] = useState<EscolhaFolha | null>(null)
   const versao = useRef<number | undefined>(undefined)
   const sujo = useRef(false)
   const fRef = useRef<CalibracaoInput | null>(null)
@@ -499,14 +502,23 @@ function EditorCalibracao({ id }: { id: string }) {
     )
   if (!dados || !f || !balanca) return <CarregandoEditor />
 
-  // Folha avulsa (em branco, do cliente ou da balança) preenchida no cliente: o nº do papel passa a ser o da calibração
-  const vincularFolha = async (numero: string) => {
+  // Folha avulsa (em branco, do cliente ou da balança) preenchida no cliente: o nº do papel passa a ser o da
+  // calibração. Impressa para outra balança (cadastro duplicado e excluído, rascunho refeito…): pergunta antes
+  const vincularFolha = async (numero: string, confirmado = false): Promise<boolean> => {
     try {
-      const r = await api.vincularFolhaCampo(id, numero)
+      const r = await api.vincularFolhaCampo(id, numero, confirmado)
       setFolha(r.folhaCampo)
       toast.sucesso(`Folha de campo ${r.folhaCampo.numero} ligada a esta calibração`)
       return true
     } catch (e) {
+      if (!confirmado && e instanceof ErroApi && e.dados.codigo === 'CONFIRMAR_FOLHA') {
+        const ok = await confirmar({
+          titulo: 'Ligar esta folha de campo?',
+          descricao: e.message,
+          confirmar: 'Ligar assim mesmo',
+        })
+        return ok ? vincularFolha(numero, true) : false
+      }
       avisarErro('Não foi possível ligar a folha de campo', e)
       return false
     }
@@ -526,7 +538,7 @@ function EditorCalibracao({ id }: { id: string }) {
     editarBalanca: () => setEditandoBalanca(true),
     folhaCampo: folha,
     vincularFolha,
-    novaFolha: () => void imprimirFolha(true),
+    novaFolha: () => setEscolhaFolha('nova'),
   }
   const indice = ETAPAS.findIndex((e) => e.id === etapa)
   const completa = (e: IdEtapa) => etapaCompleta(e, ctx)
@@ -549,18 +561,9 @@ function EditorCalibracao({ id }: { id: string }) {
 
   // Folha de campo: grava o que falta e abre o PDF em outra aba. O nº da folha é reservado quando o PDF é
   // gerado; a tela o mostra ao voltar para a aba (ou em alguns segundos). Com folha, imprime de novo a mesma
-  // (o arquivo da primeira impressão); `nova`: outra, com nº novo e o plano atual, no lugar dela
+  // (o arquivo da primeira impressão); `nova`: outra, com nº novo e os dados atuais, no lugar dela (a de
+  // antes fica registrada como não usada). Com folha própria, quem escolhe é a janela FolhaCampoModal
   const imprimirFolha = async (nova = false) => {
-    if (
-      nova &&
-      folha &&
-      !(await confirmar({
-        titulo: 'Imprimir uma folha de campo nova?',
-        descricao: `Sai outra folha, com nº novo e o plano atual, e a ${folha.numero} deixa de ser a desta calibração (o registro da impressão dela continua). Use só se a ${folha.numero} ainda não foi a campo; se ela foi preenchida no cliente, é ela que vale.`,
-        confirmar: 'Imprimir folha nova',
-      }))
-    )
-      return
     try {
       const abriu = await abrirFolhaCampo(async () => ((await salvar()) ? api.urlFolhaCampo(id, { nova }) : null))
       if (!abriu || (folha && !nova)) return
@@ -653,17 +656,24 @@ function EditorCalibracao({ id }: { id: string }) {
             <Button variante="ghost" icone={<Trash2 className="h-4 w-4" />} onClick={() => void excluir()}>
               Excluir
             </Button>
-            <Button
-              icone={<Printer className="h-4 w-4" />}
-              onClick={() => void imprimirFolha()}
-              title={
-                folha
-                  ? `Imprime de novo a folha ${folha.numero}, igual à primeira impressão (para outra, com o plano atual: “Imprimir folha nova”, na etapa 1)`
-                  : 'O checklist para levar ao cliente e preencher à mão, com os pontos, as cargas e os padrões desta calibração'
-              }
-            >
-              Imprimir folha de campo
-            </Button>
+            {/* Revisão de um certificado feito sem folha: é a mesma visita, não há folha para imprimir (um nº
+                novo agora não seria o registro dela); se houve nova visita, a folha avulsa é ligada na etapa 1 */}
+            {!(dados.calibracao.substituiId && !folha) && (
+              <Button
+                icone={<Printer className="h-4 w-4" />}
+                // Revisão com a folha do certificado revisado: só reimprime (é a mesma visita)
+                onClick={() => (folha && !folha.herdada ? setEscolhaFolha('reimprimir') : void imprimirFolha())}
+                title={
+                  !folha
+                    ? 'O checklist para levar ao cliente e preencher à mão, com os pontos, as cargas e os padrões desta calibração'
+                    : folha.herdada
+                      ? `${textoReimprimir(folha)}, do certificado revisado`
+                      : `${textoReimprimir(folha)} ou ${TEXTO_FOLHA_NOVA.toLowerCase()}`
+                }
+              >
+                Imprimir folha de campo
+              </Button>
+            )}
             <Button icone={<ScanEye className="h-4 w-4" />} onClick={() => void verPrevia()}>
               Prévia
             </Button>
@@ -792,6 +802,15 @@ function EditorCalibracao({ id }: { id: string }) {
         </aside>
       </div>
 
+      <FolhaCampoModal
+        folha={escolhaFolha && folha && !folha.herdada ? folha : null}
+        foco={escolhaFolha ?? undefined}
+        aoFechar={() => setEscolhaFolha(null)}
+        aoEscolher={(e) => {
+          setEscolhaFolha(null)
+          void imprimirFolha(e === 'nova')
+        }}
+      />
       <BalancaFormModal
         aberto={editandoBalanca}
         aoFechar={() => setEditandoBalanca(false)}

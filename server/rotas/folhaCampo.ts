@@ -1,19 +1,23 @@
 // Folha de campo em PDF (o roteiro impresso levado ao cliente e preenchido à caneta; ver
 // server/pdf/folhaCampo.ts):
-// - de uma calibração: com o plano do rascunho (pontos, cargas, padrões, OS…). Uma folha por calibração
-//   (numa revisão, a do certificado revisado); a de um certificado já emitido só existe se a calibração
-//   teve folha (um nº novo depois da emissão não seria o registro dela). `?nova=<chave>`: folha nova, com
-//   nº novo, para a calibração em andamento cujo plano mudou antes da visita;
+// - de uma calibração: com o plano do rascunho (pontos, cargas, padrões, OS…). Uma folha vigente por
+//   calibração (numa revisão, a do certificado revisado); a de um certificado já emitido só existe se a
+//   calibração teve folha (um nº novo depois da emissão não seria o registro dela), e o mesmo vale para a
+//   revisão de um certificado feito sem folha (é a mesma visita). `?nova=<chave>`: folha nova, com nº novo e
+//   os dados atuais, para a calibração em andamento cujo plano mudou antes da visita; a de antes fica
+//   registrada como substituída (não usada), e a troca vai para o registro de atividades;
 // - de uma balança (com o plano da última calibração dela, como o rascunho teria), só do cliente ou em
 //   branco, para uma balança ainda não cadastrada. Cada pedido reserva um nº; a mesma `chave` (que a tela
 //   gera a cada clique) devolve o mesmo nº, se o navegador pedir o PDF de novo. Depois da visita, o nº do
 //   papel é ligado à calibração digitada (PUT .../folha-campo).
-// A reimpressão de um nº é sempre o PDF da primeira impressão, guardado no banco, byte a byte: dois papéis
-// com o mesmo nº controlado nunca têm conteúdo diferente (a folha avulsa ligada a uma calibração sai como
-// foi a campo, em branco; a de um certificado emitido, com o plano de antes da visita).
+// A reimpressão de um nº é sempre o PDF da primeira impressão, guardado na pasta de dados (folhas-campo, com
+// o sha256 no banco), byte a byte: dois papéis com o mesmo nº controlado nunca têm conteúdo diferente (a
+// folha avulsa ligada a uma calibração sai como foi a campo, em branco; a de um certificado emitido, com o
+// plano de antes da visita).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
+import { pode } from '#shared/permissoes.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente } from '#shared/tipos.ts'
 import { padroesDa } from '../certificados.ts'
 import type { Contexto } from '../contexto.ts'
@@ -52,6 +56,22 @@ function enviarPdf(reply: FastifyReply, pdf: Buffer, nome: string, numero: strin
     .send(pdf)
 }
 
+/**
+ * O que vai para o registro de atividades quando a folha de uma calibração muda: "FC-2 (era do CC-1,
+ * cancelado) no lugar da FC-1"; a avulsa que saiu e ficou livre (foi ligada por engano) aparece como tal.
+ */
+export function detalheDaTroca(numero: string, notas: string[], substituiu: string[], liberadas: string[]): string {
+  const trocadas = substituiu.map((n) => (liberadas.includes(n) ? `${n}, que ficou livre` : n))
+  return [
+    `${numero}${notas.length ? ` (${notas.join('; ')})` : ''}`,
+    ...(trocadas.length ? [`no lugar da ${trocadas.join(', ')}`] : []),
+  ].join(' ')
+}
+
+/** Revisão de um certificado feito sem folha de campo impressa pelo sistema (a 1.0.1 não tinha folha). */
+export const REVISAO_SEM_FOLHA =
+  'O certificado revisado foi feito sem folha de campo impressa pelo sistema: a revisão é a mesma visita, e um nº novo agora não seria o registro dela. Se houve nova visita com uma folha avulsa, ligue o nº dela.'
+
 export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
   const { repo } = ctx
   const quem = (req: FastifyRequest) => {
@@ -81,6 +101,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       clienteId: e.cliente?.id,
       por: u.nome,
     })
+    if (folha.substituiu.length) req.detalheAuditoria = detalheDaTroca(folha.numero, [], folha.substituiu, folha.liberadas)
     // Reimpressão: o arquivo da primeira impressão
     if (folha.pdf) return { pdf: folha.pdf, numero: folha.numero }
     const pdf = await gerarFolhaCampoPdf({
@@ -108,12 +129,15 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     if (nova && k.status !== 'RASCUNHO' && k.status !== 'REVISAO')
       throw new ErroApi(409, 'Folha nova só para uma calibração em andamento (rascunho ou em revisão).')
     // Certificado emitido, cancelado ou substituído sem folha: um nº reservado agora, depois da emissão,
-    // passaria por registro de dados brutos de uma calibração que não o usou (ISO/IEC 17025, 7.5)
-    if (k.status !== 'RASCUNHO' && k.status !== 'REVISAO' && !repo.folhaCampoDaCalibracao(k.id))
+    // passaria por registro de dados brutos de uma calibração que não o usou (ISO/IEC 17025, 7.5). A revisão
+    // é a mesma visita do certificado revisado: sem folha nele, também não há folha para ela
+    const semFolha = !repo.folhaCampoDaCalibracao(k.id)
+    if (semFolha && k.status !== 'RASCUNHO' && k.status !== 'REVISAO')
       throw new ErroApi(
         409,
         'Esta calibração foi concluída sem folha de campo impressa pelo sistema: não há folha para reimprimir.',
       )
+    if (semFolha && k.substituiId) throw new ErroApi(409, REVISAO_SEM_FOLHA)
     // Emitida: os cadastros como estavam na emissão (os mesmos do certificado)
     const cliente = k.emissao?.cliente ?? repo.obterCliente(k.clienteId) ?? null
     const balanca = k.emissao?.balanca ?? repo.obterBalanca(k.balancaId) ?? null
@@ -133,17 +157,27 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
   })
 
   /**
-   * Liga à calibração em andamento a folha avulsa preenchida no cliente, pelo nº impresso nela
-   * ("FC-2026-00042"; aceita minúsculas, espaços e o nº sem os zeros à esquerda).
+   * Liga à calibração em andamento a folha preenchida no cliente, pelo nº impresso nela ("FC-2026-00042";
+   * aceita minúsculas, espaços e o nº sem os zeros à esquerda): a avulsa, a de um rascunho excluído, a de um
+   * certificado cancelado ou, numa revisão, a do certificado revisado. A que a calibração tinha fica
+   * registrada como substituída. Impressa para outra balança: 409 com `codigo: 'CONFIRMAR_FOLHA'`, e a tela
+   * pergunta; `confirmar: true` liga assim mesmo. De onde a folha veio vai para o registro de atividades.
    */
   app.put('/api/calibracoes/:id/folha-campo', async (req: FastifyRequest<{ Params: { id: string } }>) => {
-    quem(req)
+    const u = quem(req)
     const k = repo.obterCalibracao(req.params.id)
     if (!k) throw new ErroApi(404, 'Calibração não encontrada.')
     const corpo = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>
     const numero = numeroDaFolha(corpo.numero)
     if (!numero) throw new ErroApi(400, 'Informe o nº da folha de campo como está no alto dela (ex.: FC-2026-00042).')
-    return { folhaCampo: repo.vincularFolhaCampo(numero, k) }
+    const { substituiu, liberadas, notas, ...folhaCampo } = repo.vincularFolhaCampo(numero, k, {
+      confirmar: corpo.confirmar === true,
+      // Tirar a folha de um certificado cancelado mexe no registro dele: só quem pode cancelar
+      podeCancelado: pode(u.nivel, 'cancelarCertificado'),
+      por: u.nome,
+    })
+    req.detalheAuditoria = detalheDaTroca(numero, notas, substituiu, liberadas)
+    return { folhaCampo }
   })
 
   /**

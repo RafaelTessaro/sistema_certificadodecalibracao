@@ -1,6 +1,7 @@
 // Usuários pelo computador do servidor, sem passar pela tela: cria o administrador, redefine senhas,
-// encerra sessões e cuida das contas ao voltar uma cópia .db. Usada pelos scripts do Windows
-// (INSTALAR, ATUALIZAR, REDEFINIR-SENHA e restaurar-copia) e, no Linux, direto ou por `npm run usuarios`.
+// encerra sessões e cuida das contas e das folhas de campo ao voltar uma cópia .db. Usada pelos scripts do
+// Windows (INSTALAR, ATUALIZAR e REDEFINIR-SENHA), pelo procedimento "Voltar uma cópia do banco" do
+// instalador/LEIA-ME.md (transplantar) e, no Linux, direto ou por `npm run usuarios`.
 //
 //   node server/ferramentas/redefinir-senha.mjs situacao <banco.db> [--base64]
 //   node server/ferramentas/redefinir-senha.mjs definir <banco.db> [--base64]
@@ -9,7 +10,8 @@
 //   node server/ferramentas/redefinir-senha.mjs encerrar-sessoes <banco.db> [--base64]
 //   node server/ferramentas/redefinir-senha.mjs transplantar <banco-atual.db> <banco-restaurado.db> [--contas-da-copia] [--base64]
 //        mantém na cópia as contas atuais; com --contas-da-copia (ou se o banco atual não tiver nenhuma
-//        conta, como num computador novo), as contas voltam como estavam na cópia
+//        conta, como num computador novo), as contas voltam como estavam na cópia. As folhas de campo
+//        impressas depois da cópia vão sempre para ela (os nºs que já estão no papel nunca se repetem)
 //
 // A resposta é um JSON numa linha no stdout. Com --base64, a entrada e a resposta (inclusive a de erro)
 // vão em base64 do UTF-8: o PowerShell estragaria os acentos na página de código do console.
@@ -111,10 +113,20 @@ async function principal() {
   if (!existsSync(banco)) return [{ erro: `Banco não encontrado: ${banco}` }, 1]
 
   const { abrirBanco } = await import('../db.ts')
-  const { ServicoUsuarios, transplantarUsuarios } = await import('../usuarios.ts')
+  const { ServicoUsuarios, transplantarFolhasCampo, transplantarUsuarios } = await import('../usuarios.ts')
 
   if (comando === 'transplantar')
-    return [transplantar(abrirBanco, ServicoUsuarios, transplantarUsuarios, bancos[0], banco, contasDaCopia), 0]
+    return [
+      transplantar(
+        abrirBanco,
+        ServicoUsuarios,
+        { transplantarUsuarios, transplantarFolhasCampo },
+        bancos[0],
+        banco,
+        contasDaCopia,
+      ),
+      0,
+    ]
 
   const db = abrirBanco(banco)
   try {
@@ -140,10 +152,12 @@ const loginsDe = (db) =>
  * Restauração de uma cópia .db: a cópia (`arquivoRestaurado`, que ainda não foi posta no lugar) recebe
  * os usuários e o registro de atividades do banco atual, e perde todas as sessões. As contas voltam como
  * estavam na cópia (só as sessões são apagadas) quando o banco atual não pode ser lido, quando ele não
- * tem nenhuma conta (computador novo) ou com `contasDaCopia` (trocar o servidor de computador).
+ * tem nenhuma conta (computador novo) ou com `contasDaCopia` (trocar o servidor de computador). Com o banco
+ * atual lido, as folhas de campo impressas depois da cópia passam sempre para ela (`folhasCampo`: quantas):
+ * a numeração FC nunca volta para trás.
  * A resposta traz os logins dos dois bancos, para o script dizer o que ficou de fora.
  */
-function transplantar(abrirBanco, ServicoUsuarios, transplantarUsuarios, arquivoAtual, arquivoRestaurado, contasDaCopia) {
+function transplantar(abrirBanco, ServicoUsuarios, f, arquivoAtual, arquivoRestaurado, contasDaCopia) {
   const restaurado = abrirBanco(arquivoRestaurado)
   let atual = null
   try {
@@ -157,6 +171,7 @@ function transplantar(abrirBanco, ServicoUsuarios, transplantarUsuarios, arquivo
       // falha aqui, sem impedir a restauração
       atual.prepare('SELECT * FROM usuarios').all()
       atual.prepare('SELECT * FROM auditoria').all()
+      atual.prepare('SELECT * FROM folhas_campo').all()
       loginsAtuais = loginsDe(atual)
     } catch (e) {
       problema = mensagem(e)
@@ -178,10 +193,13 @@ function transplantar(abrirBanco, ServicoUsuarios, transplantarUsuarios, arquivo
           ? 'as contas voltaram como estavam na cópia (pedido ao restaurar)'
           : 'o banco atual não tinha contas; as contas voltaram como estavam na cópia'
       new ServicoUsuarios(restaurado).registrar('COPIA_RESTAURADA', { ip: 'local', detalhe })
-      return { transplantado: false, aviso: motivo, loginsCopia, loginsAtuais }
+      const folhasCampo = atual ? f.transplantarFolhasCampo(atual, restaurado) : 0
+      return { transplantado: false, aviso: motivo, loginsCopia, loginsAtuais, folhasCampo }
     }
-    const r = transplantarUsuarios(atual, restaurado)
-    return { transplantado: true, usuarios: r.usuarios, auditoria: r.auditoria, loginsCopia, loginsAtuais }
+    const r = f.transplantarUsuarios(atual, restaurado)
+    // Depois das contas: o registro de atividades da cópia é o atual, e a passagem das folhas entra nele
+    const folhasCampo = f.transplantarFolhasCampo(atual, restaurado)
+    return { transplantado: true, usuarios: r.usuarios, auditoria: r.auditoria, loginsCopia, loginsAtuais, folhasCampo }
   } finally {
     fecharSemErro(atual)
     fecharGravado(restaurado)

@@ -47,6 +47,23 @@ describe('descreverRegistro', () => {
     })
   })
 
+  it('folha de campo nova e folha ligada: a frase e os nºs das folhas', () => {
+    expect(
+      descreverRegistro(
+        registro({ alvo: 'k3', detalhe: 'GET /api/calibracoes/:id/folha-campo | FC-2026-00002 no lugar da FC-2026-00001' }),
+      ),
+    ).toEqual({
+      titulo: 'Imprimiu uma folha de campo nova para uma calibração',
+      detalhe: 'FC-2026-00002 no lugar da FC-2026-00001',
+      link: { tipo: 'calibracao', id: 'k3' },
+    })
+    expect(descreverRegistro(registro({ alvo: 'k3', detalhe: 'PUT /api/calibracoes/:id/folha-campo | FC-2026-00004' }))).toEqual({
+      titulo: 'Ligou uma folha de campo a uma calibração',
+      detalhe: 'FC-2026-00004',
+      link: { tipo: 'calibracao', id: 'k3' },
+    })
+  })
+
   it('rota desconhecida aparece como a chave', () => {
     expect(descreverRegistro(registro({ detalhe: 'POST /api/novidade' })).titulo).toBe('POST /api/novidade')
   })

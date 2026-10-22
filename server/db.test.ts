@@ -1,10 +1,15 @@
 // Migração 2: a balança passa a ser identificada pelo indicador e a plataforma vira o dado opcional.
+// Migração 5: histórico das folhas de campo (a substituída continua registrada) e as folhas soltas.
+// Migração 6: o PDF da folha de campo num arquivo (caminho e sha256 no banco) e as passagens da folha de um
+// certificado cancelado para a calibração refeita.
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { detalheTrocaIndicador, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
+/** Versão do esquema depois de todas as migrações. */
+const ULTIMA = 6
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -39,6 +44,8 @@ const linha = (db: DatabaseSync, id: string) =>
     versao: number
   }
 
+const versao = (db: DatabaseSync) => (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
+
 const registros = (db: DatabaseSync) =>
   db.prepare('SELECT acao, ip, detalhe FROM auditoria').all() as Array<{ acao: string; ip: string; detalhe: string }>
 
@@ -60,7 +67,7 @@ describe('migração 2: balança identificada pelo indicador', () => {
     const db = bancoV1()
     inserirBalanca(db, 'b1', PLATAFORMA_ANTIGA)
     migrar(db)
-    expect((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(4)
+    expect(versao(db)).toBe(ULTIMA)
 
     const l = linha(db, 'b1')
     const b = JSON.parse(l.dados)
@@ -250,5 +257,114 @@ describe('migração 2: balança identificada pelo indicador', () => {
     const depois = linha(db, 'b1').dados
     migrar(db)
     expect(linha(db, 'b1').dados).toBe(depois)
+  })
+})
+
+describe('migração 5: histórico das folhas de campo', () => {
+  const PDF = Buffer.from('%PDF-1.7 primeira impressão')
+
+  /** Banco na versão 4 (a da folha de campo com o PDF guardado), com um rascunho e duas folhas. */
+  function bancoV4() {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 1)
+    db.prepare(
+      `INSERT INTO clientes (id, tipo, documento, nome, busca, ativo, dados, versao, criado_em, atualizado_em)
+       VALUES ('c1', 'PJ', '', 'Frigorífico', 'frigorifico', 1, '{}', 1, ?, ?)`,
+    ).run(EM, EM)
+    inserirBalanca(db, 'b1', { numeroSerie: 'TL-1', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
+    inserirCalibracao(db, 'k1', 'b1', '', {})
+    migrar(db, 4)
+    const folha = db.prepare(
+      `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, impressa_por,
+         impressa_em, ultima_em, pdf) VALUES (?, 2026, ?, ?, ?, 'b1', 'c1', 'Ana', ?, ?, ?)`,
+    )
+    folha.run('FC-2026-00001', 1, 'calibracao:k1', 'k1', EM, EM, PDF)
+    // Folha de um rascunho excluído antes da correção (ficava presa ao id apagado)
+    folha.run('FC-2026-00002', 2, 'calibracao:apagado', 'apagado', EM, EM, PDF)
+    return db
+  }
+
+  const folhas = (db: DatabaseSync) =>
+    db
+      .prepare('SELECT numero, calibracao_id, substituida_por, substituida_em, pdf FROM folhas_campo ORDER BY numero')
+      .all() as Array<{ numero: string; calibracao_id: string; substituida_por: string; substituida_em: string; pdf: Uint8Array }>
+
+  it('acrescenta o histórico (todas vigentes), mantém o PDF e solta a folha do rascunho excluído', () => {
+    const db = bancoV4()
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    const [daCalibracao, solta] = folhas(db)
+    expect(daCalibracao).toMatchObject({ numero: 'FC-2026-00001', calibracao_id: 'k1', substituida_por: '', substituida_em: '' })
+    expect(Buffer.from(daCalibracao.pdf).equals(PDF)).toBe(true)
+    expect(solta).toMatchObject({ numero: 'FC-2026-00002', calibracao_id: '', substituida_por: '' })
+    expect(Buffer.from(solta.pdf).equals(PDF)).toBe(true)
+  })
+
+  it('a instalação da versão 1.0.1 (banco na versão 2) chega à última com a tabela completa', () => {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 2)
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    const colunas = (db.prepare('PRAGMA table_info(folhas_campo)').all() as Array<{ name: string }>).map((c) => c.name)
+    expect(colunas).toEqual(
+      expect.arrayContaining(['numero', 'chave', 'calibracao_id', 'pdf', 'substituida_por', 'substituida_em']),
+    )
+  })
+
+  it('pode ser repetida: com as colunas já criadas, não falha nem mexe nos dados', () => {
+    const db = bancoV4()
+    migrar(db)
+    db.prepare(
+      "UPDATE folhas_campo SET substituida_por = 'FC-2026-00003', substituida_em = ? WHERE numero = 'FC-2026-00001'",
+    ).run(EM)
+    const antes = folhas(db)
+    db.exec('PRAGMA user_version = 4')
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(folhas(db)).toEqual(antes)
+  })
+})
+
+describe('migração 6: PDF da folha de campo em arquivo e passagens de certificado cancelado', () => {
+  const colunas = (db: DatabaseSync) =>
+    (db.prepare('PRAGMA table_info(folhas_campo)').all() as Array<{ name: string }>).map((c) => c.name)
+
+  it('acrescenta o caminho e o sha256 do PDF (o PDF do banco continua até o servidor movê-lo) e a tabela das passagens', () => {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 5)
+    db.prepare(
+      `INSERT INTO folhas_campo (numero, ano, sequencia, chave, impressa_por, impressa_em, ultima_em, pdf)
+       VALUES ('FC-2026-00001', 2026, 1, 'avulsa:a', 'Ana', ?, ?, ?)`,
+    ).run(EM, EM, Buffer.from('%PDF-1.7'))
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(colunas(db)).toEqual(expect.arrayContaining(['pdf', 'pdf_arquivo', 'pdf_sha256']))
+    expect(db.prepare('SELECT pdf_arquivo, pdf_sha256, length(pdf) AS n FROM folhas_campo').get()).toEqual({
+      pdf_arquivo: '',
+      pdf_sha256: '',
+      n: 8,
+    })
+    const passagens = (db.prepare('PRAGMA table_info(folhas_campo_passagens)').all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    )
+    expect(passagens).toEqual(
+      expect.arrayContaining([
+        'numero',
+        'de_calibracao_id',
+        'para_calibracao_id',
+        'substituida_por',
+        'substituida_em',
+        'em',
+        'por',
+      ]),
+    )
+  })
+
+  it('pode ser repetida sem falhar', () => {
+    const db = new DatabaseSync(':memory:')
+    migrar(db)
+    db.exec('PRAGMA user_version = 5')
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
   })
 })

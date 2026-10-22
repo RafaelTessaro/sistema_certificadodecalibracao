@@ -626,6 +626,15 @@ export interface FolhaCampoImpressa {
   /** Quantas vezes foi impressa (a reimpressão mantém o número). */
   impressoes: number
   ultimaEm: string
+  /** Numa revisão de certificado: a folha é a do certificado revisado (a mesma visita); não há folha nova. */
+  herdada?: boolean
+  /** Folhas impressas antes para a calibração e substituídas por esta (não usadas), da mais antiga para a mais nova. */
+  substituidas?: string[]
+  /**
+   * Certificado cancelado: a folha dele passou para a calibração refeita a partir do mesmo papel ("CC-2026-00012"
+   * ou "rascunho da OS 77, …"); continua sendo o registro dos dados brutos dele.
+   */
+  passouPara?: string
 }
 
 export interface Envio {

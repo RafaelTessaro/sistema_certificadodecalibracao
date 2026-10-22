@@ -2427,7 +2427,9 @@ function SecaoBackup() {
               <div className="flex min-w-0 flex-col gap-1.5">
                 <p className="text-[13px] font-medium text-ink-2">Pasta de dados (copie esta)</p>
                 <TextoCopiavel texto={pastaDados} rotulo="a pasta de dados" />
-                <p className="text-xs text-muted">Tem o banco, as cópias e os PDFs dos certificados emitidos.</p>
+                <p className="text-xs text-muted">
+                  Tem o banco, as cópias e os PDFs dos certificados emitidos e das folhas de campo impressas.
+                </p>
               </div>
               <div className="flex min-w-0 flex-col gap-1.5">
                 <p className="text-[13px] font-medium text-ink-2">Cópias automáticas</p>
@@ -2439,9 +2441,10 @@ function SecaoBackup() {
             !carregando && <p className="text-[13px] text-muted">A pasta aparece aqui depois de carregar a lista.</p>
           )}
           <p className="text-xs leading-relaxed text-muted">
-            Os PDFs dos certificados ficam na pasta <span className="font-mono">certificados</span>, dentro da pasta de dados:
-            eles não estão dentro das cópias do banco, por isso é importante copiar a pasta inteira. Para voltar uma cópia
-            (restaurar), fale com quem instalou o sistema: a troca é feita no computador do servidor.
+            Os PDFs dos certificados e das folhas de campo ficam nas pastas <span className="font-mono">certificados</span> e{' '}
+            <span className="font-mono">folhas-campo</span>, dentro da pasta de dados: eles não estão dentro das cópias do banco,
+            por isso é importante copiar a pasta inteira. Para voltar uma cópia (restaurar), fale com quem instalou o sistema: a
+            troca é feita no computador do servidor.
           </p>
         </div>
       </Card>

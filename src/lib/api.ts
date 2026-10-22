@@ -252,9 +252,15 @@ export const api = {
    */
   urlFolhaCampo: (id: string, o: { nova?: boolean } = {}) =>
     `/api/calibracoes/${enc(id)}/folha-campo${o.nova ? consulta({ nova: novoId() }) : ''}`,
-  /** Liga à calibração a folha avulsa (em branco, do cliente ou da balança) preenchida no cliente, pelo nº dela. */
-  vincularFolhaCampo: (id: string, numero: string) =>
-    requisitar<{ folhaCampo: FolhaCampoImpressa }>('PUT', `/api/calibracoes/${enc(id)}/folha-campo`, { numero }),
+  /**
+   * Liga à calibração a folha avulsa (em branco, do cliente ou da balança) preenchida no cliente, pelo nº dela.
+   * Impressa para outra balança: 409 com `codigo: 'CONFIRMAR_FOLHA'`; `confirmar` liga assim mesmo.
+   */
+  vincularFolhaCampo: (id: string, numero: string, confirmar = false) =>
+    requisitar<{ folhaCampo: FolhaCampoImpressa }>('PUT', `/api/calibracoes/${enc(id)}/folha-campo`, {
+      numero,
+      ...(confirmar ? { confirmar: true } : {}),
+    }),
   /**
    * Folha de campo sem calibração: da balança (com o plano da última calibração dela), só do cliente ou,
    * sem nada, em branco. A chave nova a cada chamada reserva um nº; se o navegador pedir o PDF de novo, o nº é o mesmo.

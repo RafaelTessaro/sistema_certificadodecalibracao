@@ -1,7 +1,7 @@
 import { CircleCheck, CircleX, Hand, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 import { cargaDasPecas, cargaDaEtapa, descreverPecas, diferencaDoPonto } from '#shared/calibracao.ts'
-import { massaLegivel, METODOS_CARREGAMENTO } from '#shared/dominio.ts'
+import { ehRodoviaria, massaLegivel, METODOS_CARREGAMENTO } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
 import { formatarNumero, sugerirPontos } from '#shared/metrologia/index.ts'
 import type { ResultadoCalculo, ResultadoPonto } from '#shared/metrologia/tipos.ts'
@@ -15,24 +15,18 @@ import { Segmented } from '../ui/Misc'
 import { montagemDoPonto, pecasPara, recomporEnsaio } from './cargas'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
+import { type AbaIndicacao, mudarEnsaioDaAba } from './indicacao'
 import { casasDe } from './util'
-
-type Aba = 'depois' | 'antes'
 
 export function EtapaIndicacao(ctx: ContextoEtapa) {
   const { f, alterar, balanca, calc } = ctx
   const temAntes = f.ajuste.realizado !== 'NAO' && !!f.comoEncontrado
-  const [aba, setAba] = useState<Aba>('depois')
-  const abaAtual: Aba = temAntes ? aba : 'depois'
+  const [aba, setAba] = useState<AbaIndicacao>('depois')
+  const abaAtual: AbaIndicacao = temAntes ? aba : 'depois'
   const ensaio = abaAtual === 'antes' ? f.comoEncontrado! : f.indicacao
   const resultado = abaAtual === 'antes' ? calc?.comoEncontrado : calc?.resultado
-  const setEnsaio = (mudar: (e: EnsaioIndicacao) => EnsaioIndicacao) =>
-    alterar((s) =>
-      abaAtual === 'antes' && s.comoEncontrado
-        ? { ...s, comoEncontrado: mudar(s.comoEncontrado) }
-        : { ...s, indicacao: mudar(s.indicacao) },
-    )
-  const rodoviaria = balanca.receptor === 'RODOVIARIA' || balanca.tipo === 'RODOVIARIA' || balanca.tipo === 'FERROVIARIA'
+  const setEnsaio = (mudar: (e: EnsaioIndicacao) => EnsaioIndicacao) => alterar((s) => mudarEnsaioDaAba(s, abaAtual, mudar))
+  const rodoviaria = ehRodoviaria(balanca)
 
   return (
     <div className="flex flex-col gap-6">
@@ -59,27 +53,28 @@ export function EtapaIndicacao(ctx: ContextoEtapa) {
       {(rodoviaria || ensaio.substituicao.ativa) && (
         <Substituicao key={`sub-${abaAtual}`} ctx={ctx} ensaio={ensaio} setEnsaio={setEnsaio} antes={abaAtual === 'antes'} />
       )}
-      {abaAtual === 'depois' && (
-        <Card>
-          <CardHeader titulo="Retorno ao zero" descricao="Indicação depois de retirar toda a carga (opcional)" />
-          <div className="px-5 pb-5">
-            <CampoNumero
-              className="w-48"
-              valor={f.indicacao.retornoZero}
-              aoMudar={(v) => alterar((s) => ({ ...s, indicacao: { ...s.indicacao, retornoZero: v } }))}
-              unidade={balanca.unidade}
-              aria-label="Indicação no retorno ao zero"
-            />
-            {resultado?.erroRetornoZero !== null &&
-              resultado?.erroRetornoZero !== undefined &&
-              resultado.erroRetornoZero !== 0 && (
-                <p className="mt-2 text-[13px] text-warning">
-                  Não voltou exatamente a zero: {formatarNumero(resultado.erroRetornoZero, casasDe(balanca))} {balanca.unidade}.
-                </p>
-              )}
-          </div>
-        </Card>
-      )}
+      {/* Cada aba tem o seu retorno ao zero (a folha de campo tem uma célula para cada coluna; com
+          substituição, ele entra na incerteza do ensaio) */}
+      <Card key={`zero-${abaAtual}`}>
+        <CardHeader
+          titulo={abaAtual === 'antes' ? 'Retorno ao zero antes do ajuste' : 'Retorno ao zero'}
+          descricao="Indicação depois de retirar toda a carga (opcional)"
+        />
+        <div className="px-5 pb-5">
+          <CampoNumero
+            className="w-48"
+            valor={ensaio.retornoZero}
+            aoMudar={(v) => setEnsaio((e) => ({ ...e, retornoZero: v }))}
+            unidade={balanca.unidade}
+            aria-label={abaAtual === 'antes' ? 'Indicação no retorno ao zero antes do ajuste' : 'Indicação no retorno ao zero'}
+          />
+          {resultado?.erroRetornoZero !== null && resultado?.erroRetornoZero !== undefined && resultado.erroRetornoZero !== 0 && (
+            <p className="mt-2 text-[13px] text-warning">
+              Não voltou exatamente a zero: {formatarNumero(resultado.erroRetornoZero, casasDe(balanca))} {balanca.unidade}.
+            </p>
+          )}
+        </div>
+      </Card>
     </div>
   )
 }

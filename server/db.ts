@@ -179,7 +179,57 @@ const MIGRACOES: Migracao[] = [
   // 4: o PDF da primeira impressão de cada folha de campo. A reimpressão (o mesmo nº) devolve esse arquivo,
   // byte a byte: dois papéis com o mesmo nº controlado nunca têm conteúdo diferente (ISO/IEC 17025, 7.5).
   `ALTER TABLE folhas_campo ADD COLUMN pdf BLOB;`,
+
+  // 5: histórico das folhas de campo. A "folha nova" (nº novo, com os dados atuais) não apaga a de antes:
+  // ela continua ligada à calibração, marcada como substituída (não usada), e a calibração fica com a mais
+  // nova. A folha de um rascunho excluído antes desta versão fica livre para ser ligada de novo.
+  folhasSubstituidas,
+
+  // 6: (a) o PDF de cada folha de campo passa a ficar num arquivo, em <pasta de dados>/folhas-campo/<ano>/,
+  // com o caminho e o sha256 no banco: o banco (e cada cópia de segurança dele) não cresce ≈ 100 KB por
+  // folha impressa. Os PDFs guardados no banco pela migração 4 vão para a pasta quando o servidor sobe
+  // (`Repositorio.moverPdfsDasFolhas`). (b) As passagens de uma folha de um certificado cancelado (ou de uma
+  // cadeia de revisões que terminou cancelada) para a calibração refeita a partir do mesmo papel: o
+  // cancelado continua mostrando a folha dele, e ela volta para ele se a refeita for excluída.
+  folhasEmArquivo,
 ]
+
+/** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
+function acrescentarColuna(db: Banco, tabela: string, coluna: string, definicao: string) {
+  const colunas = db.prepare(`PRAGMA table_info(${tabela})`).all() as Array<{ name: string }>
+  if (!colunas.some((c) => c.name === coluna)) db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${coluna} ${definicao}`)
+}
+
+/** Migração 5 (ver acima). Repetível: só acrescenta o que falta e só solta folhas de calibrações que não existem. */
+function folhasSubstituidas(db: Banco) {
+  acrescentarColuna(db, 'folhas_campo', 'pdf', 'BLOB')
+  // nº da folha que ficou no lugar desta (vazio = a vigente) e quando
+  acrescentarColuna(db, 'folhas_campo', 'substituida_por', "TEXT NOT NULL DEFAULT ''")
+  acrescentarColuna(db, 'folhas_campo', 'substituida_em', "TEXT NOT NULL DEFAULT ''")
+  db.exec(
+    `UPDATE folhas_campo SET calibracao_id = ''
+      WHERE calibracao_id <> '' AND calibracao_id NOT IN (SELECT id FROM calibracoes)`,
+  )
+}
+
+/** Migração 6 (ver acima). Repetível: só acrescenta o que falta. */
+function folhasEmArquivo(db: Banco) {
+  acrescentarColuna(db, 'folhas_campo', 'pdf_arquivo', "TEXT NOT NULL DEFAULT ''") // <ano>/FC-….pdf
+  acrescentarColuna(db, 'folhas_campo', 'pdf_sha256', "TEXT NOT NULL DEFAULT ''")
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS folhas_campo_passagens (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero             TEXT NOT NULL,             -- FC-2026-00042
+      de_calibracao_id   TEXT NOT NULL,             -- o certificado cancelado (ou o original da cadeia) que tinha a folha
+      para_calibracao_id TEXT NOT NULL,             -- a calibração refeita que passou a usá-la
+      substituida_por    TEXT NOT NULL DEFAULT '',  -- como a folha estava na de origem (para voltar igual)
+      substituida_em     TEXT NOT NULL DEFAULT '',
+      em                 TEXT NOT NULL,
+      por                TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS folhas_campo_passagens_numero ON folhas_campo_passagens(numero);
+  `)
+}
 
 /**
  * Migração 2. Nas balanças com dados do indicador separado, eles passam para a identificação principal e a

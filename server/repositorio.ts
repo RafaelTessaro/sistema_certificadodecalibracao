@@ -3,6 +3,10 @@
 // ordenação e ligação entre as tabelas. A `versao` impede gravar por cima da alteração de outra
 // pessoa (409). Toda gravação aumenta a revisão geral e avisa as telas abertas (tempo real).
 
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+
 import {
   calibracaoEmOutraUnidade,
   completarConfig,
@@ -44,6 +48,18 @@ import type {
 import { type Banco, gravarMeta, lerMeta, transacao } from './db.ts'
 import { ErroApi } from './erros.ts'
 
+/** A folha foi impressa para esta calibração (a dela, ou uma folha nova dela), e não avulsa e ligada depois. */
+export const impressaPara = (chave: string, calibracaoId: string) =>
+  chave === `calibracao:${calibracaoId}` || chave.startsWith(`calibracao:${calibracaoId}:`)
+
+const SEM_TROCA = { substituidas: [] as string[], liberadas: [] as string[] }
+
+/**
+ * Chave da folha que voltou ao registro pela pasta das folhas de campo (o banco veio de uma cópia anterior
+ * à impressão dela): 'recuperada:FC-2026-00042'.
+ */
+export const CHAVE_RECUPERADA = 'recuperada:'
+
 type Linha = { dados: string }
 
 function validar<T>(r: { valor: T; erros: string[] }): T {
@@ -82,9 +98,13 @@ export class Repositorio {
   /** Relógio (os testes trocam). */
   agora: () => Date = () => new Date()
 
-  constructor(db: Banco, publicar: (msg: MensagemTempoReal) => void = () => {}) {
+  /** Pasta dos PDFs das folhas de campo (<pasta de dados>/folhas-campo); sem ela, o PDF fica no banco. */
+  private pastaFolhas: string
+
+  constructor(db: Banco, publicar: (msg: MensagemTempoReal) => void = () => {}, opcoes: { pastaFolhas?: string } = {}) {
     this.db = db
     this.publicar = publicar
+    this.pastaFolhas = opcoes.pastaFolhas ?? ''
   }
 
   revisao(): number {
@@ -690,8 +710,13 @@ export class Repositorio {
       if (atual.status !== 'RASCUNHO' && atual.status !== 'REVISAO')
         throw new ErroApi(409, 'Certificado emitido não pode ser excluído. Use "Cancelar certificado".')
       this.db.prepare('DELETE FROM calibracoes WHERE id = ?').run(id)
-      // A folha de campo impressa por ele fica livre para ser ligada à calibração refeita (o registro da impressão continua)
-      this.db.prepare("UPDATE folhas_campo SET calibracao_id = '' WHERE calibracao_id = ?").run(id)
+      // As folhas de campo dele saem junto: a que veio de um certificado cancelado volta para ele; as outras
+      // ficam livres para ser ligadas à calibração refeita (o registro da impressão continua)
+      const folhas = this.db.prepare('SELECT numero FROM folhas_campo WHERE calibracao_id = ?').all(id) as Array<{
+        numero: string
+      }>
+      for (const f of folhas) this.soltarFolha(f.numero, id)
+      this.db.prepare('DELETE FROM folhas_campo_passagens WHERE para_calibracao_id = ?').run(id)
       this.mudou('calibracao', id)
     })
   }
@@ -825,15 +850,24 @@ export class Repositorio {
   }
 
   // ---- Folhas de campo ---------------------------------------------------------------
+  // Cada nº FC é um documento só: o PDF da primeira impressão fica guardado (num arquivo da pasta
+  // folhas-campo, com o sha256 no banco) e toda reimpressão é ele. A "folha nova" (nº novo, com os dados
+  // atuais) não apaga a de antes: ela continua ligada à calibração, marcada como substituída (não usada), e
+  // a calibração fica com a mais nova (`substituida_por` vazio). Só a folha impressa para a calibração fica
+  // nela como substituída: a avulsa ligada e depois trocada fica livre de novo (foi engano), e a que veio de
+  // um certificado cancelado volta para ele (`folhas_campo_passagens`).
 
   /**
-   * Nº da folha de campo que vai ser impressa: a mesma `chave` reimprime com o mesmo nº (a de uma
-   * calibração é 'calibracao:<id>'); chave nova reserva o próximo do ano, FC-AAAA-NNNNN (nunca reutilizado).
-   * Calibração com folha ligada (impressa por ela, avulsa e ligada depois ou, numa revisão, a do certificado
-   * revisado; ver `folhaCampoDaCalibracao`): reimprime com o nº dessa folha, o que está no papel preenchido.
-   * `nova`: folha nova para a calibração em andamento (o plano mudou antes da visita): a de antes deixa de
-   * ser a dela (o registro da impressão continua). `pdf`: o arquivo da primeira impressão, se já guardado
-   * (`guardarPdfFolhaCampo`): a reimpressão é esse arquivo.
+   * Nº da folha de campo que vai ser impressa. A calibração com folha (impressa por ela, avulsa e ligada
+   * depois ou, numa revisão, a do certificado revisado; ver `folhaCampoDaCalibracao`) reimprime essa folha,
+   * a que está no papel. Sem folha, a mesma `chave` reimprime com o mesmo nº (a de uma calibração é
+   * 'calibracao:<id>'); chave nova reserva o próximo do ano, FC-AAAA-NNNNN (nunca reutilizado: nem depois de
+   * voltar uma cópia antiga do banco, ver `proximaSequencia`).
+   * `nova`: folha nova para a calibração em andamento: a de antes fica registrada como substituída por ela;
+   * `substituiu` diz quais (para o registro de atividades) e `liberadas`, as avulsas que ficaram livres.
+   * Numa revisão que usa a folha do certificado revisado não há folha nova (409); a calibração concluída, ou
+   * a revisão de um certificado feito sem folha, não ganha nº novo (409). `pdf`: o arquivo da primeira
+   * impressão, se já guardado (`guardarPdfFolhaCampo`): a reimpressão é esse arquivo.
    */
   reservarFolhaCampo(e: {
     chave: string
@@ -842,31 +876,52 @@ export class Repositorio {
     clienteId?: string
     por: string
     nova?: boolean
-  }): FolhaCampoImpressa & { nova: boolean; pdf: Buffer | null } {
+  }): FolhaCampoImpressa & { nova: boolean; pdf: Buffer | null; substituiu: string[]; liberadas: string[] } {
     return transacao(this.db, () => {
       const agora = this.agora().toISOString()
       const porChave = this.db.prepare('SELECT numero FROM folhas_campo WHERE chave = ?').get(e.chave) as
         { numero: string } | undefined
-      const ligada = e.calibracaoId && !e.nova ? this.folhaCampoDaCalibracao(e.calibracaoId) : null
-      const existente = ligada ?? porChave
+      const atual = e.calibracaoId ? this.folhaCampoDaCalibracao(e.calibracaoId) : null
+      if (e.nova && !porChave && atual?.herdada)
+        throw new ErroApi(
+          409,
+          `Esta revisão usa a folha ${atual.numero}, do certificado revisado (a mesma visita): não há folha nova para ela.`,
+        )
+      // Sem folha: só a calibração em andamento que não é revisão ganha nº novo (o certificado concluído, ou o
+      // revisado, foi feito sem folha; um nº novo agora não seria o registro dos dados brutos dele)
+      if (e.calibracaoId && !atual && !porChave) {
+        const c = this.db.prepare('SELECT status, substitui_id FROM calibracoes WHERE id = ?').get(e.calibracaoId) as
+          { status: string; substitui_id: string } | undefined
+        if (c && (c.substitui_id || (c.status !== 'RASCUNHO' && c.status !== 'REVISAO')))
+          throw new ErroApi(
+            409,
+            'Esta calibração não tem folha de campo: um nº novo agora não seria o registro dos dados brutos dela.',
+          )
+      }
+      const existente = (e.nova ? null : atual) ?? porChave
       if (existente) {
         this.db
-          .prepare(
-            `UPDATE folhas_campo SET impressoes = impressoes + 1, ultima_em = ?,
-               calibracao_id = CASE WHEN calibracao_id = '' THEN ? ELSE calibracao_id END WHERE numero = ?`,
-          )
-          .run(agora, e.calibracaoId ?? '', existente.numero)
+          .prepare('UPDATE folhas_campo SET impressoes = impressoes + 1, ultima_em = ? WHERE numero = ?')
+          .run(agora, existente.numero)
+        // A folha desta calibração que ficou sem dono (a versão anterior soltava a substituída): volta a ser dela
+        if (e.calibracaoId && !atual)
+          this.db
+            .prepare(
+              `UPDATE folhas_campo SET calibracao_id = ?, substituida_por = '', substituida_em = ''
+                WHERE numero = ? AND calibracao_id IN ('', ?)`,
+            )
+            .run(e.calibracaoId, existente.numero, e.calibracaoId)
         if (e.calibracaoId) this.mudou('calibracao', e.calibracaoId)
-        return { ...this.folhaCampo(existente.numero)!, nova: false, pdf: this.pdfFolhaCampo(existente.numero) }
+        return {
+          ...this.folhaCampo(existente.numero)!,
+          nova: false,
+          pdf: this.pdfFolhaCampo(existente.numero),
+          substituiu: [],
+          liberadas: [],
+        }
       }
-      // Folha nova para a calibração: a que ela tinha fica sem calibração (pode ser ligada de novo pelo nº)
-      if (e.nova && e.calibracaoId)
-        this.db.prepare("UPDATE folhas_campo SET calibracao_id = '' WHERE calibracao_id = ?").run(e.calibracaoId)
       const ano = Number(this.hoje().slice(0, 4))
-      const { ultima } = this.db.prepare('SELECT MAX(sequencia) AS ultima FROM folhas_campo WHERE ano = ?').get(ano) as {
-        ultima: number | null
-      }
-      const sequencia = (ultima ?? 0) + 1
+      const sequencia = this.proximaSequencia(ano)
       const numero = `FC-${ano}-${String(sequencia).padStart(5, '0')}`
       this.db
         .prepare(
@@ -885,26 +940,217 @@ export class Repositorio {
           agora,
           agora,
         )
+      // Folha nova: a que a calibração tinha fica registrada como substituída por esta (não usada)
+      const troca = e.nova && e.calibracaoId ? this.substituirFolhas(e.calibracaoId, numero, agora) : SEM_TROCA
       // A tela da calibração passa a mostrar o nº da folha
       if (e.calibracaoId) this.mudou('calibracao', e.calibracaoId)
-      return { ...this.folhaCampo(numero)!, nova: true, pdf: null }
+      return { ...this.folhaCampo(numero)!, nova: true, pdf: null, substituiu: troca.substituidas, liberadas: troca.liberadas }
     })
   }
 
+  /**
+   * Próximo nº do ano: depois do maior já registrado no banco e do maior que tem PDF na pasta das folhas.
+   * Uma cópia antiga do banco posta no lugar sem levar as folhas (ver `transplantarFolhasCampo`) não
+   * volta a numeração: os nºs impressos depois dela, que já estão no papel, nunca são emitidos de novo.
+   */
+  private proximaSequencia(ano: number): number {
+    const { ultima } = this.db.prepare('SELECT MAX(sequencia) AS ultima FROM folhas_campo WHERE ano = ?').get(ano) as {
+      ultima: number | null
+    }
+    let maior = ultima ?? 0
+    const pasta = this.pastaFolhas ? join(this.pastaFolhas, String(ano)) : ''
+    if (pasta && existsSync(pasta))
+      for (const arquivo of readdirSync(pasta)) {
+        const m = /^FC-(\d{4})-(\d{5})\b/.exec(arquivo)
+        if (m && Number(m[1]) === ano) maior = Math.max(maior, Number(m[2]))
+      }
+    return maior + 1
+  }
+
+  /**
+   * As folhas vigentes da calibração (menos `numero`) saem dela, trocadas por `numero`: a impressa para ela
+   * fica registrada como substituída (não usada); a avulsa ligada a ela (engano no nº, outro papel) fica
+   * livre de novo, para a calibração dona do papel, e a que veio de um certificado cancelado volta para ele.
+   */
+  private substituirFolhas(calibracaoId: string, numero: string, em: string): { substituidas: string[]; liberadas: string[] } {
+    const linhas = this.db
+      .prepare(
+        `SELECT numero, chave FROM folhas_campo WHERE calibracao_id = ? AND substituida_por = '' AND numero <> ?
+          ORDER BY ano, sequencia`,
+      )
+      .all(calibracaoId, numero) as Array<{ numero: string; chave: string }>
+    const liberadas: string[] = []
+    for (const l of linhas) {
+      if (impressaPara(l.chave, calibracaoId))
+        this.db
+          .prepare('UPDATE folhas_campo SET substituida_por = ?, substituida_em = ? WHERE numero = ?')
+          .run(numero, em, l.numero)
+      else if (!this.soltarFolha(l.numero, calibracaoId)) liberadas.push(l.numero)
+    }
+    return { substituidas: linhas.map((l) => l.numero), liberadas }
+  }
+
+  /**
+   * Tira a folha da calibração: volta para o certificado cancelado de onde ela passou para esta (como estava
+   * nele) ou fica livre. Devolve o id da calibração para onde ela voltou ('' = ficou livre).
+   */
+  private soltarFolha(numero: string, calibracaoId: string): string {
+    const p = this.db
+      .prepare(
+        `SELECT id, de_calibracao_id, substituida_por, substituida_em FROM folhas_campo_passagens
+          WHERE numero = ? AND para_calibracao_id = ? ORDER BY id DESC LIMIT 1`,
+      )
+      .get(numero, calibracaoId) as
+      { id: number; de_calibracao_id: string; substituida_por: string; substituida_em: string } | undefined
+    if (p && this.db.prepare('SELECT 1 FROM calibracoes WHERE id = ?').get(p.de_calibracao_id)) {
+      this.db
+        .prepare('UPDATE folhas_campo SET calibracao_id = ?, substituida_por = ?, substituida_em = ? WHERE numero = ?')
+        .run(p.de_calibracao_id, p.substituida_por, p.substituida_em, numero)
+      this.db.prepare('DELETE FROM folhas_campo_passagens WHERE id = ?').run(p.id)
+      this.mudou('calibracao', p.de_calibracao_id)
+      return p.de_calibracao_id
+    }
+    this.db
+      .prepare("UPDATE folhas_campo SET calibracao_id = '', substituida_por = '', substituida_em = '' WHERE numero = ?")
+      .run(numero)
+    return ''
+  }
+
+  /**
+   * Os PDFs que a migração 4 guardou no banco vão para a pasta das folhas (o banco e as cópias dele param de
+   * carregar ≈ 100 KB por folha). Roda quando o servidor sobe; devolve quantos foram movidos.
+   */
+  moverPdfsDasFolhas(): number {
+    if (!this.pastaFolhas) return 0
+    const linhas = this.db
+      .prepare("SELECT numero, ano, pdf FROM folhas_campo WHERE pdf IS NOT NULL AND pdf_arquivo = ''")
+      .all() as Array<{ numero: string; ano: number; pdf: Uint8Array }>
+    for (const l of linhas)
+      transacao(this.db, () => {
+        const pdf = Buffer.from(l.pdf)
+        const { arquivo, sha256 } = this.gravarArquivoDaFolha(l.numero, l.ano, pdf)
+        this.db
+          .prepare('UPDATE folhas_campo SET pdf_arquivo = ?, pdf_sha256 = ?, pdf = NULL WHERE numero = ?')
+          .run(arquivo, sha256, l.numero)
+      })
+    return linhas.length
+  }
+
+  /**
+   * A pasta das folhas é a fonte de verdade também do registro: as folhas que têm PDF nela
+   * (folhas-campo/<ano>/FC-AAAA-NNNNN.pdf) e não estão no banco, porque ele voltou de uma cópia anterior à
+   * impressão delas sem `transplantarFolhasCampo`, voltam ao registro como folhas livres
+   * (`CHAVE_RECUPERADA`), com a data e o sha256 do arquivo. O papel preenchido continua podendo ser ligado à
+   * calibração, confirmando, porque não se sabe para qual balança ele foi impresso. Roda quando o servidor
+   * sobe e, para um nº (`numero`), quando ele é ligado. Devolve os nºs que voltaram; o registro de atividades
+   * guarda quais.
+   */
+  recuperarFolhasDaPasta(numero?: string): string[] {
+    if (!this.pastaFolhas || !existsSync(this.pastaFolhas)) return []
+    const achadas = new Map<string, { arquivo: string; ano: number; sequencia: number }>()
+    for (const ano of readdirSync(this.pastaFolhas, { withFileTypes: true })) {
+      if (!ano.isDirectory() || !/^\d{4}$/.test(ano.name)) continue
+      for (const arquivo of readdirSync(join(this.pastaFolhas, ano.name)).sort()) {
+        const m = /^(FC-(\d{4})-(\d{5}))(?:-[0-9a-f]{12})?\.pdf$/.exec(arquivo)
+        if (!m || m[2] !== ano.name || (numero && m[1] !== numero)) continue
+        // Com mais de um arquivo do mesmo nº, o sem sufixo (o da primeira impressão)
+        if (achadas.has(m[1]) && arquivo !== `${m[1]}.pdf`) continue
+        achadas.set(m[1], { arquivo: `${ano.name}/${arquivo}`, ano: Number(m[2]), sequencia: Number(m[3]) })
+      }
+    }
+    if (!achadas.size) return []
+    return transacao(this.db, () => {
+      const existe = this.db.prepare('SELECT 1 FROM folhas_campo WHERE numero = ? OR (ano = ? AND sequencia = ?)')
+      const inserir = this.db.prepare(
+        `INSERT INTO folhas_campo (numero, ano, sequencia, chave, impressa_em, ultima_em, pdf_arquivo, pdf_sha256)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      const voltaram: string[] = []
+      for (const [n, f] of [...achadas].sort(([a], [b]) => a.localeCompare(b))) {
+        if (existe.get(n, f.ano, f.sequencia)) continue
+        const caminho = join(this.pastaFolhas, f.arquivo)
+        const sha256 = createHash('sha256').update(readFileSync(caminho)).digest('hex')
+        const em = statSync(caminho).mtime.toISOString()
+        inserir.run(n, f.ano, f.sequencia, `${CHAVE_RECUPERADA}${n}`, em, em, f.arquivo, sha256)
+        voltaram.push(n)
+      }
+      if (voltaram.length) {
+        const um = voltaram.length === 1
+        const quais = um ? voltaram[0] : `${voltaram[0]} a ${voltaram.at(-1)}`
+        this.db
+          .prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'COPIA_RESTAURADA', ?)")
+          .run(
+            this.agora().toISOString(),
+            `${um ? 'a folha de campo' : `${voltaram.length} folhas de campo`} da pasta folhas-campo que não ${um ? 'estava' : 'estavam'} no banco (${quais}) ${um ? 'voltou' : 'voltaram'} ao registro, livre${um ? '' : 's'}: o banco é de uma cópia anterior à impressão ${um ? 'dela' : 'delas'}`,
+          )
+      }
+      return voltaram
+    })
+  }
+
+  /** Grava o PDF na pasta das folhas ('<ano>/FC-….pdf'), sem nunca sobrescrever outro arquivo com o mesmo nome. */
+  private gravarArquivoDaFolha(numero: string, ano: number, pdf: Buffer): { arquivo: string; sha256: string } {
+    const sha256 = createHash('sha256').update(pdf).digest('hex')
+    let arquivo = `${ano}/${numero}.pdf`
+    const existente = join(this.pastaFolhas!, arquivo)
+    if (existsSync(existente) && createHash('sha256').update(readFileSync(existente)).digest('hex') !== sha256)
+      arquivo = `${ano}/${numero}-${sha256.slice(0, 12)}.pdf`
+    const destino = join(this.pastaFolhas!, arquivo)
+    if (!existsSync(destino)) {
+      mkdirSync(dirname(destino), { recursive: true })
+      const parcial = `${destino}.parcial`
+      writeFileSync(parcial, pdf)
+      renameSync(parcial, destino)
+    }
+    return { arquivo, sha256 }
+  }
+
+  /**
+   * O PDF da primeira impressão da folha, ou null se ainda não foi guardado. O arquivo que sumiu da pasta (ou
+   * foi alterado) é um erro: um PDF refeito agora não seria o mesmo papel.
+   */
   private pdfFolhaCampo(numero: string): Buffer | null {
-    const l = this.db.prepare('SELECT pdf FROM folhas_campo WHERE numero = ?').get(numero) as
-      { pdf: Uint8Array | null } | undefined
-    return l?.pdf ? Buffer.from(l.pdf) : null
+    const l = this.db.prepare('SELECT pdf, pdf_arquivo, pdf_sha256 FROM folhas_campo WHERE numero = ?').get(numero) as
+      { pdf: Uint8Array | null; pdf_arquivo: string; pdf_sha256: string } | undefined
+    if (!l) return null
+    if (l.pdf_arquivo) {
+      const caminho = this.pastaFolhas ? join(this.pastaFolhas, l.pdf_arquivo) : ''
+      if (!caminho || !existsSync(caminho))
+        throw new ErroApi(
+          409,
+          `O PDF da folha ${numero} não está na pasta de dados (folhas-campo/${l.pdf_arquivo}). Volte essa pasta da cópia de segurança externa: um PDF refeito agora não seria o mesmo papel.`,
+        )
+      const pdf = readFileSync(caminho)
+      if (l.pdf_sha256 && createHash('sha256').update(pdf).digest('hex') !== l.pdf_sha256)
+        throw new ErroApi(
+          409,
+          `O PDF da folha ${numero} (folhas-campo/${l.pdf_arquivo}) foi alterado depois da impressão. Volte o original da cópia de segurança externa.`,
+        )
+      return pdf
+    }
+    return l.pdf ? Buffer.from(l.pdf) : null
   }
 
   /**
    * Guarda o PDF da primeira impressão da folha (só se ainda não houver um) e devolve o guardado: dois
-   * pedidos ao mesmo tempo recebem o mesmo arquivo, e toda reimpressão é igual à primeira, byte a byte.
+   * pedidos ao mesmo tempo recebem o mesmo arquivo, e toda reimpressão é igual à primeira, byte a byte. O
+   * arquivo vai para a pasta das folhas (sem ela, para o banco, como antes).
    */
   guardarPdfFolhaCampo(numero: string, pdf: Buffer): Buffer {
     return transacao(this.db, () => {
-      this.db.prepare('UPDATE folhas_campo SET pdf = ? WHERE numero = ? AND pdf IS NULL').run(pdf, numero)
-      return this.pdfFolhaCampo(numero) ?? pdf
+      const guardado = this.pdfFolhaCampo(numero)
+      if (guardado) return guardado
+      const l = this.db.prepare('SELECT ano FROM folhas_campo WHERE numero = ?').get(numero) as { ano: number } | undefined
+      if (!l) return pdf
+      if (!this.pastaFolhas) {
+        this.db.prepare('UPDATE folhas_campo SET pdf = ? WHERE numero = ? AND pdf IS NULL').run(pdf, numero)
+        return pdf
+      }
+      const { arquivo, sha256 } = this.gravarArquivoDaFolha(numero, l.ano, pdf)
+      this.db
+        .prepare("UPDATE folhas_campo SET pdf_arquivo = ?, pdf_sha256 = ? WHERE numero = ? AND pdf_arquivo = ''")
+        .run(arquivo, sha256, numero)
+      return pdf
     })
   }
 
@@ -924,16 +1170,38 @@ export class Repositorio {
   }
 
   /**
-   * A folha de campo de uma calibração (a primeira, se houver mais de uma), ou null se nunca foi impressa.
-   * Uma revisão sem folha própria usa a do certificado que ela substitui (a mesma visita; numa revisão de
-   * revisão, a do original).
+   * A folha de campo vigente de uma calibração (a mais nova), ou null se nunca foi impressa. Uma revisão
+   * sem folha própria usa a do certificado que ela substitui (a mesma visita; numa revisão de revisão, a do
+   * original): `herdada`. `substituidas`: as impressas antes e trocadas por outra (não usadas). A folha de
+   * um certificado cancelado que passou para a calibração refeita a partir do mesmo papel continua
+   * aparecendo nele, com `passouPara` (quem a usa agora).
    */
   folhaCampoDaCalibracao(calibracaoId: string): FolhaCampoImpressa | null {
+    const substituidas: string[] = []
     for (const id of this.cadeiaDaRevisao(calibracaoId)) {
-      const l = this.db
-        .prepare('SELECT numero FROM folhas_campo WHERE calibracao_id = ? ORDER BY ano, sequencia LIMIT 1')
-        .get(id) as { numero: string } | undefined
-      if (l) return this.folhaCampo(l.numero) ?? null
+      const linhas = this.db
+        .prepare('SELECT numero, substituida_por FROM folhas_campo WHERE calibracao_id = ? ORDER BY ano, sequencia')
+        .all(id) as Array<{ numero: string; substituida_por: string }>
+      substituidas.push(...linhas.filter((l) => l.substituida_por).map((l) => l.numero))
+      const vigente = linhas.filter((l) => !l.substituida_por).at(-1)
+      const folha = vigente && this.folhaCampo(vigente.numero)
+      if (folha) return { ...folha, herdada: id !== calibracaoId, substituidas }
+      const passou = this.db
+        .prepare(
+          `SELECT p.numero, f.calibracao_id AS dono FROM folhas_campo_passagens p JOIN folhas_campo f ON f.numero = p.numero
+            WHERE p.de_calibracao_id = ? AND p.substituida_por = '' ORDER BY p.id DESC LIMIT 1`,
+        )
+        .get(id) as { numero: string; dono: string } | undefined
+      const dela = passou && this.folhaCampo(passou.numero)
+      if (dela) {
+        const dono = passou.dono ? this.obterCalibracao(passou.dono) : undefined
+        return {
+          ...dela,
+          herdada: id !== calibracaoId,
+          substituidas,
+          passouPara: dono ? this.descreverCalibracao(dono) : 'outra calibração',
+        }
+      }
     }
     return null
   }
@@ -951,40 +1219,194 @@ export class Repositorio {
   }
 
   /**
-   * Liga a uma calibração em andamento a folha de campo avulsa (em branco, só do cliente ou da balança)
-   * que foi preenchida no cliente: o nº do papel passa a ser o da calibração (aparece no detalhe e a
-   * reimpressão usa ele). Se a calibração já tinha outra folha (impressa pelo assistente, mas não a usada
-   * no local), ela deixa de ser a da calibração; o registro da impressão continua.
+   * A calibração que responde pela folha de `dono`: ele mesmo ou, se ele foi substituído por revisões que
+   * usam a folha dele (sem folha própria vigente), a última dessas revisões. É ela que diz se o papel ainda
+   * vale (emitida) ou não (cancelada: a calibração refeita pode ficar com ele).
    */
-  vincularFolhaCampo(numero: string, k: Pick<Calibracao, 'id' | 'status' | 'balancaId' | 'clienteId'>): FolhaCampoImpressa {
+  private fimDaCadeiaDaFolha(dono: Calibracao): Calibracao {
+    let atual = dono
+    const vistos = new Set([dono.id])
+    while (atual.status === 'SUBSTITUIDO') {
+      const rev = this.db
+        .prepare(
+          `SELECT id FROM calibracoes WHERE substitui_id = ? AND status IN ('EMITIDO', 'SUBSTITUIDO', 'CANCELADO')
+            ORDER BY revisao DESC LIMIT 1`,
+        )
+        .get(atual.id) as { id: string } | undefined
+      if (!rev || vistos.has(rev.id)) break
+      const propria = this.db.prepare("SELECT 1 FROM folhas_campo WHERE calibracao_id = ? AND substituida_por = ''").get(rev.id)
+      const revisao = propria ? undefined : this.obterCalibracao(rev.id)
+      if (!revisao) break
+      vistos.add(revisao.id)
+      atual = revisao
+    }
+    return atual
+  }
+
+  /** "CC-2026-00012" ou, sem nº, "rascunho da OS 77, Mercado Bom Preço, balança nº de série TL-2231". */
+  private descreverCalibracao(k: Calibracao): string {
+    if (k.numero) return k.numero
+    const os = k.ordemServico.trim()
+    const c = this.obterCliente(k.clienteId)
+    const b = this.obterBalanca(k.balancaId)
+    const situacao = k.status === 'REVISAO' ? 'calibração em revisão' : 'rascunho'
+    return [
+      `${situacao}${os ? ` da ${/^OS\b/i.test(os) ? os : `OS ${os}`}` : ''}`,
+      c ? c.nome || c.razaoSocial : '',
+      b ? (b.numeroSerie ? `balança nº de série ${b.numeroSerie}` : b.identificacao ? `balança ${b.identificacao}` : '') : '',
+    ]
+      .filter(Boolean)
+      .join(', ')
+  }
+
+  /**
+   * Liga a uma calibração em andamento a folha de campo preenchida no cliente, pelo nº dela: a avulsa (em
+   * branco, só do cliente ou da balança), a de um rascunho excluído, a de um certificado cancelado (a
+   * calibração refeita a partir do mesmo papel; só com `podeCancelado`, a permissão de cancelar
+   * certificados, e a passagem fica registrada: o cancelado continua mostrando a folha, e ela volta para ele
+   * se a refeita for excluída), a avulsa ligada por engano a outra calibração em andamento e já trocada lá
+   * ou, numa revisão, a do certificado revisado (fica com ele). A folha que a calibração tinha sai dela (ver
+   * `substituirFolhas`); `substituiu` diz quais e `liberadas`, as avulsas que ficaram livres. Ligar de novo
+   * uma folha substituída da própria calibração (a de antes foi a campo, afinal) a traz de volta. A folha de
+   * outra calibração que ainda vale é recusada, e a mensagem diz qual: o histórico dela não muda. Impressa
+   * para outra balança (ou, sem balança, para outro cliente): só com `confirmar`. `notas`: o que o registro
+   * de atividades deve guardar (de onde a folha veio).
+   */
+  vincularFolhaCampo(
+    numero: string,
+    k: Pick<Calibracao, 'id' | 'status' | 'balancaId' | 'clienteId'>,
+    o: { confirmar?: boolean; podeCancelado?: boolean; por?: string } = {},
+  ): FolhaCampoImpressa & { substituiu: string[]; liberadas: string[]; notas: string[] } {
+    // Sem registro, mas com o PDF na pasta: o banco voltou de uma cópia anterior à impressão dela, que volta
+    // ao registro (fica lá mesmo que a ligação abaixo seja recusada ou peça confirmação)
+    if (!this.db.prepare('SELECT 1 FROM folhas_campo WHERE numero = ?').get(numero)) this.recuperarFolhasDaPasta(numero)
     return transacao(this.db, () => {
       if (k.status !== 'RASCUNHO' && k.status !== 'REVISAO')
         throw new ErroApi(409, 'A folha de campo só pode ser ligada a uma calibração em andamento (rascunho ou em revisão).')
-      const l = this.db.prepare('SELECT calibracao_id, balanca_id, cliente_id FROM folhas_campo WHERE numero = ?').get(numero) as
-        { calibracao_id: string; balanca_id: string; cliente_id: string } | undefined
-      if (!l) throw new ErroApi(404, `A folha ${numero} não foi impressa por este sistema. Confira o nº no alto da folha.`)
-      const dono = l.calibracao_id
-      if (dono && dono !== k.id) {
-        // Revisão: a folha do certificado revisado é a da mesma visita. Fica com ele e a revisão passa a
-        // usá-la (sem outra folha própria)
-        if (this.cadeiaDaRevisao(k.id).includes(dono)) {
-          this.db.prepare("UPDATE folhas_campo SET calibracao_id = '' WHERE calibracao_id = ?").run(k.id)
-          this.mudou('calibracao', k.id)
-          return this.folhaCampo(numero)!
-        }
-        // Folha de um rascunho que foi excluído: está livre
-        if (this.db.prepare('SELECT 1 FROM calibracoes WHERE id = ?').get(dono))
-          throw new ErroApi(409, `A folha ${numero} já é de outra calibração.`)
+      const linha = this.db
+        .prepare(
+          `SELECT calibracao_id, balanca_id, cliente_id, chave, substituida_por, substituida_em FROM folhas_campo
+            WHERE numero = ?`,
+        )
+        .get(numero) as
+        | {
+            calibracao_id: string
+            balanca_id: string
+            cliente_id: string
+            chave: string
+            substituida_por: string
+            substituida_em: string
+          }
+        | undefined
+      if (!linha) throw new ErroApi(404, `A folha ${numero} não foi impressa por este sistema. Confira o nº no alto da folha.`)
+      const agora = this.agora().toISOString()
+      const dono = linha.calibracao_id
+      const vigente = !linha.substituida_por
+      const notas: string[] = []
+      const resultado = (troca: { substituidas: string[]; liberadas: string[] }) => {
+        if (troca.substituidas.length) this.mudou('calibracao', k.id)
+        return { ...this.folhaCampoDaCalibracao(k.id)!, substituiu: troca.substituidas, liberadas: troca.liberadas, notas }
       }
-      if (l.balanca_id && l.balanca_id !== k.balancaId)
-        throw new ErroApi(409, `A folha ${numero} foi impressa para outra balança.`)
-      if (l.cliente_id && l.cliente_id !== k.clienteId)
-        throw new ErroApi(409, `A folha ${numero} foi impressa para outro cliente.`)
-      this.db.prepare("UPDATE folhas_campo SET calibracao_id = '' WHERE calibracao_id = ? AND numero <> ?").run(k.id, numero)
-      this.db.prepare('UPDATE folhas_campo SET calibracao_id = ? WHERE numero = ?').run(k.id, numero)
+      // Já é a folha da calibração. Se ela tem outra vigente (uma cópia antiga do banco voltou com a folha
+      // impressa depois dela), a ligada agora passa a ser a dela, e a outra sai, como numa troca
+      if (dono === k.id && vigente)
+        return resultado(
+          this.folhaCampoDaCalibracao(k.id)?.numero === numero ? SEM_TROCA : this.substituirFolhas(k.id, numero, agora),
+        )
+      const outra = dono && dono !== k.id ? this.obterCalibracao(dono) : undefined
+      let passagem = false
+      if (outra) {
+        const qual = outra.numero ? ` (${outra.numero})` : ''
+        if (this.cadeiaDaRevisao(k.id).includes(dono)) {
+          // Revisão: a folha do certificado revisado é a da mesma visita. Fica com ele e a revisão passa a
+          // usá-la (a folha própria da revisão, se havia, sai dela)
+          if (vigente) return resultado(this.substituirFolhas(k.id, numero, agora))
+          throw new ErroApi(
+            409,
+            `A folha ${numero} foi trocada por outra no certificado revisado${qual}: lá ela ficou registrada como não usada.`,
+          )
+        }
+        // Quem responde pela folha: o dono ou, se ele foi revisado, a última revisão que usa a folha dele
+        const fim = this.fimDaCadeiaDaFolha(outra)
+        if (fim.status === 'CANCELADO') {
+          // Certificado cancelado não pode ser revisado: a calibração refeita a partir do mesmo papel fica com ele
+          if (!o.podeCancelado)
+            throw new ErroApi(
+              403,
+              `A folha ${numero} é o registro dos dados brutos ${fim.numero ? `do certificado cancelado ${fim.numero}` : 'de um certificado cancelado'}: só o administrador a passa para outra calibração.`,
+              { codigo: 'SEM_PERMISSAO', permissao: 'cancelarCertificado' },
+            )
+          notas.push(`era do ${fim.numero || 'certificado'}, cancelado`)
+          passagem = true
+        } else if (
+          !vigente &&
+          (outra.status === 'RASCUNHO' || outra.status === 'REVISAO') &&
+          !impressaPara(linha.chave, outra.id)
+        )
+          // Avulsa ligada por engano a outra calibração em andamento e já trocada lá: não é o registro dela
+          notas.push(`estava como não usada em ${this.descreverCalibracao(outra)}`)
+        // A de outra calibração que vale (mesmo substituída nela): o histórico dela não muda
+        else throw new ErroApi(409, `A folha ${numero} já é de outra calibração (${this.descreverCalibracao(fim)}).`)
+      }
+      // Impressa para outra balança: o cadastro pode ter mudado depois da impressão, mas pode ser engano no
+      // nº. Só com confirmação. A mesma balança, que passou para outro cliente, vale (fica no registro)
+      const outraBalanca = !!linha.balanca_id && linha.balanca_id !== k.balancaId
+      const outroCliente = !!linha.cliente_id && linha.cliente_id !== k.clienteId
+      if (outraBalanca || (outroCliente && !linha.balanca_id)) {
+        const para = outraBalanca ? this.paraQualBalanca(linha.balanca_id) : this.paraQualCliente(linha.cliente_id)
+        if (!o.confirmar)
+          throw new ErroApi(
+            409,
+            `A folha ${numero} foi impressa ${para}. Confira o nº no alto da folha; se é ela mesmo, ligue assim mesmo.`,
+            { codigo: 'CONFIRMAR_FOLHA' },
+          )
+        notas.push(`impressa ${para}`)
+      } else if (outroCliente) {
+        const c = this.obterCliente(linha.cliente_id)
+        notas.push(
+          `impressa quando a balança era ${c ? `do cliente ${c.nome || c.razaoSocial}` : 'de um cliente que foi excluído'}`,
+        )
+      }
+      // Voltou da pasta (o banco é de antes da impressão dela): não se sabe para qual balança foi impressa
+      if (linha.chave.startsWith(CHAVE_RECUPERADA)) {
+        if (!o.confirmar)
+          throw new ErroApi(
+            409,
+            `A folha ${numero} voltou da pasta das folhas de campo (o banco foi restaurado de uma cópia anterior à impressão dela) e não se sabe para qual balança foi impressa. Confira o nº e a balança no alto da folha; se é ela mesmo, ligue assim mesmo.`,
+            { codigo: 'CONFIRMAR_FOLHA' },
+          )
+        notas.push('recuperada da pasta das folhas de campo')
+      }
+      const troca = this.substituirFolhas(k.id, numero, agora)
+      if (passagem)
+        this.db
+          .prepare(
+            `INSERT INTO folhas_campo_passagens (numero, de_calibracao_id, para_calibracao_id, substituida_por, substituida_em, em, por)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(numero, dono, k.id, linha.substituida_por, linha.substituida_em, agora, (o.por ?? '').slice(0, 120))
+      this.db
+        .prepare("UPDATE folhas_campo SET calibracao_id = ?, substituida_por = '', substituida_em = '' WHERE numero = ?")
+        .run(k.id, numero)
+      if (outra) this.mudou('calibracao', outra.id)
       this.mudou('calibracao', k.id)
-      return this.folhaCampo(numero)!
+      return { ...this.folhaCampoDaCalibracao(k.id)!, substituiu: troca.substituidas, liberadas: troca.liberadas, notas }
     })
+  }
+
+  /** "para a balança Toledo 9094, nº de série TL-2231" (ou "… que foi excluída"), para as mensagens da folha. */
+  private paraQualBalanca(id: string): string {
+    const b = this.obterBalanca(id)
+    if (!b) return 'para uma balança que foi excluída'
+    const nome = [b.fabricante, b.modelo].filter(Boolean).join(' ')
+    const serie = b.numeroSerie ? `nº de série ${b.numeroSerie}` : b.identificacao
+    return `para a balança ${[nome, serie].filter(Boolean).join(', ') || 'sem identificação'}`
+  }
+
+  /** "para o cliente Mercado Bom Preço" (ou "… que foi excluído"). */
+  private paraQualCliente(id: string): string {
+    const c = this.obterCliente(id)
+    return c ? `para o cliente ${c.nome || c.razaoSocial}` : 'para um cliente que foi excluído'
   }
 
   // ---- Envios por e-mail ------------------------------------------------------------
