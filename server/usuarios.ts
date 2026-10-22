@@ -932,9 +932,12 @@ export function transplantarUsuarios(origem: Banco, destino: Banco): { usuarios:
  * impressos depois da cópia já estão no papel, com os técnicos, e nunca podem ser emitidos de novo para
  * outro conteúdo. A folha de uma calibração que não existe na cópia fica livre (sem calibração), e o PDF
  * vai junto (o caminho na pasta folhas-campo, que a restauração não apaga, ou o próprio arquivo, se estava
- * no banco). A calibração que fica com duas folhas vigentes (a da cópia e a impressa depois dela, que no
- * banco atual a substituiu) volta a ter uma só, como o banco atual estava (`conciliarVigentes`). Devolve
- * quantas passaram; o registro de atividades da cópia guarda quais.
+ * no banco). A calibração que recebe folhas impressas depois da cópia fica com elas como o banco atual
+ * estava: as que eram livres na cópia e são dela no banco atual voltam para ela (`ligarComoNoAtual`), e a
+ * que ficaria com duas folhas vigentes (a da cópia e a impressa depois dela, que no banco atual a
+ * substituiu) volta a ter uma só (`conciliarVigentes`). Nenhuma calibração da cópia termina com duas
+ * vigentes (`umaVigentePorCalibracao`). Devolve quantas passaram; o registro de atividades da cópia guarda
+ * quais.
  */
 export function transplantarFolhasCampo(origem: Banco, destino: Banco): number {
   const colunas = (db: Banco) =>
@@ -963,18 +966,43 @@ export function transplantarFolhasCampo(origem: Banco, destino: Banco): number {
       inserir.run(...comuns.map((c) => linha[c] ?? null))
       passaram.push(String(l.numero))
     }
-    const conciliadas = comuns.includes('substituida_por') ? conciliarVigentes(origem, destino, passaram) : []
-    if (passaram.length) {
-      const faixa = passaram.length === 1 ? passaram[0] : `${passaram[0]} a ${passaram.at(-1)}`
-      const uma = conciliadas.length === 1
-      const trocadas = conciliadas.length
-        ? `; ${conciliadas.join(', ')}, da cópia, ${uma ? 'ficou' : 'ficaram'} como no banco atual (${uma ? 'trocada pela impressa' : 'trocadas pelas impressas'} depois)`
-        : ''
-      gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', {
-        ip: 'local',
-        detalhe: `${passaram.length === 1 ? 'a folha de campo impressa' : `${passaram.length} folhas de campo impressas`} depois da cópia (${faixa}) continua${passaram.length === 1 ? '' : 'm'} registrada${passaram.length === 1 ? '' : 's'}: os nºs não se repetem${trocadas}`,
-      })
-    }
+    const historico = comuns.includes('substituida_por')
+    const ligadas = historico ? ligarComoNoAtual(origem, destino, passaram) : []
+    const trocadas = historico ? conciliarVigentes(origem, destino, passaram) : []
+    // A garantia vem por último e diz como cada folha terminou
+    const garantidas = historico ? umaVigentePorCalibracao(origem, destino) : []
+    const conciliadas = trocadas.filter((n) => !garantidas.includes(n))
+    const lista = (l: string[], uma: string, varias: string) =>
+      l.length === 1 ? `${l[0]}, ${uma}` : `${l.join(', ')}, ${varias}`
+    const partes = [
+      passaram.length === 1
+        ? `a folha de campo impressa depois da cópia (${passaram[0]}) continua registrada: os nºs não se repetem`
+        : passaram.length
+          ? `${passaram.length} folhas de campo impressas depois da cópia (${passaram[0]} a ${passaram.at(-1)}) continuam registradas: os nºs não se repetem`
+          : '',
+      conciliadas.length
+        ? lista(
+            conciliadas,
+            'da cópia, ficou como no banco atual (trocada pela impressa depois)',
+            'da cópia, ficaram como no banco atual (trocadas pelas impressas depois)',
+          )
+        : '',
+      ligadas.length
+        ? lista(
+            ligadas,
+            'livre na cópia, voltou para a calibração, como no banco atual',
+            'livres na cópia, voltaram para a calibração, como no banco atual',
+          )
+        : '',
+      garantidas.length
+        ? lista(
+            garantidas,
+            'da cópia, deixou de ser vigente (uma folha vigente por calibração)',
+            'da cópia, deixaram de ser vigentes (uma folha vigente por calibração)',
+          )
+        : '',
+    ].filter(Boolean)
+    if (partes.length) gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe: partes.join('; ') })
   })
   return passaram.length
 }
@@ -1011,6 +1039,79 @@ function conciliarVigentes(origem: Banco, destino: Banco, passaram: string[]): s
       } else if (impressaPara(o.chave, t.calibracao_id)) gravar.run(t.calibracao_id, n, t.impressa_em, o.numero)
       else gravar.run('', '', '', o.numero)
       mudaram.push(o.numero)
+    }
+  }
+  return mudaram
+}
+
+/**
+ * Antes de `conciliarVigentes`: a calibração da cópia que recebeu folhas impressas depois dela fica também com
+ * as folhas que estavam livres na cópia e que, no banco atual, são dela (ligadas depois da cópia; por
+ * exemplo, a avulsa que foi a campo no lugar da folha impressa depois da cópia), como estão no banco atual.
+ * Sem isso, a folha que passou ficaria substituída por um nº que não é da calibração, e ela, sem folha.
+ * Devolve os nºs que foram ligados.
+ */
+function ligarComoNoAtual(origem: Banco, destino: Banco, passaram: string[]): string[] {
+  const calibracoes = new Set<string>()
+  const dela = destino.prepare("SELECT calibracao_id FROM folhas_campo WHERE numero = ? AND calibracao_id <> ''")
+  for (const n of passaram) {
+    const l = dela.get(n) as { calibracao_id: string } | undefined
+    if (l) calibracoes.add(l.calibracao_id)
+  }
+  const noAtual = origem.prepare(
+    'SELECT numero, substituida_por, substituida_em FROM folhas_campo WHERE calibracao_id = ? ORDER BY ano, sequencia',
+  )
+  const livre = destino.prepare("SELECT 1 FROM folhas_campo WHERE numero = ? AND calibracao_id = ''")
+  const ligar = destino.prepare(
+    'UPDATE folhas_campo SET calibracao_id = ?, substituida_por = ?, substituida_em = ? WHERE numero = ?',
+  )
+  const ligadas: string[] = []
+  for (const k of calibracoes)
+    for (const f of noAtual.all(k) as Array<{ numero: string; substituida_por: string; substituida_em: string }>) {
+      if (passaram.includes(f.numero) || !livre.get(f.numero)) continue
+      ligar.run(k, f.substituida_por, f.substituida_em, f.numero)
+      ligadas.push(f.numero)
+    }
+  return ligadas
+}
+
+/**
+ * Por último, a garantia: nenhuma calibração da cópia termina com duas folhas vigentes. Fica a que é a
+ * vigente dela no banco atual ou, sem essa, a mais nova; as outras ficam como estão no banco atual, se lá
+ * são dela e substituídas, ou como `Repositorio.substituirFolhas` as deixaria (a impressa para a calibração
+ * substituída pela que ficou; a avulsa, livre). Devolve os nºs que mudaram.
+ */
+function umaVigentePorCalibracao(origem: Banco, destino: Banco): string[] {
+  const duplas = destino
+    .prepare(
+      `SELECT calibracao_id FROM folhas_campo WHERE calibracao_id <> '' AND substituida_por = ''
+        GROUP BY calibracao_id HAVING COUNT(*) > 1`,
+    )
+    .all() as Array<{ calibracao_id: string }>
+  const vigentes = destino.prepare(
+    "SELECT numero, chave, impressa_em FROM folhas_campo WHERE calibracao_id = ? AND substituida_por = '' ORDER BY ano, sequencia",
+  )
+  const noAtual = origem.prepare('SELECT calibracao_id, substituida_por, substituida_em FROM folhas_campo WHERE numero = ?')
+  const gravar = destino.prepare(
+    'UPDATE folhas_campo SET calibracao_id = ?, substituida_por = ?, substituida_em = ? WHERE numero = ?',
+  )
+  const mudaram: string[] = []
+  for (const { calibracao_id: k } of duplas) {
+    const lista = vigentes.all(k) as Array<{ numero: string; chave: string; impressa_em: string }>
+    const atual = (n: string) =>
+      noAtual.get(n) as { calibracao_id: string; substituida_por: string; substituida_em: string } | undefined
+    const fica =
+      lista.find((f) => {
+        const a = atual(f.numero)
+        return a?.calibracao_id === k && !a.substituida_por
+      }) ?? lista.at(-1)!
+    for (const f of lista) {
+      if (f.numero === fica.numero) continue
+      const a = atual(f.numero)
+      if (a?.calibracao_id === k && a.substituida_por) gravar.run(k, a.substituida_por, a.substituida_em, f.numero)
+      else if (impressaPara(f.chave, k)) gravar.run(k, fica.numero, fica.impressa_em, f.numero)
+      else gravar.run('', '', '', f.numero)
+      mudaram.push(f.numero)
     }
   }
   return mudaram

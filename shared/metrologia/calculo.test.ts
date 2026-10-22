@@ -438,6 +438,30 @@ describe('cg-18 H3, situação A (cargas de substituição)', () => {
     expect(r.erroRetornoZero).toBe(4)
   })
 
+  it('com substituição, o retorno ao zero entra na incerteza (I·|E0|/(Max·√3)); sem ele anotado, o termo some', () => {
+    const maiorU = (retornoZero: number | null) => {
+      const e = entrada()
+      e.indicacao.retornoZero = retornoZero
+      const r = calcular(e)
+      return { r, p: orc(r.pontos.find((x) => x.id === '30010')!.crescente) }
+    }
+    const sem = maiorU(null)
+    const com = maiorU(4)
+    const maior = maiorU(-40)
+    expect(sem.p.uTempo).toBe(0)
+    expect(sem.r.erroRetornoZero).toBeNull()
+    perto(com.p.uTempo, (30040 * 4) / (30000 * Math.sqrt(3)), 1e-12, 'u(tempo) 4 kg (indicação 30 040)')
+    // O sinal não importa; quanto maior o retorno, maior a incerteza
+    perto(maior.p.uTempo, (30040 * 40) / (30000 * Math.sqrt(3)), 1e-12, 'u(tempo) −40 kg')
+    expect(com.p.U).toBeGreaterThan(sem.p.U)
+    expect(maior.p.U).toBeGreaterThan(com.p.U)
+    // Sem substituição, o retorno ao zero não entra no orçamento
+    const e = entrada()
+    e.indicacao.substituicao.ativa = false
+    e.indicacao.pontos = e.indicacao.pontos.filter((x) => x.nivelSubstituicao === 0)
+    expect(calcular(e).pontos.every((x) => orc(x.crescente).uTempo === 0)).toBe(true)
+  })
+
   it('substituição sem as leituras de uma etapa vira pendência do ponto', () => {
     const e = entrada()
     e.indicacao.substituicao.etapas[1].leituraSubstituicao = null

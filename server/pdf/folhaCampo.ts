@@ -21,7 +21,7 @@
 // Paginação medida (`montar`): a parte de um passo que passa para a página seguinte repete o título do
 // passo com "(continuação)"; a tabela de pontos vai sempre inteira (só a que não cabe numa página se divide,
 // com o título e o cabeçalho de novo) e, quando passa para a página seguinte, o título, a instrução e o
-// método ficam na sobra desta, com o aviso "continua na próxima página"; os pontos e as etapas de
+// método ficam na sobra desta, com o aviso "tabela na próxima página"; os pontos e as etapas de
 // substituição, preenchidos intercalados, ficam na mesma página; as observações crescem no espaço que
 // sobra na página delas.
 
@@ -885,7 +885,7 @@ export interface Extras {
   medirPontos?: 'aqui' | 'pagina-nova'
   /**
    * A tabela dos pontos passou inteira para a página seguinte: o pé da página do título do passo diz onde
-   * ela está ("continua na próxima página").
+   * ela está ("tabela na próxima página").
    */
   avisoPontos?: boolean
   /**
@@ -893,6 +893,11 @@ export interface Extras {
    * das opiniões (0 = sem continuação).
    */
   continuacao: number
+  /**
+   * A última página ficaria só com as assinaturas e mais da metade em branco: as observações (e as opiniões)
+   * passam para ela, com o título do passo e "(continuação)", e crescem lá.
+   */
+  observacoesAdiante?: boolean
   /**
    * Montagem de segurança, quando algum bloco inteiro não coube numa página (e sumiria): só o título e a
    * instrução de cada passo ficam juntos; as tabelas se dividem onde a página acaba, com o cabeçalho de novo.
@@ -1897,7 +1902,7 @@ function pontosDivisiveis(ctx: Contexto): boolean {
 /** A tabela dos pontos inteira (com as etapas, quando vão juntas): a parte que passa inteira para a página seguinte. */
 const ID_TABELA_PONTOS = idParte(N.indicacao, 1)
 
-/** Espaço (pt) para o aviso "continua na próxima página" no pé da página do título do passo 5. */
+/** Espaço (pt) para o aviso "tabela na próxima página" no pé da página do título do passo 5. */
 const ALTURA_AVISO_PONTOS = 16
 
 /**
@@ -1909,8 +1914,8 @@ function notaEtapas(margem: number[] = [0, 0, 0, 4], titulo = false): NoObjeto {
     [
       ...(titulo ? [{ text: 'Cargas de substituição: ', bold: true, color: T.texto }] : []),
       `${titulo ? 'em' : 'Em'} cada etapa, com os pesos padrão na plataforma, anote a indicação; troque-os pela carga de substituição (caminhão, lastro) até a mesma indicação e anote de novo. A coluna “substituições” dos pontos diz quantas etapas ficam por baixo dos pesos. `,
-      { text: 'Com substituição, as cargas só sobem', bold: true },
-      ' (crescente contínuo): para descer, seria preciso tirar o material. ',
+      { text: 'Só crescente', bold: true },
+      ': para descer, seria preciso tirar o material. ',
       { text: 'Ajustou?', bold: true },
       ' Refaça as etapas nas colunas “depois do ajuste”.',
     ],
@@ -1920,19 +1925,23 @@ function notaEtapas(margem: number[] = [0, 0, 0, 4], titulo = false): NoObjeto {
 
 function passoIndicacao(ctx: Contexto, n: number): No[] {
   const { plano } = ctx
+  const comSub = comSubstituicao(ctx)
+  // Com as substituições na folha (rodoviária ou em branco): para descer, seria preciso tirar o material
+  const soCrescente: No[] = comSub ? [' Com cargas de substituição: ', { text: 'só crescente', bold: true }, '.'] : []
   // O método previsto vai marcado (PREVISTO) nas opções logo abaixo; "depois do ajuste" diz "só se ajustou"
   const texto: No = plano
     ? [
         'Zere vazia e aplique as cargas na ordem da tabela (',
         { text: INSTRUCAO_METODO[plano.metodoComoEncontrado], bold: true },
         '); anote a indicação estável.',
+        ...soCrescente,
       ]
     : [
         'Cargas: ',
         { text: '0, 25, 50, 75 e 100 % de Max', bold: true },
         ' e onde muda o EMA (500e e 2000e na classe III), até pelo menos 90 % de Max. Zere, aplique e anote a indicação estável.',
+        ...soCrescente,
       ]
-  const comSub = comSubstituicao(ctx)
   const t = tabelaPontos(ctx, reservaDosPontos(ctx))
   const total = t.linhas.length
   const tabela = (de: number, ate: number) =>
@@ -1957,10 +1966,12 @@ function passoIndicacao(ctx: Contexto, n: number): No[] {
   const avisoPontos: No[] = ctx.extras.avisoPontos
     ? [
         nota(
-          [
-            { text: 'Continua na próxima página: ', bold: true, color: T.texto },
-            junto ? 'os pontos e as etapas de substituição, juntos.' : 'a tabela dos pontos, inteira.',
-          ],
+          junto
+            ? [
+                { text: 'Tabelas na próxima página', bold: true, color: T.texto },
+                ': os pontos e as etapas de substituição, juntos.',
+              ]
+            : [{ text: 'Tabela dos pontos na próxima página.', bold: true, color: T.texto }],
           [0, 0, 0, 0],
         ),
       ]
@@ -2567,7 +2578,11 @@ function passoEncerramento(ctx: Contexto, n: number): No[] {
     [gradeAmbiente(ctx, 'Fim')],
     [
       { ...grade([...conformidade, ...proxima], ['*', '*', '*', 150]), margin: [0, 6, 0, 0] },
-      { parte: { ...observacoes, margin: [0, 6, 0, 0] }, id: ID_OBSERVACOES },
+      {
+        parte: { ...observacoes, margin: [0, 6, 0, 0] },
+        id: ID_OBSERVACOES,
+        ...(ctx.extras.observacoesAdiante ? { quebra: true } : {}),
+      },
       // A continuação vem logo depois das observações (no alto da página seguinte), nunca depois das opiniões
       ...(ctx.extras.continuacao
         ? [
@@ -3057,6 +3072,18 @@ function livreNaPagina(m: Medida, pagina: number): number {
   return A4.altura - MARGEM_BASE - fim
 }
 
+/** Metade da altura útil da página (pt): com mais que isso em branco, a página parece incompleta. */
+const MEIA_PAGINA = (A4.altura - MARGEM_TOPO - MARGEM_BASE) / 2
+
+/**
+ * Espaço livre no pé de uma página (pt) pelo fim dos blocos que terminam nela: a posição de início de um
+ * bloco que passou para a página seguinte fica registrada no pé desta, e não conta.
+ */
+function livreDepoisDosBlocos(m: Medida, pagina: number): number {
+  const fins = [...m.marcas.entries()].filter(([id, x]) => x.pagina === pagina && (id.startsWith('fim:') || id === ID_FIM))
+  return A4.altura - MARGEM_BASE - Math.max(MARGEM_TOPO, ...fins.map(([, x]) => x.topo))
+}
+
 /** Altura de uma linha de observação (a linha e o fio). */
 const LINHA_OBS = ALTURA_ESCRITA + 0.5
 
@@ -3141,7 +3168,7 @@ async function comContinuacoes(d: DadosFolhaCampo, m: Medida): Promise<Medida> {
 
 /**
  * A tabela dos pontos passou inteira para a página seguinte e o título do passo ficou no pé desta: com
- * espaço embaixo dele, o aviso "continua na próxima página" (conferido montando de novo).
+ * espaço embaixo dele, o aviso "tabela na próxima página" (conferido montando de novo).
  */
 async function comAvisoDosPontos(d: DadosFolhaCampo, m: Medida): Promise<Medida> {
   if (m.extras.avisoPontos || !m.extras.continuacoes.includes(ID_TABELA_PONTOS)) return m
@@ -3154,10 +3181,33 @@ async function comAvisoDosPontos(d: DadosFolhaCampo, m: Medida): Promise<Medida>
 }
 
 /**
+ * As assinaturas abriram a última página e ela ficou com mais da metade em branco: as observações e as
+ * opiniões vão para ela (com o título do passo e "(continuação)") e crescem lá, em vez de crescer no pé da
+ * página de antes. Só quando a de antes não fica com mais da metade em branco (conferido montando de novo).
+ */
+async function comObservacoesAdiante(d: DadosFolhaCampo, m: Medida): Promise<Medida> {
+  if (m.extras.semBlocos || m.extras.observacoesAdiante) return m
+  const ultima = m.paginas
+  const opinioes = m.marcas.get(`fim:${ID_OPINIOES}`)
+  const assinaturas = m.marcas.get(`fim:passo-${N.assinaturas}`)
+  if (!opinioes || assinaturas?.pagina !== ultima || opinioes.pagina !== ultima - 1) return m
+  if (livreDepoisDosBlocos(m, ultima) <= MEIA_PAGINA) return m
+  const r = await comContinuacoes(d, await medir(d, { ...m.extras, observacoesAdiante: true }))
+  const certo =
+    r.paginas === m.paginas &&
+    continuacoesExatas(r) &&
+    r.faltando.length <= m.faltando.length &&
+    r.marcas.get(`fim:${ID_OBSERVACOES}`)?.pagina === ultima &&
+    livreDepoisDosBlocos(r, ultima - 1) <= MEIA_PAGINA
+  return certo ? r : m
+}
+
+/**
  * Monta a folha medindo onde cada bloco ficou: (1) a parte de um passo que abre uma página ganha o título
  * do passo com "(continuação)" — remontando até nenhuma parte ficar solta; (2) a tabela de pontos longa
  * (maior que uma página) se divide entre as páginas (conferido montando de novo) e, quando a tabela inteira
- * passou para a página seguinte, o pé da página do título avisa onde ela está; (3) as observações
+ * passou para a página seguinte, o pé da página do título avisa onde ela está; (3) a última página não fica
+ * só com as assinaturas e mais da metade em branco: as observações vão para ela; (4) as observações
  * crescem no espaço que sobra na página delas (e continuam no alto da seguinte, se as opiniões passaram
  * para lá), conferido montando de novo: o nº de páginas não muda e nenhuma parte fica sem título.
  * Nada pode sumir: se um bloco inteiro foi descartado (mais alto que a página), a folha é montada de novo
@@ -3185,7 +3235,7 @@ async function montarCom(d: DadosFolhaCampo, base: Extras): Promise<Medida> {
     if (cortesConferem(r, cortes) && continuacoesExatas(r) && r.paginas <= m.paginas && r.faltando.length <= m.faltando.length)
       m = r
   }
-  m = await comAvisoDosPontos(d, m)
+  m = await comObservacoesAdiante(d, await comAvisoDosPontos(d, m))
   const extras = m.extras
   const obs = linhasDeObservacao(m)
   const tentativas = [

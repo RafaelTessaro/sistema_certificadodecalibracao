@@ -1,8 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it, vi } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
+import { CONFIG_PADRAO } from '#shared/dominio.ts'
 import type { CalibracaoInput } from '#shared/tipos.ts'
 import { exemploRodoviaria } from '../../../server/pdf/exemplosCertificado.ts'
-import { mudarEnsaioDaAba } from './indicacao'
+import type { ContextoEtapa } from './contexto'
+import { PainelDaAba } from './EtapaIndicacao'
+import { type AbaIndicacao, mudarEnsaioDaAba } from './indicacao'
+
+// Sem DOM: a janela (portal no document.body) não é desenhada; fechada, ela não mostra nada
+vi.mock('../ui/Modal', () => ({ Modal: () => null }))
 
 /** Rodoviária com substituição, ajuste interno e o "como encontrado" igual ao ensaio final (mesmas leituras). */
 function comAjuste(): { k: CalibracaoInput; d: ReturnType<typeof exemploRodoviaria> } {
@@ -53,5 +61,49 @@ describe('mudarEnsaioDaAba', () => {
     expect(sem.uTempo).toBe(0)
     expect(com.uTempo).toBeGreaterThan(0)
     expect(com.U).toBeGreaterThan(sem.U)
+  })
+})
+
+describe('etapa "Erro de indicação": retorno ao zero nas duas abas', () => {
+  /** Desenha a aba (sem DOM): o campo do retorno ao zero mostra o valor do ensaio dela. */
+  function desenhar(k: CalibracaoInput, aba: AbaIndicacao, d: ReturnType<typeof exemploRodoviaria>): string {
+    const { balanca, padroes, cliente } = d.emissao
+    const ctx: ContextoEtapa = {
+      f: k,
+      alterar: () => {},
+      balanca,
+      cliente,
+      padroes,
+      selecionados: padroes,
+      calc: calcularCalibracao(k, balanca, padroes),
+      config: CONFIG_PADRAO,
+      equipe: [],
+      status: 'RASCUNHO',
+      editarBalanca: () => {},
+      folhaCampo: null,
+      vincularFolha: async () => false,
+      novaFolha: () => {},
+    }
+    return renderToStaticMarkup(createElement(PainelDaAba, { ctx, aba }))
+  }
+  /** O <input> do retorno ao zero (pelo rótulo acessível) e o valor nele. */
+  const campo = (html: string, rotulo: string) => {
+    const tag = [...html.matchAll(/<input[^>]*>/g)].map((m) => m[0]).find((t) => t.includes(`aria-label="${rotulo}"`))
+    return tag ? (/value="([^"]*)"/.exec(tag)?.[1] ?? '') : null
+  }
+
+  it('cada aba tem o campo, com o valor do ensaio dela ("como encontrado" e depois do ajuste)', () => {
+    const { k, d } = comAjuste()
+    k.indicacao.retornoZero = -20
+    k.comoEncontrado!.retornoZero = 40
+    const antes = desenhar(k, 'antes', d)
+    expect(antes).toContain('Retorno ao zero antes do ajuste')
+    expect(campo(antes, 'Indicação no retorno ao zero antes do ajuste')).toBe('40')
+    expect(campo(antes, 'Indicação no retorno ao zero')).toBeNull()
+    const depois = desenhar(k, 'depois', d)
+    expect(campo(depois, 'Indicação no retorno ao zero')).toBe('-20')
+    expect(campo(depois, 'Indicação no retorno ao zero antes do ajuste')).toBeNull()
+    // Sem o "como encontrado", a aba mostra o ensaio final
+    expect(campo(desenhar({ ...k, comoEncontrado: null }, 'antes', d), 'Indicação no retorno ao zero')).toBe('-20')
   })
 })

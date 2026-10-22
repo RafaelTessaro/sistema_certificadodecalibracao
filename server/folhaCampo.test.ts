@@ -4,7 +4,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { BALANCA_VAZIA, CLIENTE_VAZIO, PADRAO_VAZIO } from '#shared/dominio.ts'
@@ -12,7 +12,7 @@ import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#sha
 import { criarApp } from './app.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
 import { abrirBanco, type Banco } from './db.ts'
-import { Repositorio } from './repositorio.ts'
+import { dataDaImpressaoNoPdf, Repositorio } from './repositorio.ts'
 import { PARAMETROS_LEVES } from './senha.ts'
 import { transplantarFolhasCampo } from './usuarios.ts'
 import { nomeArquivoDaFolha, numeroDaFolha } from './rotas/folhaCampo.ts'
@@ -1167,6 +1167,176 @@ describe('banco restaurado de uma cópia antiga: as folhas impressas depois dela
     expect(reimpressa.rawPayload.equals(primeira.rawPayload)).toBe(true)
     // Ligar de novo a que já é a dela não muda nada
     expect((await ligar(k.id, fc1)).json().folhaCampo).toMatchObject({ numero: fc1, substituidas: [fc2] })
+  })
+
+  const numeroDe = (r: { headers: Record<string, unknown> }) => r.headers['x-folha-campo'] as string
+  const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex')
+  const arquivoDa = (numero: string) => join(t.ctx.pastaDados, 'folhas-campo', String(ano), `${numero}.pdf`)
+  const restauracoes = () =>
+    (
+      t.ctx.db.prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' ORDER BY id").all() as Array<{
+        detalhe: string
+      }>
+    ).map((x) => x.detalhe)
+
+  it('a folha que volta da pasta tem a data da impressão gravada no PDF, e não a do arquivo', async () => {
+    const fc = await avulsa()
+    const { impressa_em } = t.ctx.db.prepare('SELECT impressa_em FROM folhas_campo WHERE numero = ?').get(fc) as {
+      impressa_em: string
+    }
+    // A pasta voltou da cópia de segurança externa: a data do arquivo é a da cópia
+    const daCopia = new Date('2025-03-01T12:00:00Z')
+    utimesSync(arquivoDa(fc), daCopia, daCopia)
+    t.ctx.db.exec('DELETE FROM folhas_campo')
+    expect(t.ctx.repo.recuperarFolhasDaPasta()).toEqual([fc])
+    const noPdf = new Date(Math.floor(Date.parse(impressa_em) / 1000) * 1000).toISOString()
+    expect(dataDaImpressaoNoPdf(readFileSync(arquivoDa(fc)))).toBe(noPdf)
+    expect(t.ctx.db.prepare('SELECT impressa_em, ultima_em FROM folhas_campo WHERE numero = ?').get(fc)).toEqual({
+      impressa_em: noPdf,
+      ultima_em: noPdf,
+    })
+    // Um PDF sem a data da impressão fica com a data do arquivo
+    const sem = `FC-${ano}-00007`
+    writeFileSync(arquivoDa(sem), '%PDF-1.4\n%%EOF\n')
+    utimesSync(arquivoDa(sem), daCopia, daCopia)
+    expect(t.ctx.repo.recuperarFolhasDaPasta()).toEqual([sem])
+    expect(linhaDe(t.ctx.db, sem)).toMatchObject({ chave: `recuperada:${sem}`, calibracao_id: '' })
+    expect(t.ctx.db.prepare('SELECT impressa_em FROM folhas_campo WHERE numero = ?').get(sem)).toEqual({
+      impressa_em: daCopia.toISOString(),
+    })
+  })
+
+  it('dataDaImpressaoNoPdf: no dicionário, num objeto à parte, com fuso; sem data ou inválida, null', () => {
+    const pdf = (texto: string) => Buffer.from(texto, 'latin1')
+    expect(dataDaImpressaoNoPdf(pdf('<< /CreationDate (D:20261021110200Z) >>'))).toBe('2026-10-21T11:02:00.000Z')
+    expect(dataDaImpressaoNoPdf(pdf("<< /CreationDate 30 0 R >>\n30 0 obj\n(D:20261021080200-03'00')\nendobj"))).toBe(
+      '2026-10-21T11:02:00.000Z',
+    )
+    expect(dataDaImpressaoNoPdf(pdf('<< /CreationDate (D:20261021110200) >>'))).toBe('2026-10-21T11:02:00.000Z')
+    expect(dataDaImpressaoNoPdf(pdf('%PDF-1.4'))).toBeNull()
+    expect(dataDaImpressaoNoPdf(pdf('<< /CreationDate (D:20261341110200Z) >>'))).toBeNull()
+    expect(dataDaImpressaoNoPdf(pdf('<< /CreationDate 30 0 R >>'))).toBeNull()
+  })
+
+  it('folha no banco sem o PDF (a cópia saiu entre a reserva do nº e a gravação): fica com o arquivo da pasta', async () => {
+    const k = await rascunho('OS 1')
+    const primeira = await folhaDe(k.id)
+    const fc = numeroDe(primeira)
+    t.ctx.db.prepare("UPDATE folhas_campo SET pdf_arquivo = '', pdf_sha256 = '' WHERE numero = ?").run(fc)
+    // O plano mudou depois da impressão: uma folha refeita agora não seria o papel
+    const atual = (await detalhe(k.id)).calibracao as Calibracao
+    const salvo = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...atual, ordemServico: 'OS 2', versao: atual.versao },
+    })
+    expect(salvo.statusCode, salvo.body).toBe(200)
+    expect(t.ctx.repo.recuperarFolhasDaPasta()).toEqual([])
+    expect(linhaDe(t.ctx.db, fc)).toMatchObject({ pdf_arquivo: `${ano}/${fc}.pdf`, pdf_sha256: sha(primeira.rawPayload) })
+    const reimpressa = await folhaDe(k.id)
+    expect(numeroDe(reimpressa)).toBe(fc)
+    expect(reimpressa.rawPayload.equals(primeira.rawPayload)).toBe(true)
+    expect(readdirSync(join(t.ctx.pastaDados, 'folhas-campo', String(ano)))).toEqual([`${fc}.pdf`])
+    expect(restauracoes()).toEqual([
+      `a folha de campo ${fc}, sem PDF no banco, ficou com o da pasta folhas-campo: a reimpressão é o papel`,
+    ])
+  })
+
+  it('o servidor sobe com calibrações com duas folhas vigentes: fica a mais nova, e a outra sai como numa folha nova', async () => {
+    const k = await rascunho('OS 1')
+    const fc1 = numeroDe(await folhaDe(k.id))
+    const fc2 = numeroDe(await folhaDe(k.id, '?nova=a1b2c3d4-0000-4000-8000-0000000000dd'))
+    const outro = await rascunho('OS 2')
+    const solta = await avulsa()
+    expect((await ligar(outro.id, solta)).statusCode).toBe(200)
+    const fc4 = numeroDe(await folhaDe(outro.id, '?nova=a1b2c3d4-0000-4000-8000-0000000000ee'))
+    // Como o transplante de antes desta correção deixava as duas calibrações
+    t.ctx.db.prepare("UPDATE folhas_campo SET substituida_por = '', substituida_em = '' WHERE numero = ?").run(fc1)
+    t.ctx.db.prepare('UPDATE folhas_campo SET calibracao_id = ? WHERE numero = ?').run(outro.id, solta)
+    const em2 = (t.ctx.db.prepare('SELECT impressa_em FROM folhas_campo WHERE numero = ?').get(fc2) as { impressa_em: string })
+      .impressa_em
+    // É o que roda quando o servidor sobe
+    expect(t.ctx.repo.recuperarFolhasDaPasta()).toEqual([])
+    expect(folhaNoBanco(fc1)).toEqual({ numero: fc1, calibracao_id: k.id, substituida_por: fc2, substituida_em: em2 })
+    expect(folhaNoBanco(fc2)).toMatchObject({ calibracao_id: k.id, substituida_por: '' })
+    // A avulsa ligada por engano sai livre, como numa folha nova
+    expect(folhaNoBanco(solta)).toMatchObject({ calibracao_id: '', substituida_por: '' })
+    expect(folhaNoBanco(fc4)).toMatchObject({ calibracao_id: outro.id, substituida_por: '' })
+    expect((await detalhe(k.id)).folhaCampo).toMatchObject({ numero: fc2, substituidas: [fc1] })
+    expect(restauracoes()).toEqual([
+      `2 calibrações tinham mais de uma folha de campo vigente (banco restaurado de uma cópia) e ficaram só com a mais nova: ${fc2} no lugar da ${fc1}; ${fc4} no lugar da ${solta}, que ficou livre`,
+    ])
+    // Subir de novo não muda nada
+    expect(t.ctx.repo.conciliarFolhasVigentes()).toEqual([])
+    expect(restauracoes()).toHaveLength(1)
+    // O papel que foi a campo continua podendo ser ligado de volta
+    expect((await ligar(k.id, fc1)).json().folhaCampo).toMatchObject({ numero: fc1, substituidas: [fc2] })
+  })
+
+  const vigentesPorCalibracao = (db: Banco) =>
+    (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM folhas_campo WHERE calibracao_id <> '' AND substituida_por = '' GROUP BY calibracao_id",
+        )
+        .all() as Array<{ n: number }>
+    ).map((v) => v.n)
+  const estadoEm = (db: Banco, numero: string) =>
+    db.prepare('SELECT calibracao_id, substituida_por FROM folhas_campo WHERE numero = ?').get(numero)
+  const ultimaRestauracao = (db: Banco) =>
+    (
+      db.prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' ORDER BY id DESC LIMIT 1").get() as {
+        detalhe: string
+      }
+    ).detalhe
+
+  it('transplante: a vigente de cada calibração é a do banco atual, mesmo que não seja a de nº maior', async () => {
+    const k = await rascunho('OS 1')
+    const outro = await rascunho('OS 2')
+    const a = await avulsa()
+    expect((await ligar(k.id, a)).statusCode).toBe(200)
+    const f = numeroDe(await folhaDe(outro.id))
+    const copia = await t.ctx.backups.copiar('manual')
+    // Depois da cópia: folha nova para k (a avulsa fica livre), e a avulsa vai a campo pelo outro
+    const n = numeroDe(await folhaDe(k.id, '?nova=a1b2c3d4-0000-4000-8000-0000000000ff'))
+    expect((await ligar(outro.id, a)).statusCode).toBe(200)
+    expect(folhaNoBanco(f)).toMatchObject({ calibracao_id: outro.id, substituida_por: a })
+    const destino = abrirBanco(copia)
+    try {
+      expect(transplantarFolhasCampo(t.ctx.db, destino)).toBe(1)
+      expect(estadoEm(destino, n)).toEqual({ calibracao_id: k.id, substituida_por: '' })
+      expect(estadoEm(destino, a)).toEqual({ calibracao_id: outro.id, substituida_por: '' })
+      expect(estadoEm(destino, f)).toEqual({ calibracao_id: outro.id, substituida_por: a })
+      expect(vigentesPorCalibracao(destino)).toEqual([1, 1])
+      const repo = new Repositorio(destino)
+      expect(repo.folhaCampoDaCalibracao(outro.id)).toMatchObject({ numero: a, substituidas: [f] })
+      expect(repo.folhaCampoDaCalibracao(k.id)).toMatchObject({ numero: n, substituidas: [] })
+      expect(ultimaRestauracao(destino)).toBe(
+        `a folha de campo impressa depois da cópia (${n}) continua registrada: os nºs não se repetem; ${a}, da cópia, ficou como no banco atual (trocada pela impressa depois); ${f}, da cópia, deixou de ser vigente (uma folha vigente por calibração)`,
+      )
+    } finally {
+      destino.close()
+    }
+  })
+
+  it('transplante: a avulsa livre na cópia que foi a campo no lugar da folha impressa depois dela volta para a calibração', async () => {
+    const k = await rascunho('OS 1')
+    const a = await avulsa()
+    const copia = await t.ctx.backups.copiar('manual')
+    const depois = numeroDe(await folhaDe(k.id))
+    expect((await ligar(k.id, a)).statusCode).toBe(200)
+    expect(folhaNoBanco(depois)).toMatchObject({ calibracao_id: k.id, substituida_por: a })
+    const destino = abrirBanco(copia)
+    try {
+      expect(transplantarFolhasCampo(t.ctx.db, destino)).toBe(1)
+      expect(estadoEm(destino, a)).toEqual({ calibracao_id: k.id, substituida_por: '' })
+      expect(estadoEm(destino, depois)).toEqual({ calibracao_id: k.id, substituida_por: a })
+      expect(new Repositorio(destino).folhaCampoDaCalibracao(k.id)).toMatchObject({ numero: a, substituidas: [depois] })
+      expect(ultimaRestauracao(destino)).toBe(
+        `a folha de campo impressa depois da cópia (${depois}) continua registrada: os nºs não se repetem; ${a}, livre na cópia, voltou para a calibração, como no banco atual`,
+      )
+    } finally {
+      destino.close()
+    }
   })
 })
 

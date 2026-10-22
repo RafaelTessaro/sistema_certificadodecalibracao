@@ -60,6 +60,25 @@ const SEM_TROCA = { substituidas: [] as string[], liberadas: [] as string[] }
  */
 export const CHAVE_RECUPERADA = 'recuperada:'
 
+/**
+ * A data da impressão gravada no PDF da folha (/CreationDate: a da reserva do nº, ver server/pdf/folhaCampo.ts),
+ * em ISO; null se não houver. A data do arquivo pode mudar quando a pasta volta da cópia de segurança externa;
+ * a do PDF, não.
+ */
+export function dataDaImpressaoNoPdf(pdf: Buffer): string | null {
+  const texto = pdf.toString('latin1')
+  // Direto no dicionário (/CreationDate (D:…)) ou num objeto à parte (/CreationDate 30 0 R), como o pdfkit grava
+  const ref = /\/CreationDate\s*(?:\(([^)]*)\)|(\d+)\s+(\d+)\s+R)/.exec(texto)
+  const valor = ref && (ref[1] ?? new RegExp(`(?:^|\\s)${ref[2]}\\s+${ref[3]}\\s+obj\\s*\\(([^)]*)\\)`).exec(texto)?.[1])
+  const m = valor ? /^D:(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:Z|([+-])(\d{2})'?(\d{2})'?)?/.exec(valor) : null
+  if (!m) return null
+  const [ano, mes, dia, hora, minuto, segundo] = m.slice(1, 7).map(Number)
+  if (mes < 1 || mes > 12 || dia < 1 || dia > 31 || hora > 23 || minuto > 59 || segundo > 59) return null
+  // "+03'00'": a hora local está 3 h à frente do UTC
+  const fuso = m[7] ? (m[7] === '-' ? -1 : 1) * (Number(m[8]) * 60 + Number(m[9])) : 0
+  return new Date(Date.UTC(ano, mes - 1, dia, hora, minuto, segundo) - fuso * 60_000).toISOString()
+}
+
 type Linha = { dados: string }
 
 function validar<T>(r: { valor: T; erros: string[] }): T {
@@ -1040,12 +1059,21 @@ export class Repositorio {
    * A pasta das folhas é a fonte de verdade também do registro: as folhas que têm PDF nela
    * (folhas-campo/<ano>/FC-AAAA-NNNNN.pdf) e não estão no banco, porque ele voltou de uma cópia anterior à
    * impressão delas sem `transplantarFolhasCampo`, voltam ao registro como folhas livres
-   * (`CHAVE_RECUPERADA`), com a data e o sha256 do arquivo. O papel preenchido continua podendo ser ligado à
-   * calibração, confirmando, porque não se sabe para qual balança ele foi impresso. Roda quando o servidor
-   * sobe e, para um nº (`numero`), quando ele é ligado. Devolve os nºs que voltaram; o registro de atividades
-   * guarda quais.
+   * (`CHAVE_RECUPERADA`), com a data da impressão gravada no PDF (`dataDaImpressaoNoPdf`; sem ela, a do
+   * arquivo) e o sha256 do arquivo. O papel preenchido continua podendo ser ligado à calibração, confirmando,
+   * porque não se sabe para qual balança ele foi impresso. A folha que está no banco sem PDF (a cópia foi
+   * feita entre a reserva do nº e a gravação do arquivo) fica com o arquivo da pasta: a reimpressão é o papel.
+   * Roda quando o servidor sobe e, para um nº (`numero`), quando ele é ligado. Quando o servidor sobe, também
+   * deixa cada calibração com uma folha vigente só (`conciliarFolhasVigentes`). Devolve os nºs que voltaram;
+   * o registro de atividades guarda quais.
    */
   recuperarFolhasDaPasta(numero?: string): string[] {
+    const voltaram = this.voltarFolhasDaPasta(numero)
+    if (!numero) this.conciliarFolhasVigentes()
+    return voltaram
+  }
+
+  private voltarFolhasDaPasta(numero?: string): string[] {
     if (!this.pastaFolhas || !existsSync(this.pastaFolhas)) return []
     const achadas = new Map<string, { arquivo: string; ano: number; sequencia: number }>()
     for (const ano of readdirSync(this.pastaFolhas, { withFileTypes: true })) {
@@ -1060,31 +1088,106 @@ export class Repositorio {
     }
     if (!achadas.size) return []
     return transacao(this.db, () => {
-      const existe = this.db.prepare('SELECT 1 FROM folhas_campo WHERE numero = ? OR (ano = ? AND sequencia = ?)')
+      const existe = this.db.prepare(
+        'SELECT numero, pdf_arquivo, pdf IS NULL AS sem_blob FROM folhas_campo WHERE numero = ? OR (ano = ? AND sequencia = ?)',
+      )
       const inserir = this.db.prepare(
         `INSERT INTO folhas_campo (numero, ano, sequencia, chave, impressa_em, ultima_em, pdf_arquivo, pdf_sha256)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
+      const adotar = this.db.prepare(
+        "UPDATE folhas_campo SET pdf_arquivo = ?, pdf_sha256 = ? WHERE numero = ? AND pdf_arquivo = '' AND pdf IS NULL",
+      )
       const voltaram: string[] = []
+      const comArquivo: string[] = []
       for (const [n, f] of [...achadas].sort(([a], [b]) => a.localeCompare(b))) {
-        if (existe.get(n, f.ano, f.sequencia)) continue
+        const linha = existe.get(n, f.ano, f.sequencia) as { numero: string; pdf_arquivo: string; sem_blob: number } | undefined
         const caminho = join(this.pastaFolhas, f.arquivo)
-        const sha256 = createHash('sha256').update(readFileSync(caminho)).digest('hex')
-        const em = statSync(caminho).mtime.toISOString()
+        if (linha) {
+          // No banco sem o PDF: o arquivo da primeira impressão (o nome sem sufixo) é o dela
+          if (linha.numero === n && !linha.pdf_arquivo && linha.sem_blob && f.arquivo === `${f.ano}/${n}.pdf`) {
+            adotar.run(f.arquivo, createHash('sha256').update(readFileSync(caminho)).digest('hex'), n)
+            comArquivo.push(n)
+          }
+          continue
+        }
+        const pdf = readFileSync(caminho)
+        const sha256 = createHash('sha256').update(pdf).digest('hex')
+        const em = this.dataValida(dataDaImpressaoNoPdf(pdf)) ?? statSync(caminho).mtime.toISOString()
         inserir.run(n, f.ano, f.sequencia, `${CHAVE_RECUPERADA}${n}`, em, em, f.arquivo, sha256)
         voltaram.push(n)
       }
+      const registrar = (detalhe: string) =>
+        this.db
+          .prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'COPIA_RESTAURADA', ?)")
+          .run(this.agora().toISOString(), detalhe.slice(0, 300))
+      const faixa = (l: string[]) => (l.length === 1 ? l[0] : `${l[0]} a ${l.at(-1)}`)
       if (voltaram.length) {
         const um = voltaram.length === 1
-        const quais = um ? voltaram[0] : `${voltaram[0]} a ${voltaram.at(-1)}`
+        registrar(
+          `${um ? 'a folha de campo' : `${voltaram.length} folhas de campo`} da pasta folhas-campo que não ${um ? 'estava' : 'estavam'} no banco (${faixa(voltaram)}) ${um ? 'voltou' : 'voltaram'} ao registro, livre${um ? '' : 's'}: o banco é de uma cópia anterior à impressão ${um ? 'dela' : 'delas'}`,
+        )
+      }
+      if (comArquivo.length) {
+        const um = comArquivo.length === 1
+        registrar(
+          `${um ? 'a folha de campo' : `${comArquivo.length} folhas de campo`} ${faixa(comArquivo)}, sem PDF no banco, ${um ? 'ficou' : 'ficaram'} com o da pasta folhas-campo: a reimpressão é o papel`,
+        )
+      }
+      return voltaram
+    })
+  }
+
+  /** A data ISO, se for de uma impressão possível (de 2020 até agora); senão null. */
+  private dataValida(iso: string | null): string | null {
+    const t = iso ? Date.parse(iso) : NaN
+    return t >= Date.UTC(2020, 0, 1) && t <= this.agora().getTime() + 24 * 60 * 60 * 1000 ? iso : null
+  }
+
+  /**
+   * Cada calibração com uma folha vigente só. Duas vigentes só aparecem num banco restaurado de uma cópia
+   * com a ferramenta de antes desta versão (a folha impressa depois da cópia entrava sem trocar a da
+   * cópia). Fica a mais nova, a que a tela já mostrava e reimprimia, e as outras saem como numa folha nova
+   * (`substituirFolhas`): a impressa para a calibração fica substituída (não usada); a avulsa, livre. O
+   * papel que foi a campo pode ser ligado de novo (`vincularFolhaCampo`). O registro de atividades guarda o
+   * que mudou. Devolve os ids das calibrações conciliadas.
+   */
+  conciliarFolhasVigentes(): string[] {
+    return transacao(this.db, () => {
+      const ids = (
+        this.db
+          .prepare(
+            `SELECT calibracao_id FROM folhas_campo WHERE calibracao_id <> '' AND substituida_por = ''
+              GROUP BY calibracao_id HAVING COUNT(*) > 1 ORDER BY MIN(ano), MIN(sequencia)`,
+          )
+          .all() as Array<{ calibracao_id: string }>
+      ).map((l) => l.calibracao_id)
+      const trocas: string[] = []
+      for (const id of ids) {
+        const nova = this.db
+          .prepare(
+            `SELECT numero, impressa_em FROM folhas_campo WHERE calibracao_id = ? AND substituida_por = ''
+              ORDER BY ano DESC, sequencia DESC LIMIT 1`,
+          )
+          .get(id) as { numero: string; impressa_em: string }
+        const troca = this.substituirFolhas(id, nova.numero, nova.impressa_em)
+        const saiu = troca.substituidas.map((n) => (troca.liberadas.includes(n) ? `${n}, que ficou livre` : n))
+        trocas.push(`${nova.numero} no lugar da ${saiu.join(', ')}`)
+        this.mudou('calibracao', id)
+      }
+      if (trocas.length) {
+        const uma = trocas.length === 1
         this.db
           .prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'COPIA_RESTAURADA', ?)")
           .run(
             this.agora().toISOString(),
-            `${um ? 'a folha de campo' : `${voltaram.length} folhas de campo`} da pasta folhas-campo que não ${um ? 'estava' : 'estavam'} no banco (${quais}) ${um ? 'voltou' : 'voltaram'} ao registro, livre${um ? '' : 's'}: o banco é de uma cópia anterior à impressão ${um ? 'dela' : 'delas'}`,
+            `${uma ? 'uma calibração tinha' : `${trocas.length} calibrações tinham`} mais de uma folha de campo vigente (banco restaurado de uma cópia) e ${uma ? 'ficou' : 'ficaram'} só com a mais nova: ${trocas.join('; ')}`.slice(
+              0,
+              300,
+            ),
           )
       }
-      return voltaram
+      return ids
     })
   }
 

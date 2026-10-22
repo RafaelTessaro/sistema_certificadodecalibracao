@@ -19,14 +19,10 @@ import { type AbaIndicacao, mudarEnsaioDaAba } from './indicacao'
 import { casasDe } from './util'
 
 export function EtapaIndicacao(ctx: ContextoEtapa) {
-  const { f, alterar, balanca, calc } = ctx
+  const { f } = ctx
   const temAntes = f.ajuste.realizado !== 'NAO' && !!f.comoEncontrado
   const [aba, setAba] = useState<AbaIndicacao>('depois')
   const abaAtual: AbaIndicacao = temAntes ? aba : 'depois'
-  const ensaio = abaAtual === 'antes' ? f.comoEncontrado! : f.indicacao
-  const resultado = abaAtual === 'antes' ? calc?.comoEncontrado : calc?.resultado
-  const setEnsaio = (mudar: (e: EnsaioIndicacao) => EnsaioIndicacao) => alterar((s) => mudarEnsaioDaAba(s, abaAtual, mudar))
-  const rodoviaria = ehRodoviaria(balanca)
 
   return (
     <div className="flex flex-col gap-6">
@@ -40,24 +36,43 @@ export function EtapaIndicacao(ctx: ContextoEtapa) {
           ]}
         />
       )}
+      <PainelDaAba key={abaAtual} ctx={ctx} aba={abaAtual} />
+    </div>
+  )
+}
+
+/**
+ * O ensaio de uma aba: "antes do ajuste" é o `comoEncontrado`; "depois" (ou sem ajuste), o erro de indicação
+ * final. Cada aba tem os seus pontos, as suas etapas de substituição e o seu retorno ao zero, como as duas
+ * colunas da folha de campo.
+ */
+export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicacao }) {
+  const { f, alterar, balanca, calc } = ctx
+  const antes = aba === 'antes' && !!f.comoEncontrado
+  const ensaio = antes ? f.comoEncontrado! : f.indicacao
+  const resultado = antes ? calc?.comoEncontrado : calc?.resultado
+  const setEnsaio = (mudar: (e: EnsaioIndicacao) => EnsaioIndicacao) => alterar((s) => mudarEnsaioDaAba(s, aba, mudar))
+  const rodoviaria = ehRodoviaria(balanca)
+
+  return (
+    <>
       <TabelaPontos
-        key={abaAtual}
         ctx={ctx}
         ensaio={ensaio}
         setEnsaio={setEnsaio}
         resultado={resultado ?? null}
-        titulo={abaAtual === 'antes' ? 'Erro de indicação antes do ajuste' : 'Erro de indicação'}
-        grupo={`ind-${abaAtual}`}
+        titulo={antes ? 'Erro de indicação antes do ajuste' : 'Erro de indicação'}
+        grupo={`ind-${antes ? 'antes' : 'depois'}`}
       />
       {/* Cada aba tem as suas etapas de substituição (com ajuste, a cadeia é refeita depois dele) */}
       {(rodoviaria || ensaio.substituicao.ativa) && (
-        <Substituicao key={`sub-${abaAtual}`} ctx={ctx} ensaio={ensaio} setEnsaio={setEnsaio} antes={abaAtual === 'antes'} />
+        <Substituicao ctx={ctx} ensaio={ensaio} setEnsaio={setEnsaio} antes={antes} />
       )}
       {/* Cada aba tem o seu retorno ao zero (a folha de campo tem uma célula para cada coluna; com
           substituição, ele entra na incerteza do ensaio) */}
-      <Card key={`zero-${abaAtual}`}>
+      <Card>
         <CardHeader
-          titulo={abaAtual === 'antes' ? 'Retorno ao zero antes do ajuste' : 'Retorno ao zero'}
+          titulo={antes ? 'Retorno ao zero antes do ajuste' : 'Retorno ao zero'}
           descricao="Indicação depois de retirar toda a carga (opcional)"
         />
         <div className="px-5 pb-5">
@@ -66,7 +81,7 @@ export function EtapaIndicacao(ctx: ContextoEtapa) {
             valor={ensaio.retornoZero}
             aoMudar={(v) => setEnsaio((e) => ({ ...e, retornoZero: v }))}
             unidade={balanca.unidade}
-            aria-label={abaAtual === 'antes' ? 'Indicação no retorno ao zero antes do ajuste' : 'Indicação no retorno ao zero'}
+            aria-label={antes ? 'Indicação no retorno ao zero antes do ajuste' : 'Indicação no retorno ao zero'}
           />
           {resultado?.erroRetornoZero !== null && resultado?.erroRetornoZero !== undefined && resultado.erroRetornoZero !== 0 && (
             <p className="mt-2 text-[13px] text-warning">
@@ -75,7 +90,7 @@ export function EtapaIndicacao(ctx: ContextoEtapa) {
           )}
         </div>
       </Card>
-    </div>
+    </>
   )
 }
 

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { cargaDasPecas, entradaDoCalculo, montarCarga, montarPonto } from './calibracao.ts'
+import { exemploRodoviaria } from '../server/pdf/exemplosCertificado.ts'
+import { calcularCalibracao, cargaDasPecas, entradaDoCalculo, montarCarga, montarPonto } from './calibracao.ts'
 import { BALANCA_VAZIA, calibracaoVazia, PADRAO_VAZIO } from './dominio.ts'
-import type { Balanca, EnsaioIndicacao, Padrao } from './tipos.ts'
+import type { Balanca, CalibracaoInput, EnsaioIndicacao, Padrao } from './tipos.ts'
 
 const pesos: Padrao = {
   ...PADRAO_VAZIO,
@@ -83,5 +84,34 @@ describe('cargas', () => {
       [5000, 0],
       [5000, 0],
     ])
+  })
+})
+
+describe('calcularCalibracao', () => {
+  it('"como encontrado": a incerteza usa o retorno ao zero desse ensaio (com substituição), não o do ensaio final', () => {
+    const d = exemploRodoviaria()
+    const { balanca: b, padroes } = d.emissao
+    // Ajuste interno; o "como encontrado" com as mesmas leituras do ensaio final
+    const base: CalibracaoInput = {
+      ...d.calibracao,
+      ajuste: { ...d.calibracao.ajuste, realizado: 'INTERNO' },
+      indicacao: { ...d.calibracao.indicacao, retornoZero: 20 },
+      comoEncontrado: { ...structuredClone(d.calibracao.indicacao), retornoZero: null },
+    }
+    const maior = (k: CalibracaoInput) => {
+      const r = calcularCalibracao(k, b, padroes)
+      const ponto = (x: typeof r.resultado) => x.pontos.reduce((a, p) => (p.carga > a.carga ? p : a)).crescente!
+      return { antes: ponto(r.comoEncontrado!), depois: ponto(r.resultado), r }
+    }
+    const sem = maior(base)
+    const com = maior({ ...base, comoEncontrado: { ...base.comoEncontrado!, retornoZero: 20 } })
+    // O retorno do ensaio final (20 kg) não entra no "como encontrado"
+    expect(sem.antes.uTempo).toBe(0)
+    expect(sem.depois.uTempo).toBeGreaterThan(0)
+    // Anotado no "como encontrado", a incerteza dele sobe; a do ensaio final não muda
+    expect(com.antes.uTempo).toBeCloseTo(sem.depois.uTempo, 12)
+    expect(com.antes.U).toBeGreaterThan(sem.antes.U)
+    expect(com.depois.U).toBe(sem.depois.U)
+    expect(com.r.comoEncontrado!.erroRetornoZero).toBe(20)
   })
 })

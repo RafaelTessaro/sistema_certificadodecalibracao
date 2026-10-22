@@ -11,7 +11,8 @@
 //   node server/ferramentas/redefinir-senha.mjs transplantar <banco-atual.db> <banco-restaurado.db> [--contas-da-copia] [--base64]
 //        mantém na cópia as contas atuais; com --contas-da-copia (ou se o banco atual não tiver nenhuma
 //        conta, como num computador novo), as contas voltam como estavam na cópia. As folhas de campo
-//        impressas depois da cópia vão sempre para ela (os nºs que já estão no papel nunca se repetem)
+//        impressas depois da cópia vão sempre para ela (os nºs que já estão no papel nunca se repetem), e
+//        nenhuma calibração fica com duas folhas vigentes
 //
 // A resposta é um JSON numa linha no stdout. Com --base64, a entrada e a resposta (inclusive a de erro)
 // vão em base64 do UTF-8: o PowerShell estragaria os acentos na página de código do console.
@@ -32,7 +33,7 @@ const USO = [
   '  situacao <banco.db>                       usuários e administradores ativos',
   '  definir <banco.db>                        cria o administrador ou redefine a senha (JSON na entrada padrão)',
   '  encerrar-sessoes <banco.db>               encerra todas as sessões abertas',
-  '  transplantar <atual.db> <restaurado.db>   mantém os usuários atuais na cópia que vai voltar',
+  '  transplantar <atual.db> <restaurado.db>   mantém os usuários e as folhas de campo atuais na cópia que vai voltar',
   '      [--contas-da-copia]                   (ou deixa os da cópia: trocar o servidor de computador)',
 ].join('\n')
 
