@@ -52,6 +52,11 @@ export interface PontoCalculo {
   decrescente: number | null
   /** Cargas de substituição por baixo dos pesos (0 = só pesos). */
   nivelSubstituicao: number
+  /**
+   * Peças gravadas no ponto que não estão mais entre os padrões escolhidos (um jogo desmarcado depois):
+   * a carga do ponto fica incompleta (pendência).
+   */
+  pecasAusentes?: number
 }
 
 export interface EntradaCalculo {
@@ -63,6 +68,12 @@ export interface EntradaCalculo {
     carga: number
     metodo: MetodoExcentricidade
     posicoes: Array<{ rotulo: string; leitura: number | null; referencia: number | null }>
+    /**
+     * Carga rolante (rodoviária e ferroviária): as posições vêm em passagens de 3 (início, meio e fim), na ida
+     * e na volta, e o desvio de cada posição é contra o meio da mesma passagem (cg-18 H3). Sem ela, contra a
+     * posição 1 (o centro).
+     */
+    cargaRolante?: boolean
   }
   indicacao: {
     metodo: MetodoCarregamento
@@ -100,8 +111,13 @@ export interface ResultadoRepetibilidade {
 export interface ResultadoExcentricidade {
   aplicavel: boolean
   carga: number
-  /** ΔI_ecc,i de cada posição (a primeira é a referência: 0). */
+  /** ΔI_ecc,i de cada posição (nas posições de referência: 0). */
   desvios: Array<number | null>
+  /**
+   * Posições (índices) que servem de referência aos desvios: [0] (o centro); com carga rolante, o meio de
+   * cada passagem ([1, 4] na ida e na volta).
+   */
+  referencias: number[]
   /** |ΔI_ecc|max */
   maiorDesvio: number
   /** Posição (índice) do maior desvio. */

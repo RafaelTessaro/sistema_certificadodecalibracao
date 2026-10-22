@@ -192,7 +192,54 @@ const MIGRACOES: Migracao[] = [
   // cadeia de revisões que terminou cancelada) para a calibração refeita a partir do mesmo papel: o
   // cancelado continua mostrando a folha dele, e ela volta para ele se a refeita for excluída.
   folhasEmArquivo,
+
+  // 7: o procedimento PT-CAL-01 rev. 00. Nas configurações gravadas, o código ("PT-CAL-01 rev. 0") e a
+  // descrição do método passam aos textos novos, mas só quando ainda são exatamente os de fábrica anteriores:
+  // um texto que a empresa mudou fica como está. Os certificados emitidos guardam os textos do dia e não mudam.
+  textosDoPtCal01,
 ]
+
+/** Textos de fábrica de antes do PT-CAL-01 rev. 00 e os que entram no lugar (congelados: a migração não muda). */
+export const TEXTOS_PT_CAL_01 = {
+  procedimento: { antes: 'PT-CAL-01 rev. 0', depois: 'PT-CAL-01 rev. 00' },
+  procedimentoDescricao: {
+    antes:
+      'Calibração por comparação direta com pesos padrão, conforme o EURAMET Calibration Guide No. 18, versão 4.0 (2015): ' +
+      'ensaios de repetibilidade, excentricidade e erro de indicação. Incerteza de medição avaliada conforme o ' +
+      'Guia para a Expressão da Incerteza de Medição (JCGM 100:2008).',
+    depois:
+      'Calibração por comparação com pesos padrão (nas balanças rodoviárias e ferroviárias, também com cargas de ' +
+      'substituição), conforme o procedimento PT-CAL-01, baseado no EURAMET Calibration Guide No. 18, versão 4.0 ' +
+      '(2015): ensaios de repetibilidade, excentricidade e erro de indicação. Incerteza de medição avaliada conforme ' +
+      'o Guia para a Expressão da Incerteza de Medição (JCGM 100:2008).',
+  },
+} as const
+
+/** Migração 7 (ver acima). Repetível: só troca o que ainda é igual ao texto de fábrica anterior. */
+function textosDoPtCal01(db: Banco) {
+  const linha = db.prepare("SELECT valor FROM config WHERE chave = 'geral'").get() as { valor: string } | undefined
+  if (!linha) return // sem configuração gravada: valem os textos de fábrica (já os novos)
+  let config: { textos?: Record<string, unknown> }
+  try {
+    config = JSON.parse(linha.valor)
+  } catch {
+    return // ilegível: o sistema já a trata como a de fábrica
+  }
+  const textos = config.textos
+  if (!textos || typeof textos !== 'object') return
+  const trocados: string[] = []
+  for (const [chave, { antes, depois }] of Object.entries(TEXTOS_PT_CAL_01))
+    if (textos[chave] === antes) {
+      textos[chave] = depois
+      trocados.push(chave === 'procedimento' ? 'o código e a revisão do procedimento' : 'a descrição do método')
+    }
+  if (!trocados.length) return
+  db.prepare("UPDATE config SET valor = ? WHERE chave = 'geral'").run(JSON.stringify(config))
+  db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)").run(
+    new Date().toISOString(),
+    `Textos do certificado atualizados para o PT-CAL-01 rev. 00: ${trocados.join(' e ')}.`,
+  )
+}
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
 function acrescentarColuna(db: Banco, tabela: string, coluna: string, definicao: string) {

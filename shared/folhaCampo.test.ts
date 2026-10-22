@@ -25,13 +25,33 @@ describe('planoDaFolha', () => {
     expect(p.repetibilidade).toEqual([expect.objectContaining({ carga: 150, leituras: 5, minimo: 3 })])
     expect(p.excentricidade).toMatchObject({ aplicavel: true, carga: 100, metodo: 1, pesos: '5 × 20 kg' })
     expect(p.excentricidade.posicoes).toHaveLength(5)
-    // Peças a separar: a união das cargas (15 de 20 kg do PP20; 10 kg do JP-01)
+    // "Crescente e decrescente": cada ponto leva as peças do de baixo mais as que faltam (50 kg ⊂ 100 kg ⊂ 200 kg…)
+    expect(p.pontos.map((x) => x.pesos)).toEqual([
+      '',
+      '10 kg',
+      '2 × 20 kg + 10 kg',
+      '4 × 20 kg + 10 kg + 5 kg + 2 × 2 kg + 1 kg',
+      '7 × 20 kg + 10 kg',
+      '9 × 20 kg + 10 kg + 5 kg + 2 × 2 kg + 1 kg',
+      '14 × 20 kg + 10 kg + 5 kg + 2 × 2 kg + 1 kg',
+    ])
+    // De 100 kg para 150 kg, só trocando peças (as pequenas saem): o ponto é marcado e a folha avisa
+    expect(p.pontos.filter((x) => x.foraDaSequencia).map((x) => x.carga)).toEqual([150])
+    // Peças a separar: a união das cargas (14 de 20 kg do PP20; 10 kg a 1 kg do JP-01)
     expect(p.padroes.map((x) => [x.padrao.identificacao, x.separar])).toEqual([
-      ['PP20-01 a 15', '15 × 20 kg'],
-      ['JP-01', '10 kg'],
+      ['PP20-01 a 15', '14 × 20 kg'],
+      ['JP-01', '10 kg + 5 kg + 2 × 2 kg + 1 kg'],
       ['TH-01', ''],
     ])
-    expect(p.avisos).toEqual([])
+    expect(p.avisos).toEqual([
+      'Sem descarregar (“Crescente e decrescente”), cada carga leva as peças da anterior mais as que faltam, e os pesos previstos não montam assim a carga de 150 kg: leve outras peças ou use o método “Crescente com descarga”.',
+    ])
+    // Com descarga entre os pontos, cada um à parte e sem aviso
+    const d = folhaPlataforma()
+    d.calibracao!.indicacao.metodo = 'DESCONTINUO'
+    const q = plano(d)
+    expect(q.pontos.find((x) => x.carga === 300)?.pesos).toBe('15 × 20 kg')
+    expect(q.avisos).toEqual([])
   })
 
   it('sem ensaios no rascunho, planeja com as sugestões do assistente (multi-intervalo)', () => {
@@ -42,9 +62,33 @@ describe('planoDaFolha', () => {
     // d e EMA pelo intervalo parcial de cada carga
     expect(p.pontos.find((x) => x.carga === 4)).toMatchObject({ d: 0.002, ema: 0.008 })
     expect(p.pontos.find((x) => x.carga === 33)).toMatchObject({ d: 0.01, ema: 0.04 })
-    // Repetibilidade: ~Max/2, 5 leituras; excentricidade: Max/3
-    expect(p.repetibilidade[0]).toMatchObject({ carga: 16.5, leituras: 5, minimo: 5 })
-    expect(p.excentricidade.carga).toBe(10)
+    // Repetibilidade: um ensaio por intervalo (d diferente), logo abaixo de cada Max_i; no último, ~Max/2
+    expect(p.repetibilidade.map((x) => [x.carga, x.leituras, x.minimo])).toEqual([
+      [5, 5, 5],
+      [14, 5, 5],
+      [16.5, 5, 5],
+    ])
+    expect(p.avisos.join(' ')).not.toMatch(/Repetibilidade: falta/)
+    // Excentricidade: Max/3 = 11 kg, arredondada para cima (nunca abaixo da fração)
+    expect(p.excentricidade.carga).toBe(15)
+  })
+
+  it('multi-intervalo com um ensaio só no rascunho: avisa o intervalo sem repetibilidade, com a carga sugerida', () => {
+    const d = folhaMultiIntervalo()
+    d.calibracao = { ...d.calibracao!, repetibilidade: [{ id: 'r', carga: 16.5, leituras: [null, null, null, null, null] }] }
+    const p = plano(d)
+    expect(p.repetibilidade.map((x) => x.carga)).toEqual([16.5])
+    expect(p.avisos.filter((a) => a.startsWith('Repetibilidade: falta'))).toEqual([
+      'Repetibilidade: falta ensaio no intervalo com d = 0,002 kg (até 6 kg); acrescente no sistema um com carga logo abaixo de 6 kg, como 5 kg.',
+      'Repetibilidade: falta ensaio no intervalo com d = 0,005 kg (acima de 6 kg até 15 kg); acrescente no sistema um com carga logo abaixo de 15 kg, como 14 kg.',
+    ])
+  })
+
+  it('excentricidade do rascunho abaixo da fração do DOQ-CGCRE-097, 10.4: avisa e diz a carga a usar', () => {
+    const d = folhaPlataforma()
+    // 300 kg: Max/3 = 100 kg; o último certificado usou 80 kg
+    d.calibracao = { ...d.calibracao!, excentricidade: { ...d.calibracao!.excentricidade, carga: 80 } }
+    expect(plano(d).avisos).toContain('Excentricidade: a carga no sistema (80 kg) é menor que Max/3; use 100 kg e acerte no sistema.')
   })
 
   it('rodoviária: substituição em etapas sem acusar falta de pesos nos pontos acima de 10 t', () => {
@@ -174,11 +218,15 @@ describe('planoDaFolha', () => {
       sugerida: false,
       etapas: 0,
     })
-    // Não é rodoviária: os pontos acusam a falta (sem etapas sugeridas)
+    // Não é rodoviária: os pontos acusam a falta (sem etapas sugeridas) e a folha não fala em substituição
     const piso = { ...d.balanca!, tipo: 'PISO' as const, receptor: 'APOIOS' as const }
     const p = planoDaFolha(d.calibracao, piso, d.padroes, '2026-10-28')
     expect(p.substituicao).toMatchObject({ sugerida: false, etapas: 0 })
     expect(p.pontos.find((x) => x.carga === 15_000)).toMatchObject({ nivelSubstituicao: 0, falta: 5000 })
+    expect(p.avisos.find((a) => a.startsWith('Os pesos previstos não fecham'))).toMatch(
+      /: leve mais pesos ou combine uma faixa parcial com o cliente\.$/,
+    )
+    expect(p.avisos.join(' ')).not.toMatch(/substituição/)
     // Com uma peça pequena a mais, a etapa continua em 10 000 kg (múltiplo da maior peça)
     const comPequena = d.padroes.map((x) =>
       x.tipo === 'PESOS' ? { ...x, pesos: [...x.pesos, { ...x.pesos[0], id: 'p20', nominal: 20_000 }] } : x,
@@ -215,8 +263,23 @@ describe('planoDaFolha', () => {
     const avisos = p.avisos.join(' ')
     expect(avisos).toMatch(/Repetibilidade: os pesos previstos não fecham 400 kg \(faltam [\d,]+ kg\)/)
     expect(avisos).toMatch(/Excentricidade: os pesos previstos não fecham 400 kg \(faltam [\d,]+ kg\)/)
-    // Com as cargas que fecham, nenhum aviso
-    expect(plano(folhaPlataforma()).avisos).toEqual([])
+    // Com as cargas que fecham, nenhum aviso desses
+    expect(plano(folhaPlataforma()).avisos.join(' ')).not.toMatch(/Repetibilidade|Excentricidade/)
+  })
+
+  it('rodoviária: repetibilidade e excentricidade com um veículo, sem pesos e sem aviso de falta de pesos', () => {
+    const d = folhaRodoviaria()
+    d.calibracao = {
+      ...d.calibracao!,
+      repetibilidade: [{ id: 'r1', carga: 30_000, leituras: [null, null, null] }],
+      excentricidade: { ...d.calibracao!.excentricidade, carga: 24_000 },
+    }
+    const p = plano(d)
+    expect(p.repetibilidade[0]).toMatchObject({ carga: 30_000, pecas: [], pesos: '', falta: 0, veiculo: true })
+    expect(p.excentricidade).toMatchObject({ carga: 24_000, pecas: [], pesos: '', falta: 0, veiculo: true })
+    expect(p.avisos.join(' ')).not.toMatch(/Repetibilidade|Excentricidade/)
+    // Os pesos dos pontos continuam a separar
+    expect(p.padroes.find((x) => x.padrao.identificacao === 'PP500-01 a 20')?.separar).toBe('20 × 500 kg')
   })
 
   it('balança de gancho: excentricidade não aplicável, com o motivo', () => {
@@ -281,7 +344,7 @@ describe('planoDaFolha: padrões que vão a campo e tolerância do cliente ainda
     expect(p.padroes.map((x) => [x.padrao.identificacao, x.naFolha])).toEqual([
       ['BR-01', false],
       ['JP-01', true],
-      ['JP-05', false],
+      ['JP-05', true],
       ['PP20-01 a 15', true],
       ['PP500-01 a 20', false],
       ['TH-01', true],

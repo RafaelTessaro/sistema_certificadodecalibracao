@@ -33,17 +33,20 @@ import {
   textoComEmpresa,
   TIPOS_BALANCA,
   TIPOS_PADRAO,
+  UFS,
 } from '#shared/dominio.ts'
 import type {
   Balanca,
   Calibracao,
+  DadosEmpresa,
   EmissaoCertificado,
   EnsaioIndicacao,
   MetodoCarregamento,
   Padrao,
   Signatario,
+  RespostaVerificacao,
   Unidade,
-  Verificacao,
+  ZeroAutomatico,
 } from '#shared/tipos.ts'
 import { diagramaExcentricidade, graficoErros, type PontoGrafico, type TrechoEma, type ValorGrafico } from './graficos.ts'
 import {
@@ -451,8 +454,15 @@ function divisaoTexto(valor: number, u: Unidade): string {
   return `${numeroBr(valores[0])} ${unidade}`
 }
 
-const SIM_NAO: Record<Verificacao, string> = { SIM: 'sim', NAO: 'não', NA: 'n/a' }
-const ZERO_AUTOMATICO = { LIGADO: 'ligado', DESLIGADO: 'desligado', NAO_POSSUI: 'não possui' } as const
+// Sem resposta ('') só numa prévia: a emissão exige todas as respostas
+const SIM_NAO: Record<RespostaVerificacao, string> = { SIM: 'sim', NAO: 'não', NA: 'n/a', '': '—' }
+const ZERO_AUTOMATICO: Record<ZeroAutomatico | '', string> = {
+  LIGADO: 'ligado',
+  DESLIGADO: 'desligado',
+  NAO_POSSUI: 'não possui',
+  NAO_VERIFICADO: 'não verificado',
+  '': '—',
+}
 
 function secaoInstrumento(ctx: Contexto, n: number): No[] {
   const { b, k, u } = ctx
@@ -621,16 +631,12 @@ function secaoInstrumento(ctx: Contexto, n: number): No[] {
     if (!vazio(r.selosColocados)) marcas.push(`das marcas de selagem nº ${r.selosColocados.trim()}`)
     if (marcas.length) partes.push(`, com afixação ${marcas.join(' e ')}`)
     if (!vazio(r.selosRetirados)) partes.push(` (retiradas: ${r.selosRetirados.trim()})`)
-    const orgao =
-      !ctx.e.cliente.uf || ctx.e.cliente.uf === 'SP'
-        ? 'pelo órgão metrológico (IPEM-SP)'
-        : 'pelo órgão metrológico competente (Inmetro/RBMLQ-I)'
     ajuste.push(
       destaque(
         {
           text: [
             { text: 'Reparo: ', bold: true },
-            `${partes.join('')}. Os serviços de reparo e manutenção não fazem parte da calibração. O instrumento deve ser submetido à verificação após reparo ${orgao} antes de ser utilizado nas finalidades sujeitas ao controle metrológico legal.`,
+            `${partes.join('')}. Os serviços de reparo e manutenção não fazem parte da calibração. ${textoVerificacaoAposReparo(ufDoLocalDaCalibracao(k, ctx.e.empresa))}`,
           ],
           style: 'paragrafo',
         },
@@ -656,6 +662,42 @@ function secaoInstrumento(ctx: Contexto, n: number): No[] {
     inteiro(condicao),
     ...ajuste,
   ]
+}
+
+/**
+ * UF de um endereço digitado: a do "Cidade/UF" (como o sistema monta os endereços) ou, sem a barra, a sigla
+ * solta antes do CEP ou no fim ("Rio Claro - SP"); a última, quando há mais de uma. Código de rodovia
+ * ("SP-310") não conta. '' quando não acha.
+ */
+function ufNoEndereco(texto: string): string {
+  const valida = (uf: string) => UFS.includes(uf)
+  const barra = [...texto.matchAll(/\/\s*([A-Za-z]{2})(?![\p{L}\p{N}])/gu)].map((m) => m[1].toUpperCase()).filter(valida)
+  if (barra.length) return barra.at(-1)!
+  const solta = [...texto.matchAll(/(?:^|[\s,–—-])([A-Z]{2})(?!-\d)(?=\s*(?:$|[,;.–—()-]|CEP\b|\d{5}))/gu)]
+    .map((m) => m[1])
+    .filter(valida)
+  return solta.at(-1) ?? ''
+}
+
+/**
+ * UF do local onde a calibração foi feita, que decide o órgão metrológico da verificação após reparo: a do
+ * endereço da calibração; no laboratório, sem a UF nele, a da empresa. Nunca a do cadastro do cliente (a
+ * sede pode ficar em outro estado). '' quando não dá para saber. Exportada para os testes.
+ */
+export function ufDoLocalDaCalibracao(k: Pick<Calibracao, 'local' | 'localEndereco'>, empresa: Pick<DadosEmpresa, 'uf'>): string {
+  const doEndereco = ufNoEndereco(k.localEndereco)
+  if (doEndereco) return doEndereco
+  return k.local === 'LABORATORIO' && UFS.includes(empresa.uf) ? empresa.uf : ''
+}
+
+/**
+ * Verificação após reparo, fiel à Portaria Inmetro 457/2021 (10.1): o instrumento reparado fica sujeito a
+ * ela, pelo órgão metrológico do estado onde está (em São Paulo, o IPEM-SP). Sem dizer "antes de ser
+ * utilizado": a Portaria não diz isso. Exportada para os testes.
+ */
+export function textoVerificacaoAposReparo(uf: string): string {
+  const orgao = uf === 'SP' ? 'IPEM-SP' : 'Inmetro/RBMLQ-I'
+  return `O instrumento fica sujeito à verificação após reparo pelo órgão metrológico competente (${orgao}), conforme a legislação metrológica.`
 }
 
 // ---- 4. Condições ambientais ---------------------------------------------------------------------

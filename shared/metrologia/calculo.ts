@@ -9,7 +9,7 @@ import { arredondarResultado, casasDecimais, formatarNumero, limparRuido } from 
 import { emaInstrumento, faixaDoValor, faixasOrdenadas } from './ema.ts'
 import { desvioPadrao, fatorAbrangencia, media } from './estatistica.ts'
 import { converterMassa } from './pesos.ts'
-import { cargaExcentricidade } from './sugestoes.ts'
+import { cargaExcentricidade, faixasSemRepetibilidade, fracaoExcentricidade, referenciasExcentricidade } from './sugestoes.ts'
 import type {
   Aviso,
   EntradaCalculo,
@@ -127,36 +127,43 @@ function repetibilidadeNaCarga(carga: number, ctx: Contexto): { s: number; nu: n
 
 // ---- Excentricidade (cg-18 6.3 e 7.1.1.4) --------------------------------------------------------
 
+/**
+ * Desvios ΔI de cada posição contra a posição de referência (a 1, o centro; com carga rolante, o meio da
+ * mesma passagem: ida contra "Meio (ida)", volta contra "Meio (volta)", cg-18 H3).
+ */
 function calcularExcentricidade(exc: EntradaCalculo['excentricidade']): { resultado: ResultadoExcentricidade; valida: boolean } {
+  const referenciaDe = referenciasExcentricidade(exc.posicoes.length, !!exc.cargaRolante)
   const vazio: ResultadoExcentricidade = {
     aplicavel: exc.aplicavel,
     carga: exc.carga,
     desvios: exc.posicoes.map(() => null),
+    referencias: [...new Set(referenciaDe)],
     maiorDesvio: 0,
     posicaoMaior: -1,
     incertezaRelativa: 0,
   }
   if (!exc.aplicavel || !exc.posicoes.length) return { resultado: vazio, valida: false }
   const posicoes = exc.posicoes
-  const i1 = lida(posicoes[0].leitura)
-  const ref1 = lida(posicoes[0].referencia) ?? 0
   const desvios = posicoes.map((p, i): number | null => {
+    const r = referenciaDe[i]
     const leitura = lida(p.leitura)
-    if (leitura === null || i1 === null) return null
-    if (i === 0) return 0
-    const escala = Math.max(Math.abs(leitura), Math.abs(i1))
+    const iRef = lida(posicoes[r].leitura)
+    if (leitura === null || iRef === null) return null
+    if (i === r) return 0
+    const escala = Math.max(Math.abs(leitura), Math.abs(iRef))
     switch (exc.metodo) {
       // (6.3-2) zero lido antes de cada posição (sem leitura do zero: zero = 0)
       case 3:
-        return limparRuido(leitura - (lida(p.referencia) ?? 0) - (i1 - ref1), escala)
-      // (6.3-3) leitura na posição 1 logo antes (sem ela: a primeira leitura da posição 1)
+        return limparRuido(leitura - (lida(p.referencia) ?? 0) - (iRef - (lida(posicoes[r].referencia) ?? 0)), escala)
+      // (6.3-3) leitura na posição de referência logo antes (sem ela: a primeira leitura da referência)
       case 4:
-        return limparRuido(leitura - (lida(p.referencia) ?? i1), escala)
+        return limparRuido(leitura - (lida(p.referencia) ?? iRef), escala)
       // (6.3-1) métodos 1 e 2
       default:
-        return limparRuido(leitura - i1, escala)
+        return limparRuido(leitura - iRef, escala)
     }
   })
+  const i1 = lida(posicoes[referenciaDe[0]].leitura)
   let maiorDesvio = 0
   let posicaoMaior = -1
   desvios.forEach((d, i) => {
@@ -410,6 +417,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   const cadeia = prepararSubstituicao(ctx)
   const porMedia = opcoes.histerese === 'MEDIA'
   const semPadroes: string[] = []
+  const pecasAusentes: string[] = []
   const semIncerteza: string[] = []
   const classeInsuficiente: string[] = []
   const leiturasImplausiveis: string[] = []
@@ -431,7 +439,8 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       maiorCargaLida = Math.max(maiorCargaLida, ponto.carga)
       for (const l of [sobe, desce])
         if (implausivel(l, ponto.carga)) leiturasImplausiveis.push(`${leituraTexto(l, ponto.carga)} em ${rotulo(ponto.carga)}`)
-      if (nivel === 0 && !massa.temPecas && !ehZero(ponto.carga, ctx)) semPadroes.push(rotulo(ponto.carga))
+      if ((ponto.pecasAusentes ?? 0) > 0) pecasAusentes.push(rotulo(ponto.carga))
+      else if (nivel === 0 && !massa.temPecas && !ehZero(ponto.carga, ctx)) semPadroes.push(rotulo(ponto.carga))
       if (massa.temPecas && massa.semIncerteza) semIncerteza.push(rotulo(ponto.carga))
       if (nivel === 0 && massa.temPecas && massa.emaConhecido) {
         const emaOiml = emaInstrumento(ponto.carga, instrumento, 'OIML_INICIAL')
@@ -510,10 +519,27 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   })
 
   // ---- Pendências ----
+  const lista = (itens: string[]) => [...new Set(itens)].join('; ')
   if (!pontosLidos) pendencias.unshift('Erro de indicação: nenhuma leitura registrada.')
   if (!ctx.repeticoes.length) pendencias.unshift('Repetibilidade: registre pelo menos 2 leituras (o mínimo recomendado é 5).')
   if (entrada.excentricidade.aplicavel && !exc.valida)
     pendencias.push('Excentricidade: registre as leituras das posições (ou marque o ensaio como não aplicável).')
+  // Sem a carga, o cálculo usaria a indicação da referência (no método 2, zero: a parcela some)
+  if (entrada.excentricidade.aplicavel && !(entrada.excentricidade.carga > 0))
+    pendencias.push('Excentricidade: informe a carga usada.')
+  // Ponto sem pesos padrão (e sem substituição) não tem referência: a carga digitada não é medida
+  if (semPadroes.length)
+    pendencias.push(
+      new Set(semPadroes).size === 1
+        ? `Erro de indicação: o ponto de ${lista(semPadroes)} está sem pesos padrão; escolha as peças usadas.`
+        : `Erro de indicação: os pontos de ${lista(semPadroes)} estão sem pesos padrão; escolha as peças usadas.`,
+    )
+  if (pecasAusentes.length)
+    pendencias.push(
+      `Erro de indicação: ${new Set(pecasAusentes).size === 1 ? 'o ponto' : 'os pontos'} de ${lista(pecasAusentes)} ${new Set(pecasAusentes).size === 1 ? 'usa' : 'usam'} peças de um jogo que não está mais escolhido; escolha as peças de novo.`,
+    )
+  // Com substituição, o retorno ao zero entra na incerteza (termo de tempo, cg-18 7.4.4): sem ele, o termo some
+  if (sub.ativa && retornoZero === null) pendencias.push('Com substituição, registre o retorno ao zero.')
   if (conformidade.solicitada && semEma)
     pendencias.push(
       conformidade.criterio === 'CLIENTE'
@@ -522,7 +548,6 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     )
 
   // ---- Avisos ----
-  const lista = (itens: string[]) => [...new Set(itens)].join('; ')
   for (const r of repetibilidade) {
     if (!r.n) continue
     const minimo = converterMassa(r.carga, unidade, 'kg') >= 100 * (1 - TOL) ? 3 : 5
@@ -530,6 +555,18 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       avisos.push({
         nivel: 'atencao',
         mensagem: `Repetibilidade a ${rotulo(r.carga)}: ${r.n} leitura(s); o mínimo é ${minimo}${minimo === 3 ? ' (carga ≥ 100 kg)' : ' (3 só com carga ≥ 100 kg)'}.`,
+      })
+  }
+  // Multi-intervalo e múltiplas faixas: um ensaio em cada faixa ou intervalo de d diferente (DOQ-CGCRE-097, 10.3)
+  if (ctx.repeticoes.length) {
+    const nome = instrumento.tipoFaixas === 'MULTI_INTERVALO' ? 'intervalo' : 'faixa'
+    for (const x of faixasSemRepetibilidade(
+      instrumento,
+      ctx.repeticoes.map((r) => r.carga),
+    ))
+      avisos.push({
+        nivel: 'atencao',
+        mensagem: `Repetibilidade: falta ensaio ${nome === 'intervalo' ? 'no intervalo' : 'na faixa'} com d = ${formatarNumero(x.faixa.d, casasDecimais(x.faixa.d))} ${unidade} (${x.inferior > 0 ? `acima de ${rotulo(x.inferior)} ` : ''}até ${rotulo(x.faixa.max)}); faça um com carga logo abaixo de ${rotulo(x.faixa.max)}, como ${rotulo(x.sugerida)} (DOQ-CGCRE-097, 10.3).`,
       })
   }
   if (ctx.repeticoes.some((r) => r.n < 10))
@@ -542,13 +579,14 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
           }
         : {
             nivel: 'info',
-            mensagem: 'Repetibilidade com menos de 10 leituras: o k calculado pelos graus de liberdade efetivos sai maior que 2.',
+            mensagem:
+              'Repetibilidade com menos de 10 leituras: o k calculado pelos graus de liberdade efetivos sai bem maior que 2; com mais leituras, ele se aproxima de 2.',
           },
     )
   if (pontosLidos > 0 && pontosLidos < 5)
     avisos.push({
       nivel: 'atencao',
-      mensagem: `Erro de indicação com ${pontosLidos} ponto(s); o mínimo é 5, contando o zero (cg-18 §5.2).`,
+      mensagem: `Erro de indicação com ${pontosLidos} ponto(s); o mínimo é 5, contando o zero (cg-18 5.2).`,
     })
   if (pontosLidos > 0 && maiorCargaLida < 0.9 * max * (1 - TOL))
     avisos.push({
@@ -558,12 +596,21 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   if (entrada.excentricidade.aplicavel) {
     const lEcc = entrada.excentricidade.carga
     const sugerida = cargaExcentricidade(max, unidade)
+    const fracao = fracaoExcentricidade(max, unidade)
+    // O mínimo na casa de d, arredondado para cima (166,666… kg com d = 0,1 kg → 166,7 kg)
+    const casasMinimo = casasDecimais(divisaoNaCarga(fracao.minimo, fracao.minimo, ctx))
+    const minimo = limparRuido(Math.ceil(Number((fracao.minimo * 10 ** casasMinimo).toPrecision(12))) / 10 ** casasMinimo)
     if (lEcc > max * (1 + TOL))
       avisos.push({ nivel: 'atencao', mensagem: `Carga de excentricidade (${rotulo(lEcc)}) maior que Max.` })
-    else if (lEcc > 0 && sugerida > 0 && (lEcc < 0.5 * sugerida || lEcc > 3 * sugerida))
+    else if (lEcc > 0 && lEcc < fracao.minimo * (1 - TOL))
       avisos.push({
-        nivel: lEcc < 0.5 * sugerida ? 'atencao' : 'info',
-        mensagem: `Carga de excentricidade (${rotulo(lEcc)}) muito diferente da sugerida (${rotulo(sugerida)}, DOQ-CGCRE-097 10.4.1).`,
+        nivel: 'atencao',
+        mensagem: `Carga de excentricidade (${rotulo(lEcc)}) abaixo do mínimo de Max/${fracao.divisor} (${rotulo(minimo)}) do DOQ-CGCRE-097, 10.4; a sugerida é ${rotulo(sugerida)}.`,
+      })
+    else if (lEcc > 0 && sugerida > 0 && lEcc > 3 * sugerida)
+      avisos.push({
+        nivel: 'info',
+        mensagem: `Carga de excentricidade (${rotulo(lEcc)}) muito maior que a sugerida (${rotulo(sugerida)}, DOQ-CGCRE-097, 10.4).`,
       })
     const faltando = exc.resultado.desvios.filter((d) => d === null).length
     if (exc.valida && faltando)
@@ -581,11 +628,6 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     avisos.push({
       nivel: 'erro',
       mensagem: `Leitura(s) mais de 10 % fora da carga, provável erro de digitação: ${lista(leiturasImplausiveis)}.`,
-    })
-  if (semPadroes.length)
-    avisos.push({
-      nivel: 'atencao',
-      mensagem: `Carga sem padrões em ${lista(semPadroes)}: a referência é a carga digitada, sem a incerteza dos pesos.`,
     })
   if (semIncerteza.length)
     avisos.push({
@@ -606,7 +648,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     avisos.push({
       nivel: 'info',
       mensagem:
-        'Leituras com resolução aumentada (divisão de teste): o certificado deve advertir que a incerteza é menor que a obtida com a divisão normal (cg-18 §8.3).',
+        'Leituras com resolução aumentada (divisão de teste): o certificado deve advertir que a incerteza é menor que a obtida com a divisão normal (cg-18 8.3).',
     })
 
   // ---- Conformidade geral (pior caso) ----

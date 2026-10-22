@@ -2,14 +2,16 @@
 // Migração 5: histórico das folhas de campo (a substituída continua registrada) e as folhas soltas.
 // Migração 6: o PDF da folha de campo num arquivo (caminho e sha256 no banco) e as passagens da folha de um
 // certificado cancelado para a calibração refeita.
+// Migração 7: os textos de fábrica do certificado passam ao PT-CAL-01 rev. 00 (só os que ninguém mudou).
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
-import { detalheTrocaIndicador, migrar } from './db.ts'
+import { completarConfig, CONFIG_PADRAO, TEXTOS_PADRAO } from '#shared/dominio.ts'
+import { detalheTrocaIndicador, migrar, TEXTOS_PT_CAL_01 } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 6
+const ULTIMA = 7
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -366,5 +368,87 @@ describe('migração 6: PDF da folha de campo em arquivo e passagens de certific
     db.exec('PRAGMA user_version = 5')
     migrar(db)
     expect(versao(db)).toBe(ULTIMA)
+  })
+})
+
+describe('migração 7: textos do certificado do PT-CAL-01 rev. 00', () => {
+  /** Banco na versão 6 com a configuração gravada (como o Configurações grava: o objeto inteiro). */
+  function bancoV6(textos: Record<string, string> | null) {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 6)
+    if (textos)
+      db.prepare("INSERT INTO config (chave, valor) VALUES ('geral', ?)").run(
+        JSON.stringify({ ...CONFIG_PADRAO, textos: { ...CONFIG_PADRAO.textos, ...textos } }),
+      )
+    return db
+  }
+  const config = (db: DatabaseSync) =>
+    JSON.parse((db.prepare("SELECT valor FROM config WHERE chave = 'geral'").get() as { valor: string }).valor)
+  const ANTES = {
+    procedimento: TEXTOS_PT_CAL_01.procedimento.antes,
+    procedimentoDescricao: TEXTOS_PT_CAL_01.procedimentoDescricao.antes,
+  }
+
+  it('os textos novos congelados na migração são os de fábrica de agora', () => {
+    expect(TEXTOS_PT_CAL_01.procedimento.depois).toBe(TEXTOS_PADRAO.procedimento)
+    expect(TEXTOS_PT_CAL_01.procedimentoDescricao.depois).toBe(TEXTOS_PADRAO.procedimentoDescricao)
+    expect(TEXTOS_PT_CAL_01.procedimento.antes).toBe('PT-CAL-01 rev. 0')
+  })
+
+  it('troca o código ("rev. 0" → "rev. 00") e a descrição quando ainda são exatamente os de fábrica anteriores', () => {
+    const db = bancoV6({ ...ANTES, observacoesPadrao: 'Obs. da empresa' })
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    const c = config(db)
+    expect(c.textos.procedimento).toBe('PT-CAL-01 rev. 00')
+    expect(c.textos.procedimentoDescricao).toBe(TEXTOS_PADRAO.procedimentoDescricao)
+    // O resto da configuração fica como estava
+    expect(c.textos.observacoesPadrao).toBe('Obs. da empresa')
+    expect(completarConfig(c).textos.procedimento).toBe('PT-CAL-01 rev. 00')
+    expect(registros(db)).toEqual([
+      {
+        acao: 'SISTEMA_ATUALIZADO',
+        ip: 'local',
+        detalhe:
+          'Textos do certificado atualizados para o PT-CAL-01 rev. 00: o código e a revisão do procedimento e a descrição do método.',
+      },
+    ])
+  })
+
+  it('texto que a empresa mudou fica como está (cada um decide por si)', () => {
+    const db = bancoV6({ procedimento: 'PT-CAL-01 rev. 1', procedimentoDescricao: ANTES.procedimentoDescricao })
+    migrar(db)
+    const c = config(db)
+    expect(c.textos.procedimento).toBe('PT-CAL-01 rev. 1')
+    expect(c.textos.procedimentoDescricao).toBe(TEXTOS_PADRAO.procedimentoDescricao)
+    expect(registros(db)[0].detalhe).toBe('Textos do certificado atualizados para o PT-CAL-01 rev. 00: a descrição do método.')
+
+    const outra = bancoV6({ procedimento: 'PT-CAL-01 rev. 0 ', procedimentoDescricao: 'Método da empresa.' })
+    migrar(outra)
+    expect(config(outra).textos).toMatchObject({ procedimento: 'PT-CAL-01 rev. 0 ', procedimentoDescricao: 'Método da empresa.' })
+    expect(registros(outra)).toEqual([])
+  })
+
+  it('sem configuração gravada (valem os de fábrica, já os novos) ou ilegível: não faz nada', () => {
+    const db = bancoV6(null)
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM config').get()).toEqual({ n: 0 })
+    const ruim = new DatabaseSync(':memory:')
+    migrar(ruim, 6)
+    ruim.prepare("INSERT INTO config (chave, valor) VALUES ('geral', '{quebrado')").run()
+    migrar(ruim)
+    expect(versao(ruim)).toBe(ULTIMA)
+  })
+
+  it('roda uma vez só', () => {
+    const db = bancoV6(ANTES)
+    migrar(db)
+    // Alguém volta ao texto antigo depois: a migração não roda de novo
+    db.prepare("UPDATE config SET valor = ? WHERE chave = 'geral'").run(
+      JSON.stringify({ ...CONFIG_PADRAO, textos: { ...CONFIG_PADRAO.textos, ...ANTES } }),
+    )
+    migrar(db)
+    expect(config(db).textos.procedimento).toBe('PT-CAL-01 rev. 0')
   })
 })

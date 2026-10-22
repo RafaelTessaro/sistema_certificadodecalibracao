@@ -1,9 +1,17 @@
 import { CircleCheck, CircleX, Hand, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
-import { cargaDasPecas, cargaDaEtapa, descreverPecas, diferencaDoPonto } from '#shared/calibracao.ts'
+import {
+  acumulaCargas,
+  avisoForaDaSequencia,
+  cargaDasPecas,
+  cargaDaEtapa,
+  cargasAcumuladas,
+  descreverPecas,
+  diferencaDoPonto,
+} from '#shared/calibracao.ts'
 import { ehRodoviaria, massaLegivel, METODOS_CARREGAMENTO } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
-import { formatarNumero, sugerirPontos } from '#shared/metrologia/index.ts'
+import { casasDecimais, formatarNumero, sugerirPontos } from '#shared/metrologia/index.ts'
 import type { ResultadoCalculo, ResultadoPonto } from '#shared/metrologia/tipos.ts'
 import type { EnsaioIndicacao, MetodoCarregamento, Padrao, PecaCarga, PontoIndicacao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
@@ -12,7 +20,7 @@ import { Card, CardHeader } from '../ui/Card'
 import { Field, Select } from '../ui/Form'
 import { Modal } from '../ui/Modal'
 import { Segmented } from '../ui/Misc'
-import { montagemDoPonto, pecasPara, recomporEnsaio } from './cargas'
+import { montagemDoEnsaio, pecasPara, recomporCargas } from './cargas'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
 import { type AbaIndicacao, mudarEnsaioDaAba } from './indicacao'
@@ -52,6 +60,11 @@ export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicaca
   const ensaio = antes ? f.comoEncontrado! : f.indicacao
   const resultado = antes ? calc?.comoEncontrado : calc?.resultado
   const setEnsaio = (mudar: (e: EnsaioIndicacao) => EnsaioIndicacao) => alterar((s) => mudarEnsaioDaAba(s, aba, mudar))
+  // Mudou uma carga, um nível, o método, a substituição ou a lista de pontos: as peças automáticas se refazem
+  // nas duas abas (sem descarga, cada ponto leva as peças do de baixo; a folha de campo monta igual)
+  const pesos = ctx.selecionados.filter((p) => p.tipo === 'PESOS')
+  const recompor = (mudar: (e: EnsaioIndicacao) => EnsaioIndicacao) =>
+    alterar((s) => recomporCargas(mudarEnsaioDaAba(s, aba, mudar), balanca, pesos))
   const rodoviaria = ehRodoviaria(balanca)
 
   return (
@@ -59,15 +72,15 @@ export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicaca
       <TabelaPontos
         ctx={ctx}
         ensaio={ensaio}
+        outro={antes ? f.indicacao : f.ajuste.realizado !== 'NAO' ? f.comoEncontrado : null}
         setEnsaio={setEnsaio}
+        recompor={recompor}
         resultado={resultado ?? null}
         titulo={antes ? 'Erro de indicação antes do ajuste' : 'Erro de indicação'}
         grupo={`ind-${antes ? 'antes' : 'depois'}`}
       />
       {/* Cada aba tem as suas etapas de substituição (com ajuste, a cadeia é refeita depois dele) */}
-      {(rodoviaria || ensaio.substituicao.ativa) && (
-        <Substituicao ctx={ctx} ensaio={ensaio} setEnsaio={setEnsaio} antes={antes} />
-      )}
+      {(rodoviaria || ensaio.substituicao.ativa) && <Substituicao ctx={ctx} ensaio={ensaio} recompor={recompor} antes={antes} />}
       {/* Cada aba tem o seu retorno ao zero (a folha de campo tem uma célula para cada coluna; com
           substituição, ele entra na incerteza do ensaio) */}
       <Card>
@@ -97,14 +110,20 @@ export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicaca
 function TabelaPontos({
   ctx,
   ensaio,
+  outro,
   setEnsaio,
+  recompor,
   resultado,
   titulo,
   grupo,
 }: {
   ctx: ContextoEtapa
   ensaio: EnsaioIndicacao
+  /** O ensaio da outra aba (com ajuste), ou null: com ele sem descarga, as cargas desta também se somam. */
+  outro: EnsaioIndicacao | null
   setEnsaio: (m: (e: EnsaioIndicacao) => EnsaioIndicacao) => void
+  /** Muda o ensaio e refaz as peças automáticas (de todos os pontos: sem descarga, um depende do outro). */
+  recompor: (m: (e: EnsaioIndicacao) => EnsaioIndicacao) => void
   resultado: ResultadoCalculo | null
   titulo: string
   grupo: string
@@ -119,33 +138,35 @@ function TabelaPontos({
   const soDecrescente = ensaio.metodo === 'DECRESCENTE'
   const comConformidade = f.conformidade.solicitada
   const substituicao = ensaio.substituicao.ativa
+  // Sem descarga, cada ponto leva as peças do de baixo mais as que faltam: os que não saem assim
+  const acumular = acumulaCargas(f)
+  const montagem = useMemo(
+    () => montagemDoEnsaio(ensaio, balanca, pesos, acumular),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ensaio, balanca, selecionados, acumular],
+  )
+  const foraDaSequencia = ensaio.pontos.filter((_, i) => montagem[i]?.foraDaSequencia)
+  const metodoAcumulado = cargasAcumuladas(ensaio.metodo) ? ensaio.metodo : (outro?.metodo ?? ensaio.metodo)
 
   const setPontos = (mudar: (l: PontoIndicacao[]) => PontoIndicacao[]) => setEnsaio((e) => ({ ...e, pontos: mudar(e.pontos) }))
   const setPonto = (id: string, mudar: (p: PontoIndicacao) => PontoIndicacao) =>
     setPontos((l) => l.map((p) => (p.id === id ? mudar(p) : p)))
   /**
-   * Muda um ponto e, se as peças dele são automáticas, remonta os pesos: com substituição, só o que as
-   * etapas por baixo não cobrem (a carga do ponto, no cálculo, é nível × etapa + os pesos por cima).
+   * Muda um ponto e remonta os pesos automáticos: com substituição, só o que as etapas por baixo não cobrem
+   * (a carga do ponto, no cálculo, é nível × etapa + os pesos por cima); sem descarga, a partir do ponto de baixo.
    */
   const mudarPonto = (id: string, mudar: (p: PontoIndicacao) => PontoIndicacao) =>
-    setEnsaio((e) => ({
-      ...e,
-      pontos: e.pontos.map((p) => {
-        if (p.id !== id) return p
-        const x = mudar(p)
-        return x.pecasManuais ? x : { ...x, pecas: montagemDoPonto(x, e, balanca, pesos).pecas }
-      }),
-    }))
+    recompor((e) => ({ ...e, pontos: e.pontos.map((p) => (p.id === id ? mudar(p) : p)) }))
   const mudarCarga = (p: PontoIndicacao, carga: number | null) => mudarPonto(p.id, (x) => ({ ...x, carga: carga ?? 0 }))
   const cargaEtapa = cargaDaEtapa(ensaio, pesos, u)
   const sugerir = () => {
     const cargas = sugerirPontos(balanca)
-    setEnsaio((e) => ({
+    recompor((e) => ({
       ...e,
       pontos: cargas.map((c) => ({
         id: novoId(),
         carga: c,
-        pecas: c ? pecasPara(c, balanca, pesos).pecas : [],
+        pecas: [],
         pecasManuais: false,
         crescente: c === 0 ? 0 : null,
         decrescente: c === 0 ? 0 : null,
@@ -178,7 +199,7 @@ function TabelaPontos({
           <Select
             id={`${grupo}-metodo`}
             value={ensaio.metodo}
-            onChange={(e) => setEnsaio((x) => ({ ...x, metodo: e.target.value as MetodoCarregamento }))}
+            onChange={(e) => recompor((x) => ({ ...x, metodo: e.target.value as MetodoCarregamento }))}
           >
             {(Object.keys(METODOS_CARREGAMENTO) as MetodoCarregamento[]).map((m) => (
               <option key={m} value={m}>
@@ -194,6 +215,17 @@ function TabelaPontos({
         <p className="mx-5 mb-4 flex items-center gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
           <TriangleAlert className="h-4 w-4 shrink-0" />
           Escolha os pesos padrão na etapa “Padrões e ambiente” para as cargas serem montadas e rastreadas.
+        </p>
+      )}
+      {pesos.length > 0 && foraDaSequencia.length > 0 && (
+        <p className="mx-5 mb-4 flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          {avisoForaDaSequencia(
+            foraDaSequencia.map((p) => `${formatarNumero(p.carga, casasDecimais(p.carga))} ${u}`),
+            metodoAcumulado,
+            'escolhidos',
+            substituicao,
+          )}
         </p>
       )}
 
@@ -233,6 +265,7 @@ function TabelaPontos({
                     ? diferencaDoPonto(p.carga, nivel * cargaEtapa, cargaDasPecas(p.pecas, pesos, u))
                     : 0
                 const falta = diferenca !== 0
+                const trocaPecas = !!montagem[i]?.foraDaSequencia
                 return (
                   <tr key={p.id} className="border-t border-line align-top">
                     {/* Linha alinhada pelo topo: textos com leading-9 ficam no meio dos campos (36 px) */}
@@ -254,7 +287,7 @@ function TabelaPontos({
                         disabled={!pesos.length || p.carga === 0}
                         className={cn(
                           'flex min-h-9 max-w-[190px] cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-left text-xs transition-colors hover:bg-surface-2 disabled:cursor-default disabled:hover:bg-transparent',
-                          falta ? 'text-warning' : 'text-ink-2',
+                          falta || trocaPecas ? 'text-warning' : 'text-ink-2',
                         )}
                         title={`Ver ou trocar os pesos usados nesta carga${p.pecasManuais ? ' (escolhidos à mão)' : ''}`}
                       >
@@ -280,6 +313,7 @@ function TabelaPontos({
                             (diferenca < 0
                               ? ` · faltam ${formatarNumero(-diferenca, casas)} ${u}`
                               : ` · passa ${formatarNumero(diferenca, casas)} ${u} da carga`)}
+                          {trocaPecas && ' · troca peças'}
                           {/* Ícone em vez de "· à mão": a descrição cabe numa linha e a linha fica da altura dos campos */}
                           {p.pecasManuais && (
                             <span className="whitespace-nowrap text-muted">
@@ -378,7 +412,7 @@ function TabelaPontos({
                         tamanho="icon-sm"
                         className="mt-0.5"
                         aria-label={`Remover o ponto ${i + 1}`}
-                        onClick={() => setPontos((l) => l.filter((x) => x.id !== p.id))}
+                        onClick={() => recompor((e) => ({ ...e, pontos: e.pontos.filter((x) => x.id !== p.id) }))}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -561,12 +595,12 @@ function PecasModal({
 function Substituicao({
   ctx,
   ensaio,
-  setEnsaio,
+  recompor,
   antes,
 }: {
   ctx: ContextoEtapa
   ensaio: EnsaioIndicacao
-  setEnsaio: (m: (e: EnsaioIndicacao) => EnsaioIndicacao) => void
+  recompor: (m: (e: EnsaioIndicacao) => EnsaioIndicacao) => void
   antes: boolean
 }) {
   const { balanca, selecionados } = ctx
@@ -576,8 +610,7 @@ function Substituicao({
   const cargaPadroes = cargaDasPecas(sub.pecas, pesos, u)
   const grupo = antes ? 'sub-antes' : 'sub'
   // A carga da etapa (e ligar ou desligar a substituição) muda os pesos por cima dos pontos automáticos
-  const set = (mudar: (s: typeof sub) => typeof sub) =>
-    setEnsaio((e) => recomporEnsaio({ ...e, substituicao: mudar(e.substituicao) }, balanca, pesos))
+  const set = (mudar: (s: typeof sub) => typeof sub) => recompor((e) => ({ ...e, substituicao: mudar(e.substituicao) }))
   return (
     <Card>
       <CardHeader

@@ -11,6 +11,7 @@ let t: AppComLogin
 let cliente: Cliente
 let balanca: Balanca
 let pesos: Padrao
+let termo: Padrao
 
 beforeEach(async () => {
   t = await criarAppComLogin()
@@ -63,7 +64,30 @@ beforeEach(async () => {
       ],
     })
   ).padrao
+  // O termo-higrômetro do ambiente (sem ele, o certificado não é emitido)
+  termo = (
+    await criar('/api/padroes', {
+      ...PADRAO_VAZIO,
+      tipo: 'TERMOHIGROMETRO',
+      identificacao: 'TH-01',
+      descricao: 'Termo-higrômetro digital',
+      certificado: 'LAB-0789/2026',
+      laboratorio: 'Laboratório de Temperatura Exemplo',
+      dataCalibracao: '2026-01-10',
+      validade: '2099-01-10',
+    })
+  ).padrao
 })
+
+/** Verificação antes de calibrar respondida (o rascunho começa sem resposta). */
+const PRELIMINAR_OK: CalibracaoInput['preliminar'] = {
+  identificavel: 'SIM',
+  limpa: 'SIM',
+  nivelada: 'SIM',
+  aquecida: 'SIM',
+  preCarga: 'SIM',
+  zeroAutomatico: 'DESLIGADO',
+}
 afterEach(async () => {
   await t.fechar()
 })
@@ -76,8 +100,8 @@ async function criar(url: string, payload: unknown, cookie = t.cookieAdmin) {
 
 const peca = (pesoId: string) => ({ padraoId: pesos.id, pesoId, quantidade: 1 })
 
-/** Rascunho preenchido com leituras plausíveis (erros de 0 a 10 g). */
-async function calibracaoPronta(cookie = t.cookieAdmin): Promise<Calibracao> {
+/** Rascunho preenchido com leituras plausíveis (erros de 0 a 10 g). `extra`: o que mais o técnico confirmou. */
+async function calibracaoPronta(cookie = t.cookieAdmin, extra: Partial<CalibracaoInput> = {}): Promise<Calibracao> {
   const { calibracao: k } = (await criar(
     '/api/calibracoes',
     { clienteId: cliente.id, balancaId: balanca.id, ordemServico: 'OS 4471' },
@@ -85,10 +109,12 @@ async function calibracaoPronta(cookie = t.cookieAdmin): Promise<Calibracao> {
   )) as {
     calibracao: Calibracao
   }
-  expect(k).toMatchObject({ status: 'RASCUNHO', numero: '', padroesIds: [pesos.id], ordemServico: 'OS 4471' })
+  expect(k).toMatchObject({ status: 'RASCUNHO', numero: '', ordemServico: 'OS 4471' })
+  expect([...k.padroesIds].sort()).toEqual([pesos.id, termo.id].sort())
   expect(k.localEndereco).toContain('Rio Claro')
   const dados: CalibracaoInput = {
     ...k,
+    preliminar: PRELIMINAR_OK,
     ambiente: { temperaturaInicial: 22.1, temperaturaFinal: 22.6, umidadeInicial: 55, umidadeFinal: 57, pressao: null },
     repetibilidade: [{ id: 'r1', carga: 15, leituras: [15, 15, 15.01, 15, 15, 15] }],
     excentricidade: {
@@ -138,7 +164,7 @@ async function calibracaoPronta(cookie = t.cookieAdmin): Promise<Calibracao> {
       ],
     },
   }
-  const r = await t.chamar('PUT', `/api/calibracoes/${k.id}`, { cookie, payload: { ...dados, versao: k.versao } })
+  const r = await t.chamar('PUT', `/api/calibracoes/${k.id}`, { cookie, payload: { ...dados, ...extra, versao: k.versao } })
   expect(r.statusCode, r.body).toBe(200)
   expect(r.json().pendencias).toEqual([])
   return r.json().calibracao
@@ -263,7 +289,40 @@ describe('emissão do certificado', () => {
     const r = await emitir(k)
     expect(r.statusCode).toBe(409)
     const detalhe = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json()
-    expect(detalhe.pendencias).toEqual(expect.arrayContaining([expect.stringMatching(/temperatura/)]))
+    expect(detalhe.pendencias).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/temperatura/),
+        'Registre a umidade relativa no início e no fim da calibração.',
+        'Responda a verificação antes de calibrar (etapa “Balança e ajuste”): identificação, limpeza, nivelamento, aquecimento, pré-carga e zero automático.',
+      ]),
+    )
+  })
+
+  it('o rascunho novo começa com a verificação antes de calibrar sem resposta, e sem ela não emite', async () => {
+    const { calibracao: novo } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: balanca.id })) as {
+      calibracao: Calibracao
+    }
+    expect(Object.values(novo.preliminar).every((v) => v === '')).toBe(true)
+    const k = await calibracaoPronta()
+    const r = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...k, preliminar: { ...PRELIMINAR_OK, aquecida: '', zeroAutomatico: 'NAO_VERIFICADO' } },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().calibracao.preliminar.zeroAutomatico).toBe('NAO_VERIFICADO')
+    expect(r.json().pendencias).toEqual(['Responda a verificação antes de calibrar (etapa “Balança e ajuste”): aquecimento.'])
+    const negado = await emitir(r.json().calibracao)
+    expect(negado.statusCode).toBe(409)
+  })
+
+  it('sem o termo-higrômetro marcado, não emite', async () => {
+    const k = await calibracaoPronta()
+    const r = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...k, padroesIds: [pesos.id] },
+    })
+    expect(r.json().pendencias).toEqual(['Escolha o termo-higrômetro usado (etapa “Padrões e ambiente”).'])
+    expect((await emitir(r.json().calibracao)).statusCode).toBe(409)
   })
 
   it('prévia do rascunho sai com marca d’água, sem gravar nada', async () => {
@@ -364,22 +423,44 @@ describe('revisão e cancelamento', () => {
   })
 
   it('calibrar de novo aproveita pontos e padrões, sem as leituras', async () => {
-    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    // O cliente pediu a declaração de conformidade e a data no certificado da última vez
+    const pedidos: Partial<CalibracaoInput> = {
+      conformidade: { solicitada: true, criterio: 'OIML_SERVICO', toleranciaCliente: 0, regra: 'SIMPLES' },
+      proximaCalibracao: '2027-10-01',
+      proximaNoCertificado: true,
+    }
+    const k: Calibracao = (await emitir(await calibracaoPronta(t.cookieAdmin, pedidos))).json().calibracao
+    expect(k.conformidade.solicitada).toBe(true)
     const { calibracao: nova } = (await criar(`/api/calibracoes/${k.id}/recalibrar`, {})) as { calibracao: Calibracao }
     expect(nova).toMatchObject({
       status: 'RASCUNHO',
       clienteId: cliente.id,
       balancaId: balanca.id,
-      padroesIds: [pesos.id],
       substituiId: '',
     })
+    expect([...nova.padroesIds].sort()).toEqual([pesos.id, termo.id].sort())
     expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual([5, 10, 20, 30])
     expect(nova.indicacao.pontos.every((p) => p.crescente === null && p.decrescente === null)).toBe(true)
     expect(nova.repetibilidade.flatMap((r) => r.leituras).every((l) => l === null)).toBe(true)
-    // Uma calibração nova da mesma balança também já vem com os pontos da última emitida
+    // Nada que o técnico confirma na visita vem marcado: verificação sem resposta, pedidos do cliente desmarcados
+    // (o critério e a regra ficam prontos, caso o cliente peça de novo)
+    expect(Object.values(nova.preliminar).every((v) => v === '')).toBe(true)
+    expect(nova.conformidade).toEqual({ solicitada: false, criterio: 'OIML_SERVICO', toleranciaCliente: 0, regra: 'SIMPLES' })
+    expect(nova.proximaNoCertificado).toBe(false)
+    // Uma calibração nova da mesma balança também já vem com os pontos da última emitida, e igualmente desmarcada
     const { calibracao: outra } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
     expect(outra.clienteId).toBe(cliente.id)
     expect(outra.indicacao.pontos.map((p) => p.carga)).toEqual([5, 10, 20, 30])
+    expect(Object.values(outra.preliminar).every((v) => v === '')).toBe(true)
+    expect(outra.conformidade).toMatchObject({ solicitada: false, criterio: 'OIML_SERVICO' })
+    expect(outra.proximaNoCertificado).toBe(false)
+    // A revisão de um certificado copia tudo o que foi respondido (é o mesmo serviço)
+    const { calibracao: rev } = (await criar(`/api/calibracoes/${k.id}/revisar`, { motivo: 'Correção do endereço' })) as {
+      calibracao: Calibracao
+    }
+    expect(rev.preliminar).toEqual(PRELIMINAR_OK)
+    expect(rev.conformidade.solicitada).toBe(true)
+    expect(rev.proximaNoCertificado).toBe(true)
   })
 })
 

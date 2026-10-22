@@ -22,8 +22,11 @@ import {
   definicaoFolhaCampo,
   ETAPAS_SISTEMA,
   gerarFolhaCampoPdf,
+  limiteDeltaT,
   montar,
   nomeArquivoFolhaCampo,
+  notaLegal,
+  PROCEDIMENTO,
   ROTEIRO_DIGITACAO,
   textosDaFaixa,
   VERIFICACOES_FOLHA,
@@ -228,7 +231,8 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
       expect(t).toContain('FOLHA DE CAMPO — CALIBRAÇÃO DE BALANÇA')
       expect(t).toContain(numero)
       expect(t).toContain(`Página ${i + 1} de ${paginas.length}`)
-      expect(t).toContain(`${FORMULARIO_FOLHA_CAMPO.codigo} rev. ${FORMULARIO_FOLHA_CAMPO.revisao}`)
+      // O formulário e o procedimento que ele segue (sem a revisão do PT: a folha não muda a cada revisão dele)
+      expect(t).toContain(`${FORMULARIO_FOLHA_CAMPO.codigo} rev. ${FORMULARIO_FOLHA_CAMPO.revisao} · PT-CAL-01 · registro`)
       expect(t).toContain('não é certificado de calibração')
       // Folha solta ou digitalizada sozinha: quem imprimiu e quando, rubrica e data em toda página
       expect(t).toMatch(/Impressa em \d\d\/\d\d\/\d{4}, às \d\d:\d\d por /)
@@ -353,7 +357,7 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain('FRENTE · INDICADOR')
     expect(t).toContain('a normal (d = 50 g)')
     expect(t).toContain('21/10/2027')
-    expect(t).toContain('1 · Cliente e OS ← passos 2 e 10')
+    expect(t).toContain('1 · Cliente e OS ← passos 2, 9 (Anotações internas) e 10')
   })
 
   it('balcão multi-intervalo: pontos sugeridos pelo sistema, d de cada intervalo e EMA por intervalo', async () => {
@@ -381,7 +385,8 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     // Repetibilidade em 9 linhas (5 previstas), com a carga nas casas de d do intervalo (16,5 kg: d = 10 g)
     expect(t).toContain('16,50')
     expect(t).toContain('Linhas 6 a 9: opcionais')
-    expect(t).toContain('as que não couberem, nas observações')
+    expect(t).toContain('As que não couberem: em Anotações internas (passo 9).')
+    expect(t).not.toContain('nas observações)')
     // Faixa para decidir o ajuste, e o passo 6 aponta para ela
     expect(t).toContain('Fora da faixa para decidir o ajuste (passo 5)')
   })
@@ -809,7 +814,7 @@ describe.runIf(temPdftotext)(
       const t = corrido(textoDoPdf(await gerarFolhaCampoPdf(d)))
       expect(t).toContain('299,80 a 300,20')
       expect(t).toContain(
-        'Faixa para decidir o ajuste: carga ± EMA (Portaria Inmetro 157/2022 — em serviço, classe III); fora dela, ajuste. A tolerância do cliente ainda não foi informada: pergunte e anote no passo 9.',
+        'Faixa para decidir o ajuste: carga ± EMA (Portaria Inmetro 157/2022 — em serviço, classe III); fora dela, proponha o ajuste ao cliente. A tolerância do cliente ainda não foi informada: pergunte e anote no passo 9.',
       )
       expect(t).toContain('Fora da faixa para decidir o ajuste (passo 5)')
       expect(t).not.toContain('balança sem classe')
@@ -818,7 +823,7 @@ describe.runIf(temPdftotext)(
       // Sem classe: a decisão fica pela tolerância, quando ela for informada
       const semClasse = { ...d, balanca: { ...d.balanca!, classe: '' as const } }
       const t2 = corrido(textoDoPdf(await gerarFolhaCampoPdf(semClasse)))
-      expect(t2).toContain('Fora da tolerância do cliente (anote-a no passo 9) ou a pedido dele')
+      expect(t2).toContain('Fora da tolerância do cliente (anote-a no passo 9): proponha o ajuste ao cliente.')
       expect(t2).not.toContain('balança sem classe')
     })
 
@@ -1130,5 +1135,217 @@ describe.runIf(temPdftotext)('correções da 4ª revisão: páginas sem grandes 
     const m = await montar(folhaPlataforma())
     expect(m.extras.observacoesAdiante).toBeFalsy()
     expect(corrido(paginasDe(textoDoPdf(m.pdf)).at(-1)!)).toMatch(/OBSERVAÇÕES \(SAEM NO CERTIFICADO\) .* 10 ASSINATURAS/)
+  })
+})
+
+/** Texto corrido do PDF de uma folha. */
+const textoDe = async (d: DadosFolhaCampo) => corrido(textoDoPdf(await gerarFolhaCampoPdf(d)))
+
+/** Plataforma 300 kg com outra classe e sem declaração de conformidade pedida. */
+function plataformaClasse(classe: '' | 'II' | 'IIII'): DadosFolhaCampo {
+  const d = folhaPlataforma()
+  d.balanca = { ...d.balanca!, classe }
+  d.calibracao = { ...d.calibracao!, conformidade: { ...d.calibracao!.conformidade, solicitada: false } }
+  return d
+}
+
+/** A regra do passo 6, a mesma em todas as variantes. */
+const REGRA_AJUSTE =
+  'Ajuste só com autorização do cliente e pelos meios permitidos (sem romper selo, salvo oficina permissionária): ajuste e refaça o passo 5 nas colunas “depois do ajuste”.'
+
+describe.runIf(temPdftotext)('alinhamento ao procedimento PT-CAL-01', { timeout: 180_000 }, () => {
+  it('passo 2: os acordos do certificado combinados antes das leituras; passo 9: só se confere que não mudaram', async () => {
+    const acordos =
+      'Antes do passo 5: confirme com o cliente a declaração de conformidade, o limite, a regra de decisão e se a data da próxima calibração sai no certificado; marque no passo 9.'
+    for (const e of EXEMPLOS) {
+      const t = corrido(textoDoPdf(await pdfDe(e)))
+      expect(t, e.nome).toContain(acordos)
+      expect(t, e.nome).toContain(
+        'Meça o ambiente de novo, no mesmo lugar e com o mesmo instrumento. Confira que os acordos marcados na chegada não mudaram.',
+      )
+      expect(t, e.nome).not.toContain('confirme com o cliente o que sai no certificado')
+      // O passo 2 vem antes do passo 5 (e o aviso fica na chegada)
+      expect(t.indexOf(acordos), e.nome).toBeLessThan(t.indexOf('5 ERRO DE INDICAÇÃO'))
+    }
+    const t = corrido(textoDoPdf(await pdfDe(EXEMPLOS[0])))
+    expect(t).toContain(
+      'Confira o cliente e o endereço da balança (filial, obra…). Anote a data e a hora de início. Antes do passo 5:',
+    )
+    const branco = corrido(textoDoPdf(await pdfDe(EXEMPLOS[3])))
+    expect(branco).toContain(
+      'Preencha o cliente como deve sair no certificado. Anote a data e a hora de início. Antes do passo 5:',
+    )
+  })
+
+  it('nunca manda ajustar: fora da faixa, propõe ao cliente; o ajuste só com a autorização dele (todas as variantes)', async () => {
+    const tolerancia = folhaPlataforma()
+    tolerancia.calibracao = {
+      ...tolerancia.calibracao!,
+      conformidade: { solicitada: true, criterio: 'CLIENTE', toleranciaCliente: 0, regra: 'SIMPLES' },
+    }
+    const variantes: Array<{ nome: string; dados: DadosFolhaCampo; quando: string }> = [
+      {
+        nome: 'com faixa',
+        dados: folhaPlataforma(),
+        quando: 'Fora da faixa para decidir o ajuste (passo 5): proponha o ajuste ao cliente.',
+      },
+      {
+        nome: 'tolerância pendente',
+        dados: tolerancia,
+        quando: 'Fora da faixa para decidir o ajuste (passo 5): proponha o ajuste ao cliente.',
+      },
+      {
+        nome: 'tolerância pendente, sem classe',
+        dados: { ...tolerancia, balanca: { ...tolerancia.balanca!, classe: '' } },
+        quando: 'Fora da tolerância do cliente (anote-a no passo 9): proponha o ajuste ao cliente.',
+      },
+      {
+        nome: 'sem classe',
+        dados: plataformaClasse(''),
+        quando: 'Balança sem classe: não há EMA para comparar; o ajuste é só a pedido do cliente.',
+      },
+      {
+        nome: 'em branco',
+        dados: folhaEmBranco(),
+        quando: 'Erro fora do EMA da classe (tabela embaixo dos pontos, no passo 5): proponha o ajuste ao cliente.',
+      },
+    ]
+    for (const v of variantes) {
+      const t = await textoDe(v.dados)
+      expect(t, v.nome).toContain(`${v.quando} ${REGRA_AJUSTE}`)
+      expect(t, v.nome).not.toMatch(/fora dela, ajuste|a pedido do cliente: ajuste|a pedido dele: ajuste/)
+      // A faixa dos pontos (quando há) também só manda propor
+      if (v.nome !== 'em branco' && v.nome !== 'sem classe' && v.nome !== 'tolerância pendente, sem classe')
+        expect(t, v.nome).toMatch(/Faixa para decidir o ajuste: carga ± EMA \([^)]*\); fora dela, proponha o ajuste ao cliente\./)
+    }
+    // Conformidade pedida: a nota da faixa cabe numa linha e lembra da incerteza
+    expect(await textoDe(folhaPlataforma())).toContain(
+      'Faixa para decidir o ajuste: carga ± EMA (Portaria Inmetro 157/2022 — em serviço); fora dela, proponha o ajuste ao cliente. A conformidade inclui a incerteza.',
+    )
+  })
+
+  it('repetibilidade: com 10 leituras, k fica mais perto de 2; as leituras a mais vão em Anotações internas', async () => {
+    for (const e of EXEMPLOS) {
+      const t = corrido(textoDoPdf(await pdfDe(e)))
+      expect(t, e.nome).toMatch(/com 10 leituras, k fica mais perto de 2[).]/)
+      expect(t, e.nome).not.toMatch(/k = 2/)
+      expect(t, e.nome).toContain('As que não couberem: em Anotações internas (passo 9).')
+      expect(t, e.nome).not.toMatch(/n[ao]s? observações\)/)
+    }
+  })
+
+  it('excentricidade prevista como não aplicável: se for feita, posições e leituras em Anotações internas', async () => {
+    const d = folhaPlataforma()
+    d.calibracao = {
+      ...d.calibracao!,
+      excentricidade: { ...d.calibracao!.excentricidade, aplicavel: false, motivo: 'Balança suspensa (gancho).' },
+    }
+    const t = await textoDe(d)
+    expect(t).toContain('Ensaio previsto como não aplicável. Confirme no local.')
+    expect(t).toMatch(/ENSAIO REALIZADO .*não PREVISTO .*sim: anote posições e leituras em Anotações internas/)
+    expect(t).not.toContain('descreva nas observações')
+  })
+
+  it.each([
+    { nome: 'rodoviária 80 t', dados: folhaRodoviaria },
+    { nome: 'rodoviária 60 t sem histórico', dados: folhaRodoviariaSemHistorico },
+    {
+      nome: 'ferroviária',
+      dados: (): DadosFolhaCampo => {
+        const d = folhaRodoviaria()
+        return { ...d, balanca: { ...d.balanca!, tipo: 'FERROVIARIA' } }
+      },
+    },
+  ])('$nome: repetibilidade e excentricidade com um veículo, sem pesos previstos', async ({ dados }) => {
+    const t = await textoDe(dados())
+    expect(t).toContain(
+      'Zere. Use um veículo de massa constante; pare na marca do centro, motor desligado, freio puxado, motorista sempre na mesma condição. Anote a indicação estável, saia e anote o zero. Repita',
+    )
+    expect(t).toMatch(/CARGA APLICADA \(kg\) = indicação na 1ª leitura VEÍCULO \/ CARGA tipo e placa HORA/)
+    expect(t).toContain(
+      'Zere vazia. Use um veículo de massa constante; pare nas marcas de início, meio e fim, na ida e na volta, na ordem do desenho (nº do desenho = nº da linha); em cada parada, motor desligado, freio puxado, motorista sempre na mesma condição.',
+    )
+    expect(t).toMatch(/CARGA USADA \(kg\) = indicação na posição 1 VEÍCULO \/ CARGA tipo e placa HORA/)
+    // Nada de pesos previstos, de "faltam" nem da frente do indicador nos ensaios com o veículo
+    const ensaios = t.slice(t.indexOf('7 REPETIBILIDADE'), t.indexOf('9 ENCERRAMENTO'))
+    expect(ensaios).not.toContain('PESOS PREVISTOS')
+    expect(ensaios).not.toContain('faltam')
+    expect(ensaios).not.toContain('Frente = lado do indicador')
+    expect(ensaios).not.toMatch(/Coloque [\d ]+ kg no centro/)
+  })
+
+  it('balança que não é rodoviária: carga e pesos previstos como antes; em branco, a rodoviária lembrada nas instruções', async () => {
+    const t = await textoDe(folhaPlataforma())
+    expect(t).toContain('Coloque 150 kg no centro da plataforma')
+    expect(t).toContain('PESOS PREVISTOS (NÃO PRECISA SER PADRÃO')
+    expect(t).toContain('Frente = lado do indicador.')
+    expect(t).not.toContain('veículo')
+    const branco = corrido(textoDoPdf(await pdfDe(EXEMPLOS[3])))
+    expect(branco).toContain(
+      'Rodoviária: use um veículo de massa constante (motor desligado, freio puxado, motorista sempre na mesma condição); carga aplicada = indicação na 1ª leitura.',
+    )
+    expect(branco).toContain(
+      'Rodoviária: com um veículo, pare no início, no meio e no fim, na ida e na volta; carga usada = indicação na posição 1.',
+    )
+  })
+
+  it('passo 4: selos, marca e fotos antes dos itens 1 a 6; um rótulo só da marca; a nota legal para qualquer finalidade', async () => {
+    for (const e of EXEMPLOS) {
+      const t = corrido(textoDoPdf(await pdfDe(e)))
+      const passo4 = t.slice(t.indexOf('4 VERIFICAÇÃO ANTES DE CALIBRAR'), t.indexOf('5 ERRO DE INDICAÇÃO'))
+      expect(passo4.indexOf('SELOS / LACRES ENCONTRADOS'), e.nome).toBeGreaterThan(0)
+      expect(passo4.indexOf('SELOS / LACRES ENCONTRADOS'), e.nome).toBeLessThan(passo4.indexOf('Balança identificada (série'))
+      expect(passo4, e.nome).toContain('MARCA DE VERIFICAÇÃO INMETRO/IPEM: ANO')
+      expect(passo4, e.nome).not.toContain('(SE HOUVER)')
+      expect(passo4, e.nome).toMatch(/FOTOS TIRADAS ANTES DE MEXER .*plaqueta .*mostrador .*selos/)
+      expect(passo4, e.nome).toContain(
+        'alibração não substitui a verificação do Inmetro/IPEM. Selos violados ou marca vencida: anote nas observações.',
+      )
+    }
+    // A nota com a finalidade, quando ela é comercial ou na saúde; nas outras e em branco, a frase direta
+    const t = (await pdfDe(EXEMPLOS[0]).then(textoDoPdf)).replace(/\s+/g, ' ')
+    expect(t).toContain('A calibração não substitui a verificação do Inmetro/IPEM.')
+    expect(notaLegal(null)).toBe(
+      'A calibração não substitui a verificação do Inmetro/IPEM. Selos violados ou marca vencida: anote nas observações.',
+    )
+    const b = folhaPlataforma().balanca!
+    expect(notaLegal({ ...b, finalidade: 'PROCESSO' })).toMatch(/^A calibração não substitui/)
+    expect(notaLegal({ ...b, finalidade: 'LABORATORIO' })).toMatch(/^A calibração não substitui/)
+    expect(notaLegal({ ...b, finalidade: '' })).toMatch(/^A calibração não substitui/)
+    expect(notaLegal({ ...b, finalidade: 'COMERCIAL' })).toMatch(
+      /^Balança de uso comercial \(venda por peso\): a calibração não substitui a verificação do Inmetro\/IPEM\./,
+    )
+    expect(notaLegal({ ...b, finalidade: 'SAUDE' })).toMatch(/^Balança de uso na saúde: a calibração não substitui/)
+  })
+
+  it('observações: o limite de ΔT pela classe da balança', async () => {
+    expect(limiteDeltaT({ classe: 'II' })).toBe('ΔT acima de 3 °C')
+    expect(limiteDeltaT({ classe: 'I' })).toBe('ΔT acima de 3 °C')
+    expect(limiteDeltaT({ classe: 'III' })).toBe('ΔT acima de 5 °C')
+    expect(limiteDeltaT({ classe: 'IIII' })).toBe('ΔT acima de 5 °C')
+    expect(limiteDeltaT({ classe: '' })).toBe('ΔT acima do limite (5 °C; classe II: 3 °C)')
+    expect(limiteDeltaT(null)).toBe('ΔT acima do limite (5 °C; classe II: 3 °C)')
+    const dica = (t: string) =>
+      t.slice(t.indexOf('OBSERVAÇÕES (SAEM NO CERTIFICADO)'), t.indexOf('OBSERVAÇÕES (SAEM NO CERTIFICADO)') + 220)
+    expect(dica(corrido(textoDoPdf(await pdfDe(EXEMPLOS[0]))))).toContain('itens “Não” da verificação, ΔT acima de 5 °C, faixa')
+    expect(dica(await textoDe(plataformaClasse('II')))).toContain('ΔT acima de 3 °C, faixa ou carga fora do previsto')
+    expect(dica(await textoDe(plataformaClasse('IIII')))).toContain('ΔT acima de 5 °C,')
+    expect(dica(await textoDe(plataformaClasse('')))).toContain('ΔT acima do limite (5 °C; classe II: 3 °C)')
+    expect(dica(corrido(textoDoPdf(await pdfDe(EXEMPLOS[3]))))).toContain('ΔT acima do limite (5 °C; classe II: 3 °C)')
+  })
+
+  it('escritório: a etapa 1 recebe os passos 2, 9 (Anotações internas) e 10; o rodapé cita o PT-CAL-01', async () => {
+    expect(ROTEIRO_DIGITACAO[0]).toEqual({ etapa: '1 · Cliente e OS', passos: '2, 9 (Anotações internas) e 10' })
+    expect(PROCEDIMENTO).toBe('PT-CAL-01')
+    const t = corrido(textoDoPdf(await pdfDe(EXEMPLOS[2])))
+    expect(t).toContain('1 · Cliente e OS ← passos 2, 9 (Anotações internas) e 10')
+    expect(t).toContain(
+      'FOR-CAL-01 rev. 00 · PT-CAL-01 · registro de dados brutos (ISO/IEC 17025, 7.5) · não é certificado de calibração',
+    )
+  })
+
+  it('páginas: plataforma e balcão em 4; as rodoviárias e a em branco em 5', async () => {
+    const paginas = await Promise.all(EXEMPLOS.map(async (e) => paginasDe(textoDoPdf(await pdfDe(e))).length))
+    expect(paginas).toEqual([4, 4, 5, 5, 5])
   })
 })

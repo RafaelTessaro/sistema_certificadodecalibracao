@@ -239,6 +239,12 @@ export type LocalCalibracao = 'CLIENTE' | 'LABORATORIO'
 /** Situação de um item da verificação preliminar (nivelamento, limpeza…). */
 export type Verificacao = 'SIM' | 'NAO' | 'NA'
 
+/** Resposta de um item da verificação preliminar: '' = ainda sem resposta (o rascunho novo começa assim). */
+export type RespostaVerificacao = Verificacao | ''
+
+/** Zero automático / rastreamento de zero na hora da calibração ('NAO_VERIFICADO': não deu para conferir). */
+export type ZeroAutomatico = 'LIGADO' | 'DESLIGADO' | 'NAO_POSSUI' | 'NAO_VERIFICADO'
+
 export type AjusteRealizado = 'NAO' | 'INTERNO' | 'EXTERNO'
 
 /** Peça de peso usada numa carga (cópia congelada dos dados do padrão no momento do uso). */
@@ -395,15 +401,18 @@ export interface Calibracao {
   /** Padrões usados: jogos de pesos, termo-higrômetro, barômetro. */
   padroesIds: ID[]
   ambiente: CondicoesAmbientais
-  /** Verificação preliminar (cg-18 §4.1.3). */
+  /**
+   * Verificação preliminar (cg-18 4.1.3). O rascunho novo (e o "calibrar de novo") começa sem resposta (''):
+   * o técnico responde cada item na balança, e a emissão exige todas as respostas.
+   */
   preliminar: {
-    identificavel: Verificacao
-    limpa: Verificacao
-    nivelada: Verificacao
-    aquecida: Verificacao
-    preCarga: Verificacao
+    identificavel: RespostaVerificacao
+    limpa: RespostaVerificacao
+    nivelada: RespostaVerificacao
+    aquecida: RespostaVerificacao
+    preCarga: RespostaVerificacao
     /** Zero automático / rastreamento de zero no momento da calibração. */
-    zeroAutomatico: 'LIGADO' | 'DESLIGADO' | 'NAO_POSSUI'
+    zeroAutomatico: ZeroAutomatico | ''
   }
   ajuste: {
     realizado: AjusteRealizado
@@ -536,7 +545,7 @@ export interface DadosEmpresa {
 }
 
 export interface TextosCertificado {
-  /** Código e revisão do procedimento, ex.: "PT-CAL-01 rev. 0". */
+  /** Código e revisão do procedimento, ex.: "PT-CAL-01 rev. 00". */
   procedimento: string
   /** Descrição curta do procedimento (sai no certificado). */
   procedimentoDescricao: string

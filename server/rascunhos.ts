@@ -63,7 +63,10 @@ export function naUnidadeAtual(ctx: Contexto, k: Calibracao): CalibracaoInput {
 
 /**
  * Rascunho novo: `pedido` traz o que a tela informou (cliente, balança, OS, data…). Sem histórico da
- * balança, os ensaios ficam vazios (a tela e a folha de campo sugerem os pontos).
+ * balança, os ensaios ficam vazios (a tela e a folha de campo sugerem os pontos). Nada que o técnico
+ * confirma na visita vem marcado: a verificação antes de calibrar começa sem resposta, e o pedido de
+ * declaração de conformidade e o da data no certificado começam desmarcados (o critério e a regra da última
+ * calibração ficam prontos, caso o cliente peça de novo).
  */
 export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, tecnicoId: string): CalibracaoInput {
   const { repo } = ctx
@@ -84,7 +87,9 @@ export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, 
     : ativos.filter((p) => p.tipo !== 'OUTRO').map((p) => p.id)
   return {
     ...base,
-    ...(ultima ? { ...semLeituras(ultima), opcoes: ultima.opcoes, conformidade: ultima.conformidade } : {}),
+    ...(ultima
+      ? { ...semLeituras(ultima), opcoes: ultima.opcoes, conformidade: { ...ultima.conformidade, solicitada: false } }
+      : {}),
     ...pedido,
     clienteId,
     balancaId,
@@ -99,7 +104,7 @@ export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, 
     padroesIds,
     // O lembrete conta da data da calibração (que pode ser a de uma visita marcada)
     proximaCalibracao: config.mesesProximaPadrao ? somarMeses(data, config.mesesProximaPadrao) : '',
-    proximaNoCertificado: ultima?.proximaNoCertificado ?? false,
+    proximaNoCertificado: false,
     substituiId: '',
   }
 }
