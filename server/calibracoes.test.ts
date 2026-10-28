@@ -3,6 +3,7 @@
 
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { calcularCalibracao } from '#shared/calibracao.ts'
 import { BALANCA_VAZIA, CLIENTE_VAZIO, PADRAO_VAZIO } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
@@ -548,5 +549,346 @@ describe('listas e painel', () => {
     expect(porNumero.itens.map((i: { id: string }) => i.id)).toEqual([emitida.id])
     const painel = (await t.chamar('GET', '/api/painel', { cookie: t.cookieAdmin })).json().painel
     expect(painel).toBeTruthy()
+  })
+})
+
+describe('balança classe I: o rascunho novo', () => {
+  async function analitica() {
+    return (
+      await criar('/api/balancas', {
+        ...BALANCA_VAZIA,
+        clienteId: cliente.id,
+        tipo: 'ANALITICA',
+        unidade: 'g',
+        classe: 'I',
+        fabricante: 'Shimadzu',
+        modelo: 'AUW220',
+        numeroSerie: 'D4501',
+        faixas: [{ max: 220, e: 0.001, d: 0.0001 }],
+      })
+    ).balanca as Balanca
+  }
+  async function jogoE2() {
+    return (
+      await criar('/api/padroes', {
+        ...PADRAO_VAZIO,
+        identificacao: 'JP-E2',
+        descricao: 'Jogo de pesos E2 1 mg a 200 g',
+        classe: 'E2',
+        densidade: 7950,
+        incertezaDensidade: 70,
+        certificado: 'LAB-0999/2026',
+        laboratorio: 'Laboratório de Massa Exemplo',
+        acreditacao: 'CAL 0123',
+        dataCalibracao: '2026-01-10',
+        validade: '2099-01-10',
+        pesos: [{ id: 'g200', marca: '', nominal: 200, correcao: 0.1, incerteza: 0.1, k: 2 }],
+      })
+    ).padrao as Padrao
+  }
+
+  it('sem histórico, nasce com o empuxo pela densidade do ar medida, a convecção e só os jogos E1/E2/F1', async () => {
+    const b = await analitica()
+    const e2 = await jogoE2()
+    const { calibracao: k } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: b.id })) as {
+      calibracao: Calibracao
+    }
+    expect(k.opcoes).toMatchObject({ empuxo: 'MEDIDO', conveccao: 'CALCULAR' })
+    // O jogo M1 (do beforeEach) fica de fora; o E2 entra
+    expect(k.padroesIds).toEqual([e2.id])
+    // O u(ρ) gravado no cadastro do padrão
+    const r = await t.chamar('GET', `/api/padroes`, { cookie: t.cookieAdmin })
+    expect((r.json().padroes as Padrao[]).find((p) => p.id === e2.id)?.incertezaDensidade).toBe(70)
+  })
+
+  /** Instrumento auxiliar rastreável (barômetro, termômetro de duas entradas…). */
+  async function auxiliar(tipo: Padrao['tipo'], identificacao: string) {
+    return (
+      await criar('/api/padroes', {
+        ...PADRAO_VAZIO,
+        tipo,
+        identificacao,
+        descricao: identificacao,
+        certificado: `LAB-${identificacao}/2026`,
+        laboratorio: 'Laboratório Exemplo',
+        acreditacao: 'CAL 0123',
+        dataCalibracao: '2026-01-10',
+        validade: '2099-01-10',
+        pesos: [],
+      })
+    ).padrao as Padrao
+  }
+
+  it('sem histórico: o termômetro de duas entradas ("Outro") entra; excentricidade pelo método 3 e cargas com descarga', async () => {
+    const b = await analitica()
+    const e2 = await jogoE2()
+    const td = await auxiliar('OUTRO', 'TD-01')
+    const { calibracao: k } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: b.id })) as {
+      calibracao: Calibracao
+    }
+    expect([...k.padroesIds].sort()).toEqual([e2.id, td.id].sort())
+    expect(k.excentricidade.metodo).toBe(3)
+    expect(k.indicacao.metodo).toBe('DESCONTINUO')
+    // Classe III: o "outro" fica de fora e os métodos de sempre
+    const { calibracao: iii } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: balanca.id })) as {
+      calibracao: Calibracao
+    }
+    expect(iii.padroesIds).not.toContain(td.id)
+    expect(iii.excentricidade.metodo).toBe(1)
+    expect(iii.indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
+  })
+
+  it('classe III: os dois jogos, e as opções do padrão da empresa (como sempre)', async () => {
+    await jogoE2()
+    const { calibracao: k } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: balanca.id })) as {
+      calibracao: Calibracao
+    }
+    expect(k.padroesIds).toHaveLength(2)
+    expect(k.opcoes).toMatchObject({ empuxo: 'NAO_AJUSTADO', deriva: 'EMA', conveccao: 'NAO_CONSIDERAR' })
+  })
+
+  it('a pressão e o ΔT pesos − ar gravados no rascunho; sem o ΔT, a pendência da convecção', async () => {
+    const b = await analitica()
+    const e2 = await jogoE2()
+    const { calibracao: k } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: b.id })) as {
+      calibracao: Calibracao
+    }
+    const ambiente = { temperaturaInicial: 22, temperaturaFinal: 22.4, umidadeInicial: 55, umidadeFinal: 56, pressao: 941.5 }
+    // Um ponto lido (a convecção é conferida nos pontos com leitura)
+    const indicacao = {
+      ...k.indicacao,
+      pontos: [
+        {
+          id: 'p',
+          carga: 200,
+          pecas: [{ padraoId: e2.id, pesoId: 'g200', quantidade: 1 }],
+          pecasManuais: true,
+          crescente: 200.0003,
+          decrescente: null,
+          nivelSubstituicao: 0,
+        },
+      ],
+    }
+    let versao = k.versao
+    const salvar = async (amb: object) => {
+      const r = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+        cookie: t.cookieAdmin,
+        payload: { ...k, versao, indicacao, ambiente: amb },
+      })
+      expect(r.statusCode).toBe(200)
+      versao = r.json().calibracao.versao
+      return r
+    }
+    const sem = await salvar(ambiente)
+    expect(sem.json().pendencias).toContain(
+      'Convecção: registre a diferença de temperatura entre os pesos e o ar antes do 1º ensaio, ou a aclimatação dos pesos (etapa Padrões e ambiente).',
+    )
+    const com = await salvar({ ...ambiente, deltaTPesos: 0.3 })
+    expect(com.json().calibracao.ambiente).toMatchObject({ pressao: 941.5, deltaTPesos: 0.3, aclimatacao: null })
+    expect((com.json().pendencias as string[]).some((p) => p.startsWith('Convecção'))).toBe(false)
+    const acl = await salvar({ ...ambiente, aclimatacao: { deltaT0: -4, minutos: 120 } })
+    expect(acl.json().calibracao.ambiente).toMatchObject({ deltaTPesos: null, aclimatacao: { deltaT0: -4, minutos: 120 } })
+  })
+
+  /** Calibração classe I pronta para emitir: ajuste interno, "como encontrado" e o ensaio final em 100 g e 200 g. */
+  async function classeIPronta(b: Balanca, e2: Padrao, opcoes: Partial<Calibracao['opcoes']> = {}) {
+    await auxiliar('BAROMETRO', 'BR-01')
+    await auxiliar('OUTRO', 'TD-01')
+    const { calibracao: k } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: b.id })) as {
+      calibracao: Calibracao
+    }
+    const p = (id: string, carga: number, leitura: number, pesoId?: string) => ({
+      id,
+      carga,
+      pecas: pesoId ? [{ padraoId: e2.id, pesoId, quantidade: 1 }] : [],
+      pecasManuais: true,
+      crescente: leitura,
+      decrescente: null,
+      nivelSubstituicao: 0,
+    })
+    const ensaio = (antes: boolean) => ({
+      ...k.indicacao,
+      retornoZero: 0,
+      pontos: [p('z', 0, 0), p('c', 100, antes ? 100.0004 : 100.0001, 'g100'), p('m', 200, antes ? 200.0007 : 200.0002, 'g200')],
+    })
+    const dados = {
+      ...k,
+      opcoes: { ...k.opcoes, ...opcoes },
+      ajuste: { realizado: 'INTERNO', descricao: '' },
+      ambiente: {
+        temperaturaInicial: 22.4,
+        temperaturaFinal: 23.0,
+        umidadeInicial: 58,
+        umidadeFinal: 60,
+        pressao: 941.5,
+        deltaTPesos: 0.4,
+        aclimatacao: null,
+      },
+      repetibilidade: [{ id: 'r', carga: 200, leituras: Array.from({ length: 10 }, (_, i) => (i % 2 ? 200.0003 : 200.0002)) }],
+      excentricidade: { aplicavel: false, motivo: 'Teste', carga: 0, metodo: 3, posicoes: [] },
+      comoEncontrado: ensaio(true),
+      indicacao: ensaio(false),
+    }
+    const r = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...dados, versao: k.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().pendencias).toEqual([])
+    return r.json().calibracao as Calibracao
+  }
+
+  async function jogoE2Completo() {
+    return (
+      await criar('/api/padroes', {
+        ...PADRAO_VAZIO,
+        identificacao: 'JP-E2',
+        descricao: 'Jogo de pesos E2 100 g e 200 g',
+        classe: 'E2',
+        densidade: 7950,
+        incertezaDensidade: 70,
+        certificado: 'LAB-0999/2026',
+        laboratorio: 'Laboratório de Massa Exemplo',
+        acreditacao: 'CAL 0123',
+        dataCalibracao: '2026-01-10',
+        validade: '2099-01-10',
+        pesos: [
+          { id: 'g200', marca: '', nominal: 200, correcao: 0.1, incerteza: 0.1, k: 2 },
+          { id: 'g100', marca: '', nominal: 100, correcao: -0.05, incerteza: 0.05, k: 2 },
+        ],
+      })
+    ).padrao as Padrao
+  }
+
+  it('"ajustada logo antes" com ajuste interno: o "como encontrado" vai pela densidade do ar medida', async () => {
+    const b = await analitica()
+    const e2 = await jogoE2Completo()
+    const k = await classeIPronta(b, e2, { empuxo: 'AJUSTADO' })
+    const { resultado, comoEncontrado } = calcularCalibracao(k, b, [e2])
+    expect(comoEncontrado!.pontos[2].crescente!.correcaoEmpuxo).toBeGreaterThan(0)
+    expect(comoEncontrado!.avisos.map((a) => a.mensagem).join('\n')).not.toMatch(/empuxo estimado sem a densidade do ar/)
+    expect(comoEncontrado!.pontos[2].crescente!.U / resultado.pontos[2].crescente!.U).toBeLessThan(1.1)
+  })
+
+  it('padrão gravado antes da conferência da densidade (7,85 em g/cm³): desativa e grava o resto; a densidade nova é conferida', async () => {
+    const criado = (await criar('/api/padroes', {
+      ...PADRAO_VAZIO,
+      identificacao: 'JP-M1',
+      classe: 'M1',
+      uso: 'NOMINAL',
+      pesos: [{ id: 'k20', marca: '', nominal: 20000, correcao: 0, incerteza: 0, k: 2 }],
+    })) as { padrao: Padrao }
+    const antigo = { ...criado.padrao, densidade: 7.85 }
+    t.ctx.db.prepare('UPDATE padroes SET dados = ? WHERE id = ?').run(JSON.stringify(antigo), antigo.id)
+    // "Desativar" no menu do cartão manda o cadastro inteiro
+    const desativado = await t.chamar('PUT', `/api/padroes/${antigo.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...antigo, ativo: false, versao: antigo.versao },
+    })
+    expect(desativado.statusCode, desativado.body).toBe(200)
+    expect(desativado.json().padrao).toMatchObject({ ativo: false, densidade: 7.85 })
+    const atual = desativado.json().padrao as Padrao
+    // Outro valor fora da faixa não grava; o valor corrigido grava
+    const outro = await t.chamar('PUT', `/api/padroes/${antigo.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...atual, densidade: 7.95, versao: atual.versao },
+    })
+    expect(outro.statusCode).toBe(400)
+    expect(outro.json().erro).toMatch(/Densidade de 7,95 kg\/m³ fora da faixa/)
+    const corrigido = await t.chamar('PUT', `/api/padroes/${antigo.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...atual, densidade: 7850, versao: atual.versao },
+    })
+    expect(corrigido.statusCode, corrigido.body).toBe(200)
+    // Cadastro novo com a densidade fora da faixa: não grava
+    const novo = await t.chamar('POST', '/api/padroes', {
+      cookie: t.cookieAdmin,
+      payload: { ...PADRAO_VAZIO, identificacao: 'JP-M2', densidade: 7.85, pesos: antigo.pesos },
+    })
+    expect(novo.statusCode).toBe(400)
+  })
+
+  it('"ajustada logo antes" com ajuste: a densidade dos pesos do "como encontrado" é conferida e bloqueia a emissão', async () => {
+    const b = await analitica()
+    const e2 = await jogoE2Completo()
+    const k = await classeIPronta(b, e2, { empuxo: 'AJUSTADO' })
+    // Cadastro gravado antes da conferência da unidade: 7,95 (g/cm³) como kg/m³
+    t.ctx.db
+      .prepare('UPDATE padroes SET dados = ? WHERE id = ?')
+      .run(JSON.stringify({ ...e2, densidade: 7.95, incertezaDensidade: 0.035 }), e2.id)
+    const pendencias = async () =>
+      (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().pendencias
+    expect(await pendencias()).toEqual([
+      'Como encontrado: Empuxo pela densidade do ar medida: o jogo JP-E2 está com densidade de 7,95 kg/m³, fora da faixa dos pesos; confira a unidade no cadastro do padrão (7,95 g/cm³ = 7 950 kg/m³).',
+    ])
+    const negado = await emitir(k)
+    expect(negado.statusCode).toBe(409)
+    // Sem densidade nem u(ρ) (o cadastro aceita: são opcionais)
+    const atual = t.ctx.repo.obterPadrao(e2.id)!
+    const semDensidade = await t.chamar('PUT', `/api/padroes/${e2.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...atual, densidade: 0, incertezaDensidade: 0, versao: atual.versao },
+    })
+    expect(semDensidade.statusCode, semDensidade.body).toBe(200)
+    expect(await pendencias()).toEqual([
+      'Como encontrado: Empuxo pela densidade do ar medida: o jogo JP-E2 está sem a densidade ou a incerteza da densidade (cadastro do padrão).',
+    ])
+    expect((await emitir(k)).statusCode).toBe(409)
+  })
+
+  it('revisão de certificado classe I emitido antes do cálculo da classe I: mantém o cálculo e as exigências da época', async () => {
+    const b = await analitica()
+    const e2 = await jogoE2Completo()
+    const pronta = await classeIPronta(b, e2, { empuxo: 'AJUSTADO' })
+    const emitida = await emitir(pronta)
+    expect(emitida.statusCode, emitida.body).toBe(200)
+    const original = emitida.json().calibracao as Calibracao
+    // Gravado no formato antigo (versão 1.0.x): sem a convecção nas opções, sem o ΔT pesos − ar e a aclimatação
+    const { conveccao: _c, ...opcoesAntigas } = original.opcoes
+    const { deltaTPesos: _d, aclimatacao: _a, ...ambienteAntigo } = original.ambiente
+    const antigo = { ...original, opcoes: opcoesAntigas, ambiente: ambienteAntigo }
+    t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(antigo), original.id)
+    const naEpoca = calcularCalibracao(antigo, b, [e2]).comoEncontrado!
+
+    const { calibracao: rev } = (await criar(`/api/calibracoes/${original.id}/revisar`, {
+      motivo: 'Corrigir o endereço do cliente',
+    })) as { calibracao: Calibracao }
+    expect(rev.calculoLegado).toBe(true)
+    const aberta = (await t.chamar('GET', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).json()
+    // Sem as pendências novas da classe I (convecção, ΔT) e o mesmo "como encontrado" do certificado original
+    expect(aberta.pendencias).toEqual([])
+    expect(calcularCalibracao(aberta.calibracao, b, [e2]).comoEncontrado!.pontos).toEqual(naEpoca.pontos)
+    // A tela não muda o que é legado: o PUT mantém a marca
+    const salvo = await t.chamar('PUT', `/api/calibracoes/${rev.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...rev, calculoLegado: false, versao: rev.versao },
+    })
+    expect(salvo.json().calibracao.calculoLegado).toBe(true)
+    expect(salvo.json().pendencias).toEqual([])
+    // A revisão emitida e a revisão dela continuam legadas
+    const r1 = await emitir(salvo.json().calibracao)
+    expect(r1.statusCode, r1.body).toBe(200)
+    const { calibracao: r2 } = (await criar(`/api/calibracoes/${rev.id}/revisar`, { motivo: 'Outra correção' })) as {
+      calibracao: Calibracao
+    }
+    expect(r2.calculoLegado).toBe(true)
+  })
+
+  it('revisão de certificado classe I emitido nesta versão: as regras novas, sem a marca de legado', async () => {
+    const b = await analitica()
+    const e2 = await jogoE2Completo()
+    const original = (await emitir(await classeIPronta(b, e2))).json().calibracao as Calibracao
+    const { calibracao: rev } = (await criar(`/api/calibracoes/${original.id}/revisar`, {
+      motivo: 'Corrigir o endereço do cliente',
+    })) as { calibracao: Calibracao }
+    expect(rev.calculoLegado).toBeUndefined()
+    // Sem o ΔT pesos − ar, a pendência da convecção volta
+    const semDeltaT = await t.chamar('PUT', `/api/calibracoes/${rev.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...rev, ambiente: { ...rev.ambiente, deltaTPesos: null }, versao: rev.versao },
+    })
+    expect(semDeltaT.json().pendencias).toContain(
+      'Convecção: registre a diferença de temperatura entre os pesos e o ar antes do 1º ensaio, ou a aclimatação dos pesos (etapa Padrões e ambiente).',
+    )
   })
 })

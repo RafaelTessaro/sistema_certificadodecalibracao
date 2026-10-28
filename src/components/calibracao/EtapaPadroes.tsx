@@ -1,8 +1,9 @@
-import { Check, Droplets, Gauge, Thermometer, TriangleAlert, Weight } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { Check, Droplets, Gauge, Thermometer, ThermometerSun, TriangleAlert, Weight } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   deltaTMaximo,
+  deltaTPesosMaximo,
   formatarDataBr,
   massaLegivel,
   pressaoObrigatoria,
@@ -11,17 +12,19 @@ import {
   TIPOS_PADRAO,
   totalPesos,
 } from '#shared/dominio.ts'
+import { deltaTAposAclimatacao, formatarNumero } from '#shared/metrologia/index.ts'
 import type { CondicoesAmbientais, Padrao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { hojeISO } from '../../lib/format'
 import { ValidadePadraoBadge } from '../Selos'
 import { Card, CardHeader } from '../ui/Card'
 import { Field } from '../ui/Form'
+import { Segmented } from '../ui/Misc'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
 import { textoDeltaT } from './util'
 
-export function EtapaPadroes({ f, alterar, padroes, config, balanca }: ContextoEtapa) {
+export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanca, calc }: ContextoEtapa) {
   const escolhidos = new Set(f.padroesIds)
   const alternar = (p: Padrao) =>
     alterar((s) => ({
@@ -36,9 +39,12 @@ export function EtapaPadroes({ f, alterar, padroes, config, balanca }: ContextoE
     amb.temperaturaInicial !== null && amb.temperaturaFinal !== null
       ? Math.abs(amb.temperaturaFinal - amb.temperaturaInicial)
       : null
-  // Limites da classe da balança: ΔT de 3 °C e pressão obrigatória (com barômetro) na classe II
+  // Limites da classe da balança: ΔT de 1 °C na classe I e 3 °C na II, e pressão obrigatória (com barômetro) nas duas
   const limiteDeltaT = deltaTMaximo(balanca.classe)
   const comPressao = pressaoObrigatoria(balanca.classe)
+  // Convecção (diferença de temperatura pesos − ar): sempre na classe I, e quando a opção do cálculo pede
+  const comConveccao = balanca.classe === 'I' || f.opcoes.conveccao === 'CALCULAR'
+  const densidadeAr = calc?.resultado.ar ?? null
   const pesos = padroes.filter((p) => p.tipo === 'PESOS')
   const instrumentos = padroes.filter((p) => p.tipo !== 'PESOS')
 
@@ -164,10 +170,14 @@ export function EtapaPadroes({ f, alterar, padroes, config, balanca }: ContextoE
               </GrupoAmbiente>
               <GrupoAmbiente icone={<Gauge className="h-3.5 w-3.5" />} titulo="Pressão" colunas={1}>
                 {/* "Opcional" no rótulo (e não numa dica embaixo): os três grupos ficam da mesma altura */}
-                <Field label={comPressao ? 'Obrigatória na classe II' : 'Opcional'} htmlFor="amb-p">
+                <Field label={comPressao ? `Obrigatória na classe ${balanca.classe}` : 'Opcional'} htmlFor="amb-p">
                   <CampoNumero
                     id="amb-p"
-                    aria-label={comPressao ? 'Pressão atmosférica (obrigatória na classe II)' : 'Pressão atmosférica (opcional)'}
+                    aria-label={
+                      comPressao
+                        ? `Pressão atmosférica (obrigatória na classe ${balanca.classe})`
+                        : 'Pressão atmosférica (opcional)'
+                    }
                     valor={amb.pressao}
                     aoMudar={(v) => setAmb('pressao', v)}
                     unidade="hPa"
@@ -177,15 +187,151 @@ export function EtapaPadroes({ f, alterar, padroes, config, balanca }: ContextoE
               </GrupoAmbiente>
             </div>
           </div>
+          {densidadeAr && (
+            <p className="-mt-2 text-xs text-muted">
+              Densidade do ar:{' '}
+              <span className="tnum font-medium text-ink-2">{formatarNumero(densidadeAr.densidade, 3)} kg/m³</span> (cg-18,
+              A1.1-1)
+            </p>
+          )}
           {deltaT !== null && deltaT > limiteDeltaT && (
             <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
               <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
               {textoDeltaT(deltaT, balanca.classe)}
             </p>
           )}
+          {comConveccao && (
+            <GrupoConveccao
+              ambiente={amb}
+              classeI={balanca.classe === 'I'}
+              jogos={selecionados.filter((p) => p.tipo === 'PESOS')}
+              aoMudar={(mudar) => alterar((s) => ({ ...s, ambiente: mudar(s.ambiente) }))}
+            />
+          )}
         </div>
       </Card>
     </div>
+  )
+}
+
+/**
+ * Diferença de temperatura entre os pesos e o ar (convecção, cg-18 7.1.2.4): medida antes do 1º ensaio, com o
+ * termômetro de duas entradas, ou estimada pelo tempo de aclimatação (Tabela F1.3). Trocar o modo limpa o outro.
+ */
+function GrupoConveccao({
+  ambiente,
+  classeI,
+  jogos,
+  aoMudar,
+}: {
+  ambiente: CondicoesAmbientais
+  classeI: boolean
+  jogos: Padrao[]
+  aoMudar: (mudar: (a: CondicoesAmbientais) => CondicoesAmbientais) => void
+}) {
+  const [modo, setModo] = useState<'MEDIDA' | 'ACLIMATACAO'>(ambiente.aclimatacao ? 'ACLIMATACAO' : 'MEDIDA')
+  // Os dois campos da aclimatação vão juntos para o registro: enquanto falta um, ficam só aqui
+  const [acl, setAcl] = useState<{ deltaT0: number | null; minutos: number | null }>({
+    deltaT0: ambiente.aclimatacao?.deltaT0 ?? null,
+    minutos: ambiente.aclimatacao?.minutos ?? null,
+  })
+  const mudarModo = (m: 'MEDIDA' | 'ACLIMATACAO') => {
+    if (m === modo) return
+    setModo(m)
+    if (m === 'MEDIDA') setAcl({ deltaT0: null, minutos: null })
+    aoMudar((a) => ({ ...a, deltaTPesos: null, aclimatacao: null }))
+  }
+  const mudarAcl = (k: 'deltaT0' | 'minutos', v: number | null) => {
+    const novo = { ...acl, [k]: v }
+    setAcl(novo)
+    aoMudar((a) => ({
+      ...a,
+      deltaTPesos: null,
+      aclimatacao: novo.deltaT0 !== null && novo.minutos !== null ? { deltaT0: novo.deltaT0, minutos: novo.minutos } : null,
+    }))
+  }
+  // POP 7.4: começar só com |ΔT| ≤ 1 °C (E1/E2) ou ≤ 3 °C (só F1)
+  const limite = deltaTPesosMaximo(jogos.map((p) => p.classe))
+  const medido = ambiente.deltaTPesos ?? null
+  const acimaMedido = classeI && medido !== null && Math.abs(medido) > limite + 1e-9
+  // A maior peça dos jogos escolhidos é a que demora mais a aclimatar
+  const maiorKg = Math.max(0, ...jogos.flatMap((p) => p.pesos.map((w) => w.nominal / 1000)))
+  const estimado =
+    modo === 'ACLIMATACAO' && acl.deltaT0 !== null && acl.minutos !== null && maiorKg > 0
+      ? deltaTAposAclimatacao(maiorKg, acl.deltaT0, acl.minutos)
+      : null
+  return (
+    <fieldset className="min-w-0 rounded-xl border border-line bg-surface-2/40 px-3.5 pt-3 pb-3.5">
+      <legend className="sr-only">Pesos × ar (convecção)</legend>
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div aria-hidden className="flex h-5 min-w-0 items-center gap-2">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-surface text-ink-2 shadow-xs ring-1 ring-line">
+            <ThermometerSun className="h-3.5 w-3.5" />
+          </span>
+          <span className="truncate text-[13px] font-semibold text-ink">Pesos × ar (convecção)</span>
+        </div>
+        <Segmented
+          tamanho="sm"
+          className="ml-auto"
+          valor={modo}
+          aoMudar={mudarModo}
+          opcoes={[
+            { valor: 'MEDIDA', label: 'Medida' },
+            { valor: 'ACLIMATACAO', label: 'Pela aclimatação' },
+          ]}
+        />
+      </div>
+      {modo === 'MEDIDA' ? (
+        <div className="flex flex-col gap-3">
+          <Field
+            label="ΔT pesos − ar (antes do 1º ensaio)"
+            htmlFor="amb-dtp"
+            className="max-w-xs"
+            hint="Termômetro de duas entradas: uma sonda entre os pesos, outra no ar junto ao prato. Nunca infravermelho."
+          >
+            <CampoNumero
+              id="amb-dtp"
+              valor={medido}
+              aoMudar={(v) => aoMudar((a) => ({ ...a, deltaTPesos: v, aclimatacao: null }))}
+              unidade="°C"
+              tom={acimaMedido ? 'atencao' : 'normal'}
+            />
+          </Field>
+          {acimaMedido && (
+            <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              Acima de {limite} °C: aguarde a aclimatação dos pesos (POP 7.4).
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Diferença na chegada" htmlFor="amb-acl-dt">
+              <CampoNumero id="amb-acl-dt" valor={acl.deltaT0} aoMudar={(v) => mudarAcl('deltaT0', v)} unidade="°C" />
+            </Field>
+            <Field label="Pesos no local até o 1º ensaio" htmlFor="amb-acl-min">
+              <CampoNumero id="amb-acl-min" valor={acl.minutos} aoMudar={(v) => mudarAcl('minutos', v)} unidade="min" />
+            </Field>
+          </div>
+          <p className="text-xs text-muted">
+            Diferença entre a temperatura de onde os pesos vieram (veículo, depósito) e a do local; na dúvida, o maior valor
+            provável.
+          </p>
+          {estimado !== null && (
+            <p
+              className={cn(
+                'rounded-xl px-3.5 py-2.5 text-[13px]',
+                classeI && estimado > limite + 1e-9 ? 'bg-warning-soft text-warning' : 'bg-surface-3/70 text-ink-2',
+              )}
+            >
+              ΔT estimado da maior peça: <span className="tnum font-semibold">{numeroCurto(estimado)} °C</span> (cg-18, Tabela
+              F1.3)
+            </p>
+          )}
+        </div>
+      )}
+    </fieldset>
   )
 }
 

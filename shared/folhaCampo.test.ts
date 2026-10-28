@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import type { Padrao } from './tipos.ts'
 import {
+  folhaClasseI,
   folhaEmBranco,
   folhaMultiIntervalo,
   folhaPlataforma,
@@ -9,6 +11,7 @@ import {
 import {
   AVISO_ETIQUETA,
   FORMULARIO_FOLHA_CAMPO,
+  LEITURAS_CLASSE_I,
   padroesPrevistos,
   planoDaFolha,
   referenciaDoFormulario,
@@ -53,13 +56,13 @@ describe('planoDaFolha', () => {
     expect(p.pontos.find((x) => x.carga === 33)).toMatchObject({ d: 0.01, ema: 0.04 })
     // Min (40 g) entre as cargas
     expect(p.pontos.map((x) => x.carga).slice(0, 3)).toEqual([0, 0.04, 1])
-    // Repetibilidade: um ensaio por intervalo (logo abaixo do Max dos de baixo; ~Max/2 no de cima), 5 leituras
+    // Repetibilidade: um ensaio por intervalo (logo abaixo do Max dos de baixo; cerca de metade de Max no de cima), 5 leituras
     expect(p.repetibilidade.map((r) => [r.carga, r.leituras, r.minimo])).toEqual([
       [4.8, 5, 5],
       [12, 5, 5],
       [16.5, 5, 5],
     ])
-    // Excentricidade: no mínimo Max/3 (11 kg), num valor redondo acima
+    // Excentricidade: no mínimo 1/3 de Max (11 kg), num valor redondo acima
     expect(p.excentricidade.carga).toBe(15)
     expect(p.avisos).toEqual([])
   })
@@ -269,11 +272,11 @@ describe('planoDaFolha', () => {
   })
 
   it('cargas copiadas do último certificado: excentricidade abaixo da Tabela 5 do POP e um ensaio de repetibilidade só no multi-intervalo', () => {
-    // 300 kg: no mínimo Max/3 = 100 kg (o certificado antigo arredondava para o mais próximo: 90 kg)
+    // 300 kg: no mínimo 1/3 de Max = 100 kg (o certificado antigo arredondava para o mais próximo: 90 kg)
     const d = folhaPlataforma()
     d.calibracao = { ...d.calibracao!, excentricidade: { ...d.calibracao!.excentricidade, carga: 90 } }
     expect(plano(d).avisos).toEqual([
-      'Excentricidade: 90 kg está abaixo do mínimo da Tabela 5 do POP (Max/3); use ≥ 100 kg no sistema.',
+      'Excentricidade: 90 kg está abaixo do mínimo da Tabela 5 do POP (1/3 de Max); use ≥ 100 kg no sistema.',
     ])
     d.calibracao.excentricidade.carga = 100
     expect(plano(d).avisos).toEqual([])
@@ -443,6 +446,111 @@ describe('padroesPrevistos', () => {
     ])
     const ids = [d.padroes[1].id, d.padroes[0].id]
     expect(padroesPrevistos({ padroesIds: ids }, d.padroes).map((p) => p.identificacao)).toEqual(['JP-01', 'PP20-01 a 15'])
+  })
+
+  it('classe I sem escolha: só os jogos E1, E2 e F1, e com os "outro" (o termômetro de 2 entradas), como no POST', () => {
+    const d = folhaClasseI()
+    const m1 = { ...folhaEmBranco().padroes[1], id: 'pad-m1' }
+    const todos = [...d.padroes, m1]
+    expect(padroesPrevistos(null, todos, 'I').map((p) => p.identificacao)).toEqual(['JE2-01', 'TH-01', 'BR-01', 'TD-01'])
+    // Nas outras classes, como sempre: os ativos menos "outro"
+    expect(padroesPrevistos(null, todos, 'III').map((p) => p.identificacao)).toEqual(['JE2-01', 'TH-01', 'BR-01', 'JP-01'])
+    // A folha da balança classe I sem rascunho também leva o TD-01 no passo 1
+    const semRascunho = planoDaFolha(null, d.balanca!, todos, '2026-10-26')
+    expect(semRascunho.padroes.filter((x) => x.naFolha).map((x) => x.padrao.identificacao)).toContain('TD-01')
+    expect(semRascunho.padroes.map((x) => x.padrao.identificacao)).not.toContain('JP-01')
+  })
+})
+
+describe('planoDaFolha: balança classe I', () => {
+  it('sem histórico: 10 leituras na repetibilidade (POP, Tabela 4), o barômetro e o termômetro de 2 entradas a campo', () => {
+    const p = plano(folhaClasseI())
+    expect(p.origem).toBe('SUGESTAO')
+    expect(LEITURAS_CLASSE_I).toBe(10)
+    expect(p.repetibilidade).toEqual([expect.objectContaining({ leituras: 10, minimo: 10 })])
+    // Pontos das sugestões, com Min (10 mg) e as cargas em que o EMA muda (50 000 e e 200 000 e); os ~25 e 75 % em
+    // múltiplos de 10 g, montados sem peça menor que 10 g (POP 6.1; só a Min pede peça pequena)
+    expect(p.pontos.map((x) => x.carga)).toEqual([0, 0.01, 50, 60, 110, 170, 200, 220])
+    expect(p.pontos.every((x) => x.falta === 0)).toBe(true)
+    expect(p.pontos.map((x) => x.pesos)).toEqual([
+      '',
+      '10 mg',
+      '50 g',
+      '50 g + 10 g',
+      '100 g + 10 g',
+      '100 g + 50 g + 20 g',
+      '200 g',
+      '200 g + 20 g',
+    ])
+    // Pressão obrigatória: o barômetro vai inteiro na lista; o termômetro de 2 entradas ("outro") também
+    const naFolha = p.padroes.filter((x) => x.naFolha).map((x) => x.padrao.identificacao)
+    expect(naFolha).toEqual(['JE2-01', 'TH-01', 'BR-01', 'TD-01'])
+    // Pesos E2: até 1 °C de diferença pesos − ar para começar (POP 7.4)
+    expect(p.limiteDeltaTPesos).toBe(1)
+    expect(p.avisos).toEqual([])
+    // POP 7.7, 7.10 e 7.11: cargas com descarga; repetibilidade e excentricidade com uma peça só, a da
+    // excentricidade de no mínimo 1/3 de Max, pelo método 3
+    expect([p.metodoComoEncontrado, p.metodo]).toEqual(['DESCONTINUO', 'DESCONTINUO'])
+    expect(p.repetibilidade[0]).toMatchObject({ carga: 200, pesos: '200 g', falta: 0 })
+    expect(p.excentricidade).toMatchObject({ aplicavel: true, metodo: 3, carga: 100, pesos: '100 g', falta: 0 })
+  })
+
+  it('sem rascunho (folha da balança antes do POST): os mesmos métodos e cargas da classe I', () => {
+    const d = folhaClasseI()
+    const p = planoDaFolha(null, d.balanca!, d.padroes, '2026-10-26')
+    expect([p.metodoComoEncontrado, p.metodo]).toEqual(['DESCONTINUO', 'DESCONTINUO'])
+    expect(p.excentricidade).toMatchObject({ metodo: 3, carga: 100, pesos: '100 g' })
+    expect(p.repetibilidade[0]).toMatchObject({ carga: 200, pesos: '200 g', leituras: 10 })
+    // Nas outras classes, como sempre
+    const ii = planoDaFolha(null, { ...d.balanca!, classe: 'II' }, d.padroes, '2026-10-26')
+    expect([ii.metodo, ii.excentricidade.metodo, ii.excentricidade.carga, ii.repetibilidade[0].carga]).toEqual([
+      'CRESCENTE_DECRESCENTE',
+      1,
+      75,
+      110,
+    ])
+  })
+
+  it('rascunho copiado de um certificado antigo com outro método de excentricidade: aviso para acertar no sistema', () => {
+    const d = folhaClasseI()
+    d.calibracao!.excentricidade = { ...d.calibracao!.excentricidade, metodo: 1 }
+    const p = plano(d)
+    expect(p.excentricidade.metodo).toBe(1)
+    expect(p.avisos).toContain(
+      'Excentricidade: na classe I, o POP pede o método 3 (zera antes de cada posição); acerte no sistema.',
+    )
+    // Nas outras classes, o método 1 é o padrão: sem aviso
+    expect(plano({ ...d, balanca: { ...d.balanca!, classe: 'II' } }).avisos.join('\n')).not.toMatch(/método 3/)
+  })
+
+  it('rascunho com menos de 10 leituras: a folha prevê 10 (o mínimo da classe I)', () => {
+    const d = folhaClasseI()
+    d.calibracao!.repetibilidade = [{ id: 'r1', carga: 100, leituras: [null, null, null, null, null] }]
+    expect(plano(d).repetibilidade).toEqual([expect.objectContaining({ carga: 100, leituras: 10, minimo: 10 })])
+    // Com mais de 10 no rascunho, as do rascunho
+    d.calibracao!.repetibilidade[0].leituras = Array(12).fill(null)
+    expect(plano(d).repetibilidade[0]).toMatchObject({ leituras: 12, minimo: 10 })
+  })
+
+  it('limite da diferença pesos − ar: 3 °C só com todos os jogos F1; nas outras classes, nenhum', () => {
+    const d = folhaClasseI()
+    const comClasse = (classe: Padrao['classe']) =>
+      plano({ ...d, padroes: d.padroes.map((x) => (x.tipo === 'PESOS' ? { ...x, classe } : x)) }).limiteDeltaTPesos
+    expect(comClasse('F1')).toBe(3)
+    expect(comClasse('E1')).toBe(1)
+    expect(comClasse('')).toBe(1)
+    // Um jogo E2 e um F1: o mais exigente
+    const f1: Padrao = { ...d.padroes[0], id: 'pad-f1', identificacao: 'JF1-01', classe: 'F1' }
+    const ambos = {
+      ...d,
+      padroes: [...d.padroes, f1],
+      calibracao: { ...d.calibracao!, padroesIds: [...d.calibracao!.padroesIds, f1.id] },
+    }
+    expect(plano(ambos).limiteDeltaTPesos).toBe(1)
+    // Classe III (e II): sem limite de pesos × ar; repetibilidade como antes
+    expect(plano(folhaPlataforma()).limiteDeltaTPesos).toBeNull()
+    expect(plano({ ...d, balanca: { ...d.balanca!, classe: 'II' } }).limiteDeltaTPesos).toBeNull()
+    expect(plano({ ...d, balanca: { ...d.balanca!, classe: 'II' } }).repetibilidade[0]).toMatchObject({ leituras: 5, minimo: 5 })
   })
 })
 

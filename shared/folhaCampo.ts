@@ -7,9 +7,13 @@
 import { cargaDaEtapa, cargaDasPecas, descreverPecas, diferencaDoPonto, montarCarga, montarPonto } from './calibracao.ts'
 import {
   converterMassa,
+  deltaTPesosMaximo,
   ehRodoviaria,
   METODOS_CARREGAMENTO,
+  metodoExcentricidadePadrao,
+  metodoIndicacaoPadrao,
   numeroBr,
+  padroesSemHistorico,
   pressaoObrigatoria,
   situacaoValidade,
   type SituacaoValidade,
@@ -31,6 +35,7 @@ import {
 import type {
   Balanca,
   CalibracaoInput,
+  ClasseExatidao,
   Conformidade,
   CriterioEma,
   EnsaioIndicacao,
@@ -124,9 +129,10 @@ export interface PadraoPlanejado {
   separar: string
   /**
    * Vai inteiro na lista "antes de sair": o jogo de pesos com peças a separar, o termo-higrômetro do
-   * ambiente, o barômetro na classe II (a pressão é obrigatória) e outro instrumento escolhido. Os demais (sem
-   * calibração anterior, o rascunho prevê todos os ativos) e o barômetro nas outras classes (a pressão é
-   * opcional) vão numa linha só, para não encher a folha de linhas que o plano não usa.
+   * ambiente, o barômetro nas classes I e II (a pressão é obrigatória) e outro instrumento escolhido (na classe
+   * I, o termômetro de duas entradas, cadastrado como "outro"). Os demais (sem calibração anterior, o rascunho
+   * prevê todos os ativos) e o barômetro nas outras classes (a pressão é opcional) vão numa linha só, para não
+   * encher a folha de linhas que o plano não usa.
    */
   naFolha: boolean
 }
@@ -165,11 +171,19 @@ export interface PlanoFolha {
   substituicao: { ativa: boolean; sugerida: boolean; etapas: number } & CargaPlanejada
   padroes: PadraoPlanejado[]
   /**
+   * Classe I: a maior diferença de temperatura pesos − ar para começar os ensaios (°C, POP 7.4): 3 °C quando todos
+   * os jogos de pesos previstos são F1; 1 °C com E1, E2 ou sem classe (`deltaTPesosMaximo`). null nas outras classes.
+   */
+  limiteDeltaTPesos: number | null
+  /**
    * Avisos para resolver antes de sair (padrão vencido, pesos que não fecham a carga dos pontos, da
    * repetibilidade ou da excentricidade…).
    */
   avisos: string[]
 }
+
+/** Leituras da repetibilidade na classe I (POP, Tabela 4: 10; nas outras classes, 5, ou 3 com 100 kg ou mais). */
+export const LEITURAS_CLASSE_I = 10
 
 const TOL = 1e-9
 
@@ -204,14 +218,21 @@ export function temLeituras(e: EnsaioIndicacao | null | undefined): boolean {
 export const nivelSugerido = (carga: number, etapa: number) =>
   etapa > 0 && carga > etapa * (1 + TOL) ? Math.ceil(Number(((carga - etapa) / etapa).toPrecision(12))) : 0
 
-/** Padrões previstos: os escolhidos no rascunho ou, sem escolha, todos os ativos (menos "outro"), como no POST. */
-export function padroesPrevistos(calibracao: Pick<CalibracaoInput, 'padroesIds'> | null, padroes: Padrao[]): Padrao[] {
+/**
+ * Padrões previstos: os escolhidos no rascunho ou, sem escolha, os de um rascunho novo, como no POST (os ativos,
+ * menos os "outro"; na classe I, só os jogos E1, E2 e F1, e com os "outro", como o termômetro de duas entradas).
+ */
+export function padroesPrevistos(
+  calibracao: Pick<CalibracaoInput, 'padroesIds'> | null,
+  padroes: Padrao[],
+  classe?: ClasseExatidao | null,
+): Padrao[] {
   const ids = calibracao?.padroesIds ?? []
   if (ids.length) {
     const porId = new Map(padroes.map((p) => [p.id, p]))
     return ids.map((id) => porId.get(id)).filter((p): p is Padrao => !!p)
   }
-  return padroes.filter((p) => p.ativo && p.tipo !== 'OUTRO')
+  return padroesSemHistorico(padroes, classe)
 }
 
 /**
@@ -253,7 +274,7 @@ export function planoDaFolha(
   const u = balanca.unidade
   const faixas = faixasOrdenadas(balanca.faixas)
   const max = faixas.at(-1)?.max ?? 0
-  const previstos = padroesPrevistos(calibracao, padroes)
+  const previstos = padroesPrevistos(calibracao, padroes, balanca.classe)
   const pesos = previstos.filter((p) => p.tipo === 'PESOS' && p.ativo)
   const conformidade = calibracao?.conformidade.solicitada ? calibracao.conformidade : null
   // Tolerância do cliente pedida, mas ainda sem o valor (vem na visita): sem ela não há EMA, e a faixa para
@@ -325,7 +346,7 @@ export function planoDaFolha(
   // com o outro). Com leituras, fica o método do ensaio: é o que foi feito
   const metodoDe = (m: MetodoCarregamento, e: EnsaioIndicacao | null | undefined): MetodoCarregamento =>
     maiorNivel > 0 && !temLeituras(e) ? 'CONTINUO' : m
-  const metodoRascunho = ensaio?.metodo ?? 'CRESCENTE_DECRESCENTE'
+  const metodoRascunho = ensaio?.metodo ?? metodoIndicacaoPadrao(balanca.classe)
   const metodo = metodoDe(metodoRascunho, ensaio)
   const comoEncontrado = calibracao?.comoEncontrado ?? ensaio
   const metodoComoEncontrado = metodoDe(comoEncontrado?.metodo ?? metodoRascunho, comoEncontrado)
@@ -374,8 +395,9 @@ export function planoDaFolha(
       `Com cargas de substituição, as cargas só sobem: a folha prevê ${rotuloMetodo('CONTINUO')} (${noSistema}); acerte no sistema.`,
     )
 
-  // ---- Repetibilidade (sugerida: um ensaio por intervalo ou faixa de d diferente)
-  const minimoPara = (carga: number) => (converterMassa(carga, u, 'kg') >= 100 * (1 - TOL) ? 3 : 5)
+  // ---- Repetibilidade (sugerida: um ensaio por intervalo ou faixa de d diferente; na classe I, 10 leituras)
+  const minimoPara = (carga: number) =>
+    balanca.classe === 'I' ? LEITURAS_CLASSE_I : converterMassa(carga, u, 'kg') >= 100 * (1 - TOL) ? 3 : 5
   const ensaiosRep = calibracao?.repetibilidade.length
     ? calibracao.repetibilidade.map((r) => ({ carga: r.carga, leituras: r.leituras.length }))
     : repetibilidadesSugeridas(balanca, u).map((r) => ({ carga: r.carga, leituras: Math.max(r.leituras, 5) }))
@@ -398,17 +420,20 @@ export function planoDaFolha(
   const excentricidade = {
     aplicavel,
     motivo: aplicavel ? '' : motivo,
-    metodo: ecc?.metodo ?? 1,
+    metodo: ecc?.metodo ?? metodoExcentricidadePadrao(balanca.classe),
     posicoes: aplicavel ? (ecc?.posicoes.length ? ecc.posicoes.map((p) => p.rotulo) : posicoesSugeridas) : [],
-    ...cargaPlanejada(aplicavel ? ecc?.carga || cargaExcentricidade(max, u) : 0, u, pesos),
+    ...cargaPlanejada(aplicavel ? ecc?.carga || cargaExcentricidade(max, u, balanca.classe) : 0, u, pesos),
   }
 
   // Cargas copiadas do último certificado (o rascunho novo e o "recalibrar"): a da excentricidade abaixo do
   // mínimo da Tabela 5 do POP (o arredondamento antigo ia para o mais próximo) e um ensaio de repetibilidade só
   // numa balança de vários intervalos (POP 7.2 e 7.9: acertar no sistema antes de imprimir)
+  // Classe I: o método 3 (POP 7.10); o rascunho copiado de um certificado antigo pode vir com outro
+  if (excentricidade.aplicavel && balanca.classe === 'I' && excentricidade.metodo !== 3)
+    avisos.push('Excentricidade: na classe I, o POP pede o método 3 (zera antes de cada posição); acerte no sistema.')
   if (excentricidade.aplicavel && excentricidadeAbaixoDoMinimo(excentricidade.carga, max, u))
     avisos.push(
-      `Excentricidade: ${numeroBr(excentricidade.carga)} ${u} está abaixo do mínimo da Tabela 5 do POP (${minimoExcentricidade(max, u).fracao}); use ≥ ${numeroBr(cargaExcentricidade(max, u))} ${u} no sistema.`,
+      `Excentricidade: ${numeroBr(excentricidade.carga)} ${u} está abaixo do mínimo da Tabela 5 do POP (${minimoExcentricidade(max, u).fracao}); use ≥ ${numeroBr(cargaExcentricidade(max, u, balanca.classe))} ${u} no sistema.`,
     )
   const semEnsaio = faixasSemRepetibilidade(
     balanca,
@@ -465,7 +490,7 @@ export function planoDaFolha(
   // Um termo-higrômetro basta para o ambiente: o primeiro em dia (sem nenhum em dia, o primeiro)
   const termos = validades.itens.filter((x) => x.padrao.tipo === 'TERMOHIGROMETRO')
   const ambiente = (termos.find((x) => x.situacao !== 'VENCIDO') ?? termos[0])?.padrao
-  // Na classe II a pressão é obrigatória: um barômetro vai inteiro na lista (o primeiro em dia)
+  // Nas classes I e II a pressão é obrigatória: um barômetro vai inteiro na lista (o primeiro em dia)
   const barometros = validades.itens.filter((x) => x.padrao.tipo === 'BAROMETRO')
   const barometro = pressaoObrigatoria(balanca.classe)
     ? (barometros.find((x) => x.situacao !== 'VENCIDO') ?? barometros[0])?.padrao
@@ -473,8 +498,8 @@ export function planoDaFolha(
   const padroesPlano = validades.itens.map(({ padrao: p, situacao }): PadraoPlanejado => {
     const pecas = [...usadas.values()].filter((x) => x.padraoId === p.id)
     const separar = p.tipo === 'PESOS' ? descreverPecas(pecas, [p]) : ''
-    // O barômetro fica na linha dos outros (a pressão é opcional e não entra no cálculo), menos na classe II,
-    // em que a pressão é obrigatória
+    // O barômetro fica na linha dos outros (a pressão é opcional e não entra no cálculo), menos nas classes I e
+    // II, em que a pressão é obrigatória
     const naFolha = p.tipo === 'PESOS' ? !!separar : p.tipo === 'OUTRO' || p === ambiente || p === barometro
     return { padrao: p, situacao, separar, naFolha }
   })
@@ -500,6 +525,7 @@ export function planoDaFolha(
     excentricidade,
     substituicao,
     padroes: padroesPlano,
+    limiteDeltaTPesos: balanca.classe === 'I' ? deltaTPesosMaximo(pesos.map((p) => p.classe)) : null,
     avisos,
   }
 }

@@ -11,7 +11,7 @@ export const casasDe = (b: Pick<Balanca, 'faixas'>) => Math.max(0, ...b.faixas.m
 /** Menor divisão da balança. */
 export const menorD = (b: Pick<Balanca, 'faixas'>) => Math.min(...b.faixas.map((f) => f.d).filter((d) => d > 0), Infinity)
 
-/** Aviso da variação da temperatura acima do limite da classe (3 °C na II; 5 °C nas demais e sem classe). */
+/** Aviso da variação da temperatura acima do limite da classe (1 °C na I; 3 °C na II; 5 °C nas demais e sem classe). */
 export function textoDeltaT(deltaT: number, classe: ClasseExatidao): string {
   const variou = String(Math.round(deltaT * 10) / 10).replace('.', ',')
   const quem = classe ? `balanças classe ${classe}` : 'balanças sem classe'

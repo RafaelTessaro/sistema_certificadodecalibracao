@@ -154,12 +154,21 @@ function errosPorFaixa(erros: string[], quantidade: number): Array<{ max?: strin
 /** Carga mínima usual pela classe, em múltiplos de e (Portaria Inmetro 157/2022, tabela 3). */
 const MIN_EM_E: Record<ClasseExatidao, number> = { I: 100, II: 20, III: 20, IIII: 10, '': 0 }
 
-/** Carga mínima usual para a classe e o e informados, na unidade da balança. */
-function minUsual(classe: ClasseExatidao, e: number, unidade: Unidade): { valor: number; vezes: number } | null {
+/**
+ * Carga mínima usual para a classe e o e (e o d) informados, na unidade da balança. Na classe I com d < e, a
+ * conta é com d: 100 d (R 76-1 3.4.3), ex.: 10 mg numa analítica de 0,1 mg.
+ */
+function minUsual(
+  classe: ClasseExatidao,
+  e: number,
+  unidade: Unidade,
+  d = 0,
+): { valor: number; vezes: number; base: 'e' | 'd' } | null {
   if (!(e > 0)) return null
+  if (classe === 'I' && d > 0 && d < e - 1e-12) return { valor: Number((100 * d).toPrecision(12)), vezes: 100, base: 'd' }
   // Classe II com e ≥ 0,1 g: 50 e
   const vezes = classe === 'II' && e * GRAMAS[unidade] > 0.05 + 1e-12 ? 50 : MIN_EM_E[classe]
-  return vezes ? { valor: Number((vezes * e).toPrecision(12)), vezes } : null
+  return vezes ? { valor: Number((vezes * e).toPrecision(12)), vezes, base: 'e' } : null
 }
 
 // ---- Modal --------------------------------------------------------------------------------
@@ -273,7 +282,7 @@ function FormularioBalanca({
     valor.faixas.every((x) => x.max > 0 && x.d > 0 && x.d < x.max) && (!multi || valor.faixas.length >= 2) && !invalidos
   // Sem repetir o mesmo aviso (ex.: ordem das faixas, que é conferida par a par)
   const avisos = completo ? [...new Set(avisosBalanca(valor))] : []
-  const minSugerido = minUsual(f.classe, valor.faixas[0]?.e ?? 0, f.unidade)
+  const minSugerido = minUsual(f.classe, valor.faixas[0]?.e ?? 0, f.unidade, valor.faixas[0]?.d ?? 0)
 
   // ---- Clientes ----
   const opcoesClientes = useMemo<OpcaoCombo[]>(() => {
@@ -767,7 +776,8 @@ function FormularioBalanca({
                     onClick={() => usarMinSugerido(minSugerido.valor)}
                     className="cursor-pointer text-left text-brand-ink hover:underline"
                   >
-                    Usar {massaNaUnidadeLegivel(minSugerido.valor, f.unidade)} ({minSugerido.vezes} e, o usual da classe)
+                    Usar {massaNaUnidadeLegivel(minSugerido.valor, f.unidade)} ({minSugerido.vezes} {minSugerido.base}, o usual da
+                    classe)
                   </button>
                 ) : (
                   'Opcional. Consta na plaqueta.'

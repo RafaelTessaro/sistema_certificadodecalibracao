@@ -333,3 +333,35 @@ describe('indicador × plataforma', () => {
     expect(busca).toContain('2180-0041273')
   })
 })
+
+describe('balança classe I: avisos do cadastro (R 76-1 3.4.2 e 3.4.4)', () => {
+  const analitica = (e: number, d: number, max = 220) => ({
+    ...BALANCA_VAZIA,
+    unidade: 'g' as const,
+    classe: 'I' as const,
+    faixas: [{ max, e, d }],
+  })
+
+  it('e = 1 mg com d = 0,1 mg ou 0,01 mg é o normal da classe I (e = 100·d não é aviso)', () => {
+    expect(avisosBalanca(analitica(0.001, 0.0001))).toEqual([])
+    expect(avisosBalanca(analitica(0.001, 0.00001, 120)).filter((a) => a.includes('d ≤ e'))).toEqual([])
+    // Em mg também
+    expect(avisosBalanca({ ...analitica(1, 0.01, 120_000), unidade: 'mg' })).toEqual([])
+  })
+
+  it('d < 0,1 mg: n = Max/e pode ser menor que 50 000 (sem aviso pelo limite de baixo)', () => {
+    // 120 g × 0,01 mg: n = 120 000 / e = 1 mg → 120 000 (dentro); 40 g × 0,01 mg: n = 40 000 (abaixo, mas permitido)
+    expect(avisosBalanca(analitica(0.001, 0.00001, 40))).toEqual([])
+    // Com d = 0,1 mg o limite de 50 000 continua valendo
+    expect(avisosBalanca(analitica(0.001, 0.0001, 40)).map((a) => a.replace(/\s/g, ' '))).toEqual([
+      'n = Max/e = 40 000 está fora do intervalo da classe I.',
+    ])
+  })
+
+  it('as outras classes continuam como antes: e > 10·d é aviso', () => {
+    // e = 1 mg com d = 0,01 mg (e = 100·d) na classe II: aviso como antes
+    expect(avisosBalanca({ ...analitica(0.001, 0.00001, 120), classe: 'II' })).toContain('O normal é d ≤ e ≤ 10·d.')
+    // Classe I com e diferente de 1 mg e d < e/10: aviso como antes
+    expect(avisosBalanca(analitica(0.01, 0.0001, 2200))).toContain('O normal é d ≤ e ≤ 10·d.')
+  })
+})

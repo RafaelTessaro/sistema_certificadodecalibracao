@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path'
 import {
   arquivoDoCertificadoAnterior,
   calibracaoEmOutraUnidade,
+  calculoLegado,
   certificadosAnterioresApos,
   completarConfig,
   CONFIG_PADRAO,
@@ -752,10 +753,11 @@ export class Repositorio {
   }
 
   atualizarPadrao(id: string, entrada: unknown): Padrao {
-    const valor = validar(normalizarPadrao(entrada))
     return transacao(this.db, () => {
       const atual = this.obterPadrao(id)
       if (!atual) throw new ErroApi(404, 'Padrão não encontrado.')
+      // A densidade gravada antes da conferência da unidade não impede gravar o resto (nem desativar)
+      const valor = validar(normalizarPadrao(entrada, { densidadeGravada: atual.densidade }))
       const versao = versaoDe(entrada)
       if (versao !== undefined && versao !== atual.versao) throw conflito('este padrão')
       this.verificarIdentificacao(valor.identificacao, id)
@@ -995,6 +997,8 @@ export class Repositorio {
           .get(original.id)
         if (aberta) throw new ErroApi(409, 'Já existe uma revisão em andamento para este certificado.')
         k.revisao = original.revisao + 1
+        // Certificado emitido antes do cálculo da classe I (ou revisão dele): a revisão mantém o cálculo da época
+        if (calculoLegado(original)) k.calculoLegado = true
       }
       this.gravarCalibracao(k, true)
       this.mudou('calibracao', k.id)

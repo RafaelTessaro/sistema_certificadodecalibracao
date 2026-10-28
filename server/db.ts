@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { separarProcedimento } from '#shared/arquivos.ts'
-import { hojeLocalIso, parteSeparada, semIndicadorLegado, textoBusca, textoBuscaBalanca } from '#shared/dominio.ts'
+import { calculoLegado, hojeLocalIso, parteSeparada, semIndicadorLegado, textoBusca, textoBuscaBalanca } from '#shared/dominio.ts'
 import type { Balanca, Calibracao } from '#shared/tipos.ts'
 
 export type Banco = DatabaseSync
@@ -205,6 +205,11 @@ const MIGRACOES: Migracao[] = [
   // e o certificado é emitido com ele), da mesma sequência da emissão. Cada nº fica registrado com a situação:
   // reservado, emitido ou não utilizado (com o motivo), e nunca é usado de novo. A folha guarda o nº impresso nela.
   numerosReservados,
+
+  // 9: a revisão aberta antes do cálculo da classe I, de um certificado emitido antes dele, mantém o cálculo e as
+  // exigências da época, como a revisão aberta depois (`calculoLegado`, que o servidor marca ao criar a revisão):
+  // sai com os mesmos números do original e não pede um ΔT pesos − ar que nunca foi medido.
+  revisoesLegadas,
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
@@ -269,6 +274,38 @@ function numerosReservados(db: Banco) {
   `)
   // O nº do certificado impresso na folha ('' = nenhum: folha anterior a esta versão, ou de uma revisão)
   acrescentarColuna(db, 'folhas_campo', 'numero_certificado', "TEXT NOT NULL DEFAULT ''")
+}
+
+/**
+ * Migração 9 (ver acima). Repetível: só marca a revisão aberta (rascunho ou em revisão) de um original legado que
+ * ainda não está marcada; a regra é a mesma de `Repositorio.criarCalibracao`. O registro de atividades diz quais.
+ */
+function revisoesLegadas(db: Banco) {
+  const abertas = db
+    .prepare(
+      `SELECT r.id, r.dados, o.dados AS original FROM calibracoes r JOIN calibracoes o ON o.id = r.substitui_id
+        WHERE r.substitui_id <> '' AND r.status IN ('RASCUNHO','REVISAO')`,
+    )
+    .all() as Array<{ id: string; dados: string; original: string }>
+  const gravar = db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
+  const marcadas: string[] = []
+  for (const l of abertas) {
+    const k = JSON.parse(l.dados) as Calibracao
+    const original = JSON.parse(l.original) as Calibracao
+    if (k.calculoLegado === true || !calculoLegado({ ...original, opcoes: original.opcoes ?? {} })) continue
+    gravar.run(JSON.stringify({ ...k, calculoLegado: true }), l.id)
+    marcadas.push(original.numero || l.id)
+  }
+  if (marcadas.length)
+    db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)").run(
+      new Date().toISOString(),
+      detalheLista(
+        marcadas.length === 1
+          ? 'A revisão aberta antes desta versão mantém o cálculo da época, sem as regras novas da classe I. Certificado: '
+          : `${marcadas.length} revisões abertas antes desta versão mantêm o cálculo da época, sem as regras novas da classe I. Certificados: `,
+        marcadas,
+      ),
+    )
 }
 
 /** O código de procedimento de exemplo que vinha nas configurações até a versão 1.0.1 (não é o POP de ninguém). */
@@ -388,6 +425,11 @@ export function detalheTrocaIndicador(series: string[]): string {
     n === 1
       ? '1 balança com indicador separado passou a ser identificada pelo indicador; os dados de antes ficaram como plataforma. Confira: '
       : `${n} balanças com indicador separado passaram a ser identificadas pelo indicador; os dados de antes ficaram como plataforma. Confira: `
+  return detalheLista(texto, series)
+}
+
+/** `texto` seguido da lista "A, B, C." (até 300 letras, com "…" quando não cabe). */
+function detalheLista(texto: string, series: string[]): string {
   let lista = ''
   for (const [i, s] of series.entries()) {
     const proximo = `${lista}${i ? ', ' : ''}${s}`

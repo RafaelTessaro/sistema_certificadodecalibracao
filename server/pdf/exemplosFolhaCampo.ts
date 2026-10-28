@@ -12,14 +12,25 @@
 //      declaração de conformidade pedida;
 //   6. rodoviária multi-intervalo 30/60/80 t (a balança do certificado "pior caso"): rascunho do último
 //      certificado, com 11 pontos, 7 etapas de substituição e 4 padrões (a folha mais longa das amostras: até
-//      4 páginas); o ensaio de repetibilidade único que veio do certificado gera o aviso antes de sair.
+//      4 páginas); o ensaio de repetibilidade único que veio do certificado gera o aviso antes de sair;
+//   7. analítica classe I 220 g × 0,1 mg (a do certificado de exemplo da classe I), primeira calibração: o plano sai
+//      das sugestões (10 leituras na repetibilidade) e a folha leva os campos da classe I (pesos × ar, capela,
+//      umidade e pressão obrigatórias, aquecimento de 2 h), com o jogo E2, o barômetro e o termômetro de duas
+//      entradas.
 // Os cadastros (empresa, clientes, padrões) e o POP do rodapé são os dos certificados de exemplo. Todas levam o
 // nº do certificado reservado na impressão, como no sistema: as com balança, o da calibração; as em branco
 // (folha avulsa), um nº da folha, que passa para a calibração a que ela for ligada.
 
-import { calibracaoVazia, EMPRESA_PADRAO } from '#shared/dominio.ts'
+import { calibracaoVazia, EMPRESA_PADRAO, padroesSemHistorico } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
-import { exemploBancada, exemploPiorCaso, exemploPlataforma, exemploRodoviaria, POP_EXEMPLO } from './exemplosCertificado.ts'
+import {
+  exemploBancada,
+  exemploClasseI,
+  exemploPiorCaso,
+  exemploPlataforma,
+  exemploRodoviaria,
+  POP_EXEMPLO,
+} from './exemplosCertificado.ts'
 import type { DadosFolhaCampo } from './folhaCampo.ts'
 
 /** Os dados de entrada de uma calibração (sem os campos que o servidor controla). */
@@ -321,6 +332,40 @@ export function folhaRodoviariaMultiIntervalo(repetibilidade?: CalibracaoInput['
     padroes: d.emissao.padroes,
     tecnico: 'Carlos Eduardo Lima',
     impressoEm: '2026-10-24T13:10:00.000Z',
+    impressoPor: IMPRESSO_POR,
+    procedimento: POP_EXEMPLO,
+  }
+}
+
+/**
+ * Analítica classe I 220 g × 0,1 mg (a BA-03 do certificado de exemplo da classe I), primeira calibração: a folha
+ * impressa antes da visita do certificado de exemplo (o mesmo nº reservado), com o plano das sugestões do sistema
+ * e os padrões escolhidos: o jogo E2, o termo-higrômetro, o barômetro e o termômetro de duas entradas.
+ */
+export function folhaClasseI(): DadosFolhaCampo {
+  const d = exemploClasseI()
+  // Como o POST /api/calibracoes monta o rascunho sem histórico: os métodos e os padrões da classe I (o termômetro
+  // de duas entradas, cadastrado como "Outro", entra)
+  const calibracao: CalibracaoInput = {
+    ...calibracaoVazia(d.calibracao.opcoes, d.emissao.balanca.classe),
+    clienteId: d.emissao.cliente.id,
+    balancaId: d.emissao.balanca.id,
+    ordemServico: 'OS-2026-0547',
+    dataCalibracao: '2026-10-26',
+    local: 'CLIENTE',
+    localEndereco: d.calibracao.localEndereco,
+    padroesIds: padroesSemHistorico(d.emissao.padroes, d.emissao.balanca.classe).map((p) => p.id),
+  }
+  return {
+    numero: 'FC-2026-00048',
+    numeroCertificado: 'CC-2026-00132',
+    empresa: EMPRESA_PADRAO,
+    cliente: d.emissao.cliente,
+    balanca: d.emissao.balanca,
+    calibracao,
+    padroes: d.emissao.padroes,
+    tecnico: 'Carlos Eduardo Lima',
+    impressoEm: '2026-10-23T14:15:00.000Z',
     impressoPor: IMPRESSO_POR,
     procedimento: POP_EXEMPLO,
   }

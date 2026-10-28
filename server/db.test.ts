@@ -3,14 +3,19 @@
 // Migração 6: o PDF da folha de campo num arquivo (caminho e sha256 no banco) e as passagens da folha de um
 // certificado cancelado para a calibração refeita.
 // Migração 8: os nºs de certificado reservados na impressão da folha de campo (e o nº impresso em cada folha).
+// Migração 9: a revisão aberta antes do cálculo da classe I, de um certificado emitido antes dele, fica legada.
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
+import { calcularCalibracao } from '#shared/calibracao.ts'
+import { calculoLegado, hojeLocalIso, OPCOES_CALCULO_PADRAO, pendenciasEmissao } from '#shared/dominio.ts'
+import type { Calibracao } from '#shared/tipos.ts'
+import { exemploClasseI } from './pdf/exemplosCertificado.ts'
 import { detalheTrocaIndicador, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 8
+const ULTIMA = 9
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -536,5 +541,112 @@ describe('migração 8: nºs de certificado reservados na impressão da folha de
     expect(db.prepare('SELECT numero, situacao FROM numeros_reservados').all()).toEqual([
       { numero: 'CC-2026-00013', situacao: 'reservado' },
     ])
+  })
+})
+
+describe('migração 9: revisão aberta antes do cálculo da classe I', () => {
+  /**
+   * Banco na versão 8 com o certificado classe I emitido na versão anterior (JSON sem `opcoes.conveccao`, sem o ΔT
+   * pesos − ar) e a revisão dele aberta ainda na versão anterior (sem a marca `calculoLegado`, sem emissão).
+   */
+  function bancoV8() {
+    const d = exemploClasseI()
+    const { conveccao: _c, ...opcoesAntigas } = { ...d.calibracao.opcoes, empuxo: 'AJUSTADO' as const }
+    const { deltaTPesos: _d, aclimatacao: _a, ...ambienteAntigo } = d.calibracao.ambiente
+    const antigo = {
+      ...d.calibracao,
+      opcoes: opcoesAntigas,
+      ambiente: ambienteAntigo,
+      ajuste: { realizado: 'INTERNO' as const, descricao: '' },
+    } as unknown as Calibracao
+    const original = { ...antigo, id: 'k1', status: 'EMITIDO' as const, emissao: d.emissao }
+    const { emissao: _e, numero: _n, ...semEmissao } = antigo
+    const revisao = { ...semEmissao, numero: '', id: 'k2', status: 'RASCUNHO' as const, substituiId: 'k1', revisao: 1 }
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 1)
+    db.prepare(
+      `INSERT INTO clientes (id, tipo, documento, nome, busca, ativo, dados, versao, criado_em, atualizado_em)
+       VALUES ('c1', 'PJ', '', 'Laboratório', 'laboratorio', 1, '{}', 1, ?, ?)`,
+    ).run(EM, EM)
+    inserirBalanca(db, 'b1', { numeroSerie: 'D4501', faixas: [{ max: 220, e: 0.001, d: 0.0001 }] })
+    migrar(db, 8)
+    const inserir = db.prepare(
+      `INSERT INTO calibracoes (id, status, numero, cliente_id, balanca_id, substitui_id, dados, versao, criado_em, atualizado_em)
+       VALUES (?, ?, ?, 'c1', 'b1', ?, ?, 1, ?, ?)`,
+    )
+    inserir.run('k1', 'EMITIDO', original.numero, '', JSON.stringify(original), EM, EM)
+    inserir.run('k2', 'RASCUNHO', '', 'k1', JSON.stringify(revisao), EM, EM)
+    return { db, d, original }
+  }
+  const calibracao = (db: DatabaseSync, id: string) =>
+    JSON.parse((db.prepare('SELECT dados FROM calibracoes WHERE id = ?').get(id) as { dados: string }).dados) as Calibracao
+
+  it('a revisão aberta na versão anterior fica legada: sem pendências novas e com o "como encontrado" do original', () => {
+    const { db, d, original } = bancoV8()
+    // Antes da migração: a revisão pediria a convecção e calcularia o "como encontrado" de outro jeito
+    const antes = calibracao(db, 'k2')
+    expect(calculoLegado(antes)).toBe(false)
+    const contexto = { padroes: d.emissao.padroes, hoje: hojeLocalIso(), temPesos: true, classe: 'I' as const }
+    expect(pendenciasEmissao(antes, contexto)).toContain(
+      'Balança classe I: a convecção precisa entrar no cálculo (Opções do cálculo, na Conclusão).',
+    )
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    const rev = calibracao(db, 'k2')
+    expect(rev.calculoLegado).toBe(true)
+    expect(calculoLegado(rev)).toBe(true)
+    // O resto do registro fica como estava
+    const { calculoLegado: _l, ...semMarca } = rev
+    expect(semMarca).toEqual(antes)
+    expect(pendenciasEmissao(rev, contexto)).toEqual([])
+    const doOriginal = calcularCalibracao(original, d.emissao.balanca, d.emissao.padroes)
+    const daRevisao = calcularCalibracao(rev, d.emissao.balanca, d.emissao.padroes)
+    expect(daRevisao.comoEncontrado!.pontos).toEqual(doOriginal.comoEncontrado!.pontos)
+    // (sem a marca, o "como encontrado" ia pela densidade do ar medida, com outros números)
+    expect(calcularCalibracao(antes, d.emissao.balanca, d.emissao.padroes).comoEncontrado!.pontos).not.toEqual(
+      doOriginal.comoEncontrado!.pontos,
+    )
+    expect(daRevisao.comoEncontrado!.pendencias).toEqual([])
+    // O original não muda; o registro de atividades diz qual
+    expect(calibracao(db, 'k1')).toEqual(original)
+    expect(
+      registros(db)
+        .filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
+        .map((r) => r.detalhe),
+    ).toEqual([
+      `A revisão aberta antes desta versão mantém o cálculo da época, sem as regras novas da classe I. Certificado: ${original.numero}.`,
+    ])
+  })
+
+  it('não marca a revisão de um original desta versão, o rascunho comum nem a revisão já emitida', () => {
+    const { db, original } = bancoV8()
+    // Original emitido nesta versão (com a convecção nas opções)
+    const novo = { ...original, opcoes: { ...OPCOES_CALCULO_PADRAO, conveccao: 'CALCULAR' as const } }
+    db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(novo), 'k1')
+    const rascunho = { ...calibracao(db, 'k2'), id: 'k3', substituiId: '' }
+    db.prepare(
+      `INSERT INTO calibracoes (id, status, cliente_id, balanca_id, dados, versao, criado_em, atualizado_em)
+       VALUES ('k3', 'RASCUNHO', 'c1', 'b1', ?, 1, ?, ?)`,
+    ).run(JSON.stringify(rascunho), EM, EM)
+    const antes = db.prepare('SELECT id, dados FROM calibracoes ORDER BY id').all()
+    migrar(db)
+    expect(db.prepare('SELECT id, dados FROM calibracoes ORDER BY id').all()).toEqual(antes)
+    expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toEqual([])
+    // Revisão emitida (SUBSTITUIDO/EMITIDO) de um original legado: já é legada pela própria emissão, não muda
+    const outro = bancoV8()
+    outro.db.prepare("UPDATE calibracoes SET status = 'EMITIDO' WHERE id = 'k2'").run()
+    const emitida = outro.db.prepare("SELECT dados FROM calibracoes WHERE id = 'k2'").get()
+    migrar(outro.db)
+    expect(outro.db.prepare("SELECT dados FROM calibracoes WHERE id = 'k2'").get()).toEqual(emitida)
+  })
+
+  it('pode ser repetida sem falhar nem registrar de novo', () => {
+    const { db } = bancoV8()
+    migrar(db)
+    const depois = calibracao(db, 'k2')
+    db.exec('PRAGMA user_version = 8')
+    migrar(db)
+    expect(calibracao(db, 'k2')).toEqual(depois)
+    expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(1)
   })
 })

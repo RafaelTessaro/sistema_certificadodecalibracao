@@ -7,7 +7,10 @@
 //      e marca d'água "PRÉVIA — SEM VALOR";
 //   4. o pior caso, para conferir o limite de 3 páginas: rodoviária multi-intervalo 30/60/80 t, cargas de
 //      substituição até Max, ajuste com "como encontrado" (também com substituição), reparo, revisão,
-//      conformidade, 4 padrões, verificação preliminar com item "não", observações e opiniões.
+//      conformidade, 4 padrões, verificação preliminar com item "não", observações e opiniões;
+//   5. classe I: analítica 220 g × 0,1 mg com pesos E2 pelo certificado (com a densidade), no local de uso,
+//      ajuste interno logo depois do "como encontrado", empuxo pela densidade do ar medida e convecção calculada
+//      pela diferença de temperatura pesos − ar (a frase no método do certificado).
 // Os resultados saem do motor de cálculo de verdade (shared/calibracao.ts).
 
 import { calcularCalibracao, montarCarga, montarPonto } from '#shared/calibracao.ts'
@@ -207,6 +210,64 @@ const BR01 = padrao({
   dataCalibracao: '2025-12-02',
   validade: '2026-12-02',
   incertezaTexto: 'U = 0,4 hPa',
+})
+
+/**
+ * Jogo de pesos E2, 10 mg a 200 g, aço inoxidável (balanças classe I): pelo certificado, com a densidade e a
+ * incerteza padrão dela (U/2 do certificado). As correções e as incertezas (mg) ficam abaixo de 1/3 do EMA.
+ */
+const JE2 = padrao({
+  id: 'pad-je2',
+  tipo: 'PESOS',
+  identificacao: 'JE2-01',
+  descricao: 'Jogo de pesos padrão 10 mg a 200 g',
+  fabricante: 'Häfner',
+  classe: 'E2',
+  material: 'Aço inoxidável',
+  densidade: 7950,
+  incertezaDensidade: 70,
+  pesos: [
+    peso('je2-200', '200 g', 200, 0.06, 0.1),
+    peso('je2-100', '100 g', 100, -0.03, 0.05),
+    peso('je2-50', '50 g', 50, 0.02, 0.03),
+    peso('je2-20', '20 g', 20, 0.01, 0.025),
+    peso('je2-20b', '20 g*', 20, -0.008, 0.025),
+    peso('je2-10', '10 g', 10, 0.006, 0.02),
+    peso('je2-5', '5 g', 5, -0.004, 0.016),
+    peso('je2-2', '2 g', 2, 0.003, 0.012),
+    peso('je2-2b', '2 g*', 2, -0.002, 0.012),
+    peso('je2-1', '1 g', 1, 0.002, 0.01),
+    peso('je2-500m', '500 mg', 0.5, 0.002, 0.008),
+    peso('je2-200m', '200 mg', 0.2, -0.001, 0.006),
+    peso('je2-200mb', '200 mg*', 0.2, 0.001, 0.006),
+    peso('je2-100m', '100 mg', 0.1, 0, 0.005),
+    peso('je2-50m', '50 mg', 0.05, 0.001, 0.004),
+    peso('je2-20m', '20 mg', 0.02, 0, 0.003),
+    peso('je2-20mb', '20 mg*', 0.02, -0.001, 0.003),
+    peso('je2-10m', '10 mg', 0.01, 0, 0.0025),
+  ],
+  certificado: 'M-0412/2026',
+  laboratorio: 'Calibra Massa Laboratório de Metrologia',
+  acreditacao: 'CAL 0529',
+  dataCalibracao: '2026-04-15',
+  validade: '2027-04-15',
+})
+
+/** Termômetro digital de duas entradas (classe I: pesos × ar), cadastrado como "outro" (POP 6.2). */
+const TD01 = padrao({
+  id: 'pad-td01',
+  tipo: 'OUTRO',
+  identificacao: 'TD-01',
+  descricao: 'Termômetro digital de duas entradas',
+  fabricante: 'Fluke',
+  modelo: '54-II B',
+  numeroSerie: '4387211',
+  certificado: 'T-4602/2026',
+  laboratorio: 'Visomes Comercial Metrológica',
+  acreditacao: 'CAL 0102',
+  dataCalibracao: '2026-02-11',
+  validade: '2027-02-11',
+  incertezaTexto: 'U = 0,1 °C',
 })
 
 function cliente(c: Partial<Cliente> & Pick<Cliente, 'id' | 'nome'>): Cliente {
@@ -890,6 +951,153 @@ export function exemploPiorCaso(): DadosCertificadoPdf {
     textos: TEXTOS_EXEMPLO,
     substituiNumero: 'CC-2026-00131',
     substituiEmissao: '2026-10-21T12:10:00.000Z',
+  }
+  return montar(k, e)
+}
+
+// ---- 5. Classe I: analítica 220 g × 0,1 mg (empuxo pela densidade do ar, convecção) -----------------------
+
+/**
+ * Analítica classe I no local de uso, com pesos E2 pelo certificado: "como encontrado", ajuste interno logo em
+ * seguida (POP 7.11) e os ensaios depois do ajuste. Empuxo pela densidade do ar medida (temperatura, umidade e
+ * pressão) e convecção pela diferença de temperatura pesos − ar medida antes do 1º ensaio: as opções da classe I.
+ * Os pontos são os sugeridos pelo sistema (0, Min, ~25 %… em múltiplos de 10 g, sem peças menores que 10 g, e as
+ * cargas onde muda o EMA: 50 g e 200 g); a
+ * repetibilidade com 10 leituras de uma peça só, e a excentricidade com uma peça de 1/3 de Max ou mais, pelo
+ * método 3 (zera antes de cada posição).
+ */
+export function exemploClasseI(): DadosCertificadoPdf {
+  const padroes = [JE2, TH01, BR01, TD01]
+  const pesos = [JE2]
+  const b = balanca({
+    id: 'bal-analitica',
+    clienteId: 'cli-farma',
+    tipo: 'ANALITICA',
+    fabricante: 'Shimadzu',
+    modelo: 'AUY220',
+    numeroSerie: 'D450120387',
+    identificacao: 'BA-03 (CQ)',
+    unidade: 'g',
+    faixas: [{ max: 220, e: 0.001, d: 0.0001 }],
+    min: 0.01,
+    classe: 'I',
+    portariaAprovacao: 'Portaria Inmetro/Dimel nº 0270/2011',
+    receptor: 'CIRCULAR',
+    dimensoes: 'prato Ø 80 mm',
+    finalidade: 'LABORATORIO',
+    localInstalacao: 'Controle de qualidade — sala de balanças',
+    anoFabricacao: '2020',
+  })
+  const c = cliente({
+    id: 'cli-farma',
+    nome: 'Farmacêutica Horto',
+    razaoSocial: 'LABORATÓRIO FARMACÊUTICO HORTO FLORESTAL LTDA',
+    documento: '61.827.504/0001-74',
+    contato: 'Camila Torres (Garantia da Qualidade)',
+    telefone: '(19) 3522-8800',
+    email: 'qualidade@farmahorto.com.br',
+    cep: '13506-900',
+    logradouro: 'Avenida Navarro de Andrade',
+    numero: '1200',
+    bairro: 'Horto Florestal',
+    cidade: 'Rio Claro',
+    uf: 'SP',
+  })
+  const g = (id: string, carga: number, leitura: number) => ponto(id, carga, leitura, null, pesos, 'g')
+  const k: Calibracao = {
+    ...calibracaoBase('cal-analitica'),
+    numero: 'CC-2026-00132',
+    sequencia: 132,
+    clienteId: c.id,
+    balancaId: b.id,
+    ordemServico: 'OS-2026-0547',
+    dataCalibracao: '2026-10-26',
+    dataEmissao: '2026-10-27',
+    local: 'CLIENTE',
+    localEndereco: 'Avenida Navarro de Andrade, 1200 – Horto Florestal – Rio Claro/SP (controle de qualidade)',
+    tecnicoId: TECNICO.id,
+    signatarioId: RESPONSAVEL.id,
+    padroesIds: padroes.map((p) => p.id),
+    // Pressão absoluta do local (Rio Claro, ≈ 612 m), lida no barômetro; ΔT pesos − ar com o termômetro TD-01
+    ambiente: {
+      temperaturaInicial: 22.4,
+      temperaturaFinal: 22.9,
+      umidadeInicial: 54,
+      umidadeFinal: 55,
+      pressao: 942,
+      deltaTPesos: 0.3,
+    },
+    preliminar: {
+      identificavel: 'SIM',
+      limpa: 'SIM',
+      nivelada: 'SIM',
+      aquecida: 'SIM',
+      preCarga: 'SIM',
+      zeroAutomatico: 'LIGADO',
+    },
+    // Ajuste interno logo após o "como encontrado" (POP 7.11): o ensaio final é o de logo após um ajuste
+    ajuste: { realizado: 'INTERNO', descricao: '' },
+    comoEncontrado: ensaio('DESCONTINUO', [
+      g('ce0', 0, 0),
+      g('ce1', 50, 50.0003),
+      g('ce2', 110, 110.0006),
+      g('ce3', 170, 170.0009),
+      g('ce4', 220, 220.0012),
+    ]),
+    repetibilidade: [
+      {
+        id: 'rep1',
+        carga: 200,
+        leituras: [200.0003, 200.0004, 200.0003, 200.0003, 200.0002, 200.0003, 200.0004, 200.0003, 200.0003, 200.0002],
+      },
+    ],
+    excentricidade: {
+      aplicavel: true,
+      motivo: '',
+      carga: 100,
+      metodo: 3,
+      posicoes: [
+        { rotulo: 'Centro', leitura: 100.0001, referencia: 0 },
+        { rotulo: 'Frente (0°)', leitura: 100.0003, referencia: 0 },
+        { rotulo: 'Direita (90°)', leitura: 100.0002, referencia: 0.0001 },
+        { rotulo: 'Trás (180°)', leitura: 100.0001, referencia: 0 },
+        { rotulo: 'Esquerda (270°)', leitura: 100.0002, referencia: 0 },
+      ],
+    },
+    indicacao: ensaio(
+      'DESCONTINUO',
+      [
+        g('p0', 0, 0),
+        // Min (10 mg), marcada na plaqueta
+        g('pmin', 0.01, 0.01),
+        g('p1', 50, 50.0001),
+        g('p2', 60, 60.0001),
+        g('p3', 110, 110.0002),
+        g('p4', 170, 170.0002),
+        g('p5', 200, 200.0003),
+        g('p6', 220, 220.0003),
+      ],
+      0,
+    ),
+    // As opções da classe I: empuxo pela densidade do ar medida e convecção calculada (deriva: o padrão, EMA)
+    opcoes: { ...calibracaoVazia().opcoes, empuxo: 'MEDIDO', conveccao: 'CALCULAR' },
+    observacoes: 'Calibração no local de uso, com a capela fechada em todas as leituras.',
+  }
+  const e: EmissaoCertificado = {
+    emitidoEm: '2026-10-27T13:20:00.000Z',
+    emitidoPor: RESPONSAVEL.id,
+    codigo: 'K7AN-2LTC',
+    hashPdf: '',
+    arquivo: '',
+    empresa: EMPRESA_PADRAO,
+    cliente: c,
+    balanca: b,
+    padroes,
+    tecnico: TECNICO,
+    signatario: RESPONSAVEL,
+    textos: TEXTOS_EXEMPLO,
+    substituiNumero: '',
+    substituiEmissao: '',
   }
   return montar(k, e)
 }

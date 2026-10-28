@@ -11,6 +11,7 @@ import {
   listaEmails,
   nomeArquivoCertificado,
   normalizarCalibracao,
+  opcoesDaClasse,
   somarMeses,
 } from '#shared/dominio.ts'
 import type { Calibracao, StatusCalibracao } from '#shared/tipos.ts'
@@ -165,7 +166,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     const config = repo.obterConfig()
     const hoje = hojeLocalIso()
     // O dono de hoje da balança (o cadastro pode ter passado para outro cliente depois do certificado)
-    const clienteId = repo.obterBalanca(anterior.balancaId)?.clienteId || anterior.clienteId
+    const balanca = repo.obterBalanca(anterior.balancaId)
+    const clienteId = balanca?.clienteId || anterior.clienteId
     const cliente = repo.obterCliente(clienteId)
     const ativos = new Set(repo.listarPadroes().map((p) => p.id))
     const entrada = naUnidadeAtual(anterior)
@@ -178,7 +180,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
         local: anterior.local,
         localEndereco: cliente ? enderecoCliente(cliente) : anterior.localEndereco,
         padroesIds: anterior.padroesIds.filter((id) => ativos.has(id)),
-        opcoes: entrada.opcoes,
+        // Na classe I, com as opções da classe (a balança pode ter mudado de classe depois do certificado)
+        opcoes: opcoesDaClasse(entrada.opcoes, balanca?.classe),
         conformidade: entrada.conformidade,
         dataCalibracao: hoje,
         proximaCalibracao: config.mesesProximaPadrao ? somarMeses(hoje, config.mesesProximaPadrao) : '',

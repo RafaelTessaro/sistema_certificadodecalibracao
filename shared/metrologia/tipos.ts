@@ -7,6 +7,7 @@
 
 import type {
   ClasseExatidao,
+  ClassePeso,
   CriterioEma,
   Faixa,
   MetodoCarregamento,
@@ -33,6 +34,31 @@ export interface PecaCalculo {
   usarCertificado: boolean
   /** Quantas peças iguais a esta compõem a carga. */
   quantidade: number
+  /** Classe R 111 da peça ('' ou ausente = desconhecida): decide se a convecção conta. */
+  classe?: ClassePeso | ''
+  /** Densidade ρ e incerteza padrão u(ρ) do material, kg/m³ (0 ou ausente = desconhecida). Só no empuxo MEDIDO. */
+  densidade?: number
+  uDensidade?: number
+  /** Identificação do jogo de pesos da peça (ex.: JP-E2), para as pendências do cadastro. */
+  jogo?: string
+}
+
+/** Ar no local (empuxo MEDIDO e aviso de ±10 %). */
+export interface ArCalculo {
+  /** Médias do início e do fim (°C, % UR) e a pressão (hPa); null = não registrado. */
+  temperatura: number | null
+  umidade: number | null
+  pressao: number | null
+  /** true = este ensaio foi feito logo após um ajuste (situação B): u(ρa) pela A3-1; false (situação A): A3-2. */
+  ajustadaAntes: boolean
+}
+
+/** Diferença de temperatura pesos − ar (convecção). */
+export interface TermicaCalculo {
+  /** ΔT medido antes do 1º ensaio (K; o sinal é ignorado); null = não medido. */
+  deltaT: number | null
+  /** Sem medição: diferença na chegada (K) e minutos no local até o 1º ensaio (Tabela F1.3). */
+  aclimatacao: { deltaT0: number; minutos: number } | null
 }
 
 export interface InstrumentoCalculo {
@@ -81,6 +107,10 @@ export interface EntradaCalculo {
     toleranciaCliente: number
     regra: RegraDecisao
   }
+  /** Ar no local (temperatura, umidade e pressão); ausente = não registrado. */
+  ar?: ArCalculo | null
+  /** Diferença de temperatura pesos − ar; ausente = não registrada. */
+  termica?: TermicaCalculo | null
 }
 
 /** Resultado de um ensaio de repetibilidade. */
@@ -127,6 +157,10 @@ export interface Orcamento {
   uMassa: number
   uDeriva: number
   uEmpuxo: number
+  /** u(δm_conv) da carga (7.1.2-13), somado linearmente entre as peças. */
+  uConveccao: number
+  /** δm_B aplicada ao valor de referência (7.1.2-4); 0 fora do empuxo MEDIDO. */
+  correcaoEmpuxo: number
   uSubstituicao: number
   uReferencia: number
   /** Incerteza padrão combinada u(E). */
@@ -183,6 +217,8 @@ export interface ResultadoCalculo {
   avisos: Aviso[]
   /** Faltam dados para calcular (ex.: nenhuma leitura de repetibilidade). */
   pendencias: string[]
+  /** Densidade do ar calculada (kg/m³, A1.1-1), u(ρa) deste ensaio e se t, UR e p estão na faixa da fórmula; null sem t, UR e p. */
+  ar?: { densidade: number; incerteza: number; valida: boolean } | null
 }
 
 export interface Aviso {

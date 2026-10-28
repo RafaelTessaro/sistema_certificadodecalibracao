@@ -5,7 +5,22 @@
 // Puro (sem I/O): roda igual no servidor (emissão e PDF) e no navegador (cálculo ao vivo).
 
 import type { Faixa, OpcoesCalculo } from '../tipos.ts'
+import {
+  correcaoEmpuxoRelativa,
+  DELTA_T_LOCAL_PADRAO,
+  densidadeAr,
+  densidadeArValida,
+  densidadePesosPlausivel,
+  INCERTEZA_AR_MEDIDO,
+  incertezaRelativaDensidadeAr,
+  incertezaRelativaDensidadeArLocal,
+  incertezaRelativaEmpuxoMedido,
+  RHO_0,
+  RHO_C,
+  U_DENSIDADE_DESCONHECIDA,
+} from './ar.ts'
 import { arredondarResultado, casasDecimais, formatarNumero, limparRuido } from './arredondamento.ts'
+import { conveccaoRelevante, deltaMConveccaoMg, deltaTAposAclimatacao } from './conveccao.ts'
 import { emaInstrumento, faixaDoValor, faixasOrdenadas } from './ema.ts'
 import { desvioPadrao, fatorAbrangencia, media } from './estatistica.ts'
 import { converterMassa } from './pesos.ts'
@@ -33,8 +48,8 @@ import type {
 const RAIZ3 = Math.sqrt(3)
 const RAIZ12 = Math.sqrt(12)
 /** Densidade do ar de referência e dos pesos de referência, kg/m³ (OIML R111; cg-18 7.1.2-5). */
-const RHO_AR = 1.2
-const RHO_PESOS = 8000
+const RHO_AR = RHO_0
+const RHO_PESOS = RHO_C
 /** Tolerância relativa das comparações de cargas e limites. */
 const TOL = 1e-9
 
@@ -48,7 +63,11 @@ interface Massa {
   uMassa: number
   uDeriva: number
   uEmpuxo: number
-  /** u(m_ref) = √(uMassa² + uDeriva² + uEmpuxo²). */
+  /** u(δm_conv): Σ q·Δm_conv/√3 das peças (cg-18 7.1.2-13); 0 sem a opção de convecção. */
+  uConveccao: number
+  /** δm_B somada a `valor` (7.1.2-4); 0 fora do empuxo MEDIDO. */
+  correcaoEmpuxo: number
+  /** u(m_ref) = √(uMassa² + uDeriva² + uEmpuxo² + uConveccao²) (7.1.2-14). */
   u: number
   /** Σ EMA·q das peças. */
   somaEma: number
@@ -56,6 +75,16 @@ interface Massa {
   emaConhecido: boolean
   /** Alguma peça sem incerteza (pelo nominal sem classe, ou pelo certificado sem U). */
   semIncerteza: boolean
+  /** Convecção: falta o ΔT pesos − ar (nem medido, nem pela aclimatação). */
+  semDeltaT: boolean
+  /** Convecção: ΔT acima de 20 K ou peça acima de 50 kg (fora da Tabela F2.1). */
+  conveccaoForaDaTabela: boolean
+  /** Convecção de alguma peça (≥ 10 g) maior que 1/3 do EMA dela (cg-18, Tabela F2.2), com ΔT acima de 1 K. */
+  conveccaoAcimaEma: boolean
+  /** Empuxo MEDIDO: jogos (ou peças sem jogo) sem a densidade ou sem u(ρ) no cadastro. */
+  semDensidade: string[]
+  /** Empuxo MEDIDO: jogos com a densidade fora da faixa dos pesos (7,95 digitado em vez de 7 950) e o valor. */
+  densidadeImplausivel: Array<{ jogo: string; densidade: number }>
 }
 
 /** Referência de um ponto: m_ref das peças ou, com substituição, L_T = s·m_refCheia + m_ref,k + ΣΔI_j. */
@@ -82,9 +111,17 @@ interface Contexto {
   uRelTempo: number
   /** Tolerância absoluta (TOL·Max). */
   tol: number
+  /** ρa e u(ρa) para o empuxo MEDIDO; null quando a opção não é MEDIDO ou falta t, UR ou p. */
+  ar: { rhoA: number; uRhoA: number } | null
+  /** ΔT pesos − ar (K) a usar para uma peça de `kg` quilos; null = não informado. */
+  deltaTPeca: ((kg: number) => number) | null
 }
 
 const lida = (v: number | null | undefined): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+/** "A", "A e B", "A, B e C". */
+const listaE = (itens: string[]) =>
+  itens.length > 1 ? `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}` : (itens[0] ?? '')
 
 const naoExcede = (valor: number, limite: number) => valor <= limite + TOL * Math.max(Math.abs(limite), Math.abs(valor))
 
@@ -197,9 +234,14 @@ function incertezaRelativaEmpuxo(mpeRelativo: number, opcoes: OpcoesCalculo): nu
 /**
  * Componentes da massa de referência, somados linearmente entre as peças (correlação total, cg-18 7.1.2):
  * u(δm_c) = U/k (certificado) ou EMA/√3 (nominal); deriva D = EMA, ou kD·U (com U = 0, D = EMA), u = D/√3;
- * empuxo u = u_rel·Σ nominal.
+ * empuxo u = u_rel·Σ nominal (5c/5d/5e) ou, no MEDIDO, a correção δm_B (7.1.2-4) com u pela 7.1.2-5a peça a
+ * peça (ρa e ρ comuns: soma linear); convecção u = Δm_conv/√3 peça a peça (Tabela F2.1).
  */
-function componentesMassa(pecas: readonly PecaCalculo[], opcoes: OpcoesCalculo): Massa {
+function componentesMassa(pecas: readonly PecaCalculo[], ctx: Contexto): Massa {
+  const { opcoes } = ctx
+  const unidade = ctx.entrada.instrumento.unidade
+  const medido = opcoes.empuxo === 'MEDIDO' && ctx.ar !== null
+  const comConveccao = opcoes.conveccao === 'CALCULAR'
   let nominal = 0
   let valor = 0
   let uMassa = 0
@@ -208,6 +250,14 @@ function componentesMassa(pecas: readonly PecaCalculo[], opcoes: OpcoesCalculo):
   let temPecas = false
   let emaConhecido = true
   let semIncerteza = false
+  let correcaoEmpuxo = 0
+  let uEmpuxoMedido = 0
+  let uConveccao = 0
+  let semDeltaT = false
+  let conveccaoForaDaTabela = false
+  let conveccaoAcimaEma = false
+  const semDensidade: string[] = []
+  const densidadeImplausivel: Massa['densidadeImplausivel'] = []
   for (const p of pecas) {
     const q = p.quantidade
     if (!(q > 0)) continue
@@ -221,19 +271,63 @@ function componentesMassa(pecas: readonly PecaCalculo[], opcoes: OpcoesCalculo):
     uDeriva += (deriva / RAIZ3) * q
     somaEma += p.ema * q
     if (!(p.ema > 0)) emaConhecido = false
+    // Empuxo pela densidade do ar medida sem ρ ou u(ρ), ou com ρ fora da faixa dos pesos: a pendência bloqueia a
+    // emissão (em qualquer ensaio, também no "como encontrado"); a tela calcula com ρc e a u(ρ) conservadora, sem
+    // a correção absurda de um 7,95
+    const temRho = (p.densidade ?? 0) > 0
+    const plausivel = temRho && densidadePesosPlausivel(p.densidade!)
+    if (opcoes.empuxo === 'MEDIDO') {
+      const jogo = p.jogo?.trim() || `peça de ${formatarNumero(p.nominal, casasDecimais(p.nominal))} ${unidade}`
+      if (!temRho || !((p.uDensidade ?? 0) > 0)) semDensidade.push(jogo)
+      else if (!plausivel) densidadeImplausivel.push({ jogo, densidade: p.densidade! })
+    }
+    if (medido && ctx.ar) {
+      const rho = plausivel ? p.densidade! : RHO_C
+      const uRho = plausivel && (p.uDensidade ?? 0) > 0 ? p.uDensidade! : U_DENSIDADE_DESCONHECIDA
+      correcaoEmpuxo += q * p.nominal * correcaoEmpuxoRelativa(ctx.ar.rhoA, rho)
+      uEmpuxoMedido += q * p.nominal * incertezaRelativaEmpuxoMedido(ctx.ar.rhoA, ctx.ar.uRhoA, rho, uRho)
+    }
+    if (comConveccao && conveccaoRelevante(p.classe)) {
+      if (!ctx.deltaTPeca) semDeltaT = true
+      else {
+        const kg = converterMassa(p.nominal, unidade, 'kg')
+        const dt = ctx.deltaTPeca(kg)
+        const mg = deltaMConveccaoMg(kg, dt)
+        if (mg === null) conveccaoForaDaTabela = true
+        else {
+          const dm = converterMassa(mg, 'mg', unidade)
+          uConveccao += (q * dm) / RAIZ3
+          // cg-18 Tabela F2.2, com o EMA real da peça; só dentro da tabela (≥ 10 g): abaixo, a linha de 10 g é um piso.
+          // Só acima da coluna de 1 K: até 1 K o cálculo já está na menor coluna (D3), e esperar não muda nada
+          // (as peças E1 passam de 1/3 do EMA já na coluna de 1 K)
+          if (p.ema > 0 && kg >= 0.01 * (1 - TOL) && Math.abs(dt) > 1 + TOL && dm > (p.ema / 3) * (1 + TOL))
+            conveccaoAcimaEma = true
+        }
+      }
+    }
   }
-  const uEmpuxo = nominal > 0 ? incertezaRelativaEmpuxo(somaEma / nominal, opcoes) * nominal : 0
+  // MEDIDO sem t, UR ou p: a estimativa conservadora 5d, para a tela (a pendência bloqueia a emissão)
+  const opcoesEmpuxo = opcoes.empuxo === 'MEDIDO' && !medido ? { ...opcoes, empuxo: 'NAO_AJUSTADO' as const } : opcoes
+  const uEmpuxo = medido ? uEmpuxoMedido : nominal > 0 ? incertezaRelativaEmpuxo(somaEma / nominal, opcoesEmpuxo) * nominal : 0
+  if (!medido) correcaoEmpuxo = 0
   return {
     temPecas,
     nominal: limparRuido(nominal),
-    valor: limparRuido(valor, nominal),
+    valor: limparRuido(medido ? valor + correcaoEmpuxo : valor, nominal),
     uMassa,
     uDeriva,
     uEmpuxo,
-    u: Math.sqrt(uMassa ** 2 + uDeriva ** 2 + uEmpuxo ** 2),
+    uConveccao,
+    correcaoEmpuxo,
+    u: Math.sqrt(uMassa ** 2 + uDeriva ** 2 + uEmpuxo ** 2 + uConveccao ** 2),
     somaEma,
     emaConhecido,
     semIncerteza,
+    semDeltaT,
+    conveccaoForaDaTabela,
+    conveccaoAcimaEma,
+    semDensidade,
+    densidadeImplausivel,
   }
 }
 
@@ -292,6 +386,8 @@ function orcamento(indicacao: number, ref: Referencia, ctx: Contexto, uHist = 0)
     uMassa: ref.massa.uMassa,
     uDeriva: ref.massa.uDeriva,
     uEmpuxo: ref.massa.uEmpuxo,
+    uConveccao: ref.massa.uConveccao,
+    correcaoEmpuxo: ref.massa.correcaoEmpuxo,
     uSubstituicao,
     uReferencia,
     uCombinada,
@@ -314,7 +410,7 @@ function prepararSubstituicao(ctx: Contexto): CadeiaSubstituicao | null {
   const sub = ctx.entrada.indicacao.substituicao
   if (!sub.ativa) return null
   return {
-    massa: componentesMassa(sub.pecas, ctx.opcoes),
+    massa: componentesMassa(sub.pecas, ctx),
     etapas: sub.etapas.map((etapa) => {
       const padroes = lida(etapa.leituraPadroes)
       const substituicao = lida(etapa.leituraSubstituicao)
@@ -375,6 +471,32 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   const d0 = opcoes.divisaoTeste > 0 ? opcoes.divisaoTeste : (faixas[0]?.d ?? 0)
 
   const exc = calcularExcentricidade(entrada.excentricidade)
+
+  // Ar do local (A1.1-1): u(ρa) pela A3-1 logo após um ajuste (situação B) e pela A3-2 nos demais (situação A)
+  const a = entrada.ar ?? null
+  const arCompleto = !!a && a.temperatura !== null && a.umidade !== null && a.pressao !== null
+  const rhoA = arCompleto ? densidadeAr(a.temperatura!, a.umidade!, a.pressao!) : null
+  const uRelRhoA = a?.ajustadaAntes
+    ? incertezaRelativaDensidadeAr(
+        INCERTEZA_AR_MEDIDO.pressaoHpa,
+        INCERTEZA_AR_MEDIDO.temperaturaK,
+        INCERTEZA_AR_MEDIDO.umidadePct,
+      )
+    : incertezaRelativaDensidadeArLocal(opcoes.deltaTLocal > 0 ? opcoes.deltaTLocal : DELTA_T_LOCAL_PADRAO)
+  const ar =
+    rhoA === null
+      ? null
+      : { densidade: rhoA, incerteza: rhoA * uRelRhoA, valida: densidadeArValida(a!.temperatura!, a!.umidade!, a!.pressao!) }
+  // ΔT pesos − ar: o medido (vale para todas as peças) ou o estimado pela aclimatação (depende da massa da peça)
+  const t = entrada.termica ?? null
+  const aclimatacao = t?.aclimatacao ?? null
+  const deltaTPeca: Contexto['deltaTPeca'] =
+    t && t.deltaT !== null && Number.isFinite(t.deltaT)
+      ? () => Math.abs(t.deltaT!)
+      : aclimatacao
+        ? (kg) => deltaTAposAclimatacao(kg, aclimatacao.deltaT0, aclimatacao.minutos)
+        : null
+
   if (!faixas.length || !(d0 > 0)) {
     pendencias.push('Instrumento: informe pelo menos uma faixa com Max, e e d maiores que zero.')
     return {
@@ -386,6 +508,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       conformidade: null,
       avisos,
       pendencias,
+      ar,
     }
   }
 
@@ -401,6 +524,8 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     uRelEcc: opcoes.excentricidade && exc.valida ? exc.resultado.incertezaRelativa : 0,
     uRelTempo: sub.ativa && retornoZero !== null && max > 0 ? Math.abs(retornoZero) / (max * RAIZ3) : 0,
     tol: TOL * Math.max(Math.abs(max), Number.MIN_VALUE),
+    ar: opcoes.empuxo === 'MEDIDO' && ar ? { rhoA: ar.densidade, uRhoA: ar.incerteza } : null,
+    deltaTPeca,
   }
 
   /** Carga nas casas de d (ou mais, se o valor tiver); `rotulo` acrescenta a unidade (para os avisos). */
@@ -421,6 +546,17 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   const classeInsuficiente: string[] = []
   const leiturasImplausiveis: string[] = []
   const uMenorQueD: string[] = []
+  const conveccaoAcimaEma: string[] = []
+  const semDensidade: string[] = []
+  const densidadeImplausivel = new Map<string, number>()
+  const conferirDensidade = (m: Massa) => {
+    semDensidade.push(...m.semDensidade)
+    for (const x of m.densidadeImplausivel) if (!densidadeImplausivel.has(x.jogo)) densidadeImplausivel.set(x.jogo, x.densidade)
+  }
+  let substituicaoLida = false
+  let semDeltaT = false
+  let conveccaoForaDaTabela = false
+  let algumPelaIncerteza = false
   let semEma = false
   let maiorU = 0
   let pontosLidos = 0
@@ -428,7 +564,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
 
   const pontos = entrada.indicacao.pontos.map((ponto): ResultadoPonto => {
     const nivel = cadeia ? Math.max(0, Math.floor(ponto.nivelSubstituicao || 0)) : 0
-    const massa = componentesMassa(ponto.pecas, opcoes)
+    const massa = componentesMassa(ponto.pecas, ctx)
     const ref = referenciaPonto(ponto, nivel, massa, cadeia)
     const sobe = lida(ponto.crescente)
     const desce = lida(ponto.decrescente)
@@ -440,9 +576,27 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
         if (implausivel(l, ponto.carga)) leiturasImplausiveis.push(`${leituraTexto(l, ponto.carga)} em ${rotulo(ponto.carga)}`)
       if (nivel === 0 && !massa.temPecas && !ehZero(ponto.carga, ctx)) semPadroes.push(rotulo(ponto.carga))
       if (massa.temPecas && massa.semIncerteza) semIncerteza.push(rotulo(ponto.carga))
-      if (nivel === 0 && massa.temPecas && massa.emaConhecido) {
+      if (massa.semDeltaT) semDeltaT = true
+      if (massa.conveccaoForaDaTabela) conveccaoForaDaTabela = true
+      if (massa.conveccaoAcimaEma) conveccaoAcimaEma.push(rotulo(ponto.carga))
+      conferirDensidade(massa)
+      if (nivel > 0) substituicaoLida = true
+      // Classe dos pesos (R 76-1 3.7.1): Σ EMA ≤ 1/3 do EMA da balança ou, só com pesos E1/E2 pelo certificado,
+      // a incerteza expandida da carga 2·√(u²(δm_c) + u²(δm_D)) ≤ 1/3 do EMA (uma ou outra basta)
+      const pecasUsadas = ponto.pecas.filter((p) => p.quantidade > 0)
+      const pelaIncerteza =
+        pecasUsadas.length > 0 && pecasUsadas.every((p) => p.usarCertificado && (p.classe === 'E1' || p.classe === 'E2'))
+      if (nivel === 0 && massa.temPecas && (pelaIncerteza || massa.emaConhecido)) {
         const emaOiml = emaInstrumento(ponto.carga, instrumento, 'OIML_INICIAL')
-        if (emaOiml !== null && !naoExcede(massa.somaEma, emaOiml / 3)) classeInsuficiente.push(rotulo(ponto.carga))
+        if (emaOiml !== null) {
+          const limite = emaOiml / 3
+          const atendePeloErro = massa.emaConhecido && naoExcede(massa.somaEma, limite)
+          const atendePelaIncerteza = pelaIncerteza && naoExcede(2 * Math.sqrt(massa.uMassa ** 2 + massa.uDeriva ** 2), limite)
+          if (!atendePeloErro && !atendePelaIncerteza) {
+            classeInsuficiente.push(rotulo(ponto.carga))
+            if (pelaIncerteza) algumPelaIncerteza = true
+          }
+        }
       }
     }
 
@@ -527,6 +681,29 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
         ? 'Conformidade: informe a tolerância do cliente.'
         : 'Conformidade: a classe de exatidão da balança não está marcada; não há EMA para comparar.',
     )
+  if (opcoes.empuxo === 'MEDIDO' && !arCompleto)
+    pendencias.push(
+      'Empuxo pela densidade do ar medida: registre a temperatura, a umidade relativa e a pressão atmosférica (etapa Padrões e ambiente).',
+    )
+  // A densidade e u(ρ) de cada jogo usado num ponto lido (cg-18 7.1.2-4 e 7.1.2-5a)
+  if (substituicaoLida && cadeia) conferirDensidade(cadeia.massa)
+  const jogosSemDensidade = [...new Set(semDensidade)]
+  if (jogosSemDensidade.length)
+    pendencias.push(
+      `Empuxo pela densidade do ar medida: ${jogosSemDensidade.length > 1 ? `os jogos ${listaE(jogosSemDensidade)} estão` : `o jogo ${jogosSemDensidade[0]} está`} sem a densidade ou a incerteza da densidade (cadastro do padrão).`,
+    )
+  for (const [jogo, rho] of densidadeImplausivel)
+    pendencias.push(
+      `Empuxo pela densidade do ar medida: o jogo ${jogo} está com densidade de ${formatarNumero(rho, Math.min(casasDecimais(rho), 6))} kg/m³, fora da faixa dos pesos; confira a unidade no cadastro do padrão (7,95 g/cm³ = 7 950 kg/m³).`,
+    )
+  if (semDeltaT)
+    pendencias.push(
+      'Convecção: registre a diferença de temperatura entre os pesos e o ar antes do 1º ensaio, ou a aclimatação dos pesos (etapa Padrões e ambiente).',
+    )
+  if (conveccaoForaDaTabela)
+    pendencias.push(
+      'Convecção: diferença de temperatura acima de 20 °C ou peça acima de 50 kg, fora da Tabela F2.1 do cg-18; aguarde a aclimatação e meça de novo.',
+    )
 
   // ---- Avisos ----
   const lista = (itens: string[]) => [...new Set(itens)].join('; ')
@@ -553,19 +730,23 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       mensagem: `Repetibilidade: ${cargasRep.length} ${cargasRep.length === 1 ? 'ensaio' : 'ensaios'} para ${faixas.length} ${nome}s; falta ${onde}. O POP (7.9) pede um ensaio em cada ${nome} de d diferente.`,
     })
   }
-  if (ctx.repeticoes.some((r) => r.n < 10))
-    avisos.push(
-      opcoes.metodoK === 'K2'
-        ? {
-            nivel: 'atencao',
-            mensagem:
-              'Repetibilidade com menos de 10 leituras: k = 2 fixo não se justifica (cg-18 B2); use k pelos graus de liberdade.',
-          }
-        : {
-            nivel: 'info',
-            mensagem: 'Repetibilidade com menos de 10 leituras: o k calculado pelos graus de liberdade efetivos sai maior que 2.',
-          },
-    )
+  const classeI = instrumento.classe === 'I'
+  if (ctx.repeticoes.some((r) => r.n < 10)) {
+    // Na classe I o POP pede 10 leituras (Tabela 4): o aviso de atenção substitui o informativo
+    if (classeI)
+      avisos.push({ nivel: 'atencao', mensagem: 'Balança classe I: faça 10 leituras na repetibilidade (POP, Tabela 4).' })
+    if (opcoes.metodoK === 'K2')
+      avisos.push({
+        nivel: 'atencao',
+        mensagem:
+          'Repetibilidade com menos de 10 leituras: k = 2 fixo não se justifica (cg-18 B2); use k pelos graus de liberdade.',
+      })
+    else if (!classeI)
+      avisos.push({
+        nivel: 'info',
+        mensagem: 'Repetibilidade com menos de 10 leituras: o k calculado pelos graus de liberdade efetivos sai maior que 2.',
+      })
+  }
   if (pontosLidos > 0 && pontosLidos < 5)
     avisos.push({
       nivel: 'atencao',
@@ -578,7 +759,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     })
   if (entrada.excentricidade.aplicavel) {
     const lEcc = entrada.excentricidade.carga
-    const sugerida = cargaExcentricidade(max, unidade)
+    const sugerida = cargaExcentricidade(max, unidade, instrumento.classe)
     if (lEcc > max * (1 + TOL))
       avisos.push({ nivel: 'atencao', mensagem: `Carga de excentricidade (${rotulo(lEcc)}) maior que Max.` })
     // Abaixo do mínimo da Tabela 5 (a carga copiada de um certificado antigo, que arredondava para o mais próximo)
@@ -622,7 +803,37 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   if (classeInsuficiente.length)
     avisos.push({
       nivel: 'atencao',
-      mensagem: `Classe dos pesos insuficiente em ${lista(classeInsuficiente)}: Σ EMA dos pesos maior que 1/3 do EMA OIML inicial da balança (R76 3.7.1).`,
+      mensagem: `Classe dos pesos insuficiente em ${lista(classeInsuficiente)}: Σ EMA dos pesos maior que 1/3 do EMA OIML inicial da balança${algumPelaIncerteza ? ' e, com os pesos E1/E2 pelo certificado, a incerteza 2·u (com a deriva) também' : ''} (R76 3.7.1).`,
+    })
+  // ---- Empuxo e convecção (classe I; cg-18 7.1.2.2 e 7.1.2.4) ----
+  const estimado = opcoes.empuxo === 'AJUSTADO' || opcoes.empuxo === 'NAO_AJUSTADO' || opcoes.empuxo === 'DELTA_T'
+  if (classeI && (opcoes.empuxo === 'NAO_AJUSTADO' || opcoes.empuxo === 'DELTA_T'))
+    avisos.push({
+      nivel: 'atencao',
+      mensagem:
+        'Balança classe I com o empuxo estimado sem a densidade do ar (cg-18 7.1.2-5d/5e): essa parcela domina a incerteza. Use “Densidade do ar medida” (Opções do cálculo, na Conclusão).',
+    })
+  if (opcoes.empuxo === 'AJUSTADO' && a && !a.ajustadaAntes)
+    avisos.push({
+      nivel: 'atencao',
+      mensagem:
+        'Empuxo “Balança ajustada logo antes” (cg-18 7.1.2-5c) num ensaio sem ajuste logo antes: a incerteza do empuxo fica subestimada; use “Balança não ajustada antes” ou “Densidade do ar medida”.',
+    })
+  if (opcoes.empuxo === 'MEDIDO' && ar && !ar.valida)
+    avisos.push({
+      nivel: 'info',
+      mensagem:
+        'Densidade do ar calculada fora da faixa de validade da fórmula do cg-18 (A1.1-1: 15 °C a 27 °C, 20 % a 80 % UR, 600 hPa a 1 100 hPa).',
+    })
+  if (estimado && ar && Math.abs(ar.densidade - RHO_0) > 0.1 * RHO_0 * (1 + TOL))
+    avisos.push({
+      nivel: 'atencao',
+      mensagem: `Densidade do ar de ${formatarNumero(ar.densidade, 3)} kg/m³, a mais de 10 % de 1,2 kg/m³: as estimativas do empuxo sem a densidade do ar supõem até 10 % (cg-18 7.1.2.2, nota 5) e podem subestimar a incerteza; use “Densidade do ar medida”.`,
+    })
+  if (conveccaoAcimaEma.length)
+    avisos.push({
+      nivel: 'atencao',
+      mensagem: `Convecção maior que 1/3 do EMA da peça em ${lista(conveccaoAcimaEma)}: a diferença de temperatura pesos − ar é grande para a classe dos pesos (cg-18, Tabela F2.2); se possível, aguarde a aclimatação.`,
     })
   // Pesos padrão de menos em cada etapa de substituição (a referência fica quase toda no material sem calibração)
   if (cadeia?.massa.temPecas) {
@@ -664,5 +875,6 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     conformidade: geral,
     avisos,
     pendencias,
+    ar,
   }
 }

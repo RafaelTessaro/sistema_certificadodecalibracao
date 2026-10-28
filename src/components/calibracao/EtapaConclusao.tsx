@@ -1,8 +1,17 @@
-import { BellRing, ChevronDown, FileText, Scale3d, Settings2, TriangleAlert } from 'lucide-react'
+import { BellRing, ChevronDown, FileText, Info, Scale3d, Settings2, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
-import { CRITERIOS_EMA, REGRAS_DECISAO, somarMeses, termosSensiveis } from '#shared/dominio.ts'
-import type { CriterioEma, OpcoesCalculo, RegraDecisao } from '#shared/tipos.ts'
+import {
+  calculoLegado,
+  CRITERIOS_EMA,
+  faltamOpcoesDaClasse,
+  opcoesDaClasse,
+  REGRAS_DECISAO,
+  somarMeses,
+  termosSensiveis,
+} from '#shared/dominio.ts'
+import type { ClasseExatidao, CriterioEma, OpcoesCalculo, RegraDecisao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
+import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Field, Input, Select, Textarea } from '../ui/Form'
 import { CampoNumero } from './CampoNumero'
@@ -172,14 +181,34 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
         </div>
       </Card>
 
-      <OpcoesAvancadas opcoes={f.opcoes} aoMudar={(o) => alterar((s) => ({ ...s, opcoes: o }))} />
+      <OpcoesAvancadas
+        opcoes={f.opcoes}
+        classe={balanca.classe}
+        legado={calculoLegado(f)}
+        aoMudar={(o) => alterar((s) => ({ ...s, opcoes: o }))}
+      />
     </div>
   )
 }
 
-function OpcoesAvancadas({ opcoes, aoMudar }: { opcoes: OpcoesCalculo; aoMudar: (o: OpcoesCalculo) => void }) {
+function OpcoesAvancadas({
+  opcoes,
+  classe,
+  legado,
+  aoMudar,
+}: {
+  opcoes: OpcoesCalculo
+  classe: ClasseExatidao
+  /** Revisão de certificado emitido antes do cálculo da classe I: não oferece as opções da classe (ver `calculoLegado`). */
+  legado: boolean
+  aoMudar: (o: OpcoesCalculo) => void
+}) {
   const [aberto, setAberto] = useState(false)
   const set = <K extends keyof OpcoesCalculo>(k: K, v: OpcoesCalculo[K]) => aoMudar({ ...opcoes, [k]: v })
+  const classeI = classe === 'I'
+  // A classe da balança mudou para I depois de criado o rascunho (ou alguém trocou as opções): oferece as da classe
+  const faltamDaClasseI = classeI && !legado && faltamOpcoesDaClasse(opcoes, classe)
+  const comDeltaTLocal = opcoes.empuxo === 'DELTA_T' || opcoes.empuxo === 'MEDIDO'
   return (
     <Card>
       <button
@@ -197,21 +226,57 @@ function OpcoesAvancadas({ opcoes, aoMudar }: { opcoes: OpcoesCalculo; aoMudar: 
         </span>
         <ChevronDown className={cn('h-4 w-4 text-muted transition-transform', aberto && 'rotate-180')} />
       </button>
+      {faltamDaClasseI && (
+        <div className="mx-5 mb-4 flex flex-col gap-2.5 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning sm:flex-row sm:items-center">
+          <span className="flex min-w-0 flex-1 items-start gap-2">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>Balança classe I: use as opções da classe I (empuxo pela densidade do ar medida e convecção calculada).</span>
+          </span>
+          <Button tamanho="sm" className="self-start sm:self-auto" onClick={() => aoMudar(opcoesDaClasse(opcoes, classe))}>
+            Aplicar
+          </Button>
+        </div>
+      )}
+      {classeI && legado && (
+        <p className="mx-5 mb-4 flex items-start gap-2 rounded-xl bg-info-soft px-3.5 py-2.5 text-[13px] text-info">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Revisão de certificado emitido antes do cálculo da classe I: o cálculo continua o do certificado original.</span>
+        </p>
+      )}
       {aberto && (
         <div className="grid grid-cols-1 gap-4 border-t border-line px-5 py-5 sm:grid-cols-2">
           <Field label="Empuxo do ar" htmlFor="op-emp">
             <Select id="op-emp" value={opcoes.empuxo} onChange={(e) => set('empuxo', e.target.value as OpcoesCalculo['empuxo'])}>
-              <option value="NAO_AJUSTADO">Balança não ajustada antes (recomendado)</option>
+              <option value="MEDIDO">Densidade do ar medida{classeI ? ' (recomendado na classe I)' : ''}</option>
+              <option value="NAO_AJUSTADO">Balança não ajustada antes{classeI ? '' : ' (recomendado)'}</option>
               <option value="AJUSTADO">Balança ajustada logo antes</option>
               <option value="DELTA_T">Pela variação de temperatura</option>
               <option value="NENHUM">Não considerar</option>
             </Select>
           </Field>
-          {opcoes.empuxo === 'DELTA_T' && (
-            <Field label="Variação de temperatura no local (K)" htmlFor="op-dt">
+          {comDeltaTLocal && (
+            <Field
+              label="Variação de temperatura no local de uso (K)"
+              htmlFor="op-dt"
+              hint={
+                opcoes.empuxo === 'MEDIDO'
+                  ? 'Para os ensaios sem ajuste logo antes. 0 = 10 K (laboratório com janelas, cg-18 A2.2).'
+                  : '0 = sem variação (0 K).'
+              }
+            >
               <CampoNumero id="op-dt" valor={opcoes.deltaTLocal} aoMudar={(v) => set('deltaTLocal', v ?? 0)} unidade="K" />
             </Field>
           )}
+          <Field label="Convecção (pesos × ar)" htmlFor="op-conv" hint="Só pesos E1, E2 e F1 (cg-18 7.1.2.4).">
+            <Select
+              id="op-conv"
+              value={opcoes.conveccao ?? 'NAO_CONSIDERAR'}
+              onChange={(e) => set('conveccao', e.target.value as NonNullable<OpcoesCalculo['conveccao']>)}
+            >
+              <option value="NAO_CONSIDERAR">Não considerar (pesos aclimatados)</option>
+              <option value="CALCULAR">Calcular pelo ΔT pesos − ar (cg-18, Tabela F2.1)</option>
+            </Select>
+          </Field>
           <Field label="Deriva dos pesos" htmlFor="op-der">
             <Select id="op-der" value={opcoes.deriva} onChange={(e) => set('deriva', e.target.value as OpcoesCalculo['deriva'])}>
               <option value="EMA">Erro máximo da classe (sem histórico)</option>

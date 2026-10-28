@@ -659,13 +659,13 @@ describe('regras do cálculo', () => {
     expect(r.avisos).toContainEqual({
       nivel: 'atencao',
       mensagem:
-        'Carga de excentricidade (2000 g) abaixo do mínimo da Tabela 5 do POP (Max/3, com Max de 30\u00a0000 g): use ≥ 10\u00a0000 g.',
+        'Carga de excentricidade (2000 g) abaixo do mínimo da Tabela 5 do POP (1/3 de Max, com Max de 30\u00a0000 g): use ≥ 10\u00a0000 g.',
     })
     e.excentricidade.carga = 30000
     expect(calcular(e).avisos.map((a) => a.mensagem)).not.toContainEqual(expect.stringMatching(/^Carga de excentricidade/))
     // Bem acima da sugerida (mais de 3 vezes): só informação
     const grande = exemplo30kg()
-    // 3000 kg: Max/5 = 600 kg sugeridos; 2000 kg é mais de 3 vezes isso
+    // 3000 kg: 1/5 de Max = 600 kg sugeridos; 2000 kg é mais de 3 vezes isso
     grande.instrumento = { ...grande.instrumento, faixas: [{ max: 3_000_000, e: 500, d: 500 }] }
     grande.excentricidade.carga = 2_000_000
     expect(calcular(grande).avisos.find((a) => a.mensagem.includes('muito diferente da sugerida'))?.nivel).toBe('info')
@@ -679,11 +679,11 @@ describe('regras do cálculo', () => {
   it('carga de excentricidade abaixo do mínimo da Tabela 5 do POP (copiada de um certificado antigo): atenção', () => {
     // Max, carga copiada (o arredondamento antigo ia para o mais próximo, também para baixo) e a sugerida
     const casos: Array<[number, number, number, string, string]> = [
-      [600, 0.2, 100, 'Max/5', '150,0 kg'],
-      [200, 1, 65, 'Max/3', '70 kg'],
-      [32, 1, 10, 'Max/3', '15 kg'],
-      [20, 0.5, 6.5, 'Max/3', '7,0 kg'],
-      [80_000, 20, 7500, 'Max/10', '8000 kg'],
+      [600, 0.2, 100, '1/5 de Max', '150,0 kg'],
+      [200, 1, 65, '1/3 de Max', '70 kg'],
+      [32, 1, 10, '1/3 de Max', '15 kg'],
+      [20, 0.5, 6.5, '1/3 de Max', '7,0 kg'],
+      [80_000, 20, 7500, '1/10 de Max', '8000 kg'],
     ]
     const aviso = (max: number, d: number, carga: number) => {
       const e = exemplo30kg()
@@ -701,7 +701,7 @@ describe('regras do cálculo', () => {
         new RegExp(`abaixo do mínimo da Tabela 5 do POP \\(${fracao}, com Max de .+\\): use ≥ ${sugerida}\\.$`),
       )
     }
-    // No mínimo ou acima: nada (Max/5 de 600 kg = 120 kg; Max/3 de 200 kg = 66,67 kg)
+    // No mínimo ou acima: nada (1/5 de 600 kg = 120 kg; 1/3 de 200 kg = 66,67 kg)
     expect(aviso(600, 0.2, 120)).toEqual([])
     expect(aviso(200, 1, 200 / 3)).toEqual([])
     expect(aviso(200, 1, 70)).toEqual([])

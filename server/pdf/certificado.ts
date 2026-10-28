@@ -10,11 +10,22 @@
 // em tabelas, uma legenda só para as tabelas, sem gráfico nem desenho das posições, a ressalva das opiniões
 // na linha do título e a área das assinaturas baixa. O procedimento (POP) sai no cabeçalho de toda página e
 // no método. Com 3 páginas, a última nunca fica só com as declarações e as assinaturas: a montagem mede e
-// leva para ela uma seção inteira da penúltima (`montarCertificado`).
+// leva para ela uma seção inteira da penúltima (`montarCertificado`). Com as opções da classe I (empuxo pela
+// densidade do ar medida, convecção calculada), uma frase curta embaixo do método diz a densidade do ar e a
+// diferença de temperatura pesos − ar usadas (`notaEmpuxoConveccao`); sem elas, nada muda.
 
-import { casasDecimais, faixaDoValor, faixasOrdenadas, formatarNumero, ordemDeGrandeza } from '#shared/metrologia/index.ts'
-import type { ResultadoCalculo, ResultadoPonto } from '#shared/metrologia/tipos.ts'
 import {
+  casasDecimais,
+  densidadePesosPlausivel,
+  faixaDoValor,
+  faixasOrdenadas,
+  formatarNumero,
+  ordemDeGrandeza,
+} from '#shared/metrologia/index.ts'
+import type { ResultadoCalculo, ResultadoPonto } from '#shared/metrologia/tipos.ts'
+import { opcoesComoEncontrado } from '#shared/calibracao.ts'
+import {
+  calculoLegado,
   CRITERIOS_EMA,
   divisaoLegivel,
   enderecoCliente,
@@ -39,6 +50,7 @@ import type {
   EmissaoCertificado,
   EnsaioIndicacao,
   MetodoCarregamento,
+  MetodoExcentricidade,
   Padrao,
   Signatario,
   Unidade,
@@ -420,6 +432,87 @@ function linhaAmbiente(ctx: Contexto): Campo[] {
   ]
 }
 
+/**
+ * O método (POP) e, embaixo, em letra menor, como o empuxo e a convecção entraram no cálculo (classe I). Sem a
+ * nota, o mesmo valor de sempre.
+ */
+function valorMetodo(metodo: NoObjeto[], nota: string | null): No {
+  if (!nota) return metodo.length ? metodo : '—'
+  return [...(metodo.length ? metodo : [{ text: '—' }]), { text: `\n${nota}`, fontSize: 7, color: COR.textoSecundario }]
+}
+
+/**
+ * Como o empuxo do ar e a convecção dos pesos entraram no cálculo (as opções da classe I), numa frase curta
+ * embaixo do método: a densidade do ar calculada e a dos pesos (empuxo pela densidade do ar medida, cg-18 7.1.2-4
+ * e A1.1-1) e a diferença de temperatura pesos − ar da convecção (cg-18 7.1.2.4). Com algum resultado impresso
+ * sem ajuste logo antes (o "como encontrado", ou o final sem ajuste), também a variação de temperatura do local
+ * que a incerteza da densidade do ar considera (cg-18 A3-2; como o H1.1 pede para a 5e). Sem essas opções, null:
+ * os certificados das outras classes (e os de antes) ficam como estavam.
+ */
+export function notaEmpuxoConveccao(ctx: Pick<Contexto, 'd' | 'k' | 'e'>): string | null {
+  const { k } = ctx
+  const frases: string[] = []
+  const ar = ctx.d.resultado.ar
+  // A densidade dos pesos só quando cada jogo usado nas cargas a tem no cadastro (com u(ρ) e na faixa dos pesos);
+  // sem ela o cálculo usa ρc = 8 000 kg/m³ e a emissão fica bloqueada (pendência do cálculo), mas a prévia não mente
+  const usados = new Set(
+    [k.indicacao, k.comoEncontrado]
+      .flatMap((x) => (x ? [...x.pontos.flatMap((p) => p.pecas), ...x.substituicao.pecas] : []))
+      .map((x) => x.padraoId),
+  )
+  const jogos = ctx.e.padroes.filter((p) => p.tipo === 'PESOS' && (!usados.size || usados.has(p.id)))
+  const cadastradas =
+    jogos.length > 0 &&
+    jogos.every((p) => (p.densidade ?? 0) > 0 && densidadePesosPlausivel(p.densidade) && (p.incertezaDensidade ?? 0) > 0)
+  const densidades = [...new Set(jogos.map((p) => p.densidade))]
+  const pesos = !cadastradas
+    ? ''
+    : densidades.length === 1
+      ? `, e a densidade dos pesos de ${numeroBr(densidades[0])} kg/m³`
+      : ', e a densidade de cada jogo de pesos'
+  // Classe I com "ajustada logo antes" no ensaio final: só o "como encontrado" vai pela densidade do ar medida
+  // (`opcoesComoEncontrado`; o certificado de antes do cálculo da classe I, não)
+  const arAntes = ctx.d.comoEncontrado?.ar ?? null
+  const soAntes =
+    k.opcoes.empuxo !== 'MEDIDO' &&
+    temComoEncontrado(ctx.d) &&
+    !calculoLegado(k) &&
+    opcoesComoEncontrado(k.opcoes, ctx.e.balanca.classe).empuxo === 'MEDIDO' &&
+    !!arAntes
+  if (soAntes) {
+    const deltaT = k.opcoes.deltaTLocal > 0 ? k.opcoes.deltaTLocal : 10
+    frases.push(
+      `No “como encontrado”, empuxo do ar corrigido com a densidade do ar de ${num(arAntes.densidade, 3)} kg/m³, calculada pela temperatura, umidade e pressão medidas${pesos}; a incerteza dela considera uma variação de temperatura de ${numeroBr(deltaT)} K no local de uso (EURAMET cg-18, 7.1.2-4, A1.1-1 e A3-2).`,
+    )
+  }
+  if (k.opcoes.empuxo === 'MEDIDO' && ar) {
+    frases.push(
+      `Empuxo do ar corrigido com a densidade do ar de ${num(ar.densidade, 3)} kg/m³, calculada pela temperatura, umidade e pressão medidas${pesos} (EURAMET cg-18, 7.1.2-4 e A1.1-1).`,
+    )
+    // Situação A (sem ajuste logo antes): o final, quando não houve ajuste, ou só o "como encontrado" impresso
+    const semAjuste = k.ajuste.realizado === 'NAO'
+    if (semAjuste || temComoEncontrado(ctx.d)) {
+      const deltaT = k.opcoes.deltaTLocal > 0 ? k.opcoes.deltaTLocal : 10
+      frases.push(
+        `${semAjuste ? 'A' : 'No “como encontrado”, a'} incerteza da densidade do ar considera uma variação de temperatura de ${numeroBr(deltaT)} K no local de uso (cg-18, A3-2).`,
+      )
+    }
+  }
+  if ((k.opcoes.conveccao ?? 'NAO_CONSIDERAR') === 'CALCULAR') {
+    const dt = k.ambiente.deltaTPesos ?? null
+    const acl = k.ambiente.aclimatacao ?? null
+    if (dt !== null)
+      frases.push(
+        `Convecção dos pesos incluída na incerteza, com a diferença de temperatura pesos − ar medida de ${num(Math.abs(dt), 1)} °C (cg-18, 7.1.2.4 e Tabela F2.1).`,
+      )
+    else if (acl)
+      frases.push(
+        `Convecção dos pesos incluída na incerteza, com a diferença de temperatura estimada pela aclimatação de ${numeroBr(acl.minutos)} min a partir de ${num(Math.abs(acl.deltaT0), 1)} °C (cg-18, Tabelas F1.3 e F2.1).`,
+      )
+  }
+  return frases.length ? frases.join(' ') : null
+}
+
 function secaoDadosCalibracao(ctx: Contexto, n: number): No[] {
   const { k, e } = ctx
   const c = e.cliente
@@ -429,7 +522,7 @@ function secaoDadosCalibracao(ctx: Contexto, n: number): No[] {
   const local = [LOCAIS[k.local], k.localEndereco.trim()].filter(Boolean).join(' — ')
   // O código do POP em negrito e a descrição curta; sem POP registrado, só a descrição
   const descricaoMetodo = (e.textos.procedimentoDescricao ?? '').trim()
-  const metodo: No = [
+  const metodo: NoObjeto[] = [
     ...(procedimento(e) ? [{ text: procedimento(e), bold: true }] : []),
     ...(procedimento(e) && descricaoMetodo ? [{ text: ' — ' }] : []),
     ...(descricaoMetodo ? [{ text: descricaoMetodo }] : []),
@@ -454,7 +547,7 @@ function secaoDadosCalibracao(ctx: Contexto, n: number): No[] {
       ...(k.dataRecebimento ? [{ rotulo: 'Recebimento do item', valor: formatarDataBr(k.dataRecebimento) }] : []),
     ],
     linhaAmbiente(ctx),
-    [{ rotulo: 'Método — procedimento (POP)', valor: metodo.length ? metodo : '—', span: 4 }],
+    [{ rotulo: 'Método — procedimento (POP)', valor: valorMetodo(metodo, notaEmpuxoConveccao(ctx)), span: 4 }],
   ]
   const blocos: No[] = [inteiro([...secao(n, 'Dados da calibração'), grade(linhas)])]
   if (!vazio(e.substituiNumero)) {
@@ -994,6 +1087,40 @@ function comoEncontrado(ctx: Contexto): No[] {
   ]
 }
 
+/** O desvio ΔI da excentricidade como o cálculo faz em cada método (cg-18 6.3-1, 6.3-2 e 6.3-3). */
+export const LEGENDA_DESVIO_EXCENTRICIDADE: Record<MetodoExcentricidade, string> = {
+  1: 'ΔI: indicação na posição − indicação na posição 1.',
+  2: 'ΔI: indicação na posição − indicação na posição 1.',
+  3: 'ΔI: (indicação − zero lido) na posição − o mesmo na posição 1.',
+  4: 'ΔI: indicação na posição − indicação na posição 1 logo antes.',
+}
+
+/**
+ * Em quais tabelas impressas a carga já inclui a correção do empuxo do ar δm_B (empuxo pela densidade do ar medida,
+ * cg-18 7.1.2-4): no ensaio final com a opção e o ar registrado, e no "como encontrado" com as opções dele
+ * (`opcoesComoEncontrado`: na classe I, também com "ajustada logo antes"; o certificado de antes, como na época).
+ */
+export function cargaComEmpuxo(ctx: Pick<Contexto, 'd' | 'k' | 'b'>): { final: boolean; antes: boolean } {
+  const { d, k } = ctx
+  const opcoesAntes = calculoLegado(k) ? k.opcoes : opcoesComoEncontrado(k.opcoes, ctx.b.classe)
+  return {
+    final: k.opcoes.empuxo === 'MEDIDO' && d.resultado.ar !== null,
+    antes: temComoEncontrado(d) && opcoesAntes.empuxo === 'MEDIDO' && (d.comoEncontrado?.ar ?? null) !== null,
+  }
+}
+
+/** "Carga: …" da legenda: o valor convencional dos pesos e, quando entrou, a correção do empuxo do ar. */
+function legendaCarga(ctx: Contexto, substituicao: boolean): string {
+  const empuxo = cargaComEmpuxo(ctx)
+  const impressoAntes = temComoEncontrado(ctx.d)
+  const somado = substituicao ? ', somado às cargas de substituição' : ''
+  if (empuxo.final && (empuxo.antes || !impressoAntes))
+    return `Carga: valor convencional dos pesos padrão, corrigido do empuxo do ar${somado}.`
+  if (empuxo.antes) return `Carga: valor convencional dos pesos padrão${somado}; no “como encontrado”, corrigido do empuxo do ar.`
+  if (empuxo.final) return `Carga: valor convencional dos pesos padrão${somado}; no “como deixado”, corrigido do empuxo do ar.`
+  return `Carga: valor convencional dos pesos padrão${somado}.`
+}
+
 /** Uma legenda só, embaixo dos resultados: símbolos e convenções das tabelas. */
 function legendaResultados(ctx: Contexto): NoObjeto {
   const { k, d } = ctx
@@ -1002,7 +1129,7 @@ function legendaResultados(ctx: Contexto): NoObjeto {
   const substituicao = ensaios.some(comSubstituicao)
   const media = k.opcoes.histerese === 'MEDIA'
   const partes = [
-    `Carga: valor convencional dos pesos padrão${substituicao ? ', somado às cargas de substituição' : ''}.`,
+    legendaCarga(ctx, substituicao),
     media && ambos
       ? 'Erro = média das indicações ↑ e ↓ − carga; a histerese está incluída na incerteza.'
       : 'Erro = indicação − carga.',
@@ -1012,7 +1139,7 @@ function legendaResultados(ctx: Contexto): NoObjeto {
   if (substituicao) partes.push('Subst.: nº de cargas de substituição sob os pesos.')
   if (k.conformidade.solicitada) partes.push('EMA: erro máximo admissível do critério de conformidade.')
   partes.push('s: desvio-padrão experimental (n − 1 graus de liberdade).')
-  if (k.excentricidade.aplicavel) partes.push('ΔI: indicação na posição − indicação na posição 1.')
+  if (k.excentricidade.aplicavel) partes.push(LEGENDA_DESVIO_EXCENTRICIDADE[k.excentricidade.metodo])
   return { text: partes.join(' '), style: 'nota', margin: [0, 2, 0, 0] }
 }
 

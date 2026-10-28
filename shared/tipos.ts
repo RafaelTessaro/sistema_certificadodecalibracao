@@ -204,6 +204,8 @@ export interface Padrao {
   classe: ClassePeso | ''
   material: string
   densidade: number
+  /** Pesos: incerteza padrão u(ρ) da densidade, kg/m³ (k = 1; U/2 do certificado); 0 ou ausente = desconhecida. */
+  incertezaDensidade?: number
   uso: UsoPesos
   /** Peças do jogo (só para tipo PESOS). */
   pesos: PesoPadrao[]
@@ -404,11 +406,17 @@ export interface EnsaioExcentricidade {
 export interface OpcoesCalculo {
   /**
    * Empuxo do ar (cg-18 7.1.2-5): 'AJUSTADO' (5c, balança ajustada logo antes), 'NAO_AJUSTADO' (5d),
-   * 'DELTA_T' (5e, com a variação de temperatura do local) ou 'NENHUM'.
+   * 'DELTA_T' (5e, com a variação de temperatura do local), 'MEDIDO' (correção 7.1.2-4 com a densidade do ar
+   * calculada pela temperatura, umidade e pressão medidas, e incerteza 7.1.2-5a; classe I) ou 'NENHUM'.
    */
-  empuxo: 'AJUSTADO' | 'NAO_AJUSTADO' | 'DELTA_T' | 'NENHUM'
-  /** Variação de temperatura do local de uso (K), para a opção DELTA_T. */
+  empuxo: 'AJUSTADO' | 'NAO_AJUSTADO' | 'DELTA_T' | 'MEDIDO' | 'NENHUM'
+  /**
+   * Variação de temperatura do local de uso (K): na opção DELTA_T (0 = 0 K) e, na MEDIDO, para u(ρa) dos ensaios
+   * sem ajuste logo antes (cg-18 A3-2; 0 = 10 K, laboratório com janelas).
+   */
   deltaTLocal: number
+  /** Convecção dos pesos (cg-18 7.1.2.4, Tabela F2.1); ausente = 'NAO_CONSIDERAR'. */
+  conveccao?: 'NAO_CONSIDERAR' | 'CALCULAR'
   /** Deriva dos pesos: D = EMA da classe (sem histórico) ou D = kD·U. */
   deriva: 'EMA' | 'KD'
   kD: number
@@ -444,8 +452,12 @@ export interface CondicoesAmbientais {
   temperaturaFinal: number | null
   umidadeInicial: number | null
   umidadeFinal: number | null
-  /** hPa; opcional. */
+  /** hPa; opcional (obrigatória nas classes I e II). A pressão absoluta do local, nunca a reduzida ao nível do mar. */
   pressao: number | null
+  /** |T dos pesos − T do ar junto ao prato| medido antes do 1º ensaio, °C (= K); null ou ausente = não medido. */
+  deltaTPesos?: number | null
+  /** Sem medição de ΔT: diferença na chegada (°C) e minutos no local até o 1º ensaio; null ou ausente = não registrada. */
+  aclimatacao?: { deltaT0: number; minutos: number } | null
 }
 
 export interface Calibracao {
@@ -518,6 +530,12 @@ export interface Calibracao {
   /** Revisão: calibração emitida que esta substitui, e o motivo. */
   substituiId: ID
   motivoRevisao: string
+  /**
+   * Revisão de um certificado emitido antes do cálculo da classe I (gravado sem `opcoes.conveccao`), ou de uma
+   * revisão dele: mantém o cálculo e as exigências da época (ver `calculoLegado` em dominio.ts). Quem define é o
+   * servidor, ao criar a revisão; ausente = não.
+   */
+  calculoLegado?: boolean
   /** Cancelamento: motivo, quem e quando. */
   cancelamento: { motivo: string; por: string; em: string } | null
   /** Ao emitir: dados congelados (o certificado sai sempre igual) e o código de autenticidade. */

@@ -8,14 +8,16 @@ import {
   dataIsoValida,
   LIMITES,
   massaLegivel,
+  densidadePesosPlausivel,
   normalizarPadrao,
   numero,
   numeroBr,
   PADRAO_VAZIO,
   somarMeses,
+  textoDensidadeImplausivel,
 } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
-import { emaPeso } from '#shared/metrologia/index.ts'
+import { emaPeso, linhaTabelaE1 } from '#shared/metrologia/index.ts'
 import type { ClassePeso, Padrao, PadraoInput, PesoPadrao, TipoPadrao, UsoPesos } from '#shared/tipos.ts'
 import { api, ErroApi } from '../lib/api'
 import { cn } from '../lib/cn'
@@ -74,7 +76,11 @@ interface PesoTexto {
   k: string
 }
 
-type FormPadrao = Omit<PadraoInput, 'pesos' | 'densidade'> & { pesos: PesoTexto[]; densidade: string }
+type FormPadrao = Omit<PadraoInput, 'pesos' | 'densidade' | 'incertezaDensidade'> & {
+  pesos: PesoTexto[]
+  densidade: string
+  incertezaDensidade: string
+}
 
 /** Número para o campo de texto (vírgula decimal, sem ruído binário). `zero` mostra o 0 em vez de vazio. */
 function textoDe(n: number, zero = false): string {
@@ -108,18 +114,24 @@ function formularioInicial(padrao?: Padrao, modelo?: PadraoInput): FormPadrao {
     const { id: _i, versao: _v, criadoEm: _c, atualizadoEm: _a, ...resto } = padrao
     base = { ...PADRAO_VAZIO, ...resto }
   } else base = { ...PADRAO_VAZIO, ...modelo }
-  return { ...base, pesos: base.pesos.map(pesoParaTexto), densidade: textoDe(base.densidade) }
+  return {
+    ...base,
+    pesos: base.pesos.map(pesoParaTexto),
+    densidade: textoDe(base.densidade),
+    incertezaDensidade: textoDe(base.incertezaDensidade ?? 0),
+  }
 }
 
 /** O que vai para o servidor: o que não pertence ao tipo escolhido não é gravado. */
 function paraEntrada(f: FormPadrao): PadraoInput {
-  const { pesos, densidade, ...resto } = f
+  const { pesos, densidade, incertezaDensidade, ...resto } = f
   const ehPesos = f.tipo === 'PESOS'
   return {
     ...resto,
     classe: ehPesos ? f.classe : '',
     material: ehPesos ? f.material : '',
     densidade: ehPesos ? lerCampo(densidade) : 0,
+    incertezaDensidade: ehPesos ? lerCampo(incertezaDensidade) : 0,
     pesos: ehPesos
       ? pesos.map((p) => ({
           id: p.id,
@@ -336,15 +348,28 @@ function FormularioPadrao({
   const ehPesos = f.tipo === 'PESOS'
 
   // ---- Derivados ----
-  const { valor, erros } = normalizarPadrao(paraEntrada(f))
+  // A densidade gravada antes da conferência da unidade não impede gravar o resto (o servidor faz igual)
+  const { valor, erros } = normalizarPadrao(paraEntrada(f), { densidadeGravada: padrao?.densidade })
   const conferencias = f.pesos.map((p) => conferirPeca(p, f.classe))
   const numerosInvalidos =
-    campoInvalido(f.densidade) || f.pesos.some((p) => [p.nominal, p.correcao, p.incerteza, p.k].some(campoInvalido))
+    campoInvalido(f.densidade) ||
+    campoInvalido(f.incertezaDensidade) ||
+    f.pesos.some((p) => [p.nominal, p.correcao, p.incerteza, p.k].some(campoInvalido))
+  // Tabela E1 do cg-18 para o material: oferece preencher a densidade e a incerteza quando diferem
+  const e1 = ehPesos ? linhaTabelaE1(f.material) : null
+  const e1Diferente = !!e1 && (lerCampo(f.densidade) !== e1.rho || lerCampo(f.incertezaDensidade) !== e1.u)
   const erroIdent =
     erros.find((e) => /identifica/i.test(e)) ??
     (erroIdentServidor && erroIdentServidor.codigo === f.identificacao.trim() ? erroIdentServidor.mensagem : undefined)
   const erroPesos = ehPesos ? erros.find((e) => /peça|peças/i.test(e)) : undefined
   const erroValidade = erros.find((e) => /próxima calibração/i.test(e))
+  // Densidade fora da faixa dos pesos (7,95 digitado em vez de 7 950): aparece já ao digitar, e também a gravada
+  // antes da conferência (que não impede gravar)
+  const densidadeDigitada = campoInvalido(f.densidade) ? 0 : lerCampo(f.densidade)
+  const erroDensidade =
+    ehPesos && densidadeDigitada > 0 && !densidadePesosPlausivel(densidadeDigitada)
+      ? textoDensidadeImplausivel(densidadeDigitada)
+      : undefined
   const sugestao = ehPesos && !f.descricao.trim() ? descricaoSugerida(conferencias.map((c) => c.gramas)) : ''
   // Outro nº de certificado com o mesmo arquivo: o arquivo é o do certificado anterior (padrão recalibrado)
   const arquivoAnterior =
@@ -375,7 +400,7 @@ function FormularioPadrao({
     if (erros.length || (numerosInvalidos && ehPesos)) {
       if (numerosInvalidos && ehPesos) toast.erro('Confira os números', 'Use só algarismos e vírgula, como 0,25.')
       else {
-        const escondido = erros.find((x) => x !== erroIdent && x !== erroPesos && x !== erroValidade)
+        const escondido = erros.find((x) => x !== erroIdent && x !== erroPesos && x !== erroValidade && x !== erroDensidade)
         if (escondido) toast.erro('Confira o cadastro', escondido)
       }
       requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus())
@@ -632,7 +657,7 @@ function FormularioPadrao({
                 ))}
               </Select>
             </Field>
-            <Field label="Material" htmlFor={`${ids}-material`} className="sm:col-span-2">
+            <Field label="Material" htmlFor={`${ids}-material`} className="sm:col-span-4">
               <Input
                 id={`${ids}-material`}
                 list={`${ids}-materiais`}
@@ -647,22 +672,61 @@ function FormularioPadrao({
               </datalist>
             </Field>
             <Field
-              label="Densidade"
+              label="Densidade ρ"
               htmlFor={`${ids}-dens`}
-              className="sm:col-span-2"
-              erro={campoInvalido(f.densidade) ? 'Número inválido.' : null}
-              hint="Opcional. Consta no certificado."
+              className="sm:col-span-3"
+              erro={campoInvalido(f.densidade) ? 'Número inválido.' : (erroDensidade ?? null)}
             >
               <CampoNumerico
                 id={`${ids}-dens`}
                 valor={f.densidade}
                 aoMudar={(v) => set('densidade', v)}
                 unidade="kg/m³"
-                invalido={campoInvalido(f.densidade)}
+                invalido={campoInvalido(f.densidade) || !!erroDensidade}
                 placeholder="8000"
                 className="[&_input]:pr-16"
               />
             </Field>
+            <Field
+              label="Incerteza u(ρ)"
+              htmlFor={`${ids}-udens`}
+              className="sm:col-span-3"
+              erro={campoInvalido(f.incertezaDensidade) ? 'Número inválido.' : null}
+            >
+              <CampoNumerico
+                id={`${ids}-udens`}
+                valor={f.incertezaDensidade}
+                aoMudar={(v) => set('incertezaDensidade', v)}
+                unidade="kg/m³"
+                invalido={campoInvalido(f.incertezaDensidade)}
+                placeholder="70"
+                className="[&_input]:pr-16"
+              />
+            </Field>
+            <div className="-mt-2 flex flex-col gap-2 text-xs text-muted sm:col-span-6">
+              <p>
+                Opcionais; obrigatórias para calibrar balanças da classe I (empuxo do ar). u(ρ) é a incerteza padrão (k = 1): U/2
+                do certificado. Sem certificado, Tabela E1 do cg-18: aço inoxidável 7 950 ± 70; latão/bronze 8 400 ± 85; alpaca 8
+                600 ± 85.
+              </p>
+              {e1 && e1Diferente && (
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>
+                    Tabela E1 para {e1.material.toLowerCase()}:{' '}
+                    <span className="tnum font-medium text-ink-2">
+                      {numeroBr(e1.rho)} ± {numeroBr(e1.u)} kg/m³
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setF((x) => ({ ...x, densidade: String(e1.rho), incertezaDensidade: String(e1.u) }))}
+                    className="cursor-pointer font-medium text-brand-ink hover:underline"
+                  >
+                    Usar estes valores
+                  </button>
+                </p>
+              )}
+            </div>
 
             <div
               role="radiogroup"

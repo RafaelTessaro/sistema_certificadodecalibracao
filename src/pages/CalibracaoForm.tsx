@@ -907,12 +907,19 @@ function etapaCompleta(e: IdEtapa, { f, calc, selecionados }: ContextoEtapa): bo
       return !!f.dataCalibracao && !!f.tecnicoId && (f.local !== 'CLIENTE' || !!f.localEndereco.trim())
     case 'instrumento':
       return f.ajuste.realizado !== 'EXTERNO' || !!f.ajuste.descricao.trim()
-    case 'padroes':
+    case 'padroes': {
+      const a = f.ambiente
+      // Empuxo pela densidade do ar medida (classe I): a umidade e a pressão também; convecção: o ΔT pesos − ar
+      const ar = f.opcoes.empuxo !== 'MEDIDO' || ((a.umidadeInicial ?? a.umidadeFinal) !== null && a.pressao !== null)
+      const conveccao = f.opcoes.conveccao !== 'CALCULAR' || (a.deltaTPesos ?? null) !== null || !!a.aclimatacao
       return (
         selecionados.some((p) => p.tipo === 'PESOS') &&
-        f.ambiente.temperaturaInicial !== null &&
-        f.ambiente.temperaturaFinal !== null
+        a.temperaturaInicial !== null &&
+        a.temperaturaFinal !== null &&
+        ar &&
+        conveccao
       )
+    }
     case 'repetibilidade':
       return !!calc?.resultado.repetibilidade.some((r) => r.n >= 2)
     case 'excentricidade':

@@ -41,8 +41,10 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
         />
         <div className="px-5 pb-5">
           <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[13px] text-ink-2">
-            {dicaRepetibilidade(balanca)} Faça pelo menos 5 leituras (3 com cargas de 100 kg ou mais). Com 10 ou mais leituras a
-            incerteza fica menor (k mais perto de 2).
+            {dicaRepetibilidade(balanca)}{' '}
+            {balanca.classe === 'I'
+              ? 'Na classe I, faça 10 leituras com uma peça só (POP, Tabela 4).'
+              : 'Faça pelo menos 5 leituras (3 com cargas de 100 kg ou mais). Com 10 ou mais leituras a incerteza fica menor (k mais perto de 2).'}
           </p>
         </div>
       </Card>

@@ -1,7 +1,7 @@
 // Sugestões para o técnico montar os ensaios: pontos de carga, carga e posições da excentricidade,
 // carga e número de leituras da repetibilidade (EURAMET cg-18 §5; DOQ-CGCRE-097 10.4.1; OIML R76 A.4).
 
-import type { Faixa, Receptor, Unidade } from '../tipos.ts'
+import type { ClasseExatidao, Faixa, Receptor, Unidade } from '../tipos.ts'
 import {
   algarismosSignificativos,
   arredondarMeioPar,
@@ -44,9 +44,12 @@ function meioRedondoAcima(valor: number): number {
  * ~25, 50, 75 e 100 % de Max em valores redondos múltiplos de e, mais as mudanças de EMA da classe (500e e
  * 2000e na classe III; 5 000e e 20 000e na II…) que caírem dentro da faixa. Em multi-intervalo, o e é o do
  * intervalo parcial do ponto. Sem duplicados, em ordem crescente, na unidade da balança.
+ * Classe I (com a `unidade`): os ~25, 50 e 75 % de Max em múltiplos de 10 g, que se montam só com peças de 10 g
+ * ou mais (POP 6.1: cada peça soma a sua incerteza e a sua convecção; 220 g → 60 g = 50 g + 10 g, 110 g e
+ * 170 g = 100 g + 50 g + 20 g). Com Max abaixo de 40 g não dá (o ponto de 25 % já fica abaixo de 10 g).
  */
 export function sugerirPontos(
-  instrumento: Pick<InstrumentoCalculo, 'classe' | 'tipoFaixas' | 'faixas'> & { min?: number },
+  instrumento: Pick<InstrumentoCalculo, 'classe' | 'tipoFaixas' | 'faixas'> & { min?: number; unidade?: Unidade },
 ): number[] {
   const faixas = faixasOrdenadas(instrumento.faixas)
   if (!faixas.length) return []
@@ -54,9 +57,12 @@ export function sugerirPontos(
   const pontos = [0, max]
   const min = instrumento.min ?? 0
   if (min > 0 && min < max * (1 - TOL)) pontos.push(min)
+  const dezGramas = instrumento.classe === 'I' && instrumento.unidade ? converterMassa(10, 'g', instrumento.unidade) : 0
+  const passoClasseI = dezGramas > 0 && 0.25 * max >= dezGramas * (1 - TOL) ? dezGramas : 0
   for (const fracao of [0.25, 0.5, 0.75]) {
     const v = redondo(fracao * max)
-    pontos.push(multiplo(v, faixaDoValor(v, instrumento).e))
+    const e = faixaDoValor(v, instrumento).e
+    pontos.push(multiplo(v, passoClasseI >= e ? passoClasseI : e))
   }
   if (instrumento.classe) {
     const [l1, l2] = LIMIARES_EMA[instrumento.classe]
@@ -75,23 +81,41 @@ export function sugerirPontos(
 
 /**
  * Carga mínima do ensaio de excentricidade (DOQ-CGCRE-097 10.4.1; POP 7.10, Tabela 5), pelo maior Max (na
- * unidade da balança): Max/3 até 500 kg, Max/5 acima de 500 kg até 3 000 kg e Max/10 acima de 3 000 kg.
- * `fracao`: "Max/3", "Max/5" ou "Max/10" ('' sem Max).
+ * unidade da balança): 1/3 de Max até 500 kg, 1/5 de Max acima de 500 kg até 3 000 kg e 1/10 de Max acima de
+ * 3 000 kg. `fracao`, como o POP escreve: "1/3 de Max", "1/5 de Max" ou "1/10 de Max" ('' sem Max).
  */
 export function minimoExcentricidade(max: number, unidade: Unidade): { minimo: number; fracao: string } {
   if (!(max > 0)) return { minimo: 0, fracao: '' }
   const maxKg = converterMassa(max, unidade, 'kg')
   const divisor = maxKg <= 500 * (1 + TOL) ? 3 : maxKg <= 3000 * (1 + TOL) ? 5 : 10
-  return { minimo: max / divisor, fracao: `Max/${divisor}` }
+  return { minimo: max / divisor, fracao: `1/${divisor} de Max` }
+}
+
+/**
+ * Valores nominais da série 1-2-5 dos pesos (OIML R 111: 1, 2 e 5 × 10ⁿ) de `de` a `ate`, inclusive, em ordem
+ * crescente. Vale em qualquer unidade de massa do sistema (mg, g, kg e t são potências de 10 entre si).
+ */
+function serie125(de: number, ate: number): number[] {
+  if (!(de > 0) || !(ate >= de)) return []
+  const valores: number[] = []
+  for (let ordem = Math.floor(Math.log10(de)) - 1; ordem <= Math.floor(Math.log10(ate)) + 1; ordem++)
+    for (const m of [1, 2, 5]) {
+      const v = Number((m * 10 ** ordem).toPrecision(12))
+      if (v >= de * (1 - TOL) && v <= ate * (1 + TOL)) valores.push(v)
+    }
+  return valores
 }
 
 /**
  * Carga do ensaio de excentricidade: o mínimo da Tabela 5 do POP (`minimoExcentricidade`) num valor redondo
- * igual ou acima dele (nunca abaixo). Na unidade da balança.
+ * igual ou acima dele (nunca abaixo). Na classe I, uma peça só (POP 7.11): o menor nominal da série 1-2-5 igual
+ * ou acima de 1/3 de Max (100 g numa balança de 220 g). Na unidade da balança.
  */
-export function cargaExcentricidade(max: number, unidade: Unidade): number {
+export function cargaExcentricidade(max: number, unidade: Unidade, classe?: ClasseExatidao | null): number {
   const { minimo } = minimoExcentricidade(max, unidade)
-  return minimo > 0 ? Math.min(max, meioRedondoAcima(minimo)) : 0
+  if (!(minimo > 0)) return 0
+  const peca = classe === 'I' ? serie125(minimo, max)[0] : undefined
+  return peca ?? Math.min(max, meioRedondoAcima(minimo))
 }
 
 /**
@@ -151,7 +175,7 @@ export function pesosMinimosSubstituicao(maxKg: number): number {
 }
 
 /** A regra da carga mínima da excentricidade, para as dicas da tela e da folha. */
-export const REGRA_CARGA_EXCENTRICIDADE = 'no mínimo Max/3 até 500 kg, Max/5 até 3 t e Max/10 acima'
+export const REGRA_CARGA_EXCENTRICIDADE = 'no mínimo 1/3 de Max até 500 kg, 1/5 de Max até 3 t e 1/10 de Max acima'
 
 /**
  * Rótulos das posições do ensaio de excentricidade por tipo de receptor (cg-18 Fig. 5.3-1; R76 A.4.7).
@@ -189,15 +213,40 @@ export function repetibilidadeSugerida(max: number, unidade: Unidade = 'kg'): { 
 }
 
 /**
- * Ensaios de repetibilidade sugeridos (POP 7.9). Faixa única: um, a ~0,5·Max (`repetibilidadeSugerida`).
+ * Ensaios de repetibilidade sugeridos (POP 7.9). Na classe I, sempre 10 leituras com uma peça só (POP, Tabela 4).
+ * Faixa única: um, a ~0,5·Max (`repetibilidadeSugerida`); na classe I, o menor nominal da série 1-2-5 entre
+ * metade de Max e Max (200 g numa balança de 220 g).
  * Multi-intervalo e múltiplas faixas: um por intervalo (ou faixa) de d diferente; nos de baixo, uma carga
- * redonda logo abaixo do Max dele (~0,8·Max, dentro do intervalo); no de cima, ~0,5·Max, sem coincidir com o
- * Max do intervalo de baixo (senão, um valor redondo entre os dois: 15/30 kg → 12 kg e 25 kg). Na unidade da
- * balança, do menor para o maior.
+ * redonda logo abaixo do Max dele (~0,8·Max, dentro do intervalo; na classe I, a maior peça que cabe nele); no de
+ * cima, ~0,5·Max, sem coincidir com o Max do intervalo de baixo (senão, um valor redondo entre os dois: 15/30 kg →
+ * 12 kg e 25 kg). Na unidade da balança, do menor para o maior.
  */
 export function repetibilidadesSugeridas(
-  instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'>,
+  instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'> & { classe?: ClasseExatidao },
   unidade: Unidade = 'kg',
+): Array<{ carga: number; leituras: number }> {
+  const sugeridas = repetibilidadesPorFaixa(instrumento, unidade)
+  if (instrumento.classe !== 'I') return sugeridas
+  const faixas = faixasOrdenadas(instrumento.faixas)
+  const varias = instrumento.tipoFaixas !== 'UNICA' && faixas.length > 1
+  return sugeridas.map((r, i) => {
+    // Uma peça só (POP 7.11). No intervalo de cima (ou na faixa única): a menor entre metade de Max e Max, acima do
+    // Max do de baixo. Nos de baixo: a maior que cabe nele (no multi-intervalo, acima do Max do anterior). Sem peça
+    // da série no intervalo, a carga de sempre.
+    const f = varias ? faixas[i] : faixas.at(-1)
+    if (!f) return { ...r, leituras: 10 }
+    const acimaDe = (max: number) => max * (1 + 1e-6)
+    const peca =
+      !varias || i === faixas.length - 1
+        ? serie125(Math.max(f.max / 2, varias ? acimaDe(faixas[i - 1].max) : 0), f.max)[0]
+        : serie125(instrumento.tipoFaixas === 'MULTI_INTERVALO' && i > 0 ? acimaDe(faixas[i - 1].max) : f.max / 10, f.max).at(-1)
+    return { carga: peca ?? r.carga, leituras: 10 }
+  })
+}
+
+function repetibilidadesPorFaixa(
+  instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'>,
+  unidade: Unidade,
 ): Array<{ carga: number; leituras: number }> {
   const faixas = faixasOrdenadas(instrumento.faixas)
   const max = faixas.at(-1)?.max ?? 0

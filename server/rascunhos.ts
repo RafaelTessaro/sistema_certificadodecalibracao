@@ -3,7 +3,16 @@
 // criar a calibração (POST /api/calibracoes) e na folha de campo de uma balança sem rascunho, que assim
 // sai com o mesmo plano que o rascunho teria.
 
-import { calibracaoEmOutraUnidade, calibracaoVazia, enderecoCliente, hojeLocalIso, somarMeses } from '#shared/dominio.ts'
+import {
+  calibracaoEmOutraUnidade,
+  calibracaoVazia,
+  enderecoCliente,
+  hojeLocalIso,
+  normalizarOpcoes,
+  opcoesDaClasse,
+  padroesSemHistorico,
+  somarMeses,
+} from '#shared/dominio.ts'
 import type { Calibracao, CalibracaoInput } from '#shared/tipos.ts'
 import type { Contexto } from './contexto.ts'
 
@@ -63,14 +72,17 @@ export function naUnidadeAtual(ctx: Contexto, k: Calibracao): CalibracaoInput {
 
 /**
  * Rascunho novo: `pedido` traz o que a tela informou (cliente, balança, OS, data…). Sem histórico da
- * balança, os ensaios ficam vazios (a tela e a folha de campo sugerem os pontos).
+ * balança, os ensaios ficam vazios (a tela e a folha de campo sugerem os pontos), com os métodos da classe, e os
+ * padrões são os de `padroesSemHistorico`. Na classe I, as opções do cálculo saem as da classe (empuxo pela
+ * densidade do ar medida e convecção; `opcoesDaClasse`).
  */
 export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, tecnicoId: string): CalibracaoInput {
   const { repo } = ctx
   const config = repo.obterConfig()
-  const base = calibracaoVazia(config.opcoesPadrao)
   const balancaId = typeof pedido.balancaId === 'string' ? pedido.balancaId : ''
   const balanca = balancaId ? repo.obterBalanca(balancaId) : undefined
+  // Sem histórico, os métodos da classe (na classe I: excentricidade pelo método 3 e cargas com descarga)
+  const base = calibracaoVazia(config.opcoesPadrao, balanca?.classe)
   const clienteId = typeof pedido.clienteId === 'string' && pedido.clienteId ? pedido.clienteId : (balanca?.clienteId ?? '')
   const cliente = clienteId ? repo.obterCliente(clienteId) : undefined
   const anterior = balanca ? repo.listarCalibracoes({ balancaId: balanca.id, status: 'EMITIDO', limite: 1 }).itens[0] : undefined
@@ -81,7 +93,7 @@ export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, 
   const data = typeof pedido.dataCalibracao === 'string' && pedido.dataCalibracao ? pedido.dataCalibracao : hoje
   const padroesIds = ultima
     ? ultima.padroesIds.filter((id) => ativos.some((p) => p.id === id))
-    : ativos.filter((p) => p.tipo !== 'OUTRO').map((p) => p.id)
+    : padroesSemHistorico(ativos, balanca?.classe).map((p) => p.id)
   return {
     ...base,
     ...(ultima ? { ...semLeituras(ultima), opcoes: ultima.opcoes, conformidade: ultima.conformidade } : {}),
@@ -97,6 +109,11 @@ export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, 
           : '',
     tecnicoId,
     padroesIds,
+    // As opções pedidas (quando vêm), as da última calibração ou as padrão; na classe I, com as da classe
+    opcoes: opcoesDaClasse(
+      pedido.opcoes ? normalizarOpcoes(pedido.opcoes, base.opcoes) : (ultima?.opcoes ?? base.opcoes),
+      balanca?.classe,
+    ),
     // O lembrete conta da data da calibração (que pode ser a de uma visita marcada)
     proximaCalibracao: config.mesesProximaPadrao ? somarMeses(data, config.mesesProximaPadrao) : '',
     proximaNoCertificado: ultima?.proximaNoCertificado ?? false,

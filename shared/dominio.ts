@@ -4,6 +4,7 @@
 import { normalizarArquivoAnexo } from './arquivos.ts'
 import { cnpjValido, cpfValido, mascaraCep, mascaraCnpj, mascaraCpf, normalizarCnpj, somenteDigitos } from './documentos.ts'
 import { novoId } from './id.ts'
+import { DENSIDADE_PESOS_KG_M3, densidadePesosPlausivel } from './metrologia/ar.ts'
 import type {
   AjusteRealizado,
   ArquivoAnexo,
@@ -369,6 +370,39 @@ export const OPCOES_CALCULO_PADRAO: OpcoesCalculo = {
   zeroAprovado: false,
   histerese: 'SEPARADO',
   divisaoTeste: 0,
+  conveccao: 'NAO_CONSIDERAR',
+}
+
+/**
+ * Opções do cálculo para a classe da balança. Na classe I: empuxo pela densidade do ar medida (mantém 'AJUSTADO',
+ * escolha deliberada de quem ajusta logo antes) e convecção calculada (R 76-1 A.4.1.1; cg-18 7.1.2.4). Nas demais
+ * classes, as opções como vieram.
+ */
+export function opcoesDaClasse(o: OpcoesCalculo, classe: ClasseExatidao | null | undefined): OpcoesCalculo {
+  if (classe !== 'I') return o
+  return { ...o, empuxo: o.empuxo === 'AJUSTADO' || o.empuxo === 'MEDIDO' ? o.empuxo : 'MEDIDO', conveccao: 'CALCULAR' }
+}
+
+/**
+ * A calibração segue o cálculo de antes da classe I? Sim no certificado emitido antes desta versão (gravado sem
+ * `opcoes.conveccao`) e na revisão dele (`calculoLegado`, marcado pelo servidor). Ela mantém o cálculo e as
+ * exigências da época: o "como encontrado" com as opções do ensaio final e sem as pendências novas da classe I
+ * (empuxo, convecção, classe e uso dos jogos, termômetro do ΔT). Assim a revisão que só corrige o endereço sai com os
+ * mesmos números e não pede um ΔT pesos − ar que nunca foi medido. Rascunho gravado antes desta versão não é legado:
+ * ainda não foi emitido.
+ */
+export function calculoLegado(k: {
+  opcoes: Pick<OpcoesCalculo, 'conveccao'>
+  calculoLegado?: boolean
+  emissao?: unknown
+}): boolean {
+  return k.calculoLegado === true || (!!k.emissao && k.opcoes.conveccao === undefined)
+}
+
+/** As opções da classe I diferem destas (o botão "Aplicar" da Conclusão)? Compara só empuxo e convecção. */
+export function faltamOpcoesDaClasse(o: OpcoesCalculo, classe: ClasseExatidao | null | undefined): boolean {
+  const certo = opcoesDaClasse(o, classe)
+  return certo.empuxo !== o.empuxo || (certo.conveccao ?? 'NAO_CONSIDERAR') !== (o.conveccao ?? 'NAO_CONSIDERAR')
 }
 
 export const CONFIG_PADRAO: Configuracoes = {
@@ -833,15 +867,21 @@ export function avisosBalanca(
       `Max de ${numeroBr(maxKg)} kg numa balança ${TIPOS_BALANCA[b.tipo].toLowerCase()}? Se a plaqueta diz ${plaqueta} kg, digite ${plaqueta} com o Max em kg.`,
     )
   }
+  const emMg = (v: number) => converterMassa(v, b.unidade, 'mg')
   b.faixas.forEach((f, i) => {
     const nome = b.faixas.length > 1 ? ` (faixa ${i + 1})` : ''
-    if (f.e && f.d && (f.d > f.e + 1e-12 || f.e > 10 * f.d + 1e-12)) avisos.push(`O normal é d ≤ e ≤ 10·d${nome}.`)
+    // Classe I com d < 1 mg: e = 1 mg mesmo com d = 0,1 mg ou 0,01 mg (R 76-1 3.4.2, Tabela 5b)
+    const classeIFina = b.classe === 'I' && emMg(f.d) < 1 - 1e-9 && Math.abs(emMg(f.e) - 1) < 1e-9
+    if (f.e && f.d && (f.d > f.e + 1e-12 || (!classeIFina && f.e > 10 * f.d + 1e-12)))
+      avisos.push(`O normal é d ≤ e ≤ 10·d${nome}.`)
     if (f.e && !valor125(f.e)) avisos.push(`A divisão de verificação e costuma ser 1, 2 ou 5 × 10ⁿ${nome}.`)
     if (f.d && !valor125(f.d)) avisos.push(`A divisão d costuma ser 1, 2 ou 5 × 10ⁿ${nome}.`)
     const n = f.e > 0 ? f.max / f.e : 0
     const lim = LIMITES_N[b.classe]
+    // Classe I com d < 0,1 mg: n pode ser menor que 50 000 (R 76-1 3.4.4); não avisa pelo limite de baixo
+    const semMinimo = b.classe === 'I' && emMg(f.d) < 0.1 - 1e-12
     // O n absurdo é erro (ver `errosUnidadeBalanca`), não aviso
-    if (lim && n && !nAbsurdo(b.classe, n) && (n < lim[0] - 1e-9 || n > lim[1] + 1e-9))
+    if (lim && n && !nAbsurdo(b.classe, n) && ((!semMinimo && n < lim[0] - 1e-9) || n > lim[1] + 1e-9))
       avisos.push(`n = Max/e = ${numeroBr(n, 0)} está fora do intervalo da classe ${b.classe}${nome}.`)
   })
   for (let i = 1; i < b.faixas.length; i++)
@@ -995,6 +1035,7 @@ export const PADRAO_VAZIO: PadraoInput = {
   classe: 'M1',
   material: 'Aço inoxidável',
   densidade: 0,
+  incertezaDensidade: 0,
   uso: 'CERTIFICADO',
   pesos: [],
   certificado: '',
@@ -1008,7 +1049,17 @@ export const PADRAO_VAZIO: PadraoInput = {
   certificadoArquivo: null,
 }
 
-export function normalizarPadrao(entrada: unknown): Resultado<PadraoInput> {
+// Faixa física da densidade dos pesos (a mesma que o motor confere no empuxo pela densidade do ar medida)
+export { DENSIDADE_PESOS_KG_M3, densidadePesosPlausivel }
+export const textoDensidadeImplausivel = (rho: number) =>
+  `Densidade de ${numeroBr(rho)} kg/m³ fora da faixa dos pesos (2 000 a 22 000 kg/m³): confira a unidade (7,95 g/cm³ = 7 950 kg/m³).`
+
+/**
+ * `densidadeGravada`: a densidade que o cadastro já tem. Gravada antes da conferência da unidade (7,85 em vez de
+ * 7 850), ela não impede gravar o resto (nem desativar o padrão): só a densidade nova é conferida. O uso dela no
+ * empuxo pela densidade do ar medida fica bloqueado pela pendência do cálculo.
+ */
+export function normalizarPadrao(entrada: unknown, opcoes: { densidadeGravada?: number } = {}): Resultado<PadraoInput> {
   const r = obj(entrada)
   const erros: string[] = []
   const tipo = umDe(r.tipo, Object.keys(TIPOS_PADRAO) as TipoPadrao[], 'PESOS')
@@ -1034,6 +1085,9 @@ export function normalizarPadrao(entrada: unknown): Resultado<PadraoInput> {
     if (!pesos.length) erros.push('Cadastre as peças do jogo de pesos (valor nominal de cada uma).')
     if (pesos.some((p) => !(p.nominal > 0))) erros.push('Toda peça precisa do valor nominal.')
   }
+  const densidade = positivo(r.densidade)
+  if (tipo === 'PESOS' && densidade > 0 && !densidadePesosPlausivel(densidade) && densidade !== opcoes.densidadeGravada)
+    erros.push(textoDensidadeImplausivel(densidade))
   const uso: UsoPesos = umDe(r.uso, ['CERTIFICADO', 'NOMINAL'] as const, 'CERTIFICADO')
   const validade = data(r.validade)
   if (r.validade && !validade) erros.push('Data da próxima calibração do padrão inválida.')
@@ -1050,7 +1104,8 @@ export function normalizarPadrao(entrada: unknown): Resultado<PadraoInput> {
       numeroSerie: texto(r.numeroSerie, 80),
       classe: tipo === 'PESOS' ? umDe(r.classe, ['', ...CLASSES_PESO] as const, '') : '',
       material: texto(r.material, 60),
-      densidade: positivo(r.densidade),
+      densidade,
+      incertezaDensidade: tipo === 'PESOS' ? positivo(r.incertezaDensidade) : 0,
       uso,
       pesos: pesos.sort((a, b) => b.nominal - a.nominal),
       certificado: texto(r.certificado, 80),
@@ -1147,6 +1202,8 @@ export const AMBIENTE_VAZIO: CondicoesAmbientais = {
   umidadeInicial: null,
   umidadeFinal: null,
   pressao: null,
+  deltaTPesos: null,
+  aclimatacao: null,
 }
 
 export const EXCENTRICIDADE_VAZIA: EnsaioExcentricidade = {
@@ -1156,6 +1213,21 @@ export const EXCENTRICIDADE_VAZIA: EnsaioExcentricidade = {
   metodo: 1,
   posicoes: [],
 }
+
+/**
+ * Método da excentricidade de uma balança sem calibração anterior: o 1 ("zera e desloca"); na classe I, o 3 ("zera
+ * antes de cada posição", POP 7.10).
+ */
+export const metodoExcentricidadePadrao = (classe: ClasseExatidao | null | undefined): MetodoExcentricidade =>
+  classe === 'I' ? 3 : 1
+
+/**
+ * Como as cargas do erro de indicação são aplicadas numa balança sem calibração anterior: "crescente e
+ * decrescente" (POP 7.7); na classe I, "crescente com descarga", porque cada carga é montada com o menor número de
+ * peças (de 50 g + 5 g passa a 100 g + 10 g) e só se aplica a partir do zero.
+ */
+export const metodoIndicacaoPadrao = (classe: ClasseExatidao | null | undefined): MetodoCarregamento =>
+  classe === 'I' ? 'DESCONTINUO' : 'CRESCENTE_DECRESCENTE'
 
 export const INDICACAO_VAZIA: EnsaioIndicacao = {
   metodo: 'CRESCENTE_DECRESCENTE',
@@ -1171,7 +1243,11 @@ export const CONFORMIDADE_PADRAO: Conformidade = {
   regra: 'BANDA_GUARDA',
 }
 
-export function calibracaoVazia(opcoes: OpcoesCalculo = OPCOES_CALCULO_PADRAO): CalibracaoInput {
+/**
+ * Calibração vazia. Com a `classe` da balança, os métodos dos ensaios são os dela (na classe I, excentricidade pelo
+ * método 3 e cargas com descarga; ver `metodoExcentricidadePadrao` e `metodoIndicacaoPadrao`).
+ */
+export function calibracaoVazia(opcoes: OpcoesCalculo = OPCOES_CALCULO_PADRAO, classe?: ClasseExatidao | null): CalibracaoInput {
   return {
     clienteId: '',
     balancaId: '',
@@ -1196,8 +1272,8 @@ export function calibracaoVazia(opcoes: OpcoesCalculo = OPCOES_CALCULO_PADRAO): 
     ajuste: { realizado: 'NAO', descricao: '' },
     comoEncontrado: null,
     repetibilidade: [],
-    excentricidade: { ...EXCENTRICIDADE_VAZIA },
-    indicacao: structuredClone(INDICACAO_VAZIA),
+    excentricidade: { ...EXCENTRICIDADE_VAZIA, metodo: metodoExcentricidadePadrao(classe) },
+    indicacao: { ...structuredClone(INDICACAO_VAZIA), metodo: metodoIndicacaoPadrao(classe) },
     opcoes: { ...opcoes },
     conformidade: { ...CONFORMIDADE_PADRAO },
     proximaCalibracao: '',
@@ -1281,7 +1357,7 @@ function normalizarExcentricidade(v: unknown): EnsaioExcentricidade {
 export function normalizarOpcoes(v: unknown, base: OpcoesCalculo = OPCOES_CALCULO_PADRAO): OpcoesCalculo {
   const r = obj(v)
   return {
-    empuxo: umDe(r.empuxo, ['AJUSTADO', 'NAO_AJUSTADO', 'DELTA_T', 'NENHUM'] as const, base.empuxo),
+    empuxo: umDe(r.empuxo, ['AJUSTADO', 'NAO_AJUSTADO', 'DELTA_T', 'MEDIDO', 'NENHUM'] as const, base.empuxo),
     deltaTLocal: Math.min(positivo(r.deltaTLocal ?? base.deltaTLocal), 60),
     deriva: umDe(r.deriva, ['EMA', 'KD'] as const, base.deriva),
     kD: Math.min(Math.max(numero(r.kD ?? base.kD) || 1, 0.1), 3),
@@ -1290,12 +1366,24 @@ export function normalizarOpcoes(v: unknown, base: OpcoesCalculo = OPCOES_CALCUL
     zeroAprovado: booleano(r.zeroAprovado, base.zeroAprovado),
     histerese: umDe(r.histerese, ['SEPARADO', 'MEDIA'] as const, base.histerese),
     divisaoTeste: positivo(r.divisaoTeste ?? base.divisaoTeste),
+    conveccao: umDe(r.conveccao, ['NAO_CONSIDERAR', 'CALCULAR'] as const, base.conveccao ?? 'NAO_CONSIDERAR'),
   }
 }
 
 const numOuNuloAmb = (v: unknown, min: number, max: number) => {
   const n = numeroOuNulo(v)
   return n === null || n < min || n > max ? null : n
+}
+
+/**
+ * Aclimatação dos pesos (sem a medição do ΔT pesos − ar): diferença na chegada em [−40, 40] °C (pesos que chegam
+ * mais frios dão ΔT0 negativo; o cálculo usa |ΔT0|) e minutos no local em [0, 2 880]; senão null.
+ */
+function normalizarAclimatacao(v: unknown): { deltaT0: number; minutos: number } | null {
+  const r = obj(v)
+  const deltaT0 = numOuNuloAmb(r.deltaT0, -40, 40)
+  const minutos = numOuNuloAmb(r.minutos, 0, 2880)
+  return deltaT0 === null || minutos === null ? null : { deltaT0, minutos }
 }
 
 /**
@@ -1374,6 +1462,8 @@ export function normalizarCalibracao(entrada: unknown): Resultado<CalibracaoInpu
         umidadeInicial: numOuNuloAmb(amb.umidadeInicial, 0, 100),
         umidadeFinal: numOuNuloAmb(amb.umidadeFinal, 0, 100),
         pressao: numOuNuloAmb(amb.pressao, 300, 1200),
+        deltaTPesos: numOuNuloAmb(amb.deltaTPesos, -30, 30),
+        aclimatacao: normalizarAclimatacao(amb.aclimatacao),
       },
       preliminar: {
         identificavel: umDe(pre.identificavel, VERIFICACOES, 'SIM'),
@@ -1419,30 +1509,71 @@ export function normalizarCalibracao(entrada: unknown): Resultado<CalibracaoInpu
 /** Classe fina (I ou II): aquecimento mais longo, ΔT menor e pressão atmosférica medida com barômetro. */
 const classeFina = (classe: ClasseExatidao | null | undefined) => classe === 'I' || classe === 'II'
 
-/** Variação máxima da temperatura durante os ensaios (°C): 3 na classe II; 5 nas demais (e sem classe). */
-export const deltaTMaximo = (classe: ClasseExatidao | null | undefined): number => (classeFina(classe) ? 3 : 5)
+/**
+ * Variação máxima da temperatura durante os ensaios (°C): 1 na classe I, 3 na classe II e 5 nas demais (e sem
+ * classe) (R 76-1 A.4.1.2, com a faixa mínima de temperatura da classe; POP Tabela 2).
+ */
+export const deltaTMaximo = (classe: ClasseExatidao | null | undefined): number =>
+  classe === 'I' ? 1 : classeFina(classe) ? 3 : 5
 
-/** A pressão atmosférica é obrigatória (com barômetro calibrado) na classe II; nas demais, opcional. */
+/** A pressão atmosférica é obrigatória (com barômetro calibrado) nas classes I e II; nas demais, opcional. */
 export const pressaoObrigatoria = (classe: ClasseExatidao | null | undefined): boolean => classeFina(classe)
+
+/** Classes de pesos aceitas na balança classe I (OIML R 111-1, 1.3.1). */
+export const CLASSES_PESO_CLASSE_I: readonly ClassePeso[] = ['E1', 'E2', 'F1']
+
+/**
+ * Padrões de um rascunho sem calibração anterior da balança (e da folha de campo sem rascunho): os ativos, menos os
+ * do tipo "Outro". Na classe I, só os jogos E1, E2 e F1, e os "Outro" entram: o termômetro de duas entradas do
+ * ΔT pesos − ar é cadastrado assim (POP 6.2).
+ */
+export function padroesSemHistorico<P extends Pick<Padrao, 'ativo' | 'tipo' | 'classe'>>(
+  padroes: P[],
+  classe: ClasseExatidao | null | undefined,
+): P[] {
+  return padroes.filter(
+    (p) =>
+      p.ativo &&
+      (classe === 'I' ? p.tipo !== 'PESOS' || CLASSES_PESO_CLASSE_I.includes(p.classe as ClassePeso) : p.tipo !== 'OUTRO'),
+  )
+}
+
+/**
+ * ΔT pesos − ar máximo para começar os ensaios na classe I (°C; POP 7.4): 1 °C com algum jogo E1/E2 (ou sem
+ * classe) e 3 °C quando todos os jogos são F1 (decisão da empresa: a 3 °C a convecção de nenhuma peça F1 passa
+ * de 1/3 do EMA dela, cg-18 Tabelas F2.1 e F2.2).
+ */
+export function deltaTPesosMaximo(classesDosJogos: Array<ClassePeso | ''>): number {
+  return classesDosJogos.length > 0 && classesDosJogos.every((c) => c === 'F1') ? 3 : 1
+}
 
 /**
  * Os itens da "Verificação antes de calibrar", os mesmos na tela e na folha de campo. O aquecimento é o maior
- * entre o da Tabela 2 do POP (20 min; 1 h na classe II) e o do fabricante. `classe` null: balança ainda não
- * conhecida (folha em branco), com os dois tempos.
+ * entre o da Tabela 2 do POP (20 min; 1 h na classe II; 2 h na classe I) e o do fabricante; a pré-carga, pelo
+ * menos uma vez (três na classe I, POP 7.6). `classe` null: balança ainda não conhecida (folha em branco), com os
+ * tempos e as vezes de cada classe.
  */
 export function verificacoesAntesDeCalibrar(
   classe: ClasseExatidao | null,
 ): Array<{ chave: Exclude<keyof CalibracaoInput['preliminar'], 'zeroAutomatico'>; texto: string }> {
   const aquecida =
     classe === null
-      ? 'Ligada e aquecida: 20 min, classe II 1 h (ou o tempo do fabricante, se maior)'
-      : `Ligada e aquecida por ${classeFina(classe) ? '1 h' : '20 min'} ou mais (ou o tempo do fabricante, se maior)`
+      ? 'Ligada e aquecida: 20 min, classe II 1 h, classe I 2 h (ou o tempo do fabricante, se maior)'
+      : `Ligada e aquecida por ${classe === 'I' ? '2 h' : classeFina(classe) ? '1 h' : '20 min'} ou mais (ou o tempo do fabricante, se maior)`
   return [
     { chave: 'identificavel', texto: 'Balança identificada (série, modelo, plaqueta legível)' },
     { chave: 'limpa', texto: 'Limpa, sem danos ou contaminação no prato/plataforma' },
     { chave: 'nivelada', texto: 'Nivelada (bolha centralizada, quando houver)' },
     { chave: 'aquecida', texto: aquecida },
-    { chave: 'preCarga', texto: 'Pré-carga aplicada (carga perto de Max pelo menos uma vez)' },
+    {
+      chave: 'preCarga',
+      texto:
+        classe === null
+          ? 'Pré-carga aplicada (carga perto de Max pelo menos uma vez; classe I: 3 vezes)'
+          : classe === 'I'
+            ? 'Pré-carga aplicada 3 vezes (carga perto de Max)'
+            : 'Pré-carga aplicada (carga perto de Max pelo menos uma vez)',
+    },
   ]
 }
 
@@ -1482,7 +1613,30 @@ export function pendenciasEmissao(
       `${barometros.length > 1 ? 'Barômetros escolhidos' : 'Barômetro escolhido'} sem a pressão registrada (tire ${barometros.join(', ')} dos padrões ou registre a pressão).`,
     )
   if (pressaoObrigatoria(contexto.classe) && amb.pressao === null && !barometros.length)
-    p.push('Balança classe II: registre a pressão atmosférica, medida com o barômetro (escolha-o nos padrões).')
+    p.push(`Balança classe ${contexto.classe}: registre a pressão atmosférica, medida com o barômetro (escolha-o nos padrões).`)
+  const jogos = contexto.padroes.filter((x) => x.tipo === 'PESOS')
+  // Revisão de certificado emitido antes do cálculo da classe I: as exigências da época (ver `calculoLegado`)
+  if (contexto.classe === 'I' && !calculoLegado(c)) {
+    for (const pad of jogos) {
+      if (!CLASSES_PESO_CLASSE_I.includes(pad.classe as ClassePeso))
+        p.push(
+          `Balança classe I: o jogo ${pad.identificacao} ${pad.classe ? `é da classe ${pad.classe}` : 'está sem a classe'}; use pesos E1, E2 ou F1 (OIML R 111-1, 1.3.1).`,
+        )
+      if (pad.uso !== 'CERTIFICADO')
+        p.push(
+          `Balança classe I: use o jogo ${pad.identificacao} pelo valor do certificado (cadastro do padrão; POP 6.1; OIML R 111-1, 5.3.2).`,
+        )
+    }
+    // O ΔT medido sai no certificado: o termômetro de duas entradas (padrão "Outro", POP 6.2) entra na lista
+    if (typeof amb.deltaTPesos === 'number' && !contexto.padroes.some((x) => x.tipo === 'OUTRO'))
+      p.push('Balança classe I com o ΔT pesos − ar medido: escolha nos padrões o termômetro de duas entradas.')
+    if (c.opcoes.empuxo === 'NENHUM')
+      p.push('Balança classe I: o empuxo do ar precisa entrar no cálculo (Opções do cálculo, na Conclusão).')
+    if ((c.opcoes.conveccao ?? 'NAO_CONSIDERAR') !== 'CALCULAR')
+      p.push('Balança classe I: a convecção precisa entrar no cálculo (Opções do cálculo, na Conclusão).')
+  }
+  // A densidade e u(ρ) dos jogos (empuxo pela densidade do ar medida) quem confere é o cálculo, peça a peça, em
+  // todo ensaio que a usa: no final e no "como encontrado" da classe I ajustada logo antes (`opcoesComoEncontrado`)
   if (c.local === 'CLIENTE' && !c.localEndereco.trim()) p.push('Informe o endereço onde a calibração foi feita.')
   if (c.ajuste.realizado === 'EXTERNO' && !c.ajuste.descricao.trim()) p.push('Descreva o ajuste externo (peso usado).')
   if (c.reparo.houve && !c.ordemServico.trim()) p.push('Houve reparo: informe o número da ordem de serviço.')

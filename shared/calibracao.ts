@@ -2,10 +2,20 @@
 // converte os pesos padrão para a unidade da balança e monta a entrada do cálculo.
 // Usado no navegador (cálculo ao vivo) e no servidor (emissão e PDF).
 
-import { massaLegivel } from './dominio.ts'
+import { calculoLegado, massaLegivel } from './dominio.ts'
 import { calcular, emaPeso } from './metrologia/index.ts'
-import type { EntradaCalculo, PecaCalculo, ResultadoCalculo } from './metrologia/tipos.ts'
-import type { Balanca, CalibracaoInput, EnsaioIndicacao, Padrao, PecaCarga, PesoPadrao, Unidade } from './tipos.ts'
+import type { ArCalculo, EntradaCalculo, PecaCalculo, ResultadoCalculo, TermicaCalculo } from './metrologia/tipos.ts'
+import type {
+  Balanca,
+  CalibracaoInput,
+  CondicoesAmbientais,
+  EnsaioIndicacao,
+  OpcoesCalculo,
+  Padrao,
+  PecaCarga,
+  PesoPadrao,
+  Unidade,
+} from './tipos.ts'
 
 /** Gramas em uma unidade. */
 export const GRAMAS: Record<Unidade, number> = { mg: 0.001, g: 1, kg: 1000, t: 1_000_000 }
@@ -25,6 +35,11 @@ export function pecaParaCalculo(padrao: Padrao, peso: PesoPadrao, unidade: Unida
     ema: deGramas(emaMg / 1000, unidade),
     usarCertificado,
     quantidade,
+    classe: padrao.classe,
+    // Registro antigo pode não ter os campos (JSON gravado antes desta versão)
+    densidade: (padrao.densidade ?? 0) > 0 ? padrao.densidade : 0,
+    uDensidade: (padrao.incertezaDensidade ?? 0) > 0 ? padrao.incertezaDensidade! : 0,
+    jogo: padrao.identificacao,
   }
 }
 
@@ -148,16 +163,62 @@ function indicacaoParaCalculo(ensaio: EnsaioIndicacao, padroes: Padrao[], unidad
   }
 }
 
-/** Entrada do motor de cálculo a partir da calibração gravada. */
+const lido = (v: number | null | undefined): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+/** Média do início e do fim; só uma lida → ela; nenhuma → null. */
+const mediaDe = (x: number | null | undefined, y: number | null | undefined): number | null => {
+  const a = lido(x)
+  const b = lido(y)
+  return a !== null && b !== null ? (a + b) / 2 : (a ?? b)
+}
+
+/** Ar do local para o motor: médias de t e UR (início e fim) e a pressão; null sem o registro do ambiente. */
+export function arDoAmbiente(a: CondicoesAmbientais | undefined | null, ajustadaAntes: boolean): ArCalculo | null {
+  if (!a) return null
+  return {
+    temperatura: mediaDe(a.temperaturaInicial, a.temperaturaFinal),
+    umidade: mediaDe(a.umidadeInicial, a.umidadeFinal),
+    pressao: lido(a.pressao),
+    ajustadaAntes,
+  }
+}
+
+/** ΔT pesos − ar para o motor (medido, ou a aclimatação); null quando nenhum dos dois foi registrado. */
+export function termicaDoAmbiente(a: CondicoesAmbientais | undefined | null): TermicaCalculo | null {
+  const deltaT = lido(a?.deltaTPesos)
+  const ac = a?.aclimatacao
+  const aclimatacao =
+    ac && lido(ac.deltaT0) !== null && lido(ac.minutos) !== null ? { deltaT0: ac.deltaT0, minutos: ac.minutos } : null
+  return deltaT === null && !aclimatacao ? null : { deltaT, aclimatacao }
+}
+
+/**
+ * Opções do cálculo do "como encontrado" na classe I: com o empuxo "ajustada logo antes" (5c), o ensaio antes do
+ * ajuste não foi feito logo após um ajuste. Como t, UR e p são medidos na classe I, ele vai pela densidade do ar
+ * medida (7.1.2-4/5a), com u(ρa) da situação A (A3-2, com a variação do local); sem t, UR ou p, o motor usa a 5d e
+ * dá a pendência. Nas demais classes, as opções como vieram (os certificados emitidos continuam calculando igual).
+ */
+export function opcoesComoEncontrado(opcoes: OpcoesCalculo, classe: Balanca['classe'] | undefined): OpcoesCalculo {
+  if (classe !== 'I' || opcoes.empuxo !== 'AJUSTADO') return opcoes
+  return { ...opcoes, empuxo: 'MEDIDO' }
+}
+
+/**
+ * Entrada do motor de cálculo a partir da calibração gravada. `momento`: o ensaio final (logo após o ajuste,
+ * quando houve) ou o "como encontrado" (sempre sem ajuste logo antes).
+ */
 export function entradaDoCalculo(
-  k: Pick<CalibracaoInput, 'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade'>,
+  k: Pick<CalibracaoInput, 'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade'> &
+    Partial<Pick<CalibracaoInput, 'ambiente' | 'ajuste' | 'calculoLegado'>> & { emissao?: unknown },
   balanca: Pick<Balanca, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>,
   padroes: Padrao[],
   ensaio: EnsaioIndicacao = k.indicacao,
+  momento: 'FINAL' | 'COMO_ENCONTRADO' = 'FINAL',
 ): EntradaCalculo {
+  const ajustadaAntes = momento === 'FINAL' && (k.ajuste?.realizado ?? 'NAO') !== 'NAO'
   return {
     instrumento: { unidade: balanca.unidade, classe: balanca.classe, tipoFaixas: balanca.tipoFaixas, faixas: balanca.faixas },
-    opcoes: k.opcoes,
+    // O certificado emitido antes do cálculo da classe I (e a revisão dele) calcula como na época
+    opcoes: momento === 'COMO_ENCONTRADO' && !calculoLegado(k) ? opcoesComoEncontrado(k.opcoes, balanca.classe) : k.opcoes,
     repetibilidade: k.repetibilidade.map((r) => ({ id: r.id, carga: r.carga, leituras: r.leituras })),
     excentricidade: {
       aplicavel: k.excentricidade.aplicavel,
@@ -167,6 +228,8 @@ export function entradaDoCalculo(
     },
     indicacao: indicacaoParaCalculo(ensaio, padroes, balanca.unidade),
     conformidade: k.conformidade,
+    ar: arDoAmbiente(k.ambiente, ajustadaAntes),
+    termica: termicaDoAmbiente(k.ambiente),
   }
 }
 
@@ -175,12 +238,13 @@ export function calcularCalibracao(
   k: Pick<
     CalibracaoInput,
     'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade' | 'comoEncontrado' | 'ajuste'
-  >,
+  > &
+    Partial<Pick<CalibracaoInput, 'ambiente' | 'calculoLegado'>> & { emissao?: unknown },
   balanca: Pick<Balanca, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>,
   padroes: Padrao[],
 ): { resultado: ResultadoCalculo; comoEncontrado: ResultadoCalculo | null } {
   const resultado = calcular(entradaDoCalculo(k, balanca, padroes))
   const temAntes = k.ajuste.realizado !== 'NAO' && !!k.comoEncontrado?.pontos.some((p) => p.crescente !== null)
-  const comoEncontrado = temAntes ? calcular(entradaDoCalculo(k, balanca, padroes, k.comoEncontrado!)) : null
+  const comoEncontrado = temAntes ? calcular(entradaDoCalculo(k, balanca, padroes, k.comoEncontrado!, 'COMO_ENCONTRADO')) : null
   return { resultado, comoEncontrado }
 }

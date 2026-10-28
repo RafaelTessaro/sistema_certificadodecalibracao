@@ -72,10 +72,31 @@ describe('sugerirPontos', () => {
     })
     expect(pontos).toEqual([0, 500, 2000, 3750, 4000, 7500, 11000, 15000])
   })
+
+  it('classe I: 25, 50 e 75 % de Max em múltiplos de 10 g, montáveis só com peças de 10 g ou mais (POP 6.1)', () => {
+    const classeI = (max: number, e: number, unidade?: 'g' | 'mg' | 'kg', min?: number) =>
+      sugerirPontos({ classe: 'I', tipoFaixas: 'UNICA', faixas: [{ max, e, d: e / 10 }], unidade, min })
+    // 220 g × 0,1 mg (e = 1 mg): 55 g e 165 g pediriam uma peça de 5 g → 60 g (50 + 10) e 170 g (100 + 50 + 20)
+    expect(classeI(220, 0.001, 'g', 0.01)).toEqual([0, 0.01, 50, 60, 110, 170, 200, 220])
+    expect(classeI(620, 0.001, 'g')).toEqual([0, 50, 160, 200, 310, 470, 620])
+    // A mesma balança em mg e em kg: as mesmas cargas
+    expect(classeI(220_000, 1, 'mg')).toEqual([0, 50_000, 60_000, 110_000, 170_000, 200_000, 220_000])
+    expect(classeI(0.22, 0.000001, 'kg')).toEqual([0, 0.05, 0.06, 0.11, 0.17, 0.2, 0.22])
+    // Toda carga sugerida (fora a Min, Max e as mudanças de EMA) é múltiplo de 10 g
+    for (const p of classeI(220, 0.001, 'g').filter((x) => x > 0 && x < 220 && x !== 50 && x !== 200))
+      expect(p % 10, `${p} g`).toBe(0)
+    // Max abaixo de 40 g (microbalança): os percentuais de sempre; sem a unidade, também
+    expect(classeI(6.1, 0.00001, 'g')).toEqual([0, 0.5, 1.5, 2, 3.05, 4.6, 6.1])
+    expect(classeI(220, 0.001)).toEqual([0, 50, 55, 110, 165, 200, 220])
+    // Nas outras classes, nada muda
+    expect(sugerirPontos({ classe: 'II', tipoFaixas: 'UNICA', faixas: [{ max: 220, e: 0.01, d: 0.001 }], unidade: 'g' })).toEqual(
+      [0, 50, 55, 110, 165, 200, 220],
+    )
+  })
 })
 
 describe('cargaExcentricidade (DOQ-CGCRE-097 10.4.1; POP 7.10)', () => {
-  it('Max/3 até 500 kg, Max/5 até 3000 kg, Max/10 acima, em valor redondo', () => {
+  it('1/3 de Max até 500 kg, 1/5 de Max até 3000 kg, 1/10 de Max acima, em valor redondo', () => {
     expect(cargaExcentricidade(30, 'kg')).toBe(10)
     expect(cargaExcentricidade(30000, 'g')).toBe(10000)
     expect(cargaExcentricidade(60, 't')).toBe(6)
@@ -85,9 +106,9 @@ describe('cargaExcentricidade (DOQ-CGCRE-097 10.4.1; POP 7.10)', () => {
   })
 
   it('mínimo da Tabela 5 do POP e a carga copiada abaixo dele (o arredondamento antigo, para o mais próximo)', () => {
-    expect(minimoExcentricidade(600, 'kg')).toEqual({ minimo: 120, fracao: 'Max/5' })
-    expect(minimoExcentricidade(80_000, 'kg')).toEqual({ minimo: 8000, fracao: 'Max/10' })
-    expect(minimoExcentricidade(500_000, 'g')).toEqual({ minimo: 500_000 / 3, fracao: 'Max/3' })
+    expect(minimoExcentricidade(600, 'kg')).toEqual({ minimo: 120, fracao: '1/5 de Max' })
+    expect(minimoExcentricidade(80_000, 'kg')).toEqual({ minimo: 8000, fracao: '1/10 de Max' })
+    expect(minimoExcentricidade(500_000, 'g')).toEqual({ minimo: 500_000 / 3, fracao: '1/3 de Max' })
     expect(minimoExcentricidade(0, 'kg')).toEqual({ minimo: 0, fracao: '' })
     const casos: Array<[number, number, boolean]> = [
       [600, 100, true],
@@ -122,6 +143,28 @@ describe('cargaExcentricidade (DOQ-CGCRE-097 10.4.1; POP 7.10)', () => {
     }
     // Nunca acima de Max
     expect(cargaExcentricidade(0.3, 'kg')).toBeLessThanOrEqual(0.3)
+  })
+
+  it('classe I: uma peça só, a menor da série 1-2-5 de no mínimo 1/3 de Max (POP 7.11)', () => {
+    // 220 g: 1/3 = 73,3 g → 100 g (não 75 g = 50 + 20 + 5 g)
+    expect(cargaExcentricidade(220, 'g', 'I')).toBe(100)
+    expect(cargaExcentricidade(220, 'g', 'II')).toBe(75)
+    expect(cargaExcentricidade(220, 'g')).toBe(75)
+    for (const [max, carga] of [
+      [200, 100],
+      [120, 50],
+      [62, 50],
+      [320, 200],
+      [510, 200],
+      [1000, 500],
+      [2200, 1000],
+    ] as const) {
+      expect(cargaExcentricidade(max, 'g', 'I'), `Max ${max} g`).toBe(carga)
+      expect(carga).toBeGreaterThanOrEqual(max / 3)
+    }
+    // Em mg e em kg, a mesma série
+    expect(cargaExcentricidade(5100, 'mg', 'I')).toBe(2000)
+    expect(cargaExcentricidade(6.2, 'kg', 'I')).toBe(5)
   })
 })
 
@@ -189,6 +232,27 @@ describe('repetibilidadesSugeridas (POP 7.9)', () => {
       { carga: 12, leituras: 5 },
       { carga: 25, leituras: 5 },
     ])
+  })
+
+  it('classe I: 10 leituras com uma peça só (POP, Tabela 4), entre metade de Max e Max', () => {
+    const unica = (max: number) =>
+      repetibilidadesSugeridas({ tipoFaixas: 'UNICA', faixas: [{ max, e: 0.001, d: 0.0001 }], classe: 'I' }, 'g')
+    expect(unica(220)).toEqual([{ carga: 200, leituras: 10 }])
+    expect(unica(200)).toEqual([{ carga: 100, leituras: 10 }])
+    expect(unica(120)).toEqual([{ carga: 100, leituras: 10 }])
+    expect(unica(510)).toEqual([{ carga: 500, leituras: 10 }])
+    // 450 g: nenhuma peça da série entre 225 g e 450 g; fica a carga de sempre (~metade de Max)
+    expect(unica(450)).toEqual([{ carga: 225, leituras: 10 }])
+    // Dupla faixa (82/220 g): no intervalo de baixo, a maior peça que cabe nele; no de cima, acima do Max de baixo
+    const faixas = [
+      { max: 82, e: 0.001, d: 0.00001 },
+      { max: 220, e: 0.001, d: 0.0001 },
+    ]
+    for (const tipoFaixas of ['MULTI_INTERVALO', 'MULTIPLAS_FAIXAS'] as const)
+      expect(repetibilidadesSugeridas({ tipoFaixas, faixas, classe: 'I' }, 'g')).toEqual([
+        { carga: 50, leituras: 10 },
+        { carga: 200, leituras: 10 },
+      ])
   })
 })
 

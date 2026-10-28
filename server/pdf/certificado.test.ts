@@ -10,16 +10,26 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
 import { REPRODUCAO_ANTIGA, TEXTOS_ANTIGOS, TEXTOS_PADRAO } from '#shared/dominio.ts'
+import { densidadeAr } from '#shared/metrologia/index.ts'
 import { pdfmake } from './base.ts'
 import {
   definicaoCertificado,
   gerarCertificadoPdf,
   linhasDoTexto,
   montarCertificado,
+  notaEmpuxoConveccao,
   OCUPACAO_MINIMA_ULTIMA,
   RESSALVA_OPINIOES,
 } from './certificado.ts'
-import { exemploBancada, exemploPiorCaso, exemploPlataforma, exemploRodoviaria, POP_EXEMPLO } from './exemplosCertificado.ts'
+import {
+  exemploBancada,
+  exemploClasseI,
+  exemploPiorCaso,
+  exemploPlataforma,
+  exemploRodoviaria,
+  POP_EXEMPLO,
+} from './exemplosCertificado.ts'
+import { COR } from './marca.ts'
 import type { DadosCertificadoPdf } from './tipos.ts'
 
 type NoPdf = { unbreakable?: boolean } & Record<string, unknown>
@@ -51,6 +61,8 @@ const EXEMPLOS: Array<{ arquivo: string; dados: () => DadosCertificadoPdf; pagin
   { arquivo: 'certificado-bancada-30kg', dados: exemploBancada, paginas: 2 },
   { arquivo: 'certificado-rodoviaria-80t', dados: exemploRodoviaria, paginas: 2 },
   { arquivo: 'certificado-pior-caso', dados: exemploPiorCaso, paginas: 3 },
+  // Classe I com ajuste interno e "como encontrado": cabe em 2
+  { arquivo: 'certificado-classe-i-220g', dados: exemploClasseI, paginas: 2 },
 ]
 
 /** Resultados calculados de novo depois de mudar a calibração de um exemplo. */
@@ -408,6 +420,212 @@ describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
   })
 })
 
+describe('empuxo e convecção no método (classe I)', () => {
+  /** A classe I de exemplo com outras opções ou outro ambiente, recalculada. */
+  function classeI(mudar: (d: DadosCertificadoPdf) => void): DadosCertificadoPdf {
+    const d = exemploClasseI()
+    mudar(d)
+    return recalculado(d)
+  }
+  const nota = (d: DadosCertificadoPdf) => notaEmpuxoConveccao({ d, k: d.calibracao, e: d.emissao })
+
+  it('as amostras das outras classes (sem as opções da classe I): nada, e o método de sempre', () => {
+    for (const f of [exemploPlataforma, exemploBancada, exemploRodoviaria, exemploPiorCaso]) {
+      const d = f()
+      expect(nota(d), d.calibracao.numero).toBeNull()
+      // Os campos novos ausentes ou desligados dão o mesmo documento (as amostras ficam iguais, byte a byte)
+      const desligado = f()
+      desligado.calibracao.opcoes = { ...desligado.calibracao.opcoes, conveccao: 'NAO_CONSIDERAR' }
+      desligado.calibracao.ambiente = { ...desligado.calibracao.ambiente, deltaTPesos: null, aclimatacao: null }
+      expect(JSON.stringify(definicaoCertificado(desligado))).toBe(JSON.stringify(definicaoCertificado(d)))
+      expect(JSON.stringify(definicaoCertificado(d))).not.toMatch(/Empuxo do ar|Convecção dos pesos/)
+    }
+  })
+
+  it('classe I: o ar e os pesos, a variação do local no "como encontrado" e a diferença pesos − ar', () => {
+    const t = nota(exemploClasseI())!
+    expect(t).toMatch(
+      /^Empuxo do ar corrigido com a densidade do ar de 1,1\d\d kg\/m³, calculada pela temperatura, umidade e pressão medidas, e a densidade dos pesos de 7950 kg\/m³ \(EURAMET cg-18, 7\.1\.2-4 e A1\.1-1\)\. /,
+    )
+    expect(t).toContain(' No “como encontrado”, a incerteza da densidade do ar considera uma variação de temperatura de 10 K')
+    expect(t).toMatch(
+      / Convecção dos pesos incluída na incerteza, com a diferença de temperatura pesos − ar medida de 0,3 °C \(cg-18, 7\.1\.2\.4 e Tabela F2\.1\)\.$/,
+    )
+    // No PDF, na célula do método, embaixo do POP, em letra menor (7 pt, a menor do certificado)
+    const achados: unknown[] = []
+    const visitar = (no: unknown): void => {
+      if (Array.isArray(no)) return no.forEach(visitar)
+      if (!no || typeof no !== 'object') return
+      if ((no as { text?: unknown }).text === `\n${t}`) achados.push(no)
+      Object.values(no).forEach(visitar)
+    }
+    visitar((definicaoCertificado(exemploClasseI()) as { content: unknown }).content)
+    expect(achados).toEqual([{ text: `\n${t}`, fontSize: 7, color: COR.textoSecundario }])
+  })
+
+  it('sem ajuste: a variação do local vale para os resultados (com a do ensaio, se informada); com ajuste e sem "como encontrado", não sai', () => {
+    const semAjuste = classeI((d) => {
+      d.calibracao.ajuste = { realizado: 'NAO', descricao: '' }
+      d.calibracao.comoEncontrado = null
+      d.calibracao.opcoes = { ...d.calibracao.opcoes, deltaTLocal: 5 }
+    })
+    expect(nota(semAjuste)).toContain(
+      ' A incerteza da densidade do ar considera uma variação de temperatura de 5 K no local de uso (cg-18, A3-2).',
+    )
+    const soDepois = classeI((d) => {
+      d.calibracao.comoEncontrado = null
+    })
+    expect(nota(soDepois)).not.toContain('variação de temperatura')
+    expect(nota(soDepois)).toContain('Empuxo do ar corrigido')
+  })
+
+  it('"ajustada logo antes" no ensaio final: o "como encontrado" vai pela densidade do ar medida, e a nota diz', () => {
+    const aj = classeI((d) => {
+      d.calibracao.opcoes = { ...d.calibracao.opcoes, empuxo: 'AJUSTADO' }
+    })
+    expect(aj.comoEncontrado!.pontos.some((p) => (p.crescente?.correcaoEmpuxo ?? 0) !== 0)).toBe(true)
+    expect(aj.resultado.pontos.every((p) => (p.crescente?.correcaoEmpuxo ?? 0) === 0)).toBe(true)
+    const t = nota(aj)!
+    expect(t).toMatch(
+      /^No “como encontrado”, empuxo do ar corrigido com a densidade do ar de 1,1\d\d kg\/m³, calculada pela temperatura, umidade e pressão medidas, e a densidade dos pesos de 7950 kg\/m³; a incerteza dela considera uma variação de temperatura de 10 K no local de uso \(EURAMET cg-18, 7\.1\.2-4, A1\.1-1 e A3-2\)\. /,
+    )
+    expect(t.match(/Empuxo do ar corrigido|empuxo do ar corrigido/g)).toHaveLength(1)
+    // Sem o "como encontrado" impresso, nada sobre o empuxo
+    const semAntes = classeI((d) => {
+      d.calibracao.opcoes = { ...d.calibracao.opcoes, empuxo: 'AJUSTADO' }
+      d.calibracao.comoEncontrado = null
+    })
+    expect(nota(semAntes)).not.toMatch(/empuxo/i)
+  })
+
+  /** O "Carga: …" da legenda embaixo dos resultados. */
+  function legendaCarga(d: DadosCertificadoPdf): string {
+    const achados: string[] = []
+    const visitar = (no: unknown): void => {
+      if (Array.isArray(no)) return no.forEach(visitar)
+      if (!no || typeof no !== 'object') return
+      const { text, style } = no as { text?: unknown; style?: unknown }
+      if (style === 'nota' && typeof text === 'string' && text.startsWith('Carga: ')) achados.push(text)
+      Object.values(no).forEach(visitar)
+    }
+    visitar((definicaoCertificado(d) as { content: unknown }).content)
+    expect(achados).toHaveLength(1)
+    return achados[0].slice(0, achados[0].indexOf('.') + 1)
+  }
+
+  it('legenda: com a densidade do ar medida, a carga já vem corrigida do empuxo do ar (e diz)', () => {
+    expect(legendaCarga(exemploClasseI())).toBe('Carga: valor convencional dos pesos padrão, corrigido do empuxo do ar.')
+    // "Ajustada logo antes": só o "como encontrado" vai pela densidade do ar medida
+    const aj = classeI((d) => {
+      d.calibracao.opcoes = { ...d.calibracao.opcoes, empuxo: 'AJUSTADO' }
+    })
+    expect(legendaCarga(aj)).toBe('Carga: valor convencional dos pesos padrão; no “como encontrado”, corrigido do empuxo do ar.')
+    const ajSemAntes = classeI((d) => {
+      d.calibracao.opcoes = { ...d.calibracao.opcoes, empuxo: 'AJUSTADO' }
+      d.calibracao.comoEncontrado = null
+    })
+    expect(legendaCarga(ajSemAntes)).toBe('Carga: valor convencional dos pesos padrão.')
+    // Sem o ar registrado (rascunho com pendência), o cálculo não corrige: a legenda de sempre
+    const semAr = classeI((d) => {
+      d.calibracao.ambiente = { ...d.calibracao.ambiente, pressao: null }
+    })
+    expect(legendaCarga(semAr)).toBe('Carga: valor convencional dos pesos padrão.')
+  })
+
+  it('legenda: as outras classes como sempre (com a substituição, quando houver)', () => {
+    expect(legendaCarga(exemploPlataforma())).toBe('Carga: valor convencional dos pesos padrão.')
+    expect(legendaCarga(exemploBancada())).toBe('Carga: valor convencional dos pesos padrão.')
+    expect(legendaCarga(exemploRodoviaria())).toBe(
+      'Carga: valor convencional dos pesos padrão, somado às cargas de substituição.',
+    )
+  })
+
+  it('jogos com densidades diferentes nas cargas: "a densidade de cada jogo de pesos"; o jogo que não entrou, não conta', () => {
+    const d = exemploClasseI()
+    const jogo = d.emissao.padroes[0]
+    const outro = { ...jogo, id: 'pad-je2-b', identificacao: 'JE2-02', densidade: 8000 }
+    d.emissao.padroes = [...d.emissao.padroes, outro]
+    // Só escolhido nos padrões, sem peça nas cargas: a densidade dos pesos usados
+    expect(nota(d)).toContain(
+      'calculada pela temperatura, umidade e pressão medidas, e a densidade dos pesos de 7950 kg/m³ (EURAMET',
+    )
+    const ponto = d.calibracao.indicacao.pontos.find((p) => p.pecas.length)!
+    ponto.pecas = ponto.pecas.map((x) => ({ ...x, padraoId: outro.id }))
+    expect(nota(d)).toContain(
+      'kg/m³, calculada pela temperatura, umidade e pressão medidas, e a densidade de cada jogo de pesos (EURAMET',
+    )
+  })
+
+  it('jogo sem a densidade (ou u(ρ)) ou com ela implausível: a nota não cita a densidade dos pesos (a emissão fica bloqueada)', () => {
+    for (const mudar of [{ densidade: 0 }, { incertezaDensidade: 0 }, { densidade: 7.95 }]) {
+      const d = exemploClasseI()
+      d.emissao.padroes = d.emissao.padroes.map((p) => (p.tipo === 'PESOS' ? { ...p, ...mudar } : p))
+      const t = nota(d)!
+      expect(t, JSON.stringify(mudar)).toMatch(
+        /^Empuxo do ar corrigido com a densidade do ar de 1,1\d\d kg\/m³, calculada pela temperatura, umidade e pressão medidas \(EURAMET cg-18, 7\.1\.2-4 e A1\.1-1\)\. /,
+      )
+      expect(t).not.toMatch(/densidade dos pesos|cada jogo/)
+    }
+    // No "como encontrado" da "ajustada logo antes", também
+    const aj = classeI((d) => {
+      d.calibracao.opcoes = { ...d.calibracao.opcoes, empuxo: 'AJUSTADO' }
+      d.emissao.padroes = d.emissao.padroes.map((p) => (p.tipo === 'PESOS' ? { ...p, densidade: 0, incertezaDensidade: 0 } : p))
+    })
+    expect(nota(aj)).toMatch(
+      /^No “como encontrado”, empuxo do ar corrigido com a densidade do ar de 1,1\d\d kg\/m³, calculada pela temperatura, umidade e pressão medidas; a incerteza dela/,
+    )
+    expect(aj.comoEncontrado!.pendencias).toEqual([
+      'Empuxo pela densidade do ar medida: o jogo JE2-01 está sem a densidade ou a incerteza da densidade (cadastro do padrão).',
+    ])
+  })
+
+  it('convecção: 0,0 °C medido (a coluna de 1 K, decisão conservadora) e pela aclimatação', () => {
+    const zero = classeI((d) => {
+      d.calibracao.ambiente = { ...d.calibracao.ambiente, deltaTPesos: 0 }
+    })
+    expect(nota(zero)).toContain('com a diferença de temperatura pesos − ar medida de 0,0 °C (cg-18, 7.1.2.4 e Tabela F2.1).')
+    // O sinal não importa (pesos mais frios que o ar)
+    const negativo = classeI((d) => {
+      d.calibracao.ambiente = { ...d.calibracao.ambiente, deltaTPesos: -0.8 }
+    })
+    expect(nota(negativo)).toContain('medida de 0,8 °C')
+    const aclimatacao = classeI((d) => {
+      d.calibracao.ambiente = { ...d.calibracao.ambiente, deltaTPesos: null, aclimatacao: { deltaT0: -5, minutos: 90 } }
+    })
+    expect(nota(aclimatacao)).toContain(
+      'Convecção dos pesos incluída na incerteza, com a diferença de temperatura estimada pela aclimatação de 90 min a partir de 5,0 °C (cg-18, Tabelas F1.3 e F2.1).',
+    )
+    // Sem nenhum dos dois (rascunho com pendência), a frase da convecção não sai
+    const semDado = classeI((d) => {
+      d.calibracao.ambiente = { ...d.calibracao.ambiente, deltaTPesos: null, aclimatacao: null }
+    })
+    expect(nota(semDado)).not.toContain('Convecção')
+  })
+
+  it('só o que a calibração usou: empuxo de outra opção, convecção desligada, ar sem medição', () => {
+    const ajustado = classeI((d) => {
+      d.calibracao.opcoes = { ...d.calibracao.opcoes, empuxo: 'AJUSTADO' }
+    })
+    expect(nota(ajustado)).not.toContain('Empuxo')
+    expect(nota(ajustado)).toContain('Convecção dos pesos')
+    const semConveccao = classeI((d) => {
+      d.calibracao.opcoes = { ...d.calibracao.opcoes, conveccao: 'NAO_CONSIDERAR' }
+    })
+    expect(nota(semConveccao)).not.toContain('Convecção')
+    // Sem a pressão, não há densidade do ar calculada (o rascunho fica com a pendência): nada do empuxo
+    const semPressao = classeI((d) => {
+      d.calibracao.ambiente = { ...d.calibracao.ambiente, pressao: null }
+    })
+    expect(semPressao.resultado.ar ?? null).toBeNull()
+    expect(nota(semPressao)).not.toContain('Empuxo')
+    // Tudo desligado: null, e o método como nas outras classes
+    const nada = classeI((d) => {
+      d.calibracao.opcoes = { ...d.calibracao.opcoes, empuxo: 'NAO_AJUSTADO', conveccao: 'NAO_CONSIDERAR' }
+    })
+    expect(nota(nada)).toBeNull()
+  })
+})
+
 describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 60_000 }, () => {
   it('plataforma 300 kg: ajuste, como encontrado, reparo, conformidade e próxima calibração a pedido', async () => {
     const d = exemploPlataforma()
@@ -436,6 +654,8 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     expect(t).toContain('Repetibilidade')
     expect(t).toContain('Excentricidade')
     expect(t).toMatch(/\|ΔI\|máx = 0,05 kg/)
+    // Método 1: o desvio é a indicação menos a da posição 1
+    expect(t).toContain('ΔI: indicação na posição − indicação na posição 1.')
     expect(t).toContain('Retorno ao zero')
     expect(t).toContain('Não conforme') // como encontrado, antes do ajuste
     // Declaração de conformidade
@@ -520,6 +740,48 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     // No PDF, cada uma começa a sua linha; e continua em 2 páginas
     const texto = textoDoPdf(await gerarCertificadoPdf(dados))
     for (const l of linhas) expect(texto).toMatch(new RegExp(`^\\s*${l.slice(0, 30)}`, 'm'))
+    expect(paginas(texto).total).toBe(2)
+  })
+
+  it('analítica classe I 220 g: empuxo pela densidade do ar medida e convecção, numa frase no método', async () => {
+    const d = exemploClasseI()
+    const texto = textoDoPdf(await pdfDe('certificado-classe-i-220g'))
+    conferirComum(texto, d)
+    const t = corrido(texto)
+    expect(t).toContain('LABORATÓRIO FARMACÊUTICO HORTO FLORESTAL LTDA')
+    expect(t).toContain('Balança analítica')
+    expect(t).toContain('I (especial)')
+    expect(t).toMatch(/220 g +0,01 g +0,1 mg +1 mg/)
+    // Pressão com o barômetro; o jogo E2 e o termômetro de 2 entradas entre os padrões
+    expect(t).toMatch(/PRESSÃO ATMOSFÉRICA .*942 hPa/)
+    for (const x of ['JE2-01', 'E2', 'M-0412/2026', 'TD-01', 'Termômetro digital de duas entradas']) expect(t).toContain(x)
+    // Ajuste interno logo depois do "como encontrado"
+    expect(t).toContain('antes da calibração foi realizado ajuste interno (automático). Resultados antes do ajuste em 4.4')
+    expect(t).toContain('como encontrado (antes do ajuste)')
+    // A densidade do ar é a do cálculo (A1.1-1, com as médias do início e do fim e a pressão)
+    const rho = d.resultado.ar!.densidade
+    expect(rho).toBeCloseTo(densidadeAr((22.4 + 22.9) / 2, (54 + 55) / 2, 942), 9)
+    const metodo = t.slice(t.indexOf('MÉTODO — PROCEDIMENTO (POP)'), t.indexOf('2 INSTRUMENTO CALIBRADO'))
+    expect(metodo).toContain(
+      `Empuxo do ar corrigido com a densidade do ar de ${rho.toFixed(3).replace('.', ',')} kg/m³, calculada pela temperatura, umidade e pressão medidas, e a densidade dos pesos de 7950 kg/m³ (EURAMET cg-18, 7.1.2-4 e A1.1-1).`,
+    )
+    expect(metodo).toContain(
+      'No “como encontrado”, a incerteza da densidade do ar considera uma variação de temperatura de 10 K no local de uso (cg-18, A3-2).',
+    )
+    expect(metodo).toContain(
+      'Convecção dos pesos incluída na incerteza, com a diferença de temperatura pesos − ar medida de 0,3 °C (cg-18, 7.1.2.4 e Tabela F2.1).',
+    )
+    // Uma vez só (nada nas observações) e as condições ambientais como sempre
+    expect(t.match(/Empuxo do ar corrigido/g)).toHaveLength(1)
+    expect(t).toMatch(/TEMPERATURA \(INÍCIO → FIM\) .*22,4 °C → 22,9 °C/)
+    // 10 leituras na repetibilidade; excentricidade pelo método 3 (zero antes de cada posição)
+    expect(t).toMatch(/200,0000 .* 10 200,000300 0,000067/)
+    expect(t).toContain('Zero lido (g)')
+    // A legenda do ΔI é a do método 3: o desvio desconta o zero lido antes de cada posição (posição 3: zero 0,0001,
+    // indicação 100,0002 → 100,0001 − 100,0001 = 0,0000, como impresso)
+    expect(t).toContain('ΔI: (indicação − zero lido) na posição − o mesmo na posição 1.')
+    expect(t).not.toContain('ΔI: indicação na posição − indicação na posição 1.')
+    expect(d.resultado.excentricidade.desvios[2]).toBe(0)
     expect(paginas(texto).total).toBe(2)
   })
 

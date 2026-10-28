@@ -23,7 +23,8 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
   const casas = casasDe(balanca)
   const r = calc?.resultado.excentricidade
   const set = (mudar: (e: typeof ecc) => typeof ecc) => alterar((s) => ({ ...s, excentricidade: mudar(s.excentricidade) }))
-  const sugerida = cargaExcentricidade(maxDe(balanca), u)
+  const classeI = balanca.classe === 'I'
+  const sugerida = cargaExcentricidade(maxDe(balanca), u, balanca.classe)
   const posicoesSugeridas = posicoesExcentricidade(balanca.receptor, balanca.apoios)
   const preparar = () =>
     set((e) => ({
@@ -82,7 +83,11 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
             <Field
               label="Carga usada"
               htmlFor="ecc-carga"
-              hint={`Sugerida: ${formatarNumero(sugerida, casas)} ${u} (${REGRA_CARGA_EXCENTRICIDADE})`}
+              hint={
+                classeI
+                  ? `Sugerida: ${formatarNumero(sugerida, casas)} ${u} (classe I: uma peça só, de no mínimo 1/3 de Max, a meio raio)`
+                  : `Sugerida: ${formatarNumero(sugerida, casas)} ${u} (${REGRA_CARGA_EXCENTRICIDADE})`
+              }
             >
               <CampoNumero
                 id="ecc-carga"
@@ -91,7 +96,12 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                 unidade={u}
               />
             </Field>
-            <Field label="Como foi feito" htmlFor="ecc-metodo" className="sm:col-span-2">
+            <Field
+              label="Como foi feito"
+              htmlFor="ecc-metodo"
+              className="sm:col-span-2"
+              hint={classeI ? 'Classe I: método 3 (POP 7.10).' : undefined}
+            >
               <Select
                 id="ecc-metodo"
                 value={ecc.metodo}
