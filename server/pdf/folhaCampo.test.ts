@@ -1,13 +1,13 @@
-// Testes da folha de campo em PDF: gera as cinco amostras (server/pdf/exemplosFolhaCampo.ts), confere que
-// a geração é determinística e, com o pdftotext (poppler-utils), o conteúdo de cada página: cabeçalho de
-// identificação, rótulos iguais aos da tela do assistente, plano de cargas, o POP no rodapé, o tamanho da
-// folha (enxuta: dado impresso diferente vai no verso) e o que NÃO pode aparecer (número de certificado,
-// aprovado/reprovado, validade, caixas de "confere").
+// Testes da folha de campo em PDF: gera as amostras (server/pdf/exemplosFolhaCampo.ts), confere que a
+// geração é determinística e, com o pdftotext (poppler-utils), o conteúdo de cada página: cabeçalho de
+// identificação (com o nº do certificado reservado, quando há), rótulos iguais aos da tela do assistente,
+// plano de cargas, o POP no rodapé, o tamanho da folha (enxuta: dado impresso diferente vai no verso) e o que
+// NÃO pode aparecer (aprovado/reprovado, validade — fora a nota da etiqueta —, caixas de "confere").
 
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { FORMULARIO_FOLHA_CAMPO } from '#shared/folhaCampo.ts'
+import { AVISO_ETIQUETA, FORMULARIO_FOLHA_CAMPO } from '#shared/folhaCampo.ts'
 import { TEXTOS_PADRAO } from '#shared/dominio.ts'
 import type { Padrao } from '#shared/tipos.ts'
 import { A4, BASE_RODAPE, MODULO, TOPO_CABECALHO } from './base.ts'
@@ -25,6 +25,7 @@ import {
   type DadosFolhaCampo,
   definicaoFolhaCampo,
   descricaoPadraoNaFolha,
+  DICA_ETIQUETA,
   ETAPAS_SISTEMA,
   gerarFolhaCampoPdf,
   montar,
@@ -332,17 +333,18 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain('quem acompanhou; ciente das condições, não dos resultados')
     // O escritório numa linha só: quem digitou, quem conferiu com a folha, o nº do certificado e o arquivo
     expect(t).toMatch(
-      /ESCRITÓRIO DIGITADO NO SISTEMA POR EM CONFERIDO COM A FOLHA POR EM CERTIFICADO Nº digitalizada na pasta da OS/,
+      /ESCRITÓRIO DIGITADO NO SISTEMA POR EM CONFERIDO COM A FOLHA POR EM CERTIFICADO Nº digitalizada na pasta da OS( CC-\d{4}-\d{5})? /,
     )
     expect(t).toContain('Grampeie as folhas')
     // Dado impresso diferente: no verso (sem caixas de "confere" nem de correção)
     expect(corrido(paginasDe(texto)[0])).toContain(AVISO_VERSO)
     expect(t).not.toMatch(/\bconfere\b/)
     expect(t).toContain('OPINIÕES E INTERPRETAÇÕES (OPCIONAL)')
-    // Nada de número de certificado, aprovação ou "validade" numa folha de campo
+    // Nada de aprovação ou "validade" numa folha de campo (fora a nota da etiqueta: a validade fica em branco);
+    // o nº do certificado só como reservado, nunca como o título de um certificado
     expect(t).not.toContain('CERTIFICADO DE CALIBRAÇÃO Nº')
     expect(t).not.toMatch(/\baprovad[oa]\b|\breprovad[oa]\b/i)
-    expect(t).not.toMatch(/validade/i)
+    expect(t.replace(AVISO_ETIQUETA, '')).not.toMatch(/validade/i)
   }
 
   it('plataforma 300 kg: cadastro para conferir, pontos e pesos do último certificado, EMA', async () => {
@@ -700,7 +702,7 @@ describe.runIf(temPdftotext)('montagem com 6 a 14 pontos', { timeout: 120_000 },
       .map(([id]) => id)
     expect([...m.extras.continuacoes].sort()).toEqual(abrem.sort())
     // O quadro do escritório nunca vai sozinho para a última página: as assinaturas vão junto
-    expect(corrido(paginas.at(-1)!)).toMatch(/10 ASSINATURAS NO SISTEMA/)
+    expect(corrido(paginas.at(-1)!)).toMatch(/10 ASSINATURAS (ETIQUETA · CERTIFICADO Nº CC-\d{4}-\d{5} )?NO SISTEMA/)
     // A tabela de pontos cabe numa página: vai inteira, nunca dividida
     expect(m.extras.cortes).toEqual([])
     const linhas = Array.from({ length: v.n }, (_, i) => m.marcas.get(`linha-pontos:${i}`)?.pagina)
@@ -962,9 +964,10 @@ describe.runIf(temPdftotext)('nada some do PDF (bloco maior que a página)', { t
     expect(m.faltando).toEqual([])
     const texto = textoDoPdf(m.pdf)
     const linhas = paginasDe(texto)[0].split('\n')
-    // Cada padrão numa linha só do texto, com o certificado e a próxima calibração na mesma linha
+    // Cada padrão numa linha só do texto, com o certificado e a próxima calibração na mesma linha; a descrição
+    // inteira (a classe já escrita nela não se repete)
     for (const [id, resto] of [
-      ['JP-01', /JP-01 +Jogo de pesos 20 kg \(15 peças\) · M1 +M-09999\/2027 +\d{2}\/\d{2}\/\d{4}$/],
+      ['JP-01', /JP-01 +Jogo de pesos 20 kg \(15 peças\) classe M1 +M-09999\/2027 +\d{2}\/\d{2}\/\d{4}$/],
       ['JP-02', /JP-02 +Jogo de pesos 1 kg a 10 kg classe M1 +M-07777\/2026 +\d{2}\/\d{2}\/\d{4}$/],
       ['BR-02', /BR-02 +Barômetro 2 +— +B-2\/2026 +\d{2}\/\d{2}\/\d{4}$/],
     ] as const) {
@@ -975,6 +978,41 @@ describe.runIf(temPdftotext)('nada some do PDF (bloco maior que a página)', { t
     // As observações e as assinaturas ficam na página 4 (nada de uma 5ª só com elas)
     const ultima = corrido(paginasDe(texto).at(-1)!)
     expect(ultima).toMatch(/OBSERVAÇÕES \(SAEM NO CERTIFICADO\) .* 10 ASSINATURAS/)
+  })
+
+  it('amostra em branco com 8 padrões: 4 páginas, um padrão por linha, descrição inteira, sem repetir a classe', async () => {
+    const d = folhaEmBrancoOitoPadroes()
+    expect(d.padroes.filter((p) => p.ativo)).toHaveLength(8)
+    const m = await montar(d)
+    expect(m.paginas).toBeLessThanOrEqual(4)
+    expect(m.faltando).toEqual([])
+    const texto = textoDoPdf(m.pdf)
+    const linhas = paginasDe(texto)[0].split('\n')
+    // Todos os padrões na página 1, cada um numa linha do texto (identificação, descrição, certificado e data)
+    for (const p of d.padroes) {
+      const linha = linhas.filter((l) => new RegExp(`^\\s*${p.identificacao.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `).test(l))
+      expect(linha, p.identificacao).toHaveLength(1)
+      expect(linha[0], p.identificacao).toMatch(new RegExp(`${p.certificado.replace(/[/]/g, '\\/')} +\\d{2}\\/\\d{2}\\/\\d{4}$`))
+    }
+    // As descrições longas cabem inteiras (sem "…"); a classe escrita na descrição não se repete
+    const t = corrido(texto)
+    expect(t).toMatch(/TH-02 Termo-higrômetro digital com sonda externa —/)
+    expect(t).toMatch(/JP-02 Jogo de pesos 20 kg \(15 peças\) classe M1 CAL-12988\/2026/)
+    expect(t).not.toMatch(/classe M1 · M1/)
+    expect(paginasDe(texto)[0]).not.toContain('…')
+  })
+
+  it('em branco: a descrição é a coluna larga e "peças usadas", a estreita (escrita à mão, curta)', () => {
+    const [tabela] = nosQue((definicaoFolhaCampo(folhaEmBrancoOitoPadroes()) as { content: unknown }).content, (x) =>
+      JSON.stringify((x.table as { body?: unknown[][] } | undefined)?.body?.[0] ?? '').includes('"Peças usadas"'),
+    )
+    const larguras = (tabela.table as { widths: Array<number | string> }).widths
+    expect(larguras[3]).toBe('*')
+    const fixas = larguras.filter((l): l is number => typeof l === 'number')
+    // Peças com ≈ 21 mm; a descrição, com o resto da página (186 mm, menos os respiros e os fios), ≈ 57 mm
+    expect(larguras[4]).toBeLessThanOrEqual(62)
+    const descricao = A4.largura - 2 * 34 - fixas.reduce((a, b) => a + b, 0) - (7 * 7 + 2 * 0.8 + 6 * 0.5)
+    expect((descricao * 25.4) / 72).toBeGreaterThan(55)
   })
 
   it.each([6, 8, 10])('em branco com %i padrões: no máximo 4 páginas, e a tabela dos pontos não se divide', async (n) => {
@@ -1329,5 +1367,114 @@ describe.runIf(temPdftotext)('correções da 4ª revisão: páginas sem grandes 
       /OIML R76 — em serviço +Tolerância do cliente +banda de guarda/,
     )
     expect(corrido(texto)).toMatch(/± _+ kg/)
+  })
+})
+
+describe('nº do certificado reservado na impressão', { timeout: 60_000 }, () => {
+  type Doc = { header: (p: number, t: number) => unknown; content: unknown; info: { keywords: string } }
+  const doc = (d: DadosFolhaCampo) => definicaoFolhaCampo(d) as unknown as Doc
+
+  it('no alto de toda página, ao lado do nº da folha; a dica da etiqueta só na página 1', () => {
+    const d = folhaPlataforma()
+    expect(d.numeroCertificado).toBe('CC-2026-00125')
+    const cab = (p: number) => JSON.stringify(doc(d).header(p, 3))
+    for (const p of [1, 2, 3]) {
+      expect(cab(p)).toContain('"CERTIFICADO Nº"')
+      expect(cab(p)).toContain('"CC-2026-00125"')
+      expect(cab(p)).toContain('"FC-2026-00042"')
+      // O nº do certificado vem antes do nº da folha (à esquerda dele), no mesmo tamanho
+      expect(cab(p).indexOf('CC-2026-00125')).toBeLessThan(cab(p).indexOf('FC-2026-00042'))
+    }
+    expect(cab(1)).toContain(DICA_ETIQUETA)
+    expect(cab(2)).not.toContain(DICA_ETIQUETA)
+    expect(DICA_ETIQUETA).toBe('Vai na etiqueta (passo 10)')
+    expect(doc(d).info.keywords).toContain('certificado CC-2026-00125')
+  })
+
+  it('sem nº (folha antiga ou em branco), nada: nem no cabeçalho, nem a nota da etiqueta; o escritório escreve o nº', () => {
+    for (const d of [
+      folhaEmBranco(),
+      { ...folhaPlataforma(), numeroCertificado: undefined },
+      { ...folhaPlataforma(), numeroCertificado: '   ' },
+    ]) {
+      const x = doc(d)
+      expect(JSON.stringify(x.header(1, 3))).not.toContain('CERTIFICADO Nº')
+      expect(JSON.stringify(x.header(1, 3))).not.toContain(DICA_ETIQUETA)
+      const json = JSON.stringify(x.content)
+      expect(json).not.toContain(AVISO_ETIQUETA)
+      expect(json).not.toContain('ETIQUETA · CERTIFICADO Nº')
+      expect(json).not.toContain('CC-2026-00125')
+      expect(x.info.keywords).not.toContain('certificado ')
+    }
+  })
+
+  it.runIf(temPdftotext)(
+    'texto: o nº em toda página, ao lado do da folha; no passo 10, o nº e a nota da etiqueta numa linha; o escritório já com o nº',
+    async () => {
+      const m = await montar(folhaPlataforma())
+      expect(m.paginas).toBe(3)
+      const texto = textoDoPdf(m.pdf)
+      const paginas = paginasDe(texto)
+      for (const [i, p] of paginas.entries()) {
+        // Na mesma linha do nº da folha, à esquerda dele
+        const linha = p.split('\n').find((l) => l.includes('FC-2026-00042'))!
+        expect(linha, `página ${i + 1}`).toMatch(/CC-2026-00125 +FC-2026-00042/)
+        expect(corrido(p), `página ${i + 1}`).toMatch(/CERTIFICADO Nº +FOLHA DE CAMPO — CALIBRAÇÃO DE BALANÇA/)
+        expect(corrido(p).includes(DICA_ETIQUETA), `página ${i + 1}`).toBe(i === 0)
+      }
+      // A nota inteira numa linha só, logo embaixo do título do passo 10 (com o nº), na página das assinaturas
+      const ultima = paginas.at(-1)!
+      const linhas = ultima.split('\n')
+      const titulo = linhas.findIndex((l) => /10 +ASSINATURAS ETIQUETA · CERTIFICADO Nº CC-2026-00125 +NO SISTEMA/.test(l))
+      expect(titulo).toBeGreaterThan(0)
+      const nota = linhas.findIndex((l) => l.includes('Copie este nº na etiqueta de calibração'))
+      expect(nota).toBeGreaterThan(titulo)
+      expect(nota - titulo).toBeLessThanOrEqual(2)
+      expect(linhas[nota].trim()).toBe(AVISO_ETIQUETA)
+      expect(corrido(ultima).indexOf(AVISO_ETIQUETA)).toBeLessThan(corrido(ultima).indexOf('TÉCNICO QUE EXECUTOU'))
+      // O escritório confere o certificado pelo nº já impresso
+      expect(corrido(ultima)).toMatch(/ESCRITÓRIO .*CERTIFICADO Nº digitalizada na pasta da OS CC-2026-00125/)
+    },
+  )
+
+  it.runIf(temPdftotext).each([
+    { nome: 'plataforma', dados: folhaPlataforma, numero: 'CC-2026-00125' },
+    { nome: 'balcão multi-intervalo', dados: folhaMultiIntervalo, numero: 'CC-2026-00126' },
+    { nome: 'rodoviária 80 t', dados: folhaRodoviaria, numero: 'CC-2026-00127' },
+    { nome: 'rodoviária 60 t sem histórico', dados: folhaRodoviariaSemHistorico, numero: 'CC-2026-00128' },
+  ])('$nome: o nº reservado não aumenta a folha (3 páginas) e sai em todas elas', async ({ dados, numero }) => {
+    const d = dados()
+    expect(d.numeroCertificado).toBe(numero)
+    const com = await montar(d)
+    const sem = await montar({ ...d, numeroCertificado: undefined })
+    expect(com.paginas).toBe(sem.paginas)
+    expect(com.paginas).toBeLessThanOrEqual(3)
+    expect(com.faltando).toEqual([])
+    const paginas = paginasDe(textoDoPdf(com.pdf))
+    for (const p of paginas) expect(p).toContain(numero)
+    expect(corrido(paginas.at(-1)!)).toContain(AVISO_ETIQUETA)
+  })
+})
+
+describe.runIf(temPdftotext)('nº do certificado longo (outro formato de numeração)', { timeout: 60_000 }, () => {
+  it('cabe no alto da página, no passo 10 e no escritório, sem passar da margem nem aumentar a folha', async () => {
+    const numero = 'BC-CAL-2026-000125'
+    const d = { ...folhaPlataforma(), numeroCertificado: numero }
+    const m = await montar(d)
+    expect(m.paginas).toBe(3)
+    expect(m.faltando).toEqual([])
+    const palavras = palavrasDoPdf(m.pdf)
+    for (const [i, p] of palavras.entries()) {
+      const w = p.find((x) => x.texto === numero)
+      expect(w, `página ${i + 1}`).toBeDefined()
+      expect(w!.x1, `página ${i + 1}`).toBeLessThanOrEqual(A4.largura - 34)
+    }
+    const ultima = corrido(paginasDe(textoDoPdf(m.pdf)).at(-1)!)
+    expect(ultima).toContain(`ETIQUETA · CERTIFICADO Nº ${numero}`)
+    // No escritório, inteiro numa linha (a coluna se alarga para ele)
+    expect(ultima.slice(ultima.indexOf('ESCRITÓRIO'))).toContain(numero)
+    const linhas = paginasDe(textoDoPdf(m.pdf)).at(-1)!.split('\n')
+    // No alto da página, no título do passo 10 e no escritório: três linhas, o nº inteiro em cada uma
+    expect(linhas.filter((l) => l.includes(numero))).toHaveLength(3)
   })
 })

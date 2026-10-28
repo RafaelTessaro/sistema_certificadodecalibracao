@@ -12,6 +12,7 @@ import { PageHeader, StatCard } from '../components/ui/Misc'
 import { api } from '../lib/api'
 import { useConsulta } from '../lib/consulta'
 import { dataCurta, dataExtensa, hojeISO, mesCurto, numero } from '../lib/format'
+import { textoNumeroReservado } from '../lib/numeros'
 import { useCores } from '../lib/useCores'
 import { useSessao } from '../store/sessao'
 
@@ -262,7 +263,13 @@ function ListaCalibracoes({
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-ink">
-                    <span className="tnum">{k.numero || 'Rascunho'}</span>
+                    <span
+                      className="tnum"
+                      title={!k.numero && k.numeroReservado ? textoNumeroReservado(k.numeroReservado) : undefined}
+                    >
+                      {k.numero || k.numeroReservado || 'Rascunho'}
+                    </span>
+                    {!k.numero && k.numeroReservado && <span className="text-xs font-normal text-muted"> (reservado)</span>}
                     <span className="font-normal text-muted"> · {k.clienteNome}</span>
                   </p>
                   <p className="truncate text-xs text-muted">

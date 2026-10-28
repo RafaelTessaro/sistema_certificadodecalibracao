@@ -219,7 +219,13 @@ export const GRUPOS_AUDITORIA: Record<GrupoAuditoria, readonly AcaoAuditoria[]> 
     'SESSOES_ENCERRADAS',
     'FERRAMENTA_LOCAL',
   ],
-  certificados: ['CERTIFICADO_EMITIDO', 'CERTIFICADO_CANCELADO', 'CERTIFICADO_ENVIADO'],
+  certificados: [
+    'CERTIFICADO_EMITIDO',
+    'CERTIFICADO_CANCELADO',
+    'CERTIFICADO_ENVIADO',
+    'NUMERO_RESERVADO',
+    'NUMERO_NAO_UTILIZADO',
+  ],
   dados: ['COPIA_RESTAURADA', 'BACKUP_BAIXADO', 'SISTEMA_ATUALIZADO'],
   alteracoes: ['ALTERACAO'],
 }
@@ -252,5 +258,7 @@ export const ROTULO_ACAO_AUDITORIA: Record<AcaoAuditoria, string> = {
   CERTIFICADO_EMITIDO: 'Emitiu um certificado',
   CERTIFICADO_CANCELADO: 'Cancelou um certificado',
   CERTIFICADO_ENVIADO: 'Enviou um certificado por e-mail',
+  NUMERO_RESERVADO: 'Reservou um nº de certificado',
+  NUMERO_NAO_UTILIZADO: 'Nº de certificado não utilizado',
   ALTERACAO: 'Alterou os dados',
 }

@@ -30,6 +30,12 @@ import type { DadosCertificadoPdf } from './tipos.ts'
 
 const CRIADO = '2026-01-10T12:00:00.000Z'
 
+/** O POP de calibração da empresa (código e revisão registrados no sistema), como sai nos exemplos. */
+export const POP_EXEMPLO = 'POP-CAL-01 rev. 00'
+
+/** Os textos do certificado com o POP dos exemplos. */
+const TEXTOS_EXEMPLO = { ...TEXTOS_PADRAO, procedimento: POP_EXEMPLO }
+
 // ---- Cadastros comuns ------------------------------------------------------------------------------
 
 function peso(id: string, marca: string, nominal: number, correcao: number, incerteza: number): PesoPadrao {
@@ -299,7 +305,7 @@ function ensaio(metodo: MetodoCarregamento, pontos: PontoIndicacao[], retornoZer
 function montar(
   calibracao: Calibracao,
   emissao: EmissaoCertificado,
-  extra: Partial<Pick<DadosCertificadoPdf, 'marcaDagua'>> = {},
+  extra: Partial<Pick<DadosCertificadoPdf, 'marcaDagua' | 'previa'>> = {},
 ): DadosCertificadoPdf {
   const { resultado, comoEncontrado } = calcularCalibracao(calibracao, emissao.balanca, emissao.padroes)
   return {
@@ -308,6 +314,7 @@ function montar(
     resultado,
     comoEncontrado,
     marcaDagua: extra.marcaDagua ?? '',
+    ...(extra.previa ? { previa: true } : {}),
   }
 }
 
@@ -411,6 +418,8 @@ export function exemploPlataforma(): DadosCertificadoPdf {
       'CRESCENTE_DECRESCENTE',
       [
         ponto('p0', 0, 0, 0, pesos, 'kg'),
+        // Min (1 kg), marcada na plaqueta, entre as cargas
+        ponto('pmin', 1, 1, 1, pesos, 'kg'),
         ponto('p1', 10, 10, 10, pesos, 'kg'),
         ponto('p2', 50, 50, 50.05, pesos, 'kg'),
         ponto('p3', 100, 100, 100.05, pesos, 'kg'),
@@ -444,7 +453,7 @@ export function exemploPlataforma(): DadosCertificadoPdf {
     padroes,
     tecnico: TECNICO,
     signatario: RESPONSAVEL,
-    textos: TEXTOS_PADRAO,
+    textos: TEXTOS_EXEMPLO,
     substituiNumero: '',
     substituiEmissao: '',
   }
@@ -504,7 +513,8 @@ export function exemploBancada(): DadosCertificadoPdf {
     tecnicoId: RESPONSAVEL.id,
     signatarioId: RESPONSAVEL.id,
     padroesIds: padroes.map((p) => p.id),
-    ambiente: { temperaturaInicial: 21, temperaturaFinal: 22.5, umidadeInicial: 55, umidadeFinal: 54, pressao: 925 },
+    // Sem barômetro entre os padrões: a pressão não foi medida
+    ambiente: { temperaturaInicial: 21, temperaturaFinal: 22.5, umidadeInicial: 55, umidadeFinal: 54, pressao: null },
     preliminar: {
       identificavel: 'SIM',
       limpa: 'SIM',
@@ -555,7 +565,7 @@ export function exemploBancada(): DadosCertificadoPdf {
     padroes,
     tecnico: { ...RESPONSAVEL, assinatura: '' },
     signatario: { ...RESPONSAVEL, assinatura: '' },
-    textos: TEXTOS_PADRAO,
+    textos: TEXTOS_EXEMPLO,
     substituiNumero: '',
     substituiEmissao: '',
   }
@@ -686,11 +696,12 @@ export function exemploRodoviaria(): DadosCertificadoPdf {
     padroes,
     tecnico: TECNICO,
     signatario: RESPONSAVEL,
-    textos: TEXTOS_PADRAO,
+    textos: TEXTOS_EXEMPLO,
     substituiNumero: 'CC-2026-00098',
     substituiEmissao: '2026-09-30T14:20:00.000Z',
   }
-  return montar(k, e, { marcaDagua: 'PRÉVIA — SEM VALOR' })
+  // A prévia, como o sistema a gera para o rascunho: sem as imagens das assinaturas e sem "emitido em"
+  return montar(k, e, { marcaDagua: 'PRÉVIA — SEM VALOR', previa: true })
 }
 
 // ---- 4. Pior caso: rodoviária multi-intervalo 30/60/80 t (ajuste, substituição, conformidade) ---------
@@ -876,7 +887,7 @@ export function exemploPiorCaso(): DadosCertificadoPdf {
     padroes,
     tecnico: TECNICO,
     signatario: RESPONSAVEL,
-    textos: TEXTOS_PADRAO,
+    textos: TEXTOS_EXEMPLO,
     substituiNumero: 'CC-2026-00131',
     substituiEmissao: '2026-10-21T12:10:00.000Z',
   }

@@ -116,6 +116,11 @@ export const TABELA_ACESSO: Record<string, RegraAcesso> = {
   'PUT /api/calibracoes/:id/folha-campo': 'logado', // liga a folha avulsa preenchida no cliente à calibração
   'GET /api/folha-campo': 'logado',
 
+  // rotas/numeros.ts (nºs de certificado reservados na impressão da folha de campo; o descarte do nº de uma
+  // folha avulsa, que deixa um buraco na numeração, só com a permissão de cancelar certificados)
+  'GET /api/numeros-reservados': 'logado',
+  'POST /api/numeros-reservados/:reserva/nao-utilizado': 'cancelarCertificado',
+
   // email.ts
   'GET /api/email/config': 'logado', // resposta reduzida para quem não tem `configuracoes`
   'PUT /api/email/config': 'configuracoes',
@@ -205,6 +210,7 @@ const ACAO_DA_ROTA: Record<string, AcaoAuditoria> = {
   'POST /api/calibracoes/:id/emitir': 'CERTIFICADO_EMITIDO',
   'POST /api/calibracoes/:id/cancelar': 'CERTIFICADO_CANCELADO',
   'POST /api/calibracoes/:id/email': 'CERTIFICADO_ENVIADO',
+  'POST /api/numeros-reservados/:reserva/nao-utilizado': 'NUMERO_NAO_UTILIZADO',
 }
 
 /** Rotas que só calculam ou geram prévia (POST sem gravar dados): fora da auditoria. */

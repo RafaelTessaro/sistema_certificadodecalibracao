@@ -2,6 +2,7 @@
 // Migração 5: histórico das folhas de campo (a substituída continua registrada) e as folhas soltas.
 // Migração 6: o PDF da folha de campo num arquivo (caminho e sha256 no banco) e as passagens da folha de um
 // certificado cancelado para a calibração refeita.
+// Migração 8: os nºs de certificado reservados na impressão da folha de campo (e o nº impresso em cada folha).
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
@@ -9,7 +10,7 @@ import { detalheTrocaIndicador, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 7
+const ULTIMA = 8
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -451,5 +452,89 @@ describe('migração 7: arquivos guardados no banco, revisões do POP e anexos d
     expect(versao(db)).toBe(ULTIMA)
     expect(pops(db)).toHaveLength(1)
     expect(db.prepare('SELECT COUNT(*) AS n FROM arquivos').get()).toEqual({ n: 1 })
+  })
+})
+
+describe('migração 8: nºs de certificado reservados na impressão da folha de campo', () => {
+  /** Banco na versão 7 (a anterior), com um rascunho, uma folha impressa para ele e um certificado emitido. */
+  function bancoV7() {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 1)
+    db.prepare(
+      `INSERT INTO clientes (id, tipo, documento, nome, busca, ativo, dados, versao, criado_em, atualizado_em)
+       VALUES ('c1', 'PJ', '', 'Frigorífico', 'frigorifico', 1, '{}', 1, ?, ?)`,
+    ).run(EM, EM)
+    inserirBalanca(db, 'b1', { numeroSerie: 'TL-1', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
+    inserirCalibracao(db, 'k1', 'b1', '', {})
+    migrar(db, 7)
+    db.prepare(
+      `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, impressa_por,
+         impressa_em, ultima_em) VALUES ('FC-2026-00001', 2026, 1, 'calibracao:k1', 'k1', 'b1', 'c1', 'Ana', ?, ?)`,
+    ).run(EM, EM)
+    db.prepare("INSERT INTO meta (chave, valor) VALUES ('sequencia_2026', '12')").run()
+    return db
+  }
+  const colunas = (db: DatabaseSync, tabela: string) =>
+    (db.prepare(`PRAGMA table_info(${tabela})`).all() as Array<{ name: string }>).map((c) => c.name)
+
+  it('cria a tabela (vazia: os rascunhos de antes não têm nº reservado) e a coluna do nº impresso na folha', () => {
+    const db = bancoV7()
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(colunas(db, 'numeros_reservados')).toEqual([
+      'id',
+      'numero',
+      'ano',
+      'sequencia',
+      'calibracao_id',
+      'folha',
+      'reservado_em',
+      'reservado_por',
+      'situacao',
+      'motivo',
+      'situacao_em',
+      'situacao_por',
+    ])
+    expect(db.prepare('SELECT COUNT(*) AS n FROM numeros_reservados').get()).toEqual({ n: 0 })
+    // A folha de antes não tem nº de certificado; o contador da emissão fica como estava
+    expect(db.prepare('SELECT numero, numero_certificado FROM folhas_campo').all()).toEqual([
+      { numero: 'FC-2026-00001', numero_certificado: '' },
+    ])
+    expect(db.prepare("SELECT valor FROM meta WHERE chave = 'sequencia_2026'").get()).toEqual({ valor: '12' })
+  })
+
+  it('a tabela recusa uma situação desconhecida, o mesmo ano e nº duas vezes e dois nºs reservados para a mesma calibração', () => {
+    const db = bancoV7()
+    migrar(db)
+    const inserir = (sequencia: number, calibracao: string, situacao = 'reservado') =>
+      db
+        .prepare(
+          `INSERT INTO numeros_reservados (numero, ano, sequencia, calibracao_id, folha, reservado_em, situacao)
+           VALUES (?, 2026, ?, ?, 'FC-2026-00001', ?, ?)`,
+        )
+        .run(`CC-2026-${sequencia}`, sequencia, calibracao, EM, situacao)
+    inserir(13, 'k1')
+    expect(() => inserir(14, 'k2', 'perdido')).toThrow(/CHECK/)
+    expect(() => inserir(13, 'k2')).toThrow(/UNIQUE/)
+    expect(() => inserir(14, 'k1')).toThrow(/UNIQUE/)
+    // Emitido ou não utilizado não conta como o reservado da calibração; folha avulsa ('') também não
+    inserir(15, 'k1', 'nao_utilizado')
+    inserir(16, '')
+    inserir(17, '')
+  })
+
+  it('pode ser repetida sem falhar nem perder os nºs', () => {
+    const db = bancoV7()
+    migrar(db)
+    db.prepare(
+      `INSERT INTO numeros_reservados (numero, ano, sequencia, calibracao_id, folha, reservado_em)
+       VALUES ('CC-2026-00013', 2026, 13, 'k1', 'FC-2026-00001', ?)`,
+    ).run(EM)
+    db.exec('PRAGMA user_version = 7')
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(db.prepare('SELECT numero, situacao FROM numeros_reservados').all()).toEqual([
+      { numero: 'CC-2026-00013', situacao: 'reservado' },
+    ])
   })
 })

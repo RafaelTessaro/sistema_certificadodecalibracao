@@ -10,11 +10,13 @@
 //   5. rodoviária 60 t sem calibração anterior: o plano sai das sugestões, sem a substituição no rascunho (a
 //      folha sugere as etapas, com os 20 × 500 kg em cada uma, e o nº de substituições de cada ponto) e sem
 //      declaração de conformidade pedida.
-// Os cadastros (empresa, clientes, padrões) e o POP do rodapé são os dos certificados de exemplo.
+// Os cadastros (empresa, clientes, padrões) e o POP do rodapé são os dos certificados de exemplo. Todas levam o
+// nº do certificado reservado na impressão, como no sistema: as com balança, o da calibração; as em branco
+// (folha avulsa), um nº da folha, que passa para a calibração a que ela for ligada.
 
-import { calibracaoVazia, EMPRESA_PADRAO, TEXTOS_PADRAO } from '#shared/dominio.ts'
+import { calibracaoVazia, EMPRESA_PADRAO } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
-import { exemploPlataforma, exemploRodoviaria, exemploBancada } from './exemplosCertificado.ts'
+import { exemploBancada, exemploPlataforma, exemploRodoviaria, POP_EXEMPLO } from './exemplosCertificado.ts'
 import type { DadosFolhaCampo } from './folhaCampo.ts'
 
 /** Os dados de entrada de uma calibração (sem os campos que o servidor controla). */
@@ -79,6 +81,7 @@ export function folhaPlataforma(): DadosFolhaCampo {
   const proxima = '2027-10-21'
   return {
     numero: 'FC-2026-00042',
+    numeroCertificado: 'CC-2026-00125',
     empresa: EMPRESA_PADRAO,
     cliente: d.emissao.cliente,
     balanca: d.emissao.balanca,
@@ -92,7 +95,7 @@ export function folhaPlataforma(): DadosFolhaCampo {
     tecnico: 'Carlos Eduardo Lima',
     impressoEm: '2026-10-20T17:35:00.000Z',
     impressoPor: IMPRESSO_POR,
-    procedimento: TEXTOS_PADRAO.procedimento,
+    procedimento: POP_EXEMPLO,
   }
 }
 
@@ -165,6 +168,7 @@ export function folhaMultiIntervalo(): DadosFolhaCampo {
   }
   return {
     numero: 'FC-2026-00043',
+    numeroCertificado: 'CC-2026-00126',
     empresa: EMPRESA_PADRAO,
     cliente,
     balanca,
@@ -173,7 +177,7 @@ export function folhaMultiIntervalo(): DadosFolhaCampo {
     tecnico: 'Fábio de Godoy Lima',
     impressoEm: '2026-10-21T11:02:00.000Z',
     impressoPor: 'Fábio de Godoy Lima',
-    procedimento: TEXTOS_PADRAO.procedimento,
+    procedimento: POP_EXEMPLO,
   }
 }
 
@@ -181,6 +185,7 @@ export function folhaRodoviaria(): DadosFolhaCampo {
   const d = exemploRodoviaria()
   return {
     numero: 'FC-2026-00044',
+    numeroCertificado: 'CC-2026-00127',
     empresa: EMPRESA_PADRAO,
     cliente: d.emissao.cliente,
     balanca: d.emissao.balanca,
@@ -194,7 +199,7 @@ export function folhaRodoviaria(): DadosFolhaCampo {
     tecnico: 'Carlos Eduardo Lima',
     impressoEm: '2026-10-23T19:20:00.000Z',
     impressoPor: IMPRESSO_POR,
-    procedimento: TEXTOS_PADRAO.procedimento,
+    procedimento: POP_EXEMPLO,
   }
 }
 
@@ -202,6 +207,8 @@ export function folhaEmBranco(): DadosFolhaCampo {
   const d = exemploPlataforma()
   return {
     numero: 'FC-2026-00045',
+    // A folha avulsa também reserva um nº de certificado (passa para a calibração a que for ligada)
+    numeroCertificado: 'CC-2026-00129',
     empresa: EMPRESA_PADRAO,
     cliente: null,
     balanca: null,
@@ -211,7 +218,7 @@ export function folhaEmBranco(): DadosFolhaCampo {
     tecnico: '',
     impressoEm: '2026-10-21T12:00:00.000Z',
     impressoPor: IMPRESSO_POR,
-    procedimento: TEXTOS_PADRAO.procedimento,
+    procedimento: POP_EXEMPLO,
   }
 }
 
@@ -239,7 +246,7 @@ export function folhaEmBrancoOitoPadroes(): DadosFolhaCampo {
       certificado: 'CAL-12988/2026',
     },
   ]
-  return { ...folhaEmBranco(), numero: 'FC-2026-00047', padroes: [...empresa, ...extras] }
+  return { ...folhaEmBranco(), numero: 'FC-2026-00047', numeroCertificado: 'CC-2026-00130', padroes: [...empresa, ...extras] }
 }
 
 export function folhaRodoviariaSemHistorico(): DadosFolhaCampo {
@@ -274,6 +281,7 @@ export function folhaRodoviariaSemHistorico(): DadosFolhaCampo {
   }
   return {
     numero: 'FC-2026-00046',
+    numeroCertificado: 'CC-2026-00128',
     empresa: EMPRESA_PADRAO,
     cliente: d.emissao.cliente,
     balanca,
@@ -282,6 +290,6 @@ export function folhaRodoviariaSemHistorico(): DadosFolhaCampo {
     tecnico: 'Carlos Eduardo Lima',
     impressoEm: '2026-10-23T19:40:00.000Z',
     impressoPor: IMPRESSO_POR,
-    procedimento: TEXTOS_PADRAO.procedimento,
+    procedimento: POP_EXEMPLO,
   }
 }

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { cargaExcentricidade, posicoesExcentricidade, repetibilidadeSugerida, sugerirPontos } from './sugestoes.ts'
+import {
+  cargaExcentricidade,
+  posicoesExcentricidade,
+  repetibilidadeSugerida,
+  repetibilidadesSugeridas,
+  sugerirPontos,
+} from './sugestoes.ts'
 
 describe('sugerirPontos', () => {
   it('30 kg / 5 g, classe III: 0/25/50/75/100 % mais 500e e 2000e', () => {
@@ -29,6 +35,27 @@ describe('sugerirPontos', () => {
     ])
   })
 
+  it('Min, quando marcada, entra entre as cargas (POP 7.7); sem duplicar, e só abaixo de Max', () => {
+    const plataforma = { classe: 'III' as const, tipoFaixas: 'UNICA' as const, faixas: [{ max: 300, e: 0.05, d: 0.05 }] }
+    expect(sugerirPontos(plataforma)).toEqual([0, 25, 75, 100, 150, 225, 300])
+    expect(sugerirPontos({ ...plataforma, min: 1 })).toEqual([0, 1, 25, 75, 100, 150, 225, 300])
+    // Igual a uma carga já sugerida: uma vez só
+    expect(sugerirPontos({ ...plataforma, min: 25 })).toEqual([0, 25, 75, 100, 150, 225, 300])
+    expect(sugerirPontos({ ...plataforma, min: 0 })).toEqual([0, 25, 75, 100, 150, 225, 300])
+    expect(
+      sugerirPontos({
+        classe: 'III',
+        tipoFaixas: 'MULTI_INTERVALO',
+        faixas: [
+          { max: 6, e: 0.002, d: 0.002 },
+          { max: 15, e: 0.005, d: 0.005 },
+          { max: 33, e: 0.01, d: 0.01 },
+        ],
+        min: 0.04,
+      }),
+    ).toContain(0.04)
+  })
+
   it('multi-intervalo: mudanças de EMA de cada faixa parcial, sem duplicados', () => {
     const pontos = sugerirPontos({
       classe: 'III',
@@ -43,7 +70,7 @@ describe('sugerirPontos', () => {
   })
 })
 
-describe('cargaExcentricidade (DOQ-CGCRE-097 10.4.1)', () => {
+describe('cargaExcentricidade (DOQ-CGCRE-097 10.4.1; POP 7.10)', () => {
   it('Max/3 até 500 kg, Max/5 até 3000 kg, Max/10 acima, em valor redondo', () => {
     expect(cargaExcentricidade(30, 'kg')).toBe(10)
     expect(cargaExcentricidade(30000, 'g')).toBe(10000)
@@ -51,6 +78,26 @@ describe('cargaExcentricidade (DOQ-CGCRE-097 10.4.1)', () => {
     expect(cargaExcentricidade(60000, 'kg')).toBe(6000)
     expect(cargaExcentricidade(1500, 'kg')).toBe(300)
     expect(cargaExcentricidade(220, 'g')).toBe(75)
+  })
+
+  it('o valor redondo nunca fica abaixo do mínimo da Tabela 5 (arredonda para cima)', () => {
+    const casos: Array<[number, number, number]> = [
+      // Max (kg), carga sugerida, mínimo
+      [20, 7, 20 / 3],
+      [33, 15, 11],
+      [50, 20, 50 / 3],
+      [200, 70, 200 / 3],
+      [500, 200, 500 / 3],
+      [600, 150, 120],
+      [3000, 600, 600],
+      [80000, 8000, 8000],
+    ]
+    for (const [max, carga, minimo] of casos) {
+      expect(cargaExcentricidade(max, 'kg'), `Max ${max} kg`).toBe(carga)
+      expect(cargaExcentricidade(max, 'kg')).toBeGreaterThanOrEqual(minimo)
+    }
+    // Nunca acima de Max
+    expect(cargaExcentricidade(0.3, 'kg')).toBeLessThanOrEqual(0.3)
   })
 })
 
@@ -76,6 +123,48 @@ describe('posicoesExcentricidade', () => {
       'Fim (volta)',
     ])
     expect(posicoesExcentricidade('GANCHO')).toEqual([])
+  })
+})
+
+describe('repetibilidadesSugeridas (POP 7.9)', () => {
+  it('faixa única: um ensaio, a ~0,5·Max', () => {
+    expect(repetibilidadesSugeridas({ tipoFaixas: 'UNICA', faixas: [{ max: 300, e: 0.05, d: 0.05 }] }, 'kg')).toEqual([
+      { carga: 150, leituras: 3 },
+    ])
+  })
+
+  it('multi-intervalo: um por intervalo; nos de baixo, logo abaixo do Max deles; no de cima, ~0,5·Max acima de Max₁', () => {
+    const balcao = {
+      tipoFaixas: 'MULTI_INTERVALO' as const,
+      faixas: [
+        { max: 6, e: 0.002, d: 0.002 },
+        { max: 15, e: 0.005, d: 0.005 },
+        { max: 33, e: 0.01, d: 0.01 },
+      ],
+    }
+    expect(repetibilidadesSugeridas(balcao, 'kg')).toEqual([
+      { carga: 4.8, leituras: 5 },
+      { carga: 12, leituras: 5 },
+      { carga: 16.5, leituras: 5 },
+    ])
+  })
+
+  it('múltiplas faixas: o de cima não coincide com o Max da faixa de baixo (15/30 kg → 12 kg e 25 kg)', () => {
+    expect(
+      repetibilidadesSugeridas(
+        {
+          tipoFaixas: 'MULTIPLAS_FAIXAS',
+          faixas: [
+            { max: 15, e: 0.005, d: 0.005 },
+            { max: 30, e: 0.01, d: 0.01 },
+          ],
+        },
+        'kg',
+      ),
+    ).toEqual([
+      { carga: 12, leituras: 5 },
+      { carga: 25, leituras: 5 },
+    ])
   })
 })
 

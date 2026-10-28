@@ -7,6 +7,7 @@ import {
   folhaRodoviariaSemHistorico,
 } from '../server/pdf/exemplosFolhaCampo.ts'
 import {
+  AVISO_ETIQUETA,
   FORMULARIO_FOLHA_CAMPO,
   padroesPrevistos,
   planoDaFolha,
@@ -23,7 +24,8 @@ describe('planoDaFolha', () => {
     const p = plano(folhaPlataforma())
     expect(p.origem).toBe('RASCUNHO')
     expect(p.metodo).toBe('CRESCENTE_DECRESCENTE')
-    expect(p.pontos.map((x) => x.carga)).toEqual([0, 10, 50, 100, 150, 200, 300])
+    // Com Min (1 kg), marcada na plaqueta
+    expect(p.pontos.map((x) => x.carga)).toEqual([0, 1, 10, 50, 100, 150, 200, 300])
     expect(p.pontos.find((x) => x.carga === 150)?.pesos).toBe('7 × 20 kg + 10 kg')
     expect(p.pontos.every((x) => x.falta === 0)).toBe(true)
     // Conformidade pedida: EMA da Portaria 157 em serviço (classe III, e = 50 g): 2e até 500e, 4e acima
@@ -32,10 +34,10 @@ describe('planoDaFolha', () => {
     expect(p.repetibilidade).toEqual([expect.objectContaining({ carga: 150, leituras: 5, minimo: 3 })])
     expect(p.excentricidade).toMatchObject({ aplicavel: true, carga: 100, metodo: 1, pesos: '5 × 20 kg' })
     expect(p.excentricidade.posicoes).toHaveLength(5)
-    // Peças a separar: a união das cargas (15 de 20 kg do PP20; 10 kg do JP-01)
+    // Peças a separar: a união das cargas (15 de 20 kg do PP20; 10 kg e 1 kg, de Min, do JP-01)
     expect(p.padroes.map((x) => [x.padrao.identificacao, x.separar])).toEqual([
       ['PP20-01 a 15', '15 × 20 kg'],
-      ['JP-01', '10 kg'],
+      ['JP-01', '10 kg + 1 kg'],
       ['TH-01', ''],
     ])
     expect(p.avisos).toEqual([])
@@ -49,9 +51,38 @@ describe('planoDaFolha', () => {
     // d e EMA pelo intervalo parcial de cada carga
     expect(p.pontos.find((x) => x.carga === 4)).toMatchObject({ d: 0.002, ema: 0.008 })
     expect(p.pontos.find((x) => x.carga === 33)).toMatchObject({ d: 0.01, ema: 0.04 })
-    // Repetibilidade: ~Max/2, 5 leituras; excentricidade: Max/3
-    expect(p.repetibilidade[0]).toMatchObject({ carga: 16.5, leituras: 5, minimo: 5 })
-    expect(p.excentricidade.carga).toBe(10)
+    // Min (40 g) entre as cargas
+    expect(p.pontos.map((x) => x.carga).slice(0, 3)).toEqual([0, 0.04, 1])
+    // Repetibilidade: um ensaio por intervalo (logo abaixo do Max dos de baixo; ~Max/2 no de cima), 5 leituras
+    expect(p.repetibilidade.map((r) => [r.carga, r.leituras, r.minimo])).toEqual([
+      [4.8, 5, 5],
+      [12, 5, 5],
+      [16.5, 5, 5],
+    ])
+    // Excentricidade: no mínimo Max/3 (11 kg), num valor redondo acima
+    expect(p.excentricidade.carga).toBe(15)
+    expect(p.avisos).toEqual([])
+  })
+
+  it('Min fora das cargas do rascunho: avisa para incluí-la', () => {
+    const d = folhaPlataforma()
+    d.calibracao = {
+      ...d.calibracao!,
+      indicacao: { ...d.calibracao!.indicacao, pontos: d.calibracao!.indicacao.pontos.filter((x) => x.carga !== 1) },
+    }
+    expect(plano(d).avisos).toEqual(['Min (1 kg) não está entre as cargas do erro de indicação: inclua-a no sistema.'])
+    // Sem Min marcada, nada
+    expect(plano({ ...d, balanca: { ...d.balanca!, min: 0 } }).avisos).toEqual([])
+  })
+
+  it('classe II: o barômetro vai inteiro na lista (a pressão é obrigatória); nas outras, na linha dos demais', () => {
+    const d = folhaRodoviaria()
+    const naFolha = (x: typeof d) =>
+      plano(x)
+        .padroes.filter((p) => p.naFolha)
+        .map((p) => p.padrao.identificacao)
+    expect(naFolha(d)).not.toContain('BR-01')
+    expect(naFolha({ ...d, balanca: { ...d.balanca!, classe: 'II' } })).toContain('BR-01')
   })
 
   it('rodoviária: substituição em etapas sem acusar falta de pesos nos pontos acima de 10 t', () => {
@@ -63,9 +94,14 @@ describe('planoDaFolha', () => {
     expect(p.excentricidade.posicoes).toHaveLength(6)
     // Tolerância do cliente: a mesma EMA em toda a faixa
     expect(new Set(p.pontos.map((x) => x.ema))).toEqual(new Set([60]))
-    // Os pontos param na metade de Max: o certificado só cobre até 40 t, e a folha avisa antes de sair
-    expect(p.avisos).toHaveLength(1)
+    // Os pontos param na metade de Max: o certificado só cobre até 40 t, e a folha avisa antes de sair; Min (400 kg)
+    // fora das cargas do último certificado; 10 t de pesos padrão por etapa, abaixo dos 15 t da Tabela 7 (Max 80 t)
+    expect(p.avisos).toHaveLength(3)
     expect(p.avisos[0]).toMatch(/^Os pontos vão só até 40\s000 kg \(50 % de Max\)/)
+    expect(p.avisos[1]).toBe('Min (400 kg) não está entre as cargas do erro de indicação: inclua-a no sistema.')
+    expect(p.avisos[2]).toMatch(
+      /^Cargas de substituição com 10\s000 kg de pesos padrão em cada etapa: para Max de 80\s000 kg, o mínimo é 15\s000 kg \(Tabela 7 do POP\)\. Leve mais pesos\.$/,
+    )
   })
 
   it('rodoviária sem substituição no plano: sugere as etapas (os pesos previstos) e o nível de cada ponto, como o cálculo soma', () => {
@@ -75,6 +111,8 @@ describe('planoDaFolha', () => {
     expect(p.substituicao).toMatchObject({ ativa: false, sugerida: true, carga: 10_000, etapas: 5, pesos: '20 × 500 kg' })
     expect(p.pontos.map((x) => [x.carga, x.nivelSubstituicao, x.pesos])).toEqual([
       [0, 0, ''],
+      // Min (400 kg): os 500 kg não a fecham (a folha avisa: leve outros pesos)
+      [400, 0, ''],
       [10_000, 0, '20 × 500 kg'],
       // 15 000 kg = 1 etapa de 10 000 kg + 10 × 500 kg por cima (nada de "20 × 500 kg + 5000 kg por baixo")
       [15_000, 1, '10 × 500 kg'],
@@ -83,8 +121,11 @@ describe('planoDaFolha', () => {
       [45_000, 4, '10 × 500 kg'],
       [60_000, 5, '20 × 500 kg'],
     ])
-    // nível × etapa + pesos = a carga de cada ponto (o que o cálculo usaria): nada falta nem passa
-    expect(p.pontos.every((x) => x.falta === 0 && x.excesso === 0)).toBe(true)
+    // nível × etapa + pesos = a carga de cada ponto (o que o cálculo usaria): nada falta nem passa (menos Min)
+    expect(p.pontos.filter((x) => x.carga !== 400).every((x) => x.falta === 0 && x.excesso === 0)).toBe(true)
+    expect(p.avisos).toContain('Os pesos previstos não fecham a carga de 400 kg: leve mais pesos ou use cargas de substituição.')
+    // 10 t de pesos por etapa: o mínimo da Tabela 7 para Max de 60 t (sem aviso)
+    expect(p.avisos.join(' ')).not.toContain('Tabela 7')
     expect(p.avisos[0]).toMatch(
       /^Os pesos previstos não chegam às cargas acima de 10\s000 kg: a folha sugere até 5 etapas de substituição de 10\s000 kg \(20 × 500 kg\); combine o material/,
     )
@@ -379,9 +420,22 @@ describe('referência do formulário', () => {
   it('o POP configurado (sem ele, nada): nunca mais o PT-CAL-01 fixo', () => {
     expect(referenciaDoFormulario('BALANÇAS-POP-123 rev. 00')).toBe('POP BALANÇAS-POP-123 rev. 00')
     expect(referenciaDoFormulario('  BALANÇAS-POP-123 rev. 01 ')).toBe('POP BALANÇAS-POP-123 rev. 01')
+    // O código que já começa com POP não repete a palavra
+    expect(referenciaDoFormulario('POP-CAL-01 rev. 00')).toBe('POP-CAL-01 rev. 00')
+    expect(referenciaDoFormulario('pop 12 rev. 3')).toBe('pop 12 rev. 3')
+    expect(referenciaDoFormulario('POPULAR-01 rev. 0')).toBe('POP POPULAR-01 rev. 0')
     for (const vazio of ['', '   ', null, undefined]) expect(referenciaDoFormulario(vazio)).toBe('')
     expect(JSON.stringify(FORMULARIO_FOLHA_CAMPO)).not.toContain('PT-CAL-01')
     // Layout novo (folha enxuta): revisão nova do formulário controlado
     expect(FORMULARIO_FOLHA_CAMPO.revisao).toBe('01')
+  })
+})
+
+describe('AVISO_ETIQUETA', () => {
+  it('diz para copiar o nº no campo da etiqueta e deixar a validade para o cliente, numa frase curta', () => {
+    expect(AVISO_ETIQUETA).toContain('etiqueta de calibração (campo CERTIFICADO Nº)')
+    expect(AVISO_ETIQUETA).toContain('A VALIDADE DA CALIBRAÇÃO fica em branco: é preenchida pela qualidade do cliente.')
+    // Uma linha na folha (≈ 150 caracteres a 7 pt)
+    expect(AVISO_ETIQUETA.length).toBeLessThanOrEqual(150)
   })
 })

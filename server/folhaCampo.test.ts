@@ -65,6 +65,7 @@ beforeEach(async () => {
       classe: 'M1',
       certificado: 'LAB-0456/2026',
       laboratorio: 'Laboratório de Massa Exemplo',
+      acreditacao: 'CAL 0123',
       dataCalibracao: '2026-01-10',
       validade: '2099-01-10',
       pesos: [
@@ -213,8 +214,9 @@ describe('folha de campo de uma calibração', { timeout: 30_000 }, () => {
       const texto = textoDoPdf(r.rawPayload)
       expect(texto).toContain('TL-2231')
       expect(texto).not.toContain('OUTRO')
-      // Nunca as leituras nem o nº do certificado
-      expect(texto).not.toContain(emitida.json().calibracao.numero)
+      // Nunca as leituras; o nº do certificado é o reservado na primeira impressão (o da etiqueta), com que
+      // ele foi emitido
+      expect(texto).toContain(emitida.json().calibracao.numero)
       expect(texto).not.toContain('20,01')
     }
   })

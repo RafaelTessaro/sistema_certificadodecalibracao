@@ -22,6 +22,7 @@ import type {
   GrupoAuditoria,
   MensagemTempoReal,
   NovoUsuario,
+  NumeroReservado,
   Padrao,
   PadraoInput,
   RegistroAuditoria,
@@ -85,6 +86,11 @@ export interface DetalheCalibracao {
   revisoes: Array<{ id: string; numero: string; status: StatusCalibracao }>
   /** Folha de campo já impressa desta calibração (null = ainda não). */
   folhaCampo: FolhaCampoImpressa | null
+  /**
+   * Em andamento: o nº do certificado reservado na impressão da folha de campo (sai na folha e na etiqueta;
+   * o certificado é emitido com ele). null = ainda sem nº (é dado na emissão).
+   */
+  numeroReservado?: NumeroReservado | null
   /** Certificado (arquivo) de cada padrão usado: o congelado na emissão, ou o do cadastro. */
   certificadosPadroes: CertificadoDoPadrao[]
   /** POP: a revisão da emissão (emitido) ou a vigente (em andamento); null = nenhum. */
@@ -97,6 +103,19 @@ export interface AnexosEmail {
   /** Padrões usados sem o arquivo do certificado anexado. */
   semArquivo: CertificadoDoPadrao[]
   limites: { anexos: number; bytes: number }
+}
+
+/** PUT /api/calibracoes/:id/folha-campo */
+export interface FolhaLigada {
+  folhaCampo: FolhaCampoImpressa
+  /** O nº de certificado da calibração depois da ligação. */
+  numeroReservado: NumeroReservado | null
+  /**
+   * O nº de certificado impresso na folha ligada: é o da calibração (`usado`; o nº segue o papel) ou não pode
+   * ser usado (`motivo`: revisão, nº já emitido ou não utilizado; a etiqueta precisa ser corrigida). null = a
+   * folha não tinha nº (ou nada mudou).
+   */
+  numeroDaFolha: { numero: string; usado: boolean; motivo?: string } | null
 }
 
 /** GET /api/pop */
@@ -286,7 +305,7 @@ export const api = {
    * Impressa para outra balança: 409 com `codigo: 'CONFIRMAR_FOLHA'`; `confirmar` liga assim mesmo.
    */
   vincularFolhaCampo: (id: string, numero: string, confirmar = false) =>
-    requisitar<{ folhaCampo: FolhaCampoImpressa }>('PUT', `/api/calibracoes/${enc(id)}/folha-campo`, {
+    requisitar<FolhaLigada>('PUT', `/api/calibracoes/${enc(id)}/folha-campo`, {
       numero,
       ...(confirmar ? { confirmar: true } : {}),
     }),
@@ -296,6 +315,11 @@ export const api = {
    */
   urlFolhaCampoAvulsa: (f: { balancaId?: string; clienteId?: string } = {}) =>
     `/api/folha-campo${consulta({ balancaId: f.balancaId, clienteId: f.clienteId, chave: novoId() })}`,
+  /** Nºs de certificado ainda sem certificado (reservados) e os não utilizados, do mais novo para o mais antigo. */
+  numerosReservados: () => requisitar<{ numeros: NumeroReservado[] }>('GET', '/api/numeros-reservados'),
+  /** O nº de uma folha avulsa que não vai ser usada passa a não utilizado (só o administrador). */
+  descartarNumero: (id: number, motivo: string) =>
+    requisitar<{ numero: NumeroReservado }>('POST', `/api/numeros-reservados/${id}/nao-utilizado`, { motivo }),
   /** Prévia do certificado com os dados ainda não salvos. */
   previa: async (id: string, dados: CalibracaoInput): Promise<Blob> => {
     const resp = await fetch(`/api/calibracoes/${enc(id)}/previa`, {

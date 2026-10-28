@@ -53,6 +53,7 @@ beforeEach(async () => {
       classe: 'M1',
       certificado: 'LAB-0456/2026',
       laboratorio: 'Laboratório de Massa Exemplo',
+      acreditacao: 'CAL 0123',
       dataCalibracao: '2026-01-10',
       validade: '2099-01-10',
       pesos: [

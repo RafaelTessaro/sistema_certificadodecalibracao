@@ -1,13 +1,13 @@
 import { Minus, Plus, Repeat, Trash2, Wand2 } from 'lucide-react'
 import { novoId } from '#shared/id.ts'
-import { formatarNumero, repetibilidadeSugerida } from '#shared/metrologia/index.ts'
+import { formatarNumero, repetibilidadesSugeridas } from '#shared/metrologia/index.ts'
 import type { EnsaioRepetibilidade } from '#shared/tipos.ts'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Field } from '../ui/Form'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
-import { casasDe, maxDe } from './util'
+import { casasDe, dicaRepetibilidade, proximosEnsaiosRepetibilidade } from './util'
 
 export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa) {
   const u = balanca.unidade
@@ -15,13 +15,16 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
   const resultados = new Map((calc?.resultado.repetibilidade ?? []).map((r) => [r.id, r]))
   const setEnsaios = (mudar: (l: EnsaioRepetibilidade[]) => EnsaioRepetibilidade[]) =>
     alterar((s) => ({ ...s, repetibilidade: mudar(s.repetibilidade) }))
-  const novo = () => {
-    const sug = repetibilidadeSugerida(maxDe(balanca), u)
+  // Sem ensaio: os sugeridos (um por intervalo ou faixa de d diferente); depois, o próximo que falta
+  const novo = () =>
     setEnsaios((l) => [
       ...l,
-      { id: novoId(), carga: sug.carga, leituras: Array.from({ length: Math.max(sug.leituras, 5) }, () => null) },
+      ...proximosEnsaiosRepetibilidade(repetibilidadesSugeridas(balanca, u), l).map((sug) => ({
+        id: novoId(),
+        carga: sug.carga,
+        leituras: Array.from({ length: Math.max(sug.leituras, 5) }, () => null),
+      })),
     ])
-  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -38,8 +41,8 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
         />
         <div className="px-5 pb-5">
           <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[13px] text-ink-2">
-            Use de 50 % a 100 % da capacidade (não precisa ser peso padrão). Faça pelo menos 5 leituras (3 com cargas de 100 kg ou
-            mais). Com 10 ou mais leituras a incerteza fica menor (k mais perto de 2).
+            {dicaRepetibilidade(balanca)} Faça pelo menos 5 leituras (3 com cargas de 100 kg ou mais). Com 10 ou mais leituras a
+            incerteza fica menor (k mais perto de 2).
           </p>
         </div>
       </Card>

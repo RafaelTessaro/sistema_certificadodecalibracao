@@ -21,4 +21,9 @@ export interface DadosCertificadoPdf {
    * "SUBSTITUÍDO". Vazio = documento válido.
    */
   marcaDagua: string
+  /**
+   * Prévia de um rascunho (ainda não emitido nem autorizado): sem as imagens das assinaturas (só as linhas) e,
+   * no fim, "Prévia gerada em …, sem valor" no lugar de "emitido em …".
+   */
+  previa?: boolean
 }

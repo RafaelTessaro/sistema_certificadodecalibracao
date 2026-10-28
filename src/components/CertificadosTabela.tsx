@@ -3,12 +3,27 @@ import { useNavigate } from 'react-router-dom'
 import type { CalibracaoResumo } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
 import { dataCurta } from '../lib/format'
+import { numeroDaLinha, textoNumeroReservado } from '../lib/numeros'
 import { StatusCalibracaoBadge } from './Selos'
 import { Linha, Tabela, Td, Th } from './ui/Table'
 
 /** Endereço da tela de uma calibração: rascunho abre a edição; emitido, o certificado. */
 export const rotaCalibracao = (k: Pick<CalibracaoResumo, 'id' | 'status'>) =>
   k.status === 'RASCUNHO' || k.status === 'REVISAO' ? `/calibracoes/${k.id}/editar` : `/calibracoes/${k.id}`
+
+/**
+ * Nº do certificado na lista: o emitido; em andamento, o reservado na impressão da folha de campo, com
+ * "(reservado)"; sem nº ainda, "Em andamento".
+ */
+export function NumeroDaLinha({ k }: { k: Pick<CalibracaoResumo, 'numero' | 'numeroReservado'> }) {
+  const { numero, reservado } = numeroDaLinha(k)
+  return (
+    <p className="font-medium whitespace-nowrap text-ink" title={reservado ? textoNumeroReservado(numero) : undefined}>
+      {numero ? <span className="tnum">{numero}</span> : 'Em andamento'}
+      {reservado && <span className="ml-1 text-xs font-normal text-muted">(reservado)</span>}
+    </p>
+  )
+}
 
 /** Lista de calibrações e certificados (usada na página Certificados, no cliente e na balança). */
 export function CertificadosTabela({
@@ -47,7 +62,7 @@ export function CertificadosTabela({
                   <FileBadge2 className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <p className="tnum font-medium whitespace-nowrap text-ink">{k.numero || 'Em andamento'}</p>
+                  <NumeroDaLinha k={k} />
                   <p className="text-xs whitespace-nowrap text-muted">
                     {k.dataEmissao ? `Emitido em ${dataCurta(k.dataEmissao)}` : `Atualizado em ${dataCurta(k.atualizadoEm)}`}
                     {k.envios > 0 && (

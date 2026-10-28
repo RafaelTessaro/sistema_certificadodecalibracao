@@ -9,7 +9,7 @@ import { arredondarResultado, casasDecimais, formatarNumero, limparRuido } from 
 import { emaInstrumento, faixaDoValor, faixasOrdenadas } from './ema.ts'
 import { desvioPadrao, fatorAbrangencia, media } from './estatistica.ts'
 import { converterMassa } from './pesos.ts'
-import { cargaExcentricidade } from './sugestoes.ts'
+import { cargaExcentricidade, pesosMinimosSubstituicao } from './sugestoes.ts'
 import type {
   Aviso,
   EntradaCalculo,
@@ -597,6 +597,15 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       nivel: 'atencao',
       mensagem: `Classe dos pesos insuficiente em ${lista(classeInsuficiente)}: Σ EMA dos pesos maior que 1/3 do EMA OIML inicial da balança (R76 3.7.1).`,
     })
+  // Pesos padrão de menos em cada etapa de substituição (a referência fica quase toda no material sem calibração)
+  if (cadeia?.massa.temPecas) {
+    const minimo = pesosMinimosSubstituicao(converterMassa(max, unidade, 'kg'))
+    if (minimo > 0 && converterMassa(cadeia.massa.nominal, unidade, 'kg') < minimo * (1 - TOL))
+      avisos.push({
+        nivel: 'atencao',
+        mensagem: `Cargas de substituição com ${rotulo(cadeia.massa.nominal)} de pesos padrão em cada etapa: para Max de ${rotulo(max)}, o mínimo é ${formatarNumero(converterMassa(minimo, 'kg', unidade), 0)} ${unidade} (Tabela 7 do POP).`,
+      })
+  }
   if (uMenorQueD.length)
     avisos.push({
       nivel: 'info',

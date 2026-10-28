@@ -2,6 +2,7 @@ import { CircleAlert, CircleCheck, Eye, FileBadge2, Hourglass, Loader2, ShieldCh
 import { useState } from 'react'
 import { formatarNumeroCertificado } from '#shared/dominio.ts'
 import { podeEmitir } from '#shared/permissoes.ts'
+import type { NumeroReservado } from '#shared/tipos.ts'
 import { hojeISO } from '../../lib/format'
 import { useSessao } from '../../store/sessao'
 import { Button } from '../ui/Button'
@@ -11,6 +12,7 @@ import { AvisoItem } from './PainelResultados'
 
 export function EtapaRevisao({
   ctx,
+  numeroReservado = null,
   pendencias,
   salvando,
   aoVisualizar,
@@ -19,6 +21,8 @@ export function EtapaRevisao({
   aoEmitir,
 }: {
   ctx: ContextoEtapa
+  /** O nº reservado na impressão da folha de campo (o da etiqueta): o certificado é emitido com ele. */
+  numeroReservado?: Pick<NumeroReservado, 'numero' | 'folha'> | null
   pendencias: string[]
   salvando: boolean
   aoVisualizar: () => void
@@ -128,7 +132,16 @@ export function EtapaRevisao({
             </div>
             <div className="rounded-xl bg-surface-2/60 px-4 py-3">
               <p className="text-xs text-muted">Número</p>
-              <p className="tnum mt-0.5 font-medium text-ink">Gerado na emissão (ex.: {exemplo})</p>
+              {numeroReservado ? (
+                <p className="mt-0.5 font-medium text-ink">
+                  <span className="tnum">{numeroReservado.numero}</span>{' '}
+                  <span className="font-normal text-muted">
+                    (reservado na folha <span className="tnum">{numeroReservado.folha}</span>)
+                  </span>
+                </p>
+              ) : (
+                <p className="tnum mt-0.5 font-medium text-ink">Gerado na emissão (ex.: {exemplo})</p>
+              )}
             </div>
           </div>
 

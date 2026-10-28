@@ -14,6 +14,11 @@
 // o sha256 no banco), byte a byte: dois papéis com o mesmo nº controlado nunca têm conteúdo diferente (a
 // folha avulsa ligada a uma calibração sai como foi a campo, em branco; a de um certificado emitido, com o
 // plano de antes da visita).
+// A primeira impressão também reserva o nº do certificado, que sai na folha para o técnico copiar na etiqueta
+// da balança (ver `Repositorio.numeroParaFolha`): o da calibração em andamento (a folha nova e a reimpressão
+// continuam com ele; a revisão sai com o do certificado revisado, sem reserva) ou, na folha avulsa — também
+// a da balança, impressa sem rascunho, que vai a campo do mesmo jeito —, um nº da folha, que passa para a
+// calibração a que ela for ligada.
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
@@ -24,6 +29,7 @@ import type { Contexto } from '../contexto.ts'
 import { ErroApi } from '../erros.ts'
 import { entradaDe, rascunhoInicial } from '../rascunhos.ts'
 import { type DadosFolhaCampo, gerarFolhaCampoPdf, nomeArquivoFolhaCampo } from '../pdf/folhaCampo.ts'
+import { registrarNumeros } from './numeros.ts'
 
 /** Nome do arquivo pela OS, que é como a empresa acha o serviço ("Folha-de-campo-OS-2026-0456.pdf"); sem OS, pelo nº. */
 export function nomeArquivoDaFolha(os: string, numero: string): string {
@@ -104,10 +110,11 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       por: u.nome,
     })
     if (folha.substituiu.length) req.detalheAuditoria = detalheDaTroca(folha.numero, [], folha.substituiu, folha.liberadas)
+    registrarNumeros(ctx, req, folha.eventos)
     // Reimpressão: o arquivo da primeira impressão
     if (folha.pdf) return { pdf: folha.pdf, numero: folha.numero }
     const config = repo.obterConfig()
-    const pdf = await gerarFolhaCampoPdf({
+    const dados: DadosFolhaCampo & { numeroCertificado?: string } = {
       numero: folha.numero,
       empresa: config.empresa,
       cliente: e.cliente,
@@ -120,7 +127,10 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       // A data e quem imprimiu são os da reserva do nº (a primeira impressão)
       impressoEm: folha.impressaEm,
       impressoPor: folha.impressaPor || u.nome,
-    })
+      // O nº do certificado reservado (o técnico o copia na etiqueta da balança); sem ele, nada
+      ...(folha.numeroCertificado ? { numeroCertificado: folha.numeroCertificado } : {}),
+    }
+    const pdf = await gerarFolhaCampoPdf(dados)
     return { pdf: repo.guardarPdfFolhaCampo(folha.numero, pdf), numero: folha.numero }
   }
 
@@ -178,14 +188,24 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     const corpo = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>
     const numero = numeroDaFolha(corpo.numero)
     if (!numero) throw new ErroApi(400, 'Informe o nº da folha de campo como está no alto dela (ex.: FC-2026-00042).')
-    const { substituiu, liberadas, notas, ...folhaCampo } = repo.vincularFolhaCampo(numero, k, {
+    const {
+      substituiu,
+      liberadas,
+      notas,
+      eventos,
+      numeroDaFolha: daFolha,
+      ...folhaCampo
+    } = repo.vincularFolhaCampo(numero, k, {
       confirmar: corpo.confirmar === true,
       // Tirar a folha de um certificado cancelado mexe no registro dele: só quem pode cancelar
       podeCancelado: pode(u.nivel, 'cancelarCertificado'),
       por: u.nome,
     })
     req.detalheAuditoria = detalheDaTroca(numero, notas, substituiu, liberadas)
-    return { folhaCampo }
+    registrarNumeros(ctx, req, eventos)
+    // `numeroDaFolha`: o nº de certificado impresso na avulsa, que passou para a calibração (`usado`) ou ficou
+    // não utilizado (ela já tinha nº, ou é revisão): a tela avisa para corrigir a etiqueta
+    return { folhaCampo, numeroReservado: repo.numeroReservadoDa(k.id), numeroDaFolha: daFolha }
   })
 
   /**

@@ -304,7 +304,15 @@ describe('registro de atividades', () => {
   })
 
   it('rótulos para as ações e para os grupos', () => {
-    expect(TODAS).toHaveLength(19)
+    // 19 + o nº de certificado reservado e o não utilizado (folha de campo)
+    expect(TODAS).toHaveLength(21)
+    expect(GRUPOS_AUDITORIA.certificados).toEqual([
+      'CERTIFICADO_EMITIDO',
+      'CERTIFICADO_CANCELADO',
+      'CERTIFICADO_ENVIADO',
+      'NUMERO_RESERVADO',
+      'NUMERO_NAO_UTILIZADO',
+    ])
     for (const a of TODAS) expect(ROTULO_ACAO_AUDITORIA[a].length, a).toBeGreaterThan(3)
     expect(Object.keys(ROTULO_GRUPO_AUDITORIA).sort()).toEqual(Object.keys(GRUPOS_AUDITORIA).sort())
   })

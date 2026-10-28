@@ -2,7 +2,7 @@
 // data e o arquivo), o registro de uma revisão nova e as revisões anteriores, substituídas. O código e a
 // revisão saem em todas as páginas do certificado; o arquivo é o que a empresa mostra a quem pedir. Uma
 // revisão registrada sem o arquivo recebe o arquivo depois, também quando já foi substituída: os certificados
-// emitidos com ela são mostrados com ele.
+// emitidos com ela são mostrados com ele. Anexar é do administrador (a página já é só dele; o servidor confere).
 
 import { BookOpenText, Download, ExternalLink, FileText, History, Loader2, Plus, ShieldAlert, TriangleAlert } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
@@ -13,6 +13,7 @@ import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
 import { dataHora, hojeISO, tamanhoArquivo } from '../lib/format'
+import { usePode } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
 import { BotaoAnexarArquivo, CampoArquivo } from './CampoArquivo'
@@ -27,6 +28,7 @@ const proximaRevisao = (r: string) => (/^\d+$/.test(r) ? String(Number(r) + 1).p
 
 export function CartaoPop() {
   const { dados, carregando, erro } = useConsulta('pop', () => api.pop(), ['config'])
+  const podeAnexar = usePode('configuracoes')
   const [registrando, setRegistrando] = useState(false)
   const [anexando, setAnexando] = useState(false)
   const atual = dados?.atual ?? null
@@ -120,7 +122,7 @@ export function CartaoPop() {
               rotulo={anexando ? 'Enviando o arquivo…' : 'Anexar o arquivo do POP'}
               valor={atual.arquivo}
               aoMudar={(f) => void anexar(atual, f)}
-              desabilitado={anexando}
+              desabilitado={anexando || !podeAnexar}
               semRemover
             />
           </div>
@@ -141,7 +143,7 @@ export function CartaoPop() {
           </summary>
           <ul className="divide-y divide-line border-t border-line">
             {anteriores.map((v) => (
-              <LinhaRevisao key={v.id} v={v} anexando={anexando} aoAnexar={(f) => void anexar(v, f)} />
+              <LinhaRevisao key={v.id} v={v} anexando={anexando} podeAnexar={podeAnexar} aoAnexar={(f) => void anexar(v, f)} />
             ))}
           </ul>
         </details>
@@ -159,10 +161,13 @@ export function CartaoPop() {
 export function LinhaRevisao({
   v,
   anexando = false,
+  podeAnexar = true,
   aoAnexar,
 }: {
   v: VersaoPop
   anexando?: boolean
+  /** Só o administrador anexa (sem a permissão, a linha só avisa que falta o arquivo). */
+  podeAnexar?: boolean
   aoAnexar: (arquivo: File) => void
 }) {
   const tipo = v.arquivo ? tipoDoMime(v.arquivo.tipo) : null
@@ -193,13 +198,15 @@ export function LinhaRevisao({
               <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
               sem arquivo
             </span>
-            <BotaoAnexarArquivo
-              finalidade="pop"
-              rotulo={anexando ? 'Enviando…' : 'Anexar o arquivo'}
-              titulo={`Anexar o arquivo do ${textoPop(v)}, o dos certificados emitidos com esta revisão`}
-              desabilitado={anexando}
-              aoEscolher={aoAnexar}
-            />
+            {podeAnexar && (
+              <BotaoAnexarArquivo
+                finalidade="pop"
+                rotulo={anexando ? 'Enviando…' : 'Anexar o arquivo'}
+                titulo={`Anexar o arquivo do ${textoPop(v)}, o dos certificados emitidos com esta revisão`}
+                desabilitado={anexando}
+                aoEscolher={aoAnexar}
+              />
+            )}
           </>
         )}
       </span>
@@ -302,10 +309,9 @@ export function RegistrarPopModal({
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
               <b className="font-semibold">
-                A revisão vigente (<span className="tnum">{textoPop(atual)}</span>) ainda não tem o arquivo.
+                A revisão atual (<span className="tnum">{textoPop(atual)}</span>) ainda não tem o arquivo;
               </b>{' '}
-              Os certificados emitidos com ela ficam sem o documento. Anexe antes, no cartão do POP, ou depois, em “Revisões
-              anteriores”.
+              os certificados emitidos com ela ficarão sem o documento. Anexe antes ou depois em Revisões anteriores.
             </span>
           </p>
         )}

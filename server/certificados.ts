@@ -61,7 +61,12 @@ export function pendenciasDa(ctx: Contexto, k: Calibracao): string[] {
   const balanca = ctx.repo.obterBalanca(k.balancaId)
   if (!balanca) return ['Balança não encontrada.']
   const padroes = padroesDa(ctx, k)
-  const p = pendenciasEmissao(k, { padroes, hoje: hojeLocalIso(), temPesos: padroes.some((x) => x.tipo === 'PESOS') })
+  const p = pendenciasEmissao(k, {
+    padroes,
+    hoje: hojeLocalIso(),
+    temPesos: padroes.some((x) => x.tipo === 'PESOS'),
+    classe: balanca.classe,
+  })
   if (!ctx.repo.popVigente()) p.push(PENDENCIA_POP)
   try {
     const { resultado, comoEncontrado } = calcularCalibracao(k, balanca, padroes)
@@ -189,15 +194,26 @@ export async function anexosDoCertificado(
   return { anexos, semArquivo: certificados.filter((c) => !c.arquivo) }
 }
 
-/** Gera o PDF de uma calibração com os dados indicados. */
-export async function gerarPdf(k: Calibracao, emissao: EmissaoCertificado, marcaDagua: string): Promise<Buffer> {
+/**
+ * Gera o PDF de uma calibração com os dados indicados. `previa`: o rascunho, ainda não autorizado (sem as
+ * imagens das assinaturas e sem "emitido em").
+ */
+export async function gerarPdf(
+  k: Calibracao,
+  emissao: EmissaoCertificado,
+  marcaDagua: string,
+  previa = false,
+): Promise<Buffer> {
   const { resultado, comoEncontrado } = calcularCalibracao(k, emissao.balanca, emissao.padroes)
-  return gerarCertificadoPdf({ calibracao: k, emissao, resultado, comoEncontrado, marcaDagua })
+  return gerarCertificadoPdf({ calibracao: k, emissao, resultado, comoEncontrado, marcaDagua, previa })
 }
 
 const pastaCertificados = (ctx: Contexto, ano: number | null) => join(ctx.pastaDados, 'certificados', String(ano ?? 'sem-ano'))
 
-/** Emite: confere, reserva o número, congela os dados, gera e guarda o PDF. */
+/**
+ * Emite: confere, dá o número (o reservado na impressão da folha de campo, se houver; ver `Repositorio.emitir`),
+ * congela os dados, gera e guarda o PDF.
+ */
 export async function emitirCertificado(
   ctx: Contexto,
   id: string,
@@ -229,6 +245,7 @@ export async function emitirCertificado(
       versao: entrada.versao,
       numero: (seq, ano, revisao) => formatarNumeroCertificado(config.numeracao, seq, ano, revisao),
       codigo: gerarCodigo,
+      por: autor.nome,
     },
   )
   await salvarPdf(ctx, emitida)
@@ -251,7 +268,7 @@ async function salvarPdf(ctx: Contexto, k: Calibracao): Promise<Buffer> {
  * PDF para baixar ou enviar:
  * - emitido: o arquivo guardado (refeito a partir dos dados congelados se tiver sumido);
  * - cancelado ou substituído: refeito com a marca d'água;
- * - rascunho: prévia com marca d'água e número provisório.
+ * - rascunho: prévia com marca d'água e número provisório, sem as imagens das assinaturas (ninguém autorizou).
  */
 export async function pdfDaCalibracao(ctx: Contexto, k: Calibracao): Promise<Buffer> {
   const config = ctx.repo.obterConfig()
@@ -279,5 +296,5 @@ export async function previa(ctx: Contexto, k: Calibracao, config = ctx.repo.obt
     emitidoPor: '',
     signatarioId: k.signatarioId,
   })
-  return gerarPdf(provisorio, emissao, 'PRÉVIA — SEM VALOR')
+  return gerarPdf(provisorio, emissao, 'PRÉVIA — SEM VALOR', true)
 }

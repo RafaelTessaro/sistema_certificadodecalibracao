@@ -47,6 +47,56 @@ describe('descreverRegistro', () => {
     })
   })
 
+  it('emissão com o nº reservado: o detalhe diz de qual folha de campo ele veio', () => {
+    expect(
+      descreverRegistro(
+        registro({
+          acao: 'CERTIFICADO_EMITIDO',
+          alvo: 'k7',
+          detalhe: 'POST /api/calibracoes/:id/emitir | CC-2026-00042, reservado na folha de campo FC-2026-00010',
+        }),
+      ),
+    ).toEqual({
+      titulo: 'Emitiu um certificado',
+      detalhe: 'CC-2026-00042, reservado na folha de campo FC-2026-00010',
+      link: { tipo: 'calibracao', id: 'k7' },
+    })
+  })
+
+  it('nº de certificado reservado e não utilizado: o nº e de onde (ou o motivo), com o link da calibração se houver', () => {
+    expect(
+      descreverRegistro(registro({ acao: 'NUMERO_RESERVADO', alvo: 'k3', detalhe: 'CC-2026-00042 · folha FC-2026-00010' })),
+    ).toEqual({
+      titulo: 'Reservou um nº de certificado',
+      detalhe: 'CC-2026-00042 · folha FC-2026-00010',
+      link: { tipo: 'calibracao', id: 'k3' },
+    })
+    // Folha avulsa e calibração excluída: sem link
+    expect(
+      descreverRegistro(
+        registro({ acao: 'NUMERO_NAO_UTILIZADO', detalhe: 'CC-2026-00042 · Calibração excluída antes da emissão (rascunho).' }),
+      ),
+    ).toEqual({
+      titulo: 'Nº de certificado não utilizado',
+      detalhe: 'CC-2026-00042 · Calibração excluída antes da emissão (rascunho).',
+    })
+    // O descarte pela rota: só o que vem depois da chave
+    expect(
+      descreverRegistro(
+        registro({
+          acao: 'NUMERO_NAO_UTILIZADO',
+          detalhe: 'POST /api/numeros-reservados/:reserva/nao-utilizado | CC-2026-00043 · folha avulsa FC-2026-00011',
+        }),
+      ),
+    ).toEqual({ titulo: 'Nº de certificado não utilizado', detalhe: 'CC-2026-00043 · folha avulsa FC-2026-00011' })
+    expect(grupoDaAcao('NUMERO_RESERVADO')).toBe('certificados')
+    expect(grupoDaAcao('NUMERO_NAO_UTILIZADO')).toBe('certificados')
+  })
+
+  it('folha avulsa impressa: a frase da rota', () => {
+    expect(descreverRegistro(registro({ detalhe: 'GET /api/folha-campo' })).titulo).toBe('Imprimiu uma folha de campo avulsa')
+  })
+
   it('folha de campo nova e folha ligada: a frase e os nºs das folhas', () => {
     expect(
       descreverRegistro(

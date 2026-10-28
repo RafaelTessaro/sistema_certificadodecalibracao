@@ -10,6 +10,7 @@ import {
   RECEPTORES,
   ROTULO_CLASSE,
   TIPOS_BALANCA,
+  verificacoesAntesDeCalibrar,
 } from '#shared/dominio.ts'
 import type { AjusteRealizado, CalibracaoInput, Verificacao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
@@ -20,13 +21,6 @@ import { Segmented } from '../ui/Misc'
 import type { ContextoEtapa } from './contexto'
 import { Info } from './EtapaIdentificacao'
 
-const VERIFICACOES: Array<{ chave: Exclude<keyof CalibracaoInput['preliminar'], 'zeroAutomatico'>; texto: string }> = [
-  { chave: 'identificavel', texto: 'Balança identificada (série, modelo, plaqueta legível)' },
-  { chave: 'limpa', texto: 'Limpa, sem danos ou contaminação no prato/plataforma' },
-  { chave: 'nivelada', texto: 'Nivelada (bolha centralizada, quando houver)' },
-  { chave: 'aquecida', texto: 'Ligada e aquecida pelo tempo do fabricante' },
-  { chave: 'preCarga', texto: 'Pré-carga aplicada (carga perto de Max pelo menos uma vez)' },
-]
 
 export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: ContextoEtapa) {
   const prel = f.preliminar
@@ -116,7 +110,7 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
           descricao="Condições da balança no início (EURAMET cg-18, 4.1.3)"
         />
         <ul className="divide-y divide-line border-t border-line">
-          {VERIFICACOES.map((v) => (
+          {verificacoesAntesDeCalibrar(balanca.classe).map((v) => (
             <li key={v.chave} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-sm text-ink-2">{v.texto}</span>
               <Segmented

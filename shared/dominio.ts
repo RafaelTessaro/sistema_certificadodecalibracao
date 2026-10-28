@@ -418,6 +418,34 @@ export function formatarNumeroCertificado(
   return revisao > 0 ? `${base}-R${revisao}` : base
 }
 
+/**
+ * O ano e a sequência de um nº de certificado formatado (sem a revisão), pelo formato da numeração; sem o ano
+ * no formato, `anoPadrao`. null se o nº não segue o formato.
+ */
+export function lerNumeroCertificado(
+  numeracao: { formato: string; digitos: number },
+  numero: string,
+  anoPadrao: number,
+): { ano: number; sequencia: number } | null {
+  const formato = numeracao.formato.includes('{seq}') ? numeracao.formato : '{seq}/{ano}'
+  const grupos = { '{seq}': '(\\d+)', '{ano}': '(\\d{4})', '{aa}': '(\\d{2})' } as const
+  const pedacos = formato.split(/(\{seq\}|\{ano\}|\{aa\})/)
+  const partes = pedacos.filter((p) => p in grupos).map((p) => p.slice(1, -1) as 'seq' | 'ano' | 'aa')
+  const padrao = pedacos
+    .map((p) => (p in grupos ? grupos[p as keyof typeof grupos] : p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    .join('')
+  const m = new RegExp(`^${padrao}$`).exec(numero.trim())
+  if (!m) return null
+  const valor = (p: 'seq' | 'ano' | 'aa') => {
+    const i = partes.indexOf(p)
+    return i < 0 ? null : Number(m[i + 1])
+  }
+  const aa = valor('aa')
+  const ano = valor('ano') ?? (aa !== null ? 2000 + aa : anoPadrao)
+  const sequencia = valor('seq')
+  return sequencia && sequencia > 0 && ano > 0 ? { ano, sequencia } : null
+}
+
 /** Nome de arquivo seguro a partir do número do certificado. */
 export const nomeArquivoCertificado = (numero: string) =>
   `Certificado-${numero
@@ -1386,13 +1414,45 @@ export function normalizarCalibracao(entrada: unknown): Resultado<CalibracaoInpu
   }
 }
 
+// ---- Requisitos por classe da balança (POP, Tabela 2 e 6.2) -------------------------------------------
+
+/** Classe fina (I ou II): aquecimento mais longo, ΔT menor e pressão atmosférica medida com barômetro. */
+const classeFina = (classe: ClasseExatidao | null | undefined) => classe === 'I' || classe === 'II'
+
+/** Variação máxima da temperatura durante os ensaios (°C): 3 na classe II; 5 nas demais (e sem classe). */
+export const deltaTMaximo = (classe: ClasseExatidao | null | undefined): number => (classeFina(classe) ? 3 : 5)
+
+/** A pressão atmosférica é obrigatória (com barômetro calibrado) na classe II; nas demais, opcional. */
+export const pressaoObrigatoria = (classe: ClasseExatidao | null | undefined): boolean => classeFina(classe)
+
+/**
+ * Os itens da "Verificação antes de calibrar", os mesmos na tela e na folha de campo. O aquecimento é o maior
+ * entre o da Tabela 2 do POP (20 min; 1 h na classe II) e o do fabricante. `classe` null: balança ainda não
+ * conhecida (folha em branco), com os dois tempos.
+ */
+export function verificacoesAntesDeCalibrar(
+  classe: ClasseExatidao | null,
+): Array<{ chave: Exclude<keyof CalibracaoInput['preliminar'], 'zeroAutomatico'>; texto: string }> {
+  const aquecida =
+    classe === null
+      ? 'Ligada e aquecida: 20 min, classe II 1 h (ou o tempo do fabricante, se maior)'
+      : `Ligada e aquecida por ${classeFina(classe) ? '1 h' : '20 min'} ou mais (ou o tempo do fabricante, se maior)`
+  return [
+    { chave: 'identificavel', texto: 'Balança identificada (série, modelo, plaqueta legível)' },
+    { chave: 'limpa', texto: 'Limpa, sem danos ou contaminação no prato/plataforma' },
+    { chave: 'nivelada', texto: 'Nivelada (bolha centralizada, quando houver)' },
+    { chave: 'aquecida', texto: aquecida },
+    { chave: 'preCarga', texto: 'Pré-carga aplicada (carga perto de Max pelo menos uma vez)' },
+  ]
+}
+
 /**
  * O que falta para emitir o certificado (bloqueios). Os avisos do cálculo (ex.: poucas leituras)
  * aparecem à parte e não bloqueiam.
  */
 export function pendenciasEmissao(
   c: CalibracaoInput,
-  contexto: { padroes: Padrao[]; hoje: string; temPesos: boolean },
+  contexto: { padroes: Padrao[]; hoje: string; temPesos: boolean; classe?: ClasseExatidao },
 ): string[] {
   const p: string[] = []
   if (!dataIsoValida(c.dataCalibracao)) p.push('Informe a data da calibração.')
@@ -1406,10 +1466,23 @@ export function pendenciasEmissao(
     else if (dataIsoValida(c.dataCalibracao) && pad.validade < c.dataCalibracao)
       p.push(`O padrão ${pad.identificacao} estava vencido na data da calibração (${formatarDataBr(pad.validade)}).`)
     if (!pad.certificado) p.push(`O padrão ${pad.identificacao} está sem o número do certificado de calibração.`)
+    // A declaração de rastreabilidade do certificado diz que os padrões foram calibrados por laboratório acreditado
+    if (!pad.acreditacao?.trim())
+      p.push(`O padrão ${pad.identificacao} está sem a acreditação Cgcre do laboratório que o calibrou.`)
   }
   const amb = c.ambiente
   if (amb.temperaturaInicial === null || amb.temperaturaFinal === null)
     p.push('Registre a temperatura no início e no fim da calibração.')
+  // A pressão sai no certificado com o barômetro que a mediu (rastreável); o barômetro listado foi usado
+  const barometros = contexto.padroes.filter((x) => x.tipo === 'BAROMETRO').map((x) => x.identificacao)
+  if (amb.pressao !== null && !barometros.length)
+    p.push('Pressão informada sem barômetro nos padrões: escolha o barômetro usado ou apague a pressão.')
+  if (barometros.length && amb.pressao === null)
+    p.push(
+      `${barometros.length > 1 ? 'Barômetros escolhidos' : 'Barômetro escolhido'} sem a pressão registrada (tire ${barometros.join(', ')} dos padrões ou registre a pressão).`,
+    )
+  if (pressaoObrigatoria(contexto.classe) && amb.pressao === null && !barometros.length)
+    p.push('Balança classe II: registre a pressão atmosférica, medida com o barômetro (escolha-o nos padrões).')
   if (c.local === 'CLIENTE' && !c.localEndereco.trim()) p.push('Informe o endereço onde a calibração foi feita.')
   if (c.ajuste.realizado === 'EXTERNO' && !c.ajuste.descricao.trim()) p.push('Descreva o ajuste externo (peso usado).')
   if (c.reparo.houve && !c.ordemServico.trim()) p.push('Houve reparo: informe o número da ordem de serviço.')

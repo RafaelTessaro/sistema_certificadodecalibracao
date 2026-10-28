@@ -1,7 +1,16 @@
 import { Check, Droplets, Gauge, Thermometer, TriangleAlert, Weight } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { formatarDataBr, resumoPesos, situacaoValidade, totalPesos, TIPOS_PADRAO, massaLegivel } from '#shared/dominio.ts'
+import {
+  deltaTMaximo,
+  formatarDataBr,
+  massaLegivel,
+  pressaoObrigatoria,
+  resumoPesos,
+  situacaoValidade,
+  TIPOS_PADRAO,
+  totalPesos,
+} from '#shared/dominio.ts'
 import type { CondicoesAmbientais, Padrao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { hojeISO } from '../../lib/format'
@@ -10,8 +19,9 @@ import { Card, CardHeader } from '../ui/Card'
 import { Field } from '../ui/Form'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
+import { textoDeltaT } from './util'
 
-export function EtapaPadroes({ f, alterar, padroes, config }: ContextoEtapa) {
+export function EtapaPadroes({ f, alterar, padroes, config, balanca }: ContextoEtapa) {
   const escolhidos = new Set(f.padroesIds)
   const alternar = (p: Padrao) =>
     alterar((s) => ({
@@ -26,6 +36,9 @@ export function EtapaPadroes({ f, alterar, padroes, config }: ContextoEtapa) {
     amb.temperaturaInicial !== null && amb.temperaturaFinal !== null
       ? Math.abs(amb.temperaturaFinal - amb.temperaturaInicial)
       : null
+  // Limites da classe da balança: ΔT de 3 °C e pressão obrigatória (com barômetro) na classe II
+  const limiteDeltaT = deltaTMaximo(balanca.classe)
+  const comPressao = pressaoObrigatoria(balanca.classe)
   const pesos = padroes.filter((p) => p.tipo === 'PESOS')
   const instrumentos = padroes.filter((p) => p.tipo !== 'PESOS')
 
@@ -102,7 +115,7 @@ export function EtapaPadroes({ f, alterar, padroes, config }: ContextoEtapa) {
                       title="Variação da temperatura durante a calibração"
                       className={cn(
                         'tnum rounded-md px-1.5 text-[11px] leading-5 font-medium whitespace-nowrap',
-                        deltaT > 5 ? 'bg-warning-soft text-warning' : 'bg-surface-3 text-muted',
+                        deltaT > limiteDeltaT ? 'bg-warning-soft text-warning' : 'bg-surface-3 text-muted',
                       )}
                     >
                       Δ {numeroCurto(deltaT)} °C
@@ -151,10 +164,10 @@ export function EtapaPadroes({ f, alterar, padroes, config }: ContextoEtapa) {
               </GrupoAmbiente>
               <GrupoAmbiente icone={<Gauge className="h-3.5 w-3.5" />} titulo="Pressão" colunas={1}>
                 {/* "Opcional" no rótulo (e não numa dica embaixo): os três grupos ficam da mesma altura */}
-                <Field label="Opcional" htmlFor="amb-p">
+                <Field label={comPressao ? 'Obrigatória na classe II' : 'Opcional'} htmlFor="amb-p">
                   <CampoNumero
                     id="amb-p"
-                    aria-label="Pressão atmosférica (opcional)"
+                    aria-label={comPressao ? 'Pressão atmosférica (obrigatória na classe II)' : 'Pressão atmosférica (opcional)'}
                     valor={amb.pressao}
                     aoMudar={(v) => setAmb('pressao', v)}
                     unidade="hPa"
@@ -164,10 +177,10 @@ export function EtapaPadroes({ f, alterar, padroes, config }: ContextoEtapa) {
               </GrupoAmbiente>
             </div>
           </div>
-          {deltaT !== null && deltaT > 5 && (
+          {deltaT !== null && deltaT > limiteDeltaT && (
             <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
-              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />A temperatura variou {numeroCurto(deltaT)} °C durante a
-              calibração. O recomendado para balanças classe III é até 5 °C; registre nas observações.
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              {textoDeltaT(deltaT, balanca.classe)}
             </p>
           )}
         </div>
@@ -178,6 +191,7 @@ export function EtapaPadroes({ f, alterar, padroes, config }: ContextoEtapa) {
 
 /** Uma casa decimal, com vírgula (ex.: 0,7). */
 const numeroCurto = (v: number) => String(Math.round(v * 10) / 10).replace('.', ',')
+
 
 /**
  * Grupo das condições ambientais: título com ícone e os campos lado a lado (início e fim). Na pressão, um

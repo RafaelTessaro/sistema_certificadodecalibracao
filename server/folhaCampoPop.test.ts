@@ -1,4 +1,5 @@
 // A folha de campo leva o código e a revisão do POP vigente (o gerador do PDF põe no rodapé de toda página).
+// Cada teste gera PDFs de verdade (alguns segundos cada, mais com a máquina ocupada): prazo de 30 s.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { criarAppComLogin, POP_TESTE, type AppComLogin } from './auxiliaresTeste.ts'
@@ -37,11 +38,11 @@ describe('POP na folha de campo', () => {
     expect(nova.statusCode).toBe(201)
     await folhaEmBranco('folha-pop-0002')
     expect(recebidos.map((d) => d.procedimento)).toEqual([`${POP_TESTE.codigo} rev. 00`, `${POP_TESTE.codigo} rev. 01`])
-  })
+  }, 30_000)
 
   it('sem POP registrado, a folha sai sem a referência', async () => {
     t = await criarAppComLogin({ semPop: true })
     expect((await folhaEmBranco('folha-pop-0003')).statusCode).toBe(200)
     expect(recebidos.map((d) => d.procedimento)).toEqual([''])
-  })
+  }, 30_000)
 })

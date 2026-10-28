@@ -17,6 +17,7 @@ import { type AppComLogin, criarAppComLogin, SENHA_ADMIN } from './auxiliaresTes
 const FERRAMENTA = fileURLToPath(new URL('./ferramentas/redefinir-senha.mjs', import.meta.url))
 const ano = new Date().getFullYear()
 const fc = (n: number) => `FC-${ano}-${String(n).padStart(5, '0')}`
+const cc = (n: number) => `CC-${ano}-${String(n).padStart(5, '0')}`
 
 let pasta: string
 let banco: string
@@ -177,9 +178,25 @@ describe('voltar uma cópia do banco: as folhas de campo impressas depois dela',
       { numero: fc(2), chave: `recuperada:${fc(2)}`, calibracao_id: '', impressa_em: noSegundo(impressas.get(fc(2))!.em) },
       { numero: fc(3), chave: `recuperada:${fc(3)}`, calibracao_id: '', impressa_em: expect.any(String) },
     ])
-    expect(restauracoes().at(-1)).toBe(
+    expect(restauracoes().slice(-2)).toEqual([
       `2 folhas de campo da pasta folhas-campo que não estavam no banco (${fc(2)} a ${fc(3)}) voltaram ao registro, livres: o banco é de uma cópia anterior à impressão delas`,
-    )
+      // O nº de certificado da avulsa (FC-3), reservado depois da cópia, volta lido do PDF; o da FC-2 (folha nova
+      // da calibração) é o mesmo da FC-1, que a cópia já tinha
+      `o nº de certificado impresso nas folhas que voltaram da pasta (${cc(2)}) continua reservado, no papel: os nºs não se repetem`,
+    ])
+    expect(
+      app().ctx.db.prepare('SELECT numero, numero_certificado FROM folhas_campo ORDER BY sequencia').all(),
+    ).toEqual([
+      { numero: fc(1), numero_certificado: cc(1) },
+      { numero: fc(2), numero_certificado: cc(1) },
+      { numero: fc(3), numero_certificado: cc(2) },
+    ])
+    expect(
+      app().ctx.db.prepare('SELECT numero, calibracao_id, folha, situacao FROM numeros_reservados ORDER BY sequencia').all(),
+    ).toEqual([
+      { numero: cc(1), calibracao_id: k.id, folha: fc(1), situacao: 'reservado' },
+      { numero: cc(2), calibracao_id: '', folha: fc(3), situacao: 'reservado' },
+    ])
     expect(vigentesPorCalibracao()).toEqual([1])
 
     // Ligar a FC-2, que foi a campo: não se sabe para qual balança foi impressa, então pede confirmação
@@ -193,8 +210,13 @@ describe('voltar uma cópia do banco: as folhas de campo impressas depois dela',
     const reimpressa = await imprimir(k.id)
     expect(reimpressa.headers['x-folha-campo']).toBe(fc(2))
     expect(reimpressa.rawPayload.equals(impressas.get(fc(2))!.pdf)).toBe(true)
-    // Nenhum nº que já está no papel é emitido de novo
+    // O nº de certificado da FC-2 continua o da calibração (o da etiqueta)
+    expect(ligada.json()).toMatchObject({ numeroReservado: { numero: cc(1) }, numeroDaFolha: { numero: cc(1), usado: true } })
+    // Nenhum nº que já está no papel é emitido de novo: nem o da folha, nem o do certificado
     expect(await avulsa()).toBe(fc(4))
+    expect(app().ctx.db.prepare('SELECT numero_certificado FROM folhas_campo WHERE numero = ?').get(fc(4))).toEqual({
+      numero_certificado: cc(3),
+    })
 
     // Subir de novo não repete nada
     await parar()

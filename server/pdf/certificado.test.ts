@@ -9,10 +9,16 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { REPRODUCAO_ANTIGA, TEXTOS_PADRAO } from '#shared/dominio.ts'
+import { REPRODUCAO_ANTIGA, TEXTOS_ANTIGOS, TEXTOS_PADRAO } from '#shared/dominio.ts'
 import { pdfmake } from './base.ts'
-import { definicaoCertificado, gerarCertificadoPdf } from './certificado.ts'
-import { exemploBancada, exemploPiorCaso, exemploPlataforma, exemploRodoviaria } from './exemplosCertificado.ts'
+import {
+  definicaoCertificado,
+  gerarCertificadoPdf,
+  montarCertificado,
+  OCUPACAO_MINIMA_ULTIMA,
+  RESSALVA_OPINIOES,
+} from './certificado.ts'
+import { exemploBancada, exemploPiorCaso, exemploPlataforma, exemploRodoviaria, POP_EXEMPLO } from './exemplosCertificado.ts'
 import type { DadosCertificadoPdf } from './tipos.ts'
 
 type NoPdf = { unbreakable?: boolean } & Record<string, unknown>
@@ -104,11 +110,42 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
   },
   // O caso comum: sem revisão, sem ajuste e sem "como encontrado"; uma opinião curta não abre a 3ª página
   {
-    nome: 'rodoviária sem revisão + opinião',
+    nome: 'rodoviária sem revisão + opinião de 1 linha',
     paginas: 2,
     dados: () => {
       const d = rodoviariaSemRevisao()
       d.calibracao.opinioes = 'Recomenda-se limpar as laterais da plataforma.'
+      return d
+    },
+  },
+  {
+    nome: 'rodoviária sem revisão + opinião e observação de 1 linha',
+    paginas: 2,
+    dados: () => {
+      const d = rodoviariaSemRevisao()
+      d.calibracao.opinioes = 'Recomenda-se limpar as laterais da plataforma.'
+      d.calibracao.observacoes += '\nPlataforma lavada pelo cliente antes da calibração.'
+      return d
+    },
+  },
+  {
+    nome: 'bancada + opinião',
+    paginas: 2,
+    dados: () => {
+      const d = exemploBancada()
+      d.calibracao.opinioes = 'A balança está em boas condições de uso; mantenha o prato limpo e o nível centralizado.'
+      d.calibracao.observacoes = 'Balança usada na pesagem de amostras do controle de qualidade.'
+      return d
+    },
+  },
+  {
+    // Configuração com os textos de fábrica antigos (longos), de antes da migração para os curtos
+    nome: 'rodoviária sem revisão + opinião de 1 linha, com os textos antigos',
+    paginas: 2,
+    dados: () => {
+      const d = rodoviariaSemRevisao()
+      d.calibracao.opinioes = 'Recomenda-se limpar as laterais da plataforma.'
+      d.emissao.textos = { ...d.emissao.textos, ...TEXTOS_ANTIGOS }
       return d
     },
   },
@@ -179,7 +216,7 @@ async function pdfDe(arquivo: string): Promise<Buffer> {
 }
 
 /** Cabeçalho de cada página: marca, título, número do certificado, o procedimento (POP) e "Página i de N". */
-function conferirCabecalhos(texto: string, numero: string, marca: string, pop = 'PT-CAL-01 rev. 0') {
+function conferirCabecalhos(texto: string, numero: string, marca: string, pop = POP_EXEMPLO) {
   const folhas = texto.split('\f').filter((p) => p.trim())
   folhas.forEach((folha, i) => {
     const t = corrido(folha)
@@ -244,7 +281,7 @@ function conferirComum(texto: string, d: DadosCertificadoPdf) {
   expect(ultima).toContain('Fim do Certificado de Calibração')
 }
 
-describe('gerarCertificadoPdf', () => {
+describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
   it.each(EXEMPLOS)('gera um PDF válido e grava a amostra: $arquivo', async ({ arquivo }) => {
     const pdf = await pdfDe(arquivo)
     expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-')
@@ -308,6 +345,36 @@ describe('gerarCertificadoPdf', () => {
     expect(comMarca.watermark?.text).toBe('PRÉVIA — SEM VALOR')
   })
 
+  it('prévia do rascunho: sem as imagens das assinaturas (só as linhas) e sem "emitido em"', () => {
+    const imagens = (d: DadosCertificadoPdf) => JSON.stringify(definicaoCertificado(d)).match(/"image":/g)?.length ?? 0
+    const emitido = exemploPlataforma()
+    expect(imagens(emitido)).toBe(2)
+    const previa: DadosCertificadoPdf = { ...emitido, marcaDagua: 'PRÉVIA — SEM VALOR', previa: true }
+    expect(imagens(previa)).toBe(0)
+    const json = JSON.stringify(definicaoCertificado(previa))
+    expect(json).not.toContain('emitido em')
+    expect(json).toContain('Prévia gerada em 14/10/2026, às 10:42 (horário de Brasília), sem valor.')
+    // Os nomes e as linhas continuam (quem vai executar e autorizar)
+    expect(json).toContain('Carlos Eduardo Lima')
+    expect(json).toContain('Fábio de Godoy Lima')
+    // A amostra da prévia (rodoviária) também
+    expect(imagens(exemploRodoviaria())).toBe(0)
+  })
+
+  it('pressão atmosférica só com o barômetro entre os padrões', () => {
+    const celula = (d: DadosCertificadoPdf) => {
+      const json = JSON.stringify(definicaoCertificado(d))
+      return json.slice(json.indexOf('PRESSÃO ATMOSFÉRICA'), json.indexOf('MONITORAMENTO AMBIENTAL'))
+    }
+    const semBarometro = exemploBancada()
+    expect(semBarometro.emissao.padroes.some((p) => p.tipo === 'BAROMETRO')).toBe(false)
+    expect(semBarometro.calibracao.ambiente.pressao).toBeNull()
+    // Digitada sem barômetro (a emissão não deixa; um certificado antigo): não sai
+    semBarometro.calibracao.ambiente.pressao = 925
+    expect(celula(semBarometro)).not.toContain('925 hPa')
+    expect(celula(exemploRodoviaria())).toContain('941 hPa')
+  })
+
   it('sai com a linha de assinatura quando a imagem não é PNG/JPEG válido', async () => {
     const d = exemploPlataforma()
     d.emissao.tecnico = { ...d.emissao.tecnico, assinatura: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' }
@@ -340,7 +407,7 @@ describe('gerarCertificadoPdf', () => {
   })
 })
 
-describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', () => {
+describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 60_000 }, () => {
   it('plataforma 300 kg: ajuste, como encontrado, reparo, conformidade e próxima calibração a pedido', async () => {
     const d = exemploPlataforma()
     const texto = textoDoPdf(await pdfDe('certificado-plataforma-300kg'))
@@ -440,6 +507,11 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', () => {
     expect(t).toContain('Tolerância do cliente: EMA de ±60 kg')
     expect(t).toContain('Aceitação simples')
     expect(t).toContain('TH-01, BR-01')
+    // Prévia: sem "emitido em" (não foi emitido), com quando foi gerada e que não tem valor
+    expect(t).toContain('Prévia gerada em 14/10/2026, às 16:10 (horário de Brasília), sem valor.')
+    expect(t).not.toMatch(/emitido em 14\/10\/2026/)
+    // A pressão sai: o barômetro que a mediu está entre os padrões
+    expect(t).toMatch(/PRESSÃO ATMOSFÉRICA .*941 hPa/)
   })
 })
 
@@ -532,13 +604,30 @@ describe.runIf(temPdftotext)('certificado enxuto (2 páginas; 3 no pior caso)', 
     const visitar = (no: unknown) => {
       if (Array.isArray(no)) no.forEach(visitar)
       else if (no && typeof no === 'object') {
-        const x = no as { fontSize?: unknown }
-        if (typeof x.fontSize === 'number') tamanhos.push(x.fontSize)
+        const x = no as { fontSize?: unknown; id?: unknown }
+        // As marcas da montagem (um espaço de 0,1 pt depois de cada seção) não são texto
+        const marca = typeof x.id === 'string' && x.id.startsWith('fim:')
+        if (typeof x.fontSize === 'number' && !marca) tamanhos.push(x.fontSize)
         Object.values(no).forEach(visitar)
       }
     }
     visitar(doc.content)
     expect(Math.min(...tamanhos)).toBeGreaterThanOrEqual(7)
+  })
+
+  it('letra legível: só as marcas invisíveis da montagem (um espaço, sem tinta) ficam abaixo de 7 pt', () => {
+    const miudos: unknown[] = []
+    const visitar = (no: unknown) => {
+      if (Array.isArray(no)) no.forEach(visitar)
+      else if (no && typeof no === 'object') {
+        const x = no as { fontSize?: number; text?: unknown; id?: string }
+        if (typeof x.fontSize === 'number' && x.fontSize < 7) miudos.push(x)
+        Object.values(no).forEach(visitar)
+      }
+    }
+    visitar((definicaoCertificado(exemploPiorCaso()) as { content: unknown }).content)
+    expect(miudos.length).toBeGreaterThan(0)
+    for (const x of miudos) expect(x).toMatchObject({ text: ' ', id: expect.stringMatching(/^fim:/) })
   })
 
   it('o título dos padrões nunca fica sozinho no pé da página: vai com o cabeçalho e a 1ª linha da tabela', async () => {
@@ -583,17 +672,18 @@ describe('o fim do certificado nunca fica sozinho', { timeout: 120_000 }, () => 
   const casos = [...EXEMPLOS.map((e) => ({ nome: e.arquivo, dados: e.dados })), ...VARIANTES]
 
   it.each(casos)('$nome: as declarações vão inteiras, num bloco só com as assinaturas', ({ dados }) => {
-    const doc = definicaoCertificado(dados()) as { content: NoPdf[] }
+    const d = dados()
+    const textos = d.emissao.textos
+    const doc = definicaoCertificado(d) as { content: NoPdf[] }
     const ultimo = doc.content.at(-1)!
     expect(ultimo.unbreakable).toBe(true)
     const json = JSON.stringify(ultimo)
     expect(json).toContain('DECLARAÇÕES')
-    for (const t of [TEXTOS_PADRAO.incerteza, TEXTOS_PADRAO.abrangencia, TEXTOS_PADRAO.controleLegal])
-      expect(json).toContain(t.slice(0, 60))
+    for (const t of [textos.incerteza, textos.abrangencia, textos.controleLegal]) expect(json).toContain(t.slice(0, 60))
     expect(json).toContain('EXECUTADO')
     expect(json).toContain('— Fim do Certificado de Calibração nº')
     // Nenhuma declaração fora do bloco
-    expect(JSON.stringify(doc.content.slice(0, -1))).not.toContain(TEXTOS_PADRAO.incerteza.slice(0, 60))
+    expect(JSON.stringify(doc.content.slice(0, -1))).not.toContain(textos.incerteza.slice(0, 60))
   })
 
   it.runIf(temPdftotext).each(casos)(
@@ -623,7 +713,147 @@ describe('o fim do certificado nunca fica sozinho', { timeout: 120_000 }, () => 
   })
 })
 
-describe('cláusula de reprodução no rodapé', () => {
+describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
+  /** O certificado com a paginação natural (sem o equilíbrio), em texto. */
+  async function natural(d: DadosCertificadoPdf): Promise<string[]> {
+    const pdf = await pdfmake()
+      .createPdf(definicaoCertificado({ ...d, marcaDagua: '' }) as never)
+      .getBuffer()
+    return folhas(textoDoPdf(pdf))
+  }
+
+  it.runIf(temPdftotext)(
+    'plataforma (ajuste com "como encontrado", reparo e conformidade): a 3ª página leva seções inteiras, não só o fim',
+    async () => {
+      const d = exemploPlataforma()
+      // Sem o equilíbrio, a 3ª página ficaria só com as declarações e as assinaturas
+      const antes = await natural(d)
+      expect(antes).toHaveLength(3)
+      const p3 = corrido(antes[2])
+      expect(p3.slice(p3.indexOf('Página 3 de 3') + 'Página 3 de 3'.length).trim()).toMatch(/^7 DECLARAÇÕES/)
+      const m = await montarCertificado(d)
+      expect(m.paginas).toBe(3)
+      expect(m.quebras).toEqual(['conformidade'])
+      // As duas últimas páginas com pelo menos ≈ metade cada (antes: ≈ 3/4 e ≈ 1/4)
+      expect(m.ocupacao[2]).toBeGreaterThanOrEqual(0.45)
+      expect(m.ocupacao[1]).toBeGreaterThanOrEqual(0.45)
+      const ultima = corrido(folhas(textoDoPdf(m.pdf))[2])
+      expect(ultima).toMatch(/5 DECLARAÇÃO DE CONFORMIDADE .* 6 OBSERVAÇÕES .* 7 DECLARAÇÕES .* Fim do Certificado/)
+      // O PDF gerado é o da montagem, byte a byte (sem as imagens das assinaturas: o pdfkit decodifica os PNG
+      // com transparência em paralelo e a ordem dos objetos no arquivo varia; o conteúdo é o mesmo)
+      const semImagens: DadosCertificadoPdf = {
+        ...d,
+        emissao: {
+          ...d.emissao,
+          tecnico: { ...d.emissao.tecnico, assinatura: '' },
+          signatario: { ...d.emissao.signatario, assinatura: '' },
+        },
+      }
+      const montado = await montarCertificado(semImagens)
+      expect(montado.quebras).toEqual(['conformidade'])
+      expect((await gerarCertificadoPdf(semImagens)).equals(montado.pdf)).toBe(true)
+    },
+  )
+
+  it.runIf(temPdftotext).each([...EXEMPLOS.map((e) => ({ nome: e.arquivo, dados: e.dados })), ...VARIANTES])(
+    '$nome: com 3 páginas ou mais, a última leva mais que as declarações e as assinaturas',
+    async ({ dados }) => {
+      const m = await montarCertificado({ ...dados(), marcaDagua: '' })
+      expect(m.ocupacao).toHaveLength(m.paginas)
+      if (m.paginas < 3) {
+        // 2 páginas: a paginação natural, sem quebra forçada
+        expect(m.quebras).toEqual([])
+        return
+      }
+      const ultima = corrido(folhas(textoDoPdf(m.pdf)).at(-1)!)
+      const antesDasDeclaracoes = ultima.slice(0, ultima.search(/\d+ DECLARAÇÕES/))
+      expect(antesDasDeclaracoes).toMatch(
+        /\d(\.\d)? (DECLARAÇÃO DE CONFORMIDADE|OBSERVAÇÕES|OPINIÕES E INTERPRETAÇÕES|RESULTADOS|Erro de indicação|Excentricidade)/,
+      )
+      expect(m.ocupacao.at(-1)!).toBeGreaterThanOrEqual(OCUPACAO_MINIMA_ULTIMA - 0.1)
+    },
+  )
+
+  it('a montagem só mexe na paginação de 3 páginas ou mais com a última quase vazia', async () => {
+    // Pior caso: a 3ª página já tinha observações e opiniões; o equilíbrio leva a conformidade também
+    const pior = await montarCertificado(exemploPiorCaso())
+    expect(pior.paginas).toBe(3)
+    expect(pior.ocupacao[2]).toBeGreaterThanOrEqual(OCUPACAO_MINIMA_ULTIMA)
+    // 2 páginas: como sai
+    for (const d of [exemploBancada(), exemploRodoviaria()]) {
+      const m = await montarCertificado(d)
+      expect(m.paginas).toBe(2)
+      expect(m.quebras).toEqual([])
+    }
+    // Uma quebra pedida na definição começa a seção numa página nova (o grupo final nunca recebe quebra)
+    const doc = definicaoCertificado(exemploBancada(), { quebras: ['observacoes', 'declaracoes'] }) as {
+      content: Array<{ pageBreak?: string; id?: string }>
+    }
+    expect(doc.content.filter((x) => x.pageBreak === 'before')).toHaveLength(1)
+    const i = doc.content.findIndex((x) => x.pageBreak === 'before')
+    expect(doc.content[i - 1].id).toBe('fim:indicacao')
+    // A marca do fim do certificado só na medição
+    expect(JSON.stringify(doc.content)).not.toContain('fim:declaracoes')
+    expect(JSON.stringify((definicaoCertificado(exemploBancada(), { medir: true }) as { content: unknown }).content)).toContain(
+      'fim:declaracoes',
+    )
+  })
+
+  it.runIf(temPdftotext)(
+    'normal (sem ajuste) com opinião e observação de 1 linha: 2 páginas, com folga no pé da 2ª',
+    async () => {
+      for (const nome of ['rodoviária sem revisão + opinião de 1 linha', 'bancada + opinião']) {
+        const m = await montarCertificado(VARIANTES.find((v) => v.nome === nome)!.dados())
+        expect(m.paginas, nome).toBe(2)
+        expect(m.ocupacao[1], nome).toBeLessThanOrEqual(0.9)
+      }
+    },
+  )
+
+  it.runIf(temPdftotext)('opiniões: a ressalva vai na linha do título, e a caixa só com a opinião', async () => {
+    const texto = textoDoPdf(await pdfDe('certificado-bancada-30kg'))
+    const linha = texto.split('\n').find((l) => l.includes('OPINIÕES E INTERPRETAÇÕES'))!
+    expect(linha).toMatch(
+      /6 +OPINIÕES E INTERPRETAÇÕES +Baseadas nos resultados; não fazem parte dos resultados de medição\. Emitidas por pessoal autorizado\.$/,
+    )
+    expect(corrido(texto).split(RESSALVA_OPINIOES)).toHaveLength(2)
+    expect(RESSALVA_OPINIOES).toContain('não fazem parte dos resultados de medição')
+  })
+
+  it.runIf(temPdftotext)(
+    'assinaturas baixas: imagem até 22 pt; com uma só, a data e o fim ao lado dela (sem linha a mais)',
+    async () => {
+      const imagens: Array<{ fit: number[] }> = []
+      const visitar = (no: unknown) => {
+        if (Array.isArray(no)) no.forEach(visitar)
+        else if (no && typeof no === 'object') {
+          const x = no as { image?: unknown; fit?: number[] }
+          if (x.image && x.fit) imagens.push(x as { fit: number[] })
+          Object.values(no).forEach(visitar)
+        }
+      }
+      visitar((definicaoCertificado(exemploPlataforma()) as { content: unknown }).content)
+      expect(imagens).toHaveLength(2)
+      for (const i of imagens) expect(i.fit[1]).toBeLessThanOrEqual(22)
+      // Uma assinatura (executado e autorizado pela mesma pessoa): a data e o fim na coluna ao lado
+      const linhas = textoDoPdf(await pdfDe('certificado-bancada-30kg')).split('\n')
+      expect(linhas.find((l) => l.includes('Fábio de Godoy Lima'))).toMatch(
+        /Fábio de Godoy Lima +Rio Claro\/SP, emitido em 14\/10\/2026, às 15:05 \(horário de Brasília\)\.$/,
+      )
+      expect(linhas.find((l) => l.includes('Responsável técnico'))).toMatch(
+        /CREA-SP 5062345678 +— Fim do Certificado de Calibração nº CC-2026-00124 —$/,
+      )
+    },
+  )
+
+  it.runIf(temPdftotext)('só o obrigatório: sem separadores numa observação; o intervalo numa linha', async () => {
+    for (const e of EXEMPLOS) expect(corrido(textoDoPdf(await pdfDe(e.arquivo)))).not.toMatch(/Separador (decimal|de milhar)/)
+    const linhas = textoDoPdf(await pdfDe('certificado-bancada-30kg')).split('\n')
+    expect(linhas.find((l) => l.includes('não contém recomendação de intervalo'))?.trim()).toBe(TEXTOS_PADRAO.intervalo)
+  })
+})
+
+describe('cláusula de reprodução no rodapé', { timeout: 60_000 }, () => {
   /** Margem de baixo da página (pt): cresce com as linhas do rodapé. */
   const margemBase = (d: DadosCertificadoPdf) => (definicaoCertificado(d) as { pageMargins: number[] }).pageMargins[3]
 
@@ -697,7 +927,7 @@ describe('cláusula de reprodução no rodapé', () => {
   })
 })
 
-describe.runIf(temPdftoppm)('amostras em PNG (revisão visual)', () => {
+describe.runIf(temPdftoppm)('amostras em PNG (revisão visual)', { timeout: 60_000 }, () => {
   it.each(EXEMPLOS)('renderiza as páginas de $arquivo', async ({ arquivo }) => {
     const pdf = await pdfDe(arquivo)
     const caminho = join(PASTA_EXEMPLOS, `${arquivo}.pdf`)

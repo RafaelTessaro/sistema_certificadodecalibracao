@@ -25,7 +25,16 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { calcularCalibracao } from '#shared/calibracao.ts'
 import { PENDENCIA_POP } from '#shared/arquivos.ts'
 import { capacidadeTexto, pendenciasEmissao, TIPOS_BALANCA } from '#shared/dominio.ts'
-import type { Balanca, Calibracao, CalibracaoInput, Cliente, Configuracoes, FolhaCampoImpressa, Padrao } from '#shared/tipos.ts'
+import type {
+  Balanca,
+  Calibracao,
+  CalibracaoInput,
+  Cliente,
+  Configuracoes,
+  FolhaCampoImpressa,
+  NumeroReservado,
+  Padrao,
+} from '#shared/tipos.ts'
 import { BalancaFormModal } from '../components/BalancaFormModal'
 import { recomporCargas } from '../components/calibracao/cargas'
 import type { ContextoEtapa, IdEtapa } from '../components/calibracao/contexto'
@@ -41,11 +50,12 @@ import { PainelResultados } from '../components/calibracao/PainelResultados'
 import { ClienteFormModal } from '../components/ClienteFormModal'
 import { BotaoPop } from '../components/BotaoPop'
 import { type EscolhaFolha, FolhaCampoModal } from '../components/FolhaCampoModal'
+import { SeloNumeroReservado } from '../components/SeloNumeroReservado'
 import { StatusCalibracaoBadge } from '../components/Selos'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Combobox } from '../components/ui/Combobox'
-import { confirmar } from '../components/ui/Feedback'
+import { avisar, confirmar } from '../components/ui/Feedback'
 import { Field, Input } from '../components/ui/Form'
 import { Modal } from '../components/ui/Modal'
 import { EmptyState, PageHeader } from '../components/ui/Misc'
@@ -54,6 +64,7 @@ import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
 import { abrirFolhaCampo, TEXTO_FOLHA_NOVA, textoReimprimir } from '../lib/folhaCampo'
 import { dataCurta, hojeISO } from '../lib/format'
+import { avisoNumeroDaFolha } from '../lib/numeros'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
 
@@ -349,6 +360,8 @@ function EditorCalibracao({ id }: { id: string }) {
   const [editandoBalanca, setEditandoBalanca] = useState(false)
   const [previa, setPrevia] = useState<{ url: string } | { carregando: true } | null>(null)
   const [folha, setFolha] = useState<FolhaCampoImpressa | null>(null)
+  /** O nº de certificado reservado na impressão da folha de campo (null = ainda sem nº: é dado na emissão). */
+  const [numeroReservado, setNumeroReservado] = useState<NumeroReservado | null>(null)
   /** Janela "reimprimir ou folha nova" aberta (com a opção que vem selecionada), ou null. */
   const [escolhaFolha, setEscolhaFolha] = useState<EscolhaFolha | null>(null)
   const versao = useRef<number | undefined>(undefined)
@@ -379,6 +392,7 @@ function EditorCalibracao({ id }: { id: string }) {
         })
         setF(entradaDe(k))
         setFolha(d.folhaCampo)
+        setNumeroReservado(d.numeroReservado ?? null)
         setPendenciasServidor(d.pendencias)
         // Retoma na primeira etapa ainda sem dados
         if (k.indicacao.pontos.some((x) => x.crescente !== null)) setEtapa('revisao')
@@ -389,6 +403,31 @@ function EditorCalibracao({ id }: { id: string }) {
       ativo = false
     }
   }, [id, navegar])
+
+  // A folha de campo e o nº reservado mudam quando a folha é impressa (em outra aba). Vindo de "Criar e
+  // imprimir folha de campo", o PDF ainda está sendo gerado: confere de novo ao voltar para esta aba e em
+  // alguns segundos (a edição não é recarregada pelo tempo real)
+  const atualizarFolha = useCallback(
+    () =>
+      void api
+        .calibracao(id)
+        .then((d) => {
+          setFolha(d.folhaCampo)
+          setNumeroReservado(d.numeroReservado ?? null)
+        })
+        .catch(() => {}),
+    [id],
+  )
+  const carregou = !!dados
+  useEffect(() => {
+    if (!carregou || folha) return
+    const t = setTimeout(atualizarFolha, 4000)
+    window.addEventListener('focus', atualizarFolha, { once: true })
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener('focus', atualizarFolha)
+    }
+  }, [carregou, folha, atualizarFolha])
 
   const balanca = dados?.balanca
   const selecionados = useMemo(
@@ -484,6 +523,7 @@ function EditorCalibracao({ id }: { id: string }) {
       padroes: selecionados,
       hoje: hojeISO(),
       temPesos: selecionados.some((p) => p.tipo === 'PESOS'),
+      classe: balanca?.classe,
     })
     return [
       ...new Set([
@@ -494,7 +534,7 @@ function EditorCalibracao({ id }: { id: string }) {
         ...(calc?.comoEncontrado?.pendencias.map((p) => `Como encontrado: ${p}`) ?? []),
       ]),
     ]
-  }, [f, dados, selecionados, calc, pendenciasServidor, pop])
+  }, [f, dados, selecionados, calc, pendenciasServidor, pop, balanca])
 
   if (erro)
     return (
@@ -513,7 +553,16 @@ function EditorCalibracao({ id }: { id: string }) {
     try {
       const r = await api.vincularFolhaCampo(id, numero, confirmado)
       setFolha(r.folhaCampo)
-      toast.sucesso(`Folha de campo ${r.folhaCampo.numero} ligada a esta calibração`)
+      setNumeroReservado(r.numeroReservado)
+      const daFolha = r.numeroDaFolha
+      if (daFolha && !daFolha.usado)
+        // O nº impresso na folha pode já estar na etiqueta da balança: avisa até a pessoa fechar
+        void avisar(avisoNumeroDaFolha(daFolha, r.folhaCampo.numero))
+      else
+        toast.sucesso(
+          `Folha de campo ${r.folhaCampo.numero} ligada a esta calibração`,
+          daFolha ? `O certificado vai ser emitido com o nº ${daFolha.numero}, o impresso na folha.` : undefined,
+        )
       return true
     } catch (e) {
       if (!confirmado && e instanceof ErroApi && e.dados.codigo === 'CONFIRMAR_FOLHA') {
@@ -572,13 +621,8 @@ function EditorCalibracao({ id }: { id: string }) {
     try {
       const abriu = await abrirFolhaCampo(async () => ((await salvar()) ? api.urlFolhaCampo(id, { nova }) : null))
       if (!abriu || (folha && !nova)) return
-      const atualizar = () =>
-        void api
-          .calibracao(id)
-          .then((d) => setFolha(d.folhaCampo))
-          .catch(() => {})
-      window.addEventListener('focus', atualizar, { once: true })
-      setTimeout(atualizar, 4000)
+      window.addEventListener('focus', atualizarFolha, { once: true })
+      setTimeout(atualizarFolha, 4000)
     } catch (e) {
       avisarErro('Não foi possível abrir a folha de campo', e)
     }
@@ -600,8 +644,9 @@ function EditorCalibracao({ id }: { id: string }) {
   const emitir = async () => {
     const ok = await confirmar({
       titulo: 'Emitir o certificado?',
-      descricao:
-        'O certificado recebe o número definitivo e não pode mais ser alterado. Se precisar corrigir depois, é feita uma revisão que substitui este certificado.',
+      descricao: numeroReservado
+        ? `O certificado sai com o nº ${numeroReservado.numero}, o da folha de campo, e não pode mais ser alterado. Se precisar corrigir depois, é feita uma revisão que substitui este certificado.`
+        : 'O certificado recebe o número definitivo e não pode mais ser alterado. Se precisar corrigir depois, é feita uma revisão que substitui este certificado.',
       confirmar: 'Emitir certificado',
     })
     if (!ok) return
@@ -620,7 +665,11 @@ function EditorCalibracao({ id }: { id: string }) {
   const excluir = async () => {
     const ok = await confirmar({
       titulo: 'Excluir esta calibração?',
-      descricao: 'O rascunho e todas as leituras serão apagados. Esta ação não pode ser desfeita.',
+      descricao: `O rascunho e todas as leituras serão apagados. Esta ação não pode ser desfeita.${
+        numeroReservado
+          ? ` O nº ${numeroReservado.numero}, reservado para ela, volta para a folha de campo ${folha?.numero || numeroReservado.folha}: passa para a calibração refeita a que a folha for ligada (nunca para outra folha).`
+          : ''
+      }`,
       confirmar: 'Excluir rascunho',
       perigo: true,
     })
@@ -644,6 +693,7 @@ function EditorCalibracao({ id }: { id: string }) {
           <span className="flex flex-wrap items-center gap-3">
             {dados.calibracao.substituiId ? 'Revisão de certificado' : 'Calibração'}
             <StatusCalibracaoBadge status={dados.calibracao.status} />
+            {numeroReservado && <SeloNumeroReservado n={numeroReservado} />}
           </span>
         }
         descricao={
@@ -767,6 +817,7 @@ function EditorCalibracao({ id }: { id: string }) {
               {etapa === 'revisao' && (
                 <EtapaRevisao
                   ctx={ctx}
+                  numeroReservado={numeroReservado}
                   pendencias={pendencias}
                   salvando={salvo === 'salvando'}
                   aoVisualizar={() => void verPrevia()}

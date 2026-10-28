@@ -10,6 +10,7 @@ import {
   ehRodoviaria,
   METODOS_CARREGAMENTO,
   numeroBr,
+  pressaoObrigatoria,
   situacaoValidade,
   type SituacaoValidade,
 } from './dominio.ts'
@@ -18,8 +19,9 @@ import {
   emaInstrumento,
   faixaDoValor,
   faixasOrdenadas,
+  pesosMinimosSubstituicao,
   posicoesExcentricidade,
-  repetibilidadeSugerida,
+  repetibilidadesSugeridas,
   sugerirPontos,
 } from './metrologia/index.ts'
 import type {
@@ -50,12 +52,20 @@ export const FORMULARIO_FOLHA_CAMPO = {
 
 /**
  * Referência do formulário no rodapé de toda página: o POP configurado (`textos.procedimento`, ex.:
- * "BALANÇAS-POP-123 rev. 00" → "POP BALANÇAS-POP-123 rev. 00"); sem POP, nada.
+ * "BALANÇAS-POP-123 rev. 00" → "POP BALANÇAS-POP-123 rev. 00"; o código que já começa com POP fica como
+ * está: "POP-CAL-01 rev. 00"); sem POP, nada.
  */
 export function referenciaDoFormulario(procedimento: string | null | undefined): string {
   const pop = (procedimento ?? '').trim()
-  return pop ? `POP ${pop}` : ''
+  return !pop ? '' : /^POP\b/i.test(pop) ? pop : `POP ${pop}`
 }
+
+/**
+ * Nota da etiqueta de calibração, na folha com o nº do certificado reservado: o técnico copia o nº na
+ * etiqueta que cola na balança; a validade da etiqueta é escolha do cliente (o certificado não tem validade).
+ */
+export const AVISO_ETIQUETA =
+  'Copie este nº na etiqueta de calibração (campo CERTIFICADO Nº). A VALIDADE DA CALIBRAÇÃO fica em branco: é preenchida pela qualidade do cliente.'
 
 export interface CargaPlanejada {
   /** Carga nominal, na unidade da balança. */
@@ -110,9 +120,9 @@ export interface PadraoPlanejado {
   separar: string
   /**
    * Vai inteiro na lista "antes de sair": o jogo de pesos com peças a separar, o termo-higrômetro do
-   * ambiente e outro instrumento escolhido. Os demais (sem calibração anterior, o rascunho prevê todos os
-   * ativos) e o barômetro (a pressão é opcional) vão numa linha só, para não encher a folha de linhas que o
-   * plano não usa.
+   * ambiente, o barômetro na classe II (a pressão é obrigatória) e outro instrumento escolhido. Os demais (sem
+   * calibração anterior, o rascunho prevê todos os ativos) e o barômetro nas outras classes (a pressão é
+   * opcional) vão numa linha só, para não encher a folha de linhas que o plano não usa.
    */
   naFolha: boolean
 }
@@ -336,6 +346,9 @@ export function planoDaFolha(
     avisos.push(
       `Os pontos vão só até ${numeroBr(maiorCarga)} ${u} (${Math.round((maiorCarga / max) * 100)} % de Max) e o certificado só vale até essa carga: confirme com o cliente.`,
     )
+  // Min marcada fica entre as cargas (as sugeridas já a têm); nas do rascunho, o aviso para incluí-la
+  if (balanca.min > 0 && balanca.min < max && !pontos.some((p) => Math.abs(p.carga - balanca.min) <= TOL * max))
+    avisos.push(`Min (${numeroBr(balanca.min)} ${u}) não está entre as cargas do erro de indicação: inclua-a no sistema.`)
   // O "como encontrado" do rascunho (quando há) também: cada aba do sistema tem o seu método
   const rotuloMetodo = (m: MetodoCarregamento) => `“${METODOS_CARREGAMENTO[m].label}”`
   const antesMudou = !!calibracao?.comoEncontrado && metodoComoEncontrado !== calibracao.comoEncontrado.metodo
@@ -351,12 +364,11 @@ export function planoDaFolha(
       `Com cargas de substituição, as cargas só sobem: a folha prevê ${rotuloMetodo('CONTINUO')} (${noSistema}); acerte no sistema.`,
     )
 
-  // ---- Repetibilidade
-  const sugerida = repetibilidadeSugerida(max, u)
+  // ---- Repetibilidade (sugerida: um ensaio por intervalo ou faixa de d diferente)
   const minimoPara = (carga: number) => (converterMassa(carga, u, 'kg') >= 100 * (1 - TOL) ? 3 : 5)
   const ensaiosRep = calibracao?.repetibilidade.length
     ? calibracao.repetibilidade.map((r) => ({ carga: r.carga, leituras: r.leituras.length }))
-    : [{ carga: sugerida.carga, leituras: Math.max(sugerida.leituras, 5) }]
+    : repetibilidadesSugeridas(balanca, u).map((r) => ({ carga: r.carga, leituras: Math.max(r.leituras, 5) }))
   const repetibilidade = ensaiosRep.map((r) => ({
     ...cargaPlanejada(r.carga, u, pesos),
     leituras: Math.max(r.leituras, minimoPara(r.carga)),
@@ -399,6 +411,12 @@ export function planoDaFolha(
 
   // ---- Substituição (a do rascunho ou a sugerida)
   const comSugestao = !!subSugerida && maiorNivel > 0
+  // Pesos padrão de menos em cada etapa (Tabela 7 do POP): a referência fica quase toda no material sem calibração
+  const minimoPesos = pesosMinimosSubstituicao(converterMassa(max, u, 'kg'))
+  if ((substituicaoAtiva || comSugestao) && cargaEtapa > 0 && converterMassa(cargaEtapa, u, 'kg') < minimoPesos * (1 - TOL))
+    avisos.push(
+      `Cargas de substituição com ${numeroBr(cargaEtapa)} ${u} de pesos padrão em cada etapa: para Max de ${numeroBr(max)} ${u}, o mínimo é ${numeroBr(converterMassa(minimoPesos, 'kg', u))} ${u} (Tabela 7 do POP). Leve mais pesos.`,
+    )
   const substituicao = {
     ativa: substituicaoAtiva,
     sugerida: comSugestao,
@@ -418,11 +436,17 @@ export function planoDaFolha(
   // Um termo-higrômetro basta para o ambiente: o primeiro em dia (sem nenhum em dia, o primeiro)
   const termos = validades.itens.filter((x) => x.padrao.tipo === 'TERMOHIGROMETRO')
   const ambiente = (termos.find((x) => x.situacao !== 'VENCIDO') ?? termos[0])?.padrao
+  // Na classe II a pressão é obrigatória: um barômetro vai inteiro na lista (o primeiro em dia)
+  const barometros = validades.itens.filter((x) => x.padrao.tipo === 'BAROMETRO')
+  const barometro = pressaoObrigatoria(balanca.classe)
+    ? (barometros.find((x) => x.situacao !== 'VENCIDO') ?? barometros[0])?.padrao
+    : undefined
   const padroesPlano = validades.itens.map(({ padrao: p, situacao }): PadraoPlanejado => {
     const pecas = [...usadas.values()].filter((x) => x.padraoId === p.id)
     const separar = p.tipo === 'PESOS' ? descreverPecas(pecas, [p]) : ''
-    // O barômetro fica na linha dos outros: a pressão é opcional e não entra no cálculo
-    const naFolha = p.tipo === 'PESOS' ? !!separar : p.tipo === 'OUTRO' || p === ambiente
+    // O barômetro fica na linha dos outros (a pressão é opcional e não entra no cálculo), menos na classe II,
+    // em que a pressão é obrigatória
+    const naFolha = p.tipo === 'PESOS' ? !!separar : p.tipo === 'OUTRO' || p === ambiente || p === barometro
     return { padrao: p, situacao, separar, naFolha }
   })
   // Vencido só importa no que vai a campo (o que o plano não usa sai na linha dos outros, marcado)

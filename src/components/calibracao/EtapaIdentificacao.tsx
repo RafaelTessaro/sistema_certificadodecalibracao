@@ -184,10 +184,10 @@ function CampoFolhaCampo({
         !folha && revisao
           ? 'O certificado revisado foi feito sem folha de campo impressa pelo sistema: a revisão é a mesma visita, sem folha para imprimir. Se houve nova visita com uma folha avulsa, informe o nº do alto dela.'
           : !folha
-            ? 'Foi preenchida no cliente uma folha avulsa (em branco, do cliente ou da balança)? Informe o nº do alto dela: a calibração fica com esse nº.'
+            ? 'Foi preenchida no cliente uma folha avulsa (em branco, do cliente ou da balança)? Informe o nº do alto dela: a calibração fica com essa folha e com o nº de certificado impresso nela.'
             : folha.herdada
               ? `Do certificado revisado (a mesma visita), ${impressa}.`
-              : `${impressa.charAt(0).toUpperCase()}${impressa.slice(1)}.${naoUsadas} Se no cliente foi preenchida outra folha (em branco ou da balança), informe o nº dela.`
+              : `${impressa.charAt(0).toUpperCase()}${impressa.slice(1)}.${naoUsadas} Se no cliente foi preenchida outra folha (em branco ou da balança), informe o nº dela: a calibração passa a usar o nº de certificado impresso nela.`
       }
     >
       <div className="flex flex-col gap-2 sm:flex-row">

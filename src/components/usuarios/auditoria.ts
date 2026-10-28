@@ -43,6 +43,11 @@ const ROTAS: Record<string, readonly [Verbo, string, TipoLink?]> = {
   // Só a folha nova (nº novo no lugar de outro) vai para o registro; a reimpressão, não
   'GET /api/calibracoes/:id/folha-campo': [['Imprimiu', 'imprimir'], 'uma folha de campo nova para uma calibração', 'calibracao'],
   'PUT /api/calibracoes/:id/folha-campo': [['Ligou', 'ligar'], 'uma folha de campo a uma calibração', 'calibracao'],
+  'GET /api/folha-campo': [['Imprimiu', 'imprimir'], 'uma folha de campo avulsa'],
+  'POST /api/numeros-reservados/:reserva/nao-utilizado': [
+    ['Registrou', 'registrar'],
+    'o nº de uma folha avulsa como não utilizado',
+  ],
   'POST /api/lembretes': [ENVIAR, 'um lembrete de calibração a um cliente'],
   'PUT /api/config': [ALTERAR, 'as configurações'],
   'PUT /api/email/config': [ALTERAR, 'a configuração do e-mail'],
@@ -75,6 +80,15 @@ const COM_DETALHE = new Set([
 
 /** Ações próprias dos certificados: o alvo é a calibração (a frase leva a ela). */
 const ACOES_DO_CERTIFICADO = new Set<AcaoAuditoria>(['CERTIFICADO_EMITIDO', 'CERTIFICADO_CANCELADO', 'CERTIFICADO_ENVIADO'])
+
+/**
+ * Nºs de certificado reservados na impressão da folha de campo, ou não utilizados: o detalhe é o nº e de onde
+ * (ou o motivo); o alvo, a calibração (vazio na folha avulsa e na calibração excluída).
+ */
+const ACOES_DO_NUMERO = new Set<AcaoAuditoria>(['NUMERO_RESERVADO', 'NUMERO_NAO_UTILIZADO'])
+
+/** O que a rota acrescentou ao registro (depois de " | "), ou ''. */
+const extraDoDetalhe = (detalhe: string) => (detalhe.includes(' | ') ? detalhe.slice(detalhe.indexOf(' | ') + 3) : '')
 
 const GRUPO_DA_ACAO = new Map<AcaoAuditoria, GrupoAuditoria>(
   (Object.entries(GRUPOS_AUDITORIA) as Array<[GrupoAuditoria, readonly AcaoAuditoria[]]>).flatMap(([grupo, acoes]) =>
@@ -119,7 +133,17 @@ export function descreverRegistro(r: RegistroAuditoria, nomes?: ReadonlyMap<stri
     return { titulo, detalhe: rota ? `Tentou ${rota[0][1]} ${rota[1]}.` : r.detalhe }
   }
   if (ACOES_DO_CERTIFICADO.has(r.acao)) {
-    return { titulo, detalhe: '', ...(r.alvo ? { link: { tipo: 'calibracao' as const, id: r.alvo } } : {}) }
+    // A emissão com o nº reservado diz de qual folha de campo ele veio
+    return {
+      titulo,
+      detalhe: extraDoDetalhe(r.detalhe),
+      ...(r.alvo ? { link: { tipo: 'calibracao' as const, id: r.alvo } } : {}),
+    }
+  }
+  if (ACOES_DO_NUMERO.has(r.acao)) {
+    // Gravado pela rota do descarte ('POST … | nº · folha') ou direto (só o nº e de onde)
+    const detalhe = r.detalhe.startsWith('POST /api/') ? extraDoDetalhe(r.detalhe) : r.detalhe
+    return { titulo, detalhe, ...(r.alvo ? { link: { tipo: 'calibracao' as const, id: r.alvo } } : {}) }
   }
   // Na própria conta (trocar a própria senha) quem fez já aparece na linha de baixo. Na ferramenta do
   // servidor, a linha de baixo diz "No computador do servidor": a conta ajustada vem aqui

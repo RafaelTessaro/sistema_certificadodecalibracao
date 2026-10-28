@@ -27,25 +27,33 @@ function multiplo(valor: number, passo: number): number {
   return arredondarMeioPar(n * passo, casasDecimais(passo))
 }
 
-/** Valor "redondo" de 1 algarismo e meio: múltiplo de 0,5·10^ordem mais próximo (73,3 → 75; 10 → 10; 6 000 → 6 000). */
-function meioRedondo(valor: number): number {
+/**
+ * Valor "redondo" de 1 algarismo e meio, igual ou acima de `valor`: o menor múltiplo de 0,5·10^ordem que não
+ * fica abaixo dele (73,3 → 75; 6,67 → 7; 10 → 10; 6 000 → 6 000).
+ */
+function meioRedondoAcima(valor: number): number {
   if (!(valor > 0)) return 0
   const ordem = ordemDeGrandeza(valor)
   const passo = ordem >= 1 ? 5 * 10 ** (ordem - 1) : 5 / 10 ** (1 - ordem)
-  return multiplo(valor, passo)
+  const n = Math.max(1, Math.ceil(Number((valor / passo).toPrecision(12)) - TOL))
+  return arredondarMeioPar(n * passo, casasDecimais(passo))
 }
 
 /**
- * Pontos sugeridos para o erro de indicação (cg-18 §5.2; R76 A.4.4.1): 0, ~25, 50, 75 e 100 % de Max em
- * valores redondos múltiplos de e, mais as mudanças de EMA da classe (500e e 2000e na classe III; 5 000e e
- * 20 000e na II…) que caírem dentro da faixa. Em multi-intervalo, o e é o do intervalo parcial do ponto.
- * Sem duplicados, em ordem crescente, na unidade da balança.
+ * Pontos sugeridos para o erro de indicação (cg-18 §5.2; R76 A.4.4.1; POP 7.7): 0, Min (quando marcada),
+ * ~25, 50, 75 e 100 % de Max em valores redondos múltiplos de e, mais as mudanças de EMA da classe (500e e
+ * 2000e na classe III; 5 000e e 20 000e na II…) que caírem dentro da faixa. Em multi-intervalo, o e é o do
+ * intervalo parcial do ponto. Sem duplicados, em ordem crescente, na unidade da balança.
  */
-export function sugerirPontos(instrumento: Pick<InstrumentoCalculo, 'classe' | 'tipoFaixas' | 'faixas'>): number[] {
+export function sugerirPontos(
+  instrumento: Pick<InstrumentoCalculo, 'classe' | 'tipoFaixas' | 'faixas'> & { min?: number },
+): number[] {
   const faixas = faixasOrdenadas(instrumento.faixas)
   if (!faixas.length) return []
   const max = faixas[faixas.length - 1].max
   const pontos = [0, max]
+  const min = instrumento.min ?? 0
+  if (min > 0 && min < max * (1 - TOL)) pontos.push(min)
   for (const fracao of [0.25, 0.5, 0.75]) {
     const v = redondo(fracao * max)
     pontos.push(multiplo(v, faixaDoValor(v, instrumento).e))
@@ -66,15 +74,35 @@ export function sugerirPontos(instrumento: Pick<InstrumentoCalculo, 'classe' | '
 }
 
 /**
- * Carga do ensaio de excentricidade (DOQ-CGCRE-097 10.4.1): Max/3 até 500 kg, Max/5 de 500 kg a 3 000 kg
- * e Max/10 acima de 3 000 kg, arredondada para um valor redondo. Na unidade da balança.
+ * Carga do ensaio de excentricidade (DOQ-CGCRE-097 10.4.1; POP 7.10, Tabela 5): no mínimo Max/3 até 500 kg,
+ * Max/5 acima de 500 kg até 3 000 kg e Max/10 acima de 3 000 kg, num valor redondo igual ou acima desse
+ * mínimo (nunca abaixo dele). Na unidade da balança.
  */
 export function cargaExcentricidade(max: number, unidade: Unidade): number {
   if (!(max > 0)) return 0
   const maxKg = converterMassa(max, unidade, 'kg')
   const divisor = maxKg <= 500 * (1 + TOL) ? 3 : maxKg <= 3000 * (1 + TOL) ? 5 : 10
-  return meioRedondo(max / divisor)
+  return Math.min(max, meioRedondoAcima(max / divisor))
 }
+
+/**
+ * Massa mínima de pesos padrão (kg) em cada etapa com cargas de substituição (POP 7.12, Tabela 7), pelo Max em
+ * kg: 1 000 kg até 5 t; 5 000 kg até 30 t; 10 000 kg até 60 t; 15 000 kg até 80 t; 20 000 kg acima. Abaixo de
+ * 1 000 kg não se usa substituição (0).
+ */
+export function pesosMinimosSubstituicao(maxKg: number): number {
+  if (!(maxKg >= 1000 * (1 - TOL))) return 0
+  const tabela: Array<[number, number]> = [
+    [5_000, 1_000],
+    [30_000, 5_000],
+    [60_000, 10_000],
+    [80_000, 15_000],
+  ]
+  return tabela.find(([ate]) => maxKg <= ate * (1 + TOL))?.[1] ?? 20_000
+}
+
+/** A regra da carga mínima da excentricidade, para as dicas da tela e da folha. */
+export const REGRA_CARGA_EXCENTRICIDADE = 'no mínimo Max/3 até 500 kg, Max/5 até 3 t e Max/10 acima'
 
 /**
  * Rótulos das posições do ensaio de excentricidade por tipo de receptor (cg-18 Fig. 5.3-1; R76 A.4.7).
@@ -98,6 +126,9 @@ export function posicoesExcentricidade(receptor: Receptor, apoios = 0): string[]
   }
 }
 
+/** Leituras mínimas da repetibilidade: 5, ou 3 com carga de 100 kg ou mais (POP 7.9, Tabela 4). */
+const leiturasMinimas = (carga: number, unidade: Unidade) => (converterMassa(carga, unidade, 'kg') >= 100 * (1 - TOL) ? 3 : 5)
+
 /**
  * Repetibilidade sugerida (cg-18 §5.1): carga de ~0,5·Max (valor redondo) e o número mínimo de
  * leituras, 5 (ou 3 quando a carga é de 100 kg ou mais). Com menos de 10 leituras, k sai maior que 2.
@@ -105,5 +136,32 @@ export function posicoesExcentricidade(receptor: Receptor, apoios = 0): string[]
 export function repetibilidadeSugerida(max: number, unidade: Unidade = 'kg'): { carga: number; leituras: number } {
   if (!(max > 0)) return { carga: 0, leituras: 5 }
   const carga = redondo(max / 2)
-  return { carga, leituras: converterMassa(carga, unidade, 'kg') >= 100 * (1 - TOL) ? 3 : 5 }
+  return { carga, leituras: leiturasMinimas(carga, unidade) }
+}
+
+/**
+ * Ensaios de repetibilidade sugeridos (POP 7.9). Faixa única: um, a ~0,5·Max (`repetibilidadeSugerida`).
+ * Multi-intervalo e múltiplas faixas: um por intervalo (ou faixa) de d diferente; nos de baixo, uma carga
+ * redonda logo abaixo do Max dele (~0,8·Max, dentro do intervalo); no de cima, ~0,5·Max, sem coincidir com o
+ * Max do intervalo de baixo (senão, um valor redondo entre os dois: 15/30 kg → 12 kg e 25 kg). Na unidade da
+ * balança, do menor para o maior.
+ */
+export function repetibilidadesSugeridas(
+  instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'>,
+  unidade: Unidade = 'kg',
+): Array<{ carga: number; leituras: number }> {
+  const faixas = faixasOrdenadas(instrumento.faixas)
+  const max = faixas.at(-1)?.max ?? 0
+  if (instrumento.tipoFaixas === 'UNICA' || faixas.length < 2) return [repetibilidadeSugerida(max, unidade)]
+  const cargas = faixas.map((f, i) => {
+    const anterior = instrumento.tipoFaixas === 'MULTI_INTERVALO' && i > 0 ? faixas[i - 1].max : 0
+    if (i < faixas.length - 1) {
+      const c = redondo(Number((0.8 * f.max).toPrecision(12)))
+      return c > anterior * (1 + TOL) && c < f.max * (1 - TOL) ? c : redondo(Number(((anterior + f.max) / 2).toPrecision(12)))
+    }
+    const meio = redondo(max / 2)
+    const abaixo = faixas[i - 1].max
+    return meio > abaixo * (1 + TOL) ? meio : Math.min(max, meioRedondoAcima((abaixo + max) / 2))
+  })
+  return cargas.map((carga) => ({ carga, leituras: leiturasMinimas(carga, unidade) }))
 }

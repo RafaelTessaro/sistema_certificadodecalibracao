@@ -18,7 +18,18 @@ vi.mock('../lib/consulta', () => ({
   useConsulta: () => ({ dados: consulta.dados, carregando: false, erro: '', atualizando: false, recarregar: () => {} }),
 }))
 
+// Quem está usando (no servidor, o zustand desenha com o estado inicial): anexar o arquivo é do administrador
+const sessao = vi.hoisted(() => ({ nivel: 'ADMIN' as 'ADMIN' | 'COMUM' }))
+vi.mock('../store/sessao', async () => {
+  const { pode } = await import('#shared/permissoes.ts')
+  return { usePode: (p: Parameters<typeof pode>[1]) => pode(sessao.nivel, p) }
+})
+
 const { CartaoPop, LinhaRevisao, RegistrarPopModal } = await import('./CartaoPop')
+
+const entrarComo = (nivel: 'ADMIN' | 'COMUM') => {
+  sessao.nivel = nivel
+}
 
 const ARQUIVO: ArquivoAnexo = {
   sha256: 'a'.repeat(64),
@@ -60,6 +71,13 @@ describe('revisões anteriores do POP', () => {
     expect(t).toMatch(/<button[^>]*disabled=""[^>]*>.*Enviando…<\/button>/)
   })
 
+  it('sem a permissão (não é o administrador): avisa que falta o arquivo, sem o botão de anexar', () => {
+    const t = html(createElement(LinhaRevisao, { v: versao('00'), podeAnexar: false, aoAnexar: () => {} }))
+    expect(t).toContain('sem arquivo')
+    expect(t).not.toContain('Anexar o arquivo')
+    expect(t).not.toContain('type="file"')
+  })
+
   it('com o arquivo: o link para abrir, sem o botão de anexar', () => {
     const t = html(createElement(LinhaRevisao, { v: versao('00', { arquivo: ARQUIVO }), aoAnexar: () => {} }))
     expect(t).toContain(`/api/arquivos/${ARQUIVO.sha256}`)
@@ -68,6 +86,7 @@ describe('revisões anteriores do POP', () => {
   })
 
   it('no cartão: a revisão substituída sem o arquivo aparece com o aviso no resumo e o botão de anexar', () => {
+    entrarComo('ADMIN')
     const atual = versao('01', { arquivo: ARQUIVO, vigente: true })
     const anterior = versao('00')
     consulta.dados = { atual, versoes: [atual, anterior] }
@@ -75,6 +94,12 @@ describe('revisões anteriores do POP', () => {
     expect(t).toContain('Revisões anteriores (1)')
     expect(t).toContain('1 sem arquivo')
     expect(t.match(/Anexar o arquivo<\/button>/g)?.length).toBe(1)
+    // Sem a permissão de configurações, o aviso continua, sem o botão
+    entrarComo('COMUM')
+    const comum = html(createElement(CartaoPop))
+    expect(comum).toContain('1 sem arquivo')
+    expect(comum).not.toContain('Anexar o arquivo</button>')
+    entrarComo('ADMIN')
     // Todas com o arquivo: nada de aviso
     consulta.dados = { atual, versoes: [atual, versao('00', { arquivo: ARQUIVO })] }
     const tudo = html(createElement(CartaoPop))
@@ -86,11 +111,12 @@ describe('revisões anteriores do POP', () => {
 describe('registrar nova revisão do POP', () => {
   const janela = (atual: VersaoPop | null) => html(createElement(RegistrarPopModal, { aberto: true, aoFechar: () => {}, atual }))
 
-  it('a vigente sem o arquivo: avisa que os certificados emitidos com ela ficam sem o documento', () => {
+  it('a vigente sem o arquivo: avisa que os certificados emitidos com ela ficarão sem o documento', () => {
     const t = janela(versao('00', { vigente: true }))
-    expect(t).toContain('A revisão vigente (<span class="tnum">BALANÇAS-POP-123 rev. 00</span>) ainda não tem o arquivo.')
-    expect(t).toContain('Os certificados emitidos com ela ficam sem o documento.')
-    expect(t).toContain('“Revisões anteriores”')
+    // O texto como a pessoa lê (sem as marcações)
+    expect(t.replace(/<[^>]+>/g, '')).toContain(
+      'A revisão atual (BALANÇAS-POP-123 rev. 00) ainda não tem o arquivo; os certificados emitidos com ela ficarão sem o documento. Anexe antes ou depois em Revisões anteriores.',
+    )
   })
 
   it('a vigente com o arquivo, ou o primeiro registro: sem o aviso', () => {

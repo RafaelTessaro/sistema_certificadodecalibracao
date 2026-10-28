@@ -564,6 +564,42 @@ export interface CalibracaoResumo {
   atualizadoEm: string
   /** Quantas vezes o certificado foi enviado por e-mail. */
   envios: number
+  /**
+   * Em andamento: o nº do certificado já reservado (impresso na folha de campo, para a etiqueta), que ele
+   * recebe na emissão. Ausente ou '' = ainda sem nº (é dado na emissão).
+   */
+  numeroReservado?: string
+}
+
+/**
+ * Situação de um nº de certificado reservado: `reservado` (ainda não emitido), `emitido` (o certificado saiu
+ * com ele) ou `nao_utilizado` (nunca vai ser emitido: a calibração foi excluída, a folha avulsa foi ligada a
+ * uma calibração que já tinha nº…; o motivo fica registrado). Um nº nunca é usado de novo.
+ */
+export type SituacaoNumero = 'reservado' | 'emitido' | 'nao_utilizado'
+
+/**
+ * Nº de certificado reservado na impressão da folha de campo: sai na folha, o técnico o copia na etiqueta da
+ * balança e o certificado é emitido com ele (mesmo que em outro ano). Mesma sequência da emissão.
+ */
+export interface NumeroReservado {
+  id: number
+  /** Como sai no certificado (ex.: "CC-2026-00042"), formatado na reserva. */
+  numero: string
+  ano: number
+  sequencia: number
+  /** A calibração dona do nº; '' = de uma folha avulsa ainda não ligada a uma calibração. */
+  calibracaoId: ID
+  /** Nº da folha de campo em que foi impresso pela primeira vez (FC-2026-00042). */
+  folha: string
+  reservadoEm: string
+  reservadoPor: string
+  situacao: SituacaoNumero
+  /** Por que não foi utilizado ('' nas outras situações). */
+  motivo: string
+  /** Quando foi emitido ou ficou não utilizado (ISO), e por quem. */
+  situacaoEm: string
+  situacaoPor: string
 }
 
 /** Dados congelados no momento da emissão. */
@@ -865,6 +901,8 @@ export type AcaoAuditoria =
   | 'CERTIFICADO_EMITIDO'
   | 'CERTIFICADO_CANCELADO'
   | 'CERTIFICADO_ENVIADO'
+  | 'NUMERO_RESERVADO'
+  | 'NUMERO_NAO_UTILIZADO'
   | 'ALTERACAO'
 
 export type GrupoAuditoria = 'acessos' | 'usuarios' | 'certificados' | 'dados' | 'alteracoes'

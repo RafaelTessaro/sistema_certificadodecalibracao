@@ -1,7 +1,12 @@
 import { Crosshair, Wand2 } from 'lucide-react'
 import { useEffect } from 'react'
 import { METODOS_EXCENTRICIDADE } from '#shared/dominio.ts'
-import { cargaExcentricidade, formatarNumero, posicoesExcentricidade } from '#shared/metrologia/index.ts'
+import {
+  cargaExcentricidade,
+  formatarNumero,
+  posicoesExcentricidade,
+  REGRA_CARGA_EXCENTRICIDADE,
+} from '#shared/metrologia/index.ts'
 import type { MetodoExcentricidade, Receptor } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
@@ -77,7 +82,7 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
             <Field
               label="Carga usada"
               htmlFor="ecc-carga"
-              hint={`Sugerida: ${formatarNumero(sugerida, casas)} ${u} (cerca de 1/3 da capacidade)`}
+              hint={`Sugerida: ${formatarNumero(sugerida, casas)} ${u} (${REGRA_CARGA_EXCENTRICIDADE})`}
             >
               <CampoNumero
                 id="ecc-carga"

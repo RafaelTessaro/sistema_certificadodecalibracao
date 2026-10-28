@@ -28,6 +28,7 @@ import type { criarModuloEmail } from '../email.ts'
 import { conferirAnexos, destinatarios, LIMITES_EMAIL } from '../email.ts'
 import { ErroApi } from '../erros.ts'
 import { naUnidadeAtual as naUnidadeAtualDe, rascunhoInicial, semLeituras } from '../rascunhos.ts'
+import { registrarNumeros } from './numeros.ts'
 
 type ComId = FastifyRequest<{ Params: { id: string } }>
 type Corpo = Record<string, unknown>
@@ -74,6 +75,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       pendencias: aberta ? pendenciasDa(ctx, k) : [],
       revisoes: repo.revisoesDe(k.id),
       folhaCampo: repo.folhaCampoDaCalibracao(k.id),
+      // Em andamento: o nº de certificado já reservado (impresso na folha de campo), com que ela vai ser emitida
+      numeroReservado: aberta ? repo.numeroReservadoDa(k.id) : null,
       certificadosPadroes: certificadosDosPadroes(ctx, k),
       // Emitido: a revisão do POP da emissão (com o arquivo, mesmo se anexado depois); em andamento: a vigente
       pop: k.emissao
@@ -111,8 +114,10 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     return { calibracao: k, pendencias: pendenciasDa(ctx, k) }
   })
 
+  // O nº de certificado reservado para ela volta para a folha de campo em que foi impresso (para a refeita)
   app.delete('/api/calibracoes/:id', async (req: ComId, reply) => {
-    repo.excluirRascunho(req.params.id)
+    const { eventos } = repo.excluirRascunho(req.params.id)
+    registrarNumeros(ctx, req, eventos)
     return reply.code(204).send()
   })
 
@@ -130,7 +135,11 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
   app.post('/api/calibracoes/:id/emitir', async (req: ComId) => {
     const u = autor(req)
     const c = corpo(req)
+    const reservado = repo.numeroReservadoDa(req.params.id)
     const k = await emitirCertificado(ctx, req.params.id, u, { versao: versaoDe(c) })
+    // Com o nº reservado na impressão da folha de campo: o registro diz de qual folha
+    if (reservado && k.numero === reservado.numero)
+      req.detalheAuditoria = `${k.numero}, reservado na folha de campo ${reservado.folha}`
     return { calibracao: k }
   })
 

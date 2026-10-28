@@ -699,6 +699,27 @@ describe('backup e banco', () => {
       destino.close()
     }
   })
+  it('transplantarUsuarios: quem é signatário, o cargo, o registro e a assinatura vão junto (a emissão continua possível)', async () => {
+    const assinatura = 'data:image/png;base64,iVBORw0KGgo='
+    t.ctx.db
+      .prepare("UPDATE usuarios SET signatario = 1, cargo = 'Responsável técnico', registro = 'CREA 123', assinatura = ? WHERE login = 'admin'")
+      .run(assinatura)
+    const destino = abrirBanco(':memory:')
+    try {
+      transplantarUsuarios(t.ctx.db, destino)
+      expect(
+        destino.prepare('SELECT login, signatario, cargo, registro, assinatura FROM usuarios ORDER BY login').all(),
+      ).toEqual([
+        { login: 'admin', signatario: 1, cargo: 'Responsável técnico', registro: 'CREA 123', assinatura },
+        { login: 'comum', signatario: 0, cargo: '', registro: '', assinatura: '' },
+      ])
+      const restaurado = new ServicoUsuarios(destino, { parametrosSenha: PARAMETROS_LEVES })
+      const admin = destino.prepare("SELECT id FROM usuarios WHERE login = 'admin'").get() as { id: string }
+      expect(restaurado.obter(admin.id)).toMatchObject({ signatario: true, cargo: 'Responsável técnico', registro: 'CREA 123', assinatura })
+    } finally {
+      destino.close()
+    }
+  })
 })
 
 describe('registro de atividades', () => {

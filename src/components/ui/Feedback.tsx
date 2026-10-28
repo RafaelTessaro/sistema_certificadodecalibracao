@@ -64,6 +64,8 @@ interface PedidoConfirmacao {
   perigo?: boolean
   /** Exige que o usuário digite esta palavra para liberar o botão (ações irreversíveis). */
   digitar?: string
+  /** Só um aviso, sem "Cancelar" (o botão só fecha). */
+  soAviso?: boolean
   resolver: (ok: boolean) => void
 }
 
@@ -71,6 +73,11 @@ const useConfirmacao = create<{ pedido: PedidoConfirmacao | null }>(() => ({ ped
 
 export function confirmar(opcoes: Omit<PedidoConfirmacao, 'resolver'>) {
   return new Promise<boolean>((resolver) => useConfirmacao.setState({ pedido: { ...opcoes, resolver } }))
+}
+
+/** Aviso que pede atenção (não some sozinho, como o toast): só o botão "Entendi". */
+export function avisar(opcoes: { titulo: string; descricao?: string }) {
+  return confirmar({ ...opcoes, confirmar: 'Entendi', soAviso: true })
 }
 
 export function ConfirmHost() {
@@ -87,7 +94,13 @@ export function ConfirmHost() {
       largura="max-w-md"
       titulo={pedido?.titulo}
       descricao={pedido?.descricao}
-      icone={pedido?.perigo ? <TriangleAlert className="h-5 w-5 text-danger" /> : undefined}
+      icone={
+        pedido?.perigo ? (
+          <TriangleAlert className="h-5 w-5 text-danger" />
+        ) : pedido?.soAviso ? (
+          <TriangleAlert className="h-5 w-5 text-warning" />
+        ) : undefined
+      }
       rodape={pedido && <BotoesConfirmacao key={pedido.titulo} pedido={pedido} responder={responder} />}
     >
       {pedido?.digitar && <CampoDigitar palavra={pedido.digitar} />}
@@ -114,7 +127,7 @@ function BotoesConfirmacao({ pedido, responder }: { pedido: PedidoConfirmacao; r
   const liberado = !pedido.digitar || texto.trim().toUpperCase() === pedido.digitar.toUpperCase()
   return (
     <>
-      <Button onClick={() => responder(false)}>Cancelar</Button>
+      {!pedido.soAviso && <Button onClick={() => responder(false)}>Cancelar</Button>}
       <Button
         variante={pedido.perigo ? 'danger' : 'primary'}
         onClick={() => responder(true)}

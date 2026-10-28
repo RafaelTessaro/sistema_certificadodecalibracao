@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { STATUS_CALIBRACAO } from '#shared/dominio.ts'
 import { BotaoPop } from '../components/BotaoPop'
 import { CertificadosTabela } from '../components/CertificadosTabela'
+import { NumerosNaoUtilizados } from '../components/NumerosNaoUtilizados'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Input } from '../components/ui/Form'
@@ -62,7 +63,7 @@ export function Certificados() {
         'Próxima calibração',
       ],
       itens.map((k) => [
-        k.numero,
+        k.numero || (k.numeroReservado ? `${k.numeroReservado} (reservado)` : ''),
         STATUS_CALIBRACAO[k.status].label,
         k.clienteNome,
         k.balancaDescricao,
@@ -206,6 +207,7 @@ export function Certificados() {
           </>
         )}
       </Card>
+      <NumerosNaoUtilizados />
     </>
   )
 }

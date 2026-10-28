@@ -16,8 +16,10 @@
 // caixa de correção: o técnico anota o certo no verso da folha, com o nº do passo (uma linha no alto da
 // página 1 diz isso). Com balança (e, de preferência, rascunho), a folha sai pré-preenchida pelo plano
 // (shared/folhaCampo.ts); sem balança, sai "em branco", para uma balança ainda não cadastrada.
-// Toda página leva o nº da folha (com QR), a OS, o cliente e a balança, e a rubrica e a data: uma folha
-// solta ou digitalizada sozinha continua identificável. Determinística como o certificado.
+// Toda página leva o nº da folha (com QR), o nº do certificado reservado (quando há), a OS, o cliente e a
+// balança, e a rubrica e a data: uma folha solta ou digitalizada sozinha continua identificável. O nº do
+// certificado vai também na etiqueta de calibração (a nota sai no passo das assinaturas). Determinística
+// como o certificado.
 //
 // Paginação medida (`montar`): a parte de um passo que passa para a página seguinte repete o título do
 // passo com "(continuação)"; a tabela de pontos vai sempre inteira (só a que não cabe numa página se divide,
@@ -33,6 +35,7 @@ import {
   capacidadeTexto,
   converterMassa,
   CRITERIOS_EMA,
+  deltaTMaximo,
   divisaoLegivel,
   ehRodoviaria,
   enderecoCliente,
@@ -41,13 +44,16 @@ import {
   METODOS_CARREGAMENTO,
   METODOS_EXCENTRICIDADE,
   numeroBr,
+  pressaoObrigatoria,
   RECEPTORES,
   REGRAS_DECISAO,
   ROTULO_CLASSE,
   TIPOS_BALANCA,
   TIPOS_PADRAO,
+  verificacoesAntesDeCalibrar,
 } from '#shared/dominio.ts'
 import {
+  AVISO_ETIQUETA,
   type CargaPlanejada,
   CRITERIO_AJUSTE,
   FORMULARIO_FOLHA_CAMPO,
@@ -63,6 +69,7 @@ import {
   faixasOrdenadas,
   formatarNumero,
   posicoesExcentricidade,
+  REGRA_CARGA_EXCENTRICIDADE,
   trechosEma,
 } from '#shared/metrologia/index.ts'
 import type {
@@ -118,6 +125,13 @@ export interface DadosFolhaCampo {
    * página, como referência do formulário. Vazio ou ausente = sem referência.
    */
   procedimento?: string
+  /**
+   * Nº do certificado reservado na impressão da folha (o da calibração; na folha avulsa, também a em branco, um
+   * nº da folha, que passa para a calibração a que ela for ligada): sai no alto de toda página, ao lado do nº
+   * da folha, e no passo das assinaturas, com a nota da etiqueta de calibração (`AVISO_ETIQUETA`). Vazio ou
+   * ausente (folha de antes desta versão, ou de uma revisão) = nada.
+   */
+  numeroCertificado?: string
 }
 
 // ---- Página, cores e tipografia ------------------------------------------------------------------------
@@ -499,16 +513,20 @@ interface Coluna {
 
 type Alinhamento = 'left' | 'right' | 'center'
 type CelulaTabela = {
-  tipo: 'previsto' | 'escrever' | 'numero' | 'dica'
+  /** 'coberta': a célula de baixo de uma que ocupa mais de uma linha (`linhas`). */
+  tipo: 'previsto' | 'escrever' | 'numero' | 'dica' | 'coberta'
   no?: No
   alinhamento?: Alinhamento
   /** Colunas ocupadas (padrão 1). */
   span?: number
+  /** Linhas ocupadas (padrão 1); as de baixo levam `coberta()` nesta coluna. */
+  linhas?: number
 }
 
 const pre = (no: No, alinhamento?: Alinhamento): CelulaTabela => ({ tipo: 'previsto', no, alinhamento })
 const livre = (): CelulaTabela => ({ tipo: 'escrever' })
 const nro = (n: No): CelulaTabela => ({ tipo: 'numero', no: n })
+const coberta = (): CelulaTabela => ({ tipo: 'coberta' })
 /** Caixa de escrever com o previsto em letra miúda no canto ("previsto: TH-01"). */
 const dica = (n: No, span?: number): CelulaTabela => ({ tipo: 'dica', no: n, span })
 
@@ -568,6 +586,7 @@ function tabelaLeituras(
     // A marca da linha vai num texto (o pdfmake corrige a página do texto de uma linha que passou inteira
     // para a página seguinte)
     const marcaLinha = id ? { id } : {}
+    if (cel.tipo === 'coberta') return {}
     if (cel.tipo === 'escrever') return { text: id ? ' ' : '', fontSize: 1, ...marcaLinha, fillColor: '#FFFFFF' }
     if (cel.tipo === 'dica')
       return {
@@ -608,7 +627,13 @@ function tabelaLeituras(
     l.forEach((cel, k) => {
       const span = Math.max(1, cel.span ?? 1)
       const id = o.idLinhas && k === 0 ? `${o.idLinhas}:${primeira + j}` : undefined
-      out.push({ ...celula(cel, coluna, id), ...(span > 1 ? { colSpan: span } : {}) })
+      const linhasOcupadas = Math.max(1, cel.linhas ?? 1)
+      // A que ocupa mais de uma linha fica no alto dela (o pdfmake não centraliza na altura de várias linhas)
+      out.push({
+        ...celula(cel, coluna, id),
+        ...(span > 1 ? { colSpan: span } : {}),
+        ...(linhasOcupadas > 1 ? { rowSpan: linhasOcupadas, verticalAlignment: 'top' } : {}),
+      })
       for (let x = 1; x < span; x++) out.push({})
       coluna += span
     })
@@ -694,9 +719,10 @@ function subtitulo(texto: string, margem: number[] = [0, 7, 0, 3]): NoObjeto {
 
 /**
  * Título de um passo: nº num quadrado verde, o nome e, à direita, a etapa do sistema onde ele é digitado.
- * `continuacao`: a parte do passo que passou para a página seguinte repete o título, com "(continuação)".
+ * `continuacao`: a parte do passo que passou para a página seguinte repete o título, com "(continuação)";
+ * `complemento`: logo depois do nome, na mesma linha (o nº do certificado reservado, no passo 10).
  */
-function tituloPasso(n: number, titulo: string, sistema: string, continuacao = false): NoObjeto {
+function tituloPasso(n: number, titulo: string, sistema: string, continuacao = false, complemento: No[] = []): NoObjeto {
   // A continuação é mais baixa (≈ 4 mm): só lembra de que passo é a parte que abre a página
   const lado = continuacao ? 11 : 12
   const corpo = continuacao ? 7.4 : 8.2
@@ -720,6 +746,7 @@ function tituloPasso(n: number, titulo: string, sistema: string, continuacao = f
               ...(continuacao
                 ? [{ text: '  (CONTINUAÇÃO)', bold: false, fontSize: 6.4, characterSpacing: 0.3, color: T.rotulo }]
                 : []),
+              ...complemento,
             ],
             font: 'InterMedio',
             bold: true,
@@ -842,6 +869,8 @@ interface Contexto {
   data: string
   /** O que a montagem mediu e acrescenta (títulos de continuação, linhas de observação a mais). */
   extras: Extras
+  /** Nº do certificado reservado na impressão ('' = sem nº: folha de antes desta versão, ou de uma revisão). */
+  certificado: string
 }
 
 /** O que a montagem acrescenta depois de medir a folha (ver `montar`). */
@@ -896,6 +925,7 @@ function contexto(d: DadosFolhaCampo, extras: Extras = SEM_EXTRAS): Contexto {
     impresso: dataHoraBrasilia(d.impressoEm),
     data,
     extras,
+    certificado: d.numeroCertificado?.trim() ?? '',
   }
 }
 
@@ -1041,11 +1071,13 @@ const LINHAS_PADROES_INTEIRA = 20
 /**
  * Larguras da tabela dos padrões (a descrição fica com o resto). Com o plano, a coluna das peças é larga (a
  * lista impressa: "10 kg + 5 kg + 2 × 2 kg + 1 kg + 500 g…" quebra menos); sem ele, as peças são escritas à
- * mão e a descrição ganha a largura para caber numa linha.
+ * mão, curtas ("7 × 20 + 10"), numa caixa de ≈ 21 mm, e a descrição ganha a largura (≈ 57 mm) para caber
+ * inteira numa linha ("Termo-higrômetro digital com sonda externa", "Jogo de pesos 20 kg (15 peças) classe M1"):
+ * um padrão por linha, e a folha em branco não cresce com os padrões da empresa.
  */
 const COLUNAS_PADROES = {
   plano: { levado: 26, usado: 24, identificacao: 70, pecas: 112, certificado: 72, proxima: 64 },
-  semPlano: { levado: 26, usado: 24, identificacao: 70, pecas: 82, certificado: 68, proxima: 64 },
+  semPlano: { levado: 26, usado: 24, identificacao: 68, pecas: 60, certificado: 68, proxima: 64 },
 }
 /** O que a tabela de leituras gasta além das colunas: o respiro (3,5 + 3,5) de cada uma e os fios verticais. */
 const MOLDURA_PADROES = 7 * 7 + 2 * 0.8 + 6 * 0.5
@@ -1509,14 +1541,15 @@ function passoBalancaEmBranco(ctx: Contexto, n: number): No[] {
 
 // ---- 4. Verificação antes de calibrar e ambiente no início ---------------------------------------------------
 
-/** Os mesmos itens e textos da tela "Verificação antes de calibrar" (EtapaInstrumento.tsx). */
-export const VERIFICACOES_FOLHA = [
-  'Balança identificada (série, modelo, plaqueta legível)',
-  'Limpa, sem danos ou contaminação no prato/plataforma',
-  'Nivelada (bolha centralizada, quando houver)',
-  'Ligada e aquecida pelo tempo do fabricante',
-  'Pré-carga aplicada (carga perto de Max pelo menos uma vez)',
-]
+/**
+ * Os mesmos itens e textos da tela "Verificação antes de calibrar" (EtapaInstrumento.tsx), com o aquecimento
+ * da classe da balança (`classe` null: folha em branco, com os dois tempos).
+ */
+export const verificacoesFolha = (classe: Balanca['classe'] | null): string[] =>
+  verificacoesAntesDeCalibrar(classe).map((v) => v.texto)
+
+/** Os itens da folha em branco. */
+export const VERIFICACOES_FOLHA = verificacoesFolha(null)
 
 /** Instrumentos de ambiente previstos: com o plano, os que vão a campo (o termo-higrômetro escolhido). */
 function instrumentosAmbiente(ctx: Contexto): Padrao[] {
@@ -1544,7 +1577,10 @@ function gradeAmbiente(ctx: Contexto, momento: 'Início' | 'Fim', margem: number
         }),
         escrever(`Temperatura${OBRIG} (°C)`),
         escrever('Umidade relativa (%)'),
-        escrever('Pressão, opcional (hPa)'),
+        // Obrigatória na classe II, com o barômetro (POP 6.2); em branco, a classe ainda não é conhecida
+        escrever(
+          !ctx.b ? 'Pressão (hPa) · classe II' : pressaoObrigatoria(ctx.b.classe) ? `Pressão${OBRIG} (hPa)` : 'Pressão, opcional (hPa)',
+        ),
         escrever('Instrumento usado', previstos ? { aoLado: `previsto: ${previstos}` } : {}),
       ],
     ],
@@ -1557,7 +1593,7 @@ function passoVerificacao(ctx: Contexto, n: number): No[] {
   const { plano, u } = ctx
   const maxTexto = plano && plano.max ? ` (${numeroBr(plano.max)} ${u})` : ''
   // Uma linha por item, baixa (≈ 4,6 mm): só se marca com X
-  const linhas: No[][] = VERIFICACOES_FOLHA.map((t, i) => [
+  const linhas: No[][] = verificacoesFolha(ctx.b ? ctx.b.classe : null).map((t, i) => [
     { text: `${i + 1}.`, fontSize: 7.2, color: T.rotulo, margin: [0, 1.2, 0, 0] },
     { text: t, fontSize: 7.8, margin: [0, 1.2, 0, 0] },
     opcoes([{ rotulo: 'Sim' }, { rotulo: 'Não' }, { rotulo: 'N/A' }], { tamanho: 7.6, espaco: 10 }),
@@ -1858,10 +1894,10 @@ function notaFaixa(ctx: Contexto): No[] {
         ...pesos,
         { text: `${FAIXA_AJUSTE}: `, bold: true, color: T.texto },
         f.daConformidade
-          ? `carga ± EMA (${criterio}); fora dela, ajuste. A conformidade do certificado considera também a incerteza.`
+          ? `carga ± EMA (${criterio}); fora dela, proponha o ajuste. A conformidade do certificado considera também a incerteza.`
           : f.toleranciaPendente
-            ? `carga ± EMA (${criterio}, classe ${ctx.b?.classe}); fora dela, ajuste. A tolerância do cliente ainda não foi informada: pergunte e anote no passo ${N.encerramento}.`
-            : `carga ± EMA (${criterio}, classe ${ctx.b?.classe}); fora dela, ajuste. Não é declaração de conformidade (o cliente não pediu).`,
+            ? `carga ± EMA (${criterio}, classe ${ctx.b?.classe}); fora dela, proponha o ajuste. A tolerância do cliente ainda não foi informada: pergunte e anote no passo ${N.encerramento}.`
+            : `carga ± EMA (${criterio}, classe ${ctx.b?.classe}); fora dela, proponha o ajuste. Não é declaração de conformidade (o cliente não pediu).`,
       ],
       [0, 3, 0, 0],
     ),
@@ -1954,7 +1990,7 @@ function passoIndicacao(ctx: Contexto, n: number): No[] {
       ]
     : [
         'Cargas: ',
-        { text: '0, 25, 50, 75 e 100 % de Max', bold: true },
+        { text: '0, Min (se marcada), 25, 50, 75 e 100 % de Max', bold: true },
         ' e onde muda o EMA (500e e 2000e na classe III), até pelo menos 90 % de Max. Zere, aplique e anote a indicação estável.',
         ...soCrescente,
       ]
@@ -2137,27 +2173,34 @@ function passoAjuste(ctx: Contexto, n: number, indicacao: number): No[] {
   const comFaixa = !!ctx.plano?.pontos.some((p) => p.ema !== null)
   const toleranciaPendente =
     k?.conformidade.solicitada && k.conformidade.criterio === 'CLIENTE' && !(k.conformidade.toleranciaCliente > 0)
+  // Quando propor o ajuste; ajustar, só com a autorização do cliente (na OS ou, no local, no verso)
   const quando: No[] = comFaixa
-    ? [{ text: `Fora da ${FAIXA_AJUSTE.toLowerCase()}`, bold: true }, ` (passo ${indicacao}) ou a pedido do cliente: ajuste e `]
+    ? [{ text: `Fora da ${FAIXA_AJUSTE.toLowerCase()}`, bold: true }, ` (passo ${indicacao}) ou a pedido do cliente: proponha o ajuste. `]
     : ctx.plano
       ? toleranciaPendente
         ? [
             { text: 'Fora da tolerância do cliente', bold: true },
-            ` (anote-a no passo ${N.encerramento}) ou a pedido dele: ajuste e `,
+            ` (anote-a no passo ${N.encerramento}) ou a pedido dele: proponha o ajuste. `,
           ]
         : ctx.b?.classe
-          ? ['A pedido do cliente: ajuste e ']
-          : ['A pedido do cliente (balança sem classe: não há EMA para comparar): ajuste e ']
+          ? ['Ajuste só a pedido do cliente. ']
+          : ['Balança sem classe (não há EMA para comparar): ajuste só a pedido do cliente. ']
       : [
           { text: 'Erro fora do EMA da classe', bold: true },
-          ` (tabela embaixo dos pontos, no passo ${indicacao}) ou a pedido do cliente: ajuste e `,
+          ` (tabela embaixo dos pontos, no passo ${indicacao}) ou a pedido do cliente: proponha o ajuste. `,
         ]
   return passo(
     ctx,
     n,
     'Ajuste e reparo',
     E.balanca,
-    [...quando, { text: `refaça o passo ${indicacao} nas colunas “depois do ajuste”`, bold: true }, '.'],
+    [
+      ...quando,
+      { text: 'Ajuste só com a autorização do cliente', bold: true },
+      ' (na OS ou no verso: nome, função e hora); depois, ',
+      { text: `refaça o passo ${indicacao} nas colunas “depois do ajuste”`, bold: true },
+      '.',
+    ],
     [grid],
   )
 }
@@ -2300,23 +2343,72 @@ function blocoRepetibilidade(ctx: Contexto, r: PlanoFolha['repetibilidade'][numb
   ]
 }
 
+/**
+ * Mais de um ensaio (multi-intervalo e múltiplas faixas: um por intervalo, POP 7.9): uma tabela só, uma linha
+ * dupla por ensaio (a carga, os pesos e a hora; as leituras com a carga e o zero depois de retirar), para a
+ * folha continuar em 3 páginas. Com muitas leituras previstas (mais de 8 num ensaio), null: os blocos de sempre.
+ */
+function tabelaRepetibilidades(ctx: Contexto, lista: PlanoFolha['repetibilidade']): No[] | null {
+  const maior = Math.max(...lista.map((r) => r.leituras))
+  if (maior > 8) return null
+  const uc = unidadeColuna(ctx)
+  const colunasLeitura = Math.max(6, maior)
+  // Cabeçalho numa linha só (a unidade ao lado do título)
+  const colunas: Coluna[] = [
+    { titulo: 'Ensaio', largura: 24, alinhamento: 'center' },
+    { titulo: `Carga (${uc})`, largura: 44, alinhamento: 'right' },
+    { titulo: 'Pesos previstos', largura: 88 },
+    { titulo: 'Hora', largura: 38, alinhamento: 'center' },
+    { titulo: `Leitura (${uc})`, largura: 60 },
+    ...Array.from({ length: colunasLeitura }, (_, j): Coluna => ({ titulo: `${j + 1}ª`, largura: '*', alinhamento: 'center' })),
+  ]
+  const linhas = lista.flatMap((r, i): CelulaTabela[][] => [
+    [
+      { ...nro(String(i + 1)), linhas: 2 },
+      { ...pre({ text: cargaNaDivisao(ctx, r.carga), bold: true }, 'right'), linhas: 2 },
+      { ...pre(pesosDaCarga(ctx, r, 7.4)), linhas: 2 },
+      { ...dica('____:____', undefined), alinhamento: 'center', linhas: 2 },
+      dica('com a carga'),
+      ...Array.from({ length: colunasLeitura }, livre),
+    ],
+    [coberta(), coberta(), coberta(), coberta(), dica('zero após retirar'), ...Array.from({ length: colunasLeitura }, livre)],
+  ])
+  const minimo = Math.min(...lista.map((r) => r.minimo))
+  const n = lista[0].leituras
+  const iguais = lista.every((r) => r.leituras === n)
+  return [
+    tabelaLeituras(colunas, linhas, { altura: 12.5 }),
+    nota(
+      `A carga não precisa ser padrão. ${iguais ? `${n} leituras por ensaio` : 'As leituras previstas em cada ensaio'} (mínimo ${minimo}${minimo === 3 ? ': carga de 100 kg ou mais' : ''}); ${colunasLeitura > n ? 'colunas a mais: opcionais; ' : ''}com 10 leituras, k = 2 (as que não couberem, no verso).`,
+    ),
+  ]
+}
+
 function passoRepetibilidade(ctx: Contexto, n: number): No[] {
   const { plano, u } = ctx
   const lista = plano?.repetibilidade ?? []
   const primeiro = lista[0]
-  const texto: No = primeiro
+  const varios = lista.length > 1
+  const texto: No = !primeiro
     ? [
-        `Zere. Coloque ${numeroBr(primeiro.carga)} ${u} no centro ${centro(ctx.b)}, anote a indicação estável, retire e anote o zero. `,
-        { text: `Repita ${primeiro.leituras} vezes`, bold: true },
-        ', do mesmo jeito.',
-      ]
-    : [
         'Zere. Coloque uma carga de ',
         { text: 'cerca de metade de Max', bold: true },
         ' no centro, anote a indicação, retire e anote o zero. Repita 5 vezes (3 se a carga for de 100 kg ou mais).',
       ]
+    : varios
+      ? [
+          { text: `Um ensaio por ${ctx.b?.tipoFaixas === 'MULTIPLAS_FAIXAS' ? 'faixa' : 'intervalo'}`, bold: true },
+          `: zere, coloque a carga no centro ${centro(ctx.b)}, anote a indicação estável, retire e anote o zero; repita.`,
+        ]
+      : [
+          `Zere. Coloque ${numeroBr(primeiro.carga)} ${u} no centro ${centro(ctx.b)}, anote a indicação estável, retire e anote o zero. `,
+          { text: `Repita ${primeiro.leituras} vezes`, bold: true },
+          ', do mesmo jeito.',
+        ]
+  const compacta = varios ? tabelaRepetibilidades(ctx, lista) : null
+  if (compacta) return passo(ctx, n, 'Repetibilidade', E.repetibilidade, texto, compacta)
   const blocos = lista.length
-    ? lista.map((r, i) => blocoRepetibilidade(ctx, r, lista.length > 1 ? `Ensaio ${i + 1}` : ''))
+    ? lista.map((r, i) => blocoRepetibilidade(ctx, r, varios ? `Ensaio ${i + 1}` : ''))
     : [blocoRepetibilidade(ctx, null, '')]
   return passo(
     ctx,
@@ -2366,7 +2458,7 @@ function passoExcentricidade(ctx: Contexto, n: number): No[] {
   const receptor = b?.receptor ?? 'RETANGULAR'
   // Em branco o receptor não é conhecido: a posição de cada linha é escrita no local
   const rotulos = b ? (ecc?.posicoes.length ? ecc.posicoes : posicoesExcentricidade(receptor, b.apoios)) : []
-  const diagrama = b ? diagramaExcentricidade(receptor, rotulos, -1, b.apoios, { frente: 'FRENTE · INDICADOR' }) : null
+  const diagrama = b ? diagramaExcentricidade(receptor, rotulos, -1, b.apoios, { frente: 'FRENTE' }) : null
   // Rodoviária: o desenho comprido, com o "como foi feito" embaixo, à esquerda da tabela (mais estreita)
   const larga = receptor === 'RODOVIARIA'
   const larguraEsquerda = larga ? 236 : 176
@@ -2398,11 +2490,11 @@ function passoExcentricidade(ctx: Contexto, n: number): No[] {
       ? [`Zere vazia e coloque ${numeroBr(ecc!.carga)} ${u} em cada posição, `]
       : [
           'Zere vazia e coloque a carga (',
-          { text: 'Max/3 até 500 kg · Max/5 até 3 t · Max/10 acima', bold: true },
+          { text: REGRA_CARGA_EXCENTRICIDADE, bold: true },
           ') em cada posição, ',
         ]),
     { text: 'na ordem do desenho', bold: true },
-    ' (nº do desenho = nº da linha). Frente = lado do indicador.',
+    ' (nº do desenho = nº da linha). Frente = lado do indicador (indicador remoto: lado de acesso; anote no verso).',
   ]
   const metodo = ecc ? ecc.metodo : null
   const desenho: No = diagrama
@@ -2598,7 +2690,7 @@ function passoEncerramento(ctx: Contexto, n: number): No[] {
   const observacoes = linhasGuia(
     LINHAS_OBSERVACOES + ctx.extras.linhas,
     TITULO_OBSERVACOES,
-    'itens “Não” da verificação, balança ao ar livre (sol, vento, chuva), ΔT acima de 5 °C, ensaio não feito e o motivo',
+    `itens “Não” da verificação, balança ao ar livre (sol, vento, chuva), ΔT acima de ${ctx.b ? `${deltaTMaximo(ctx.b.classe)} °C` : '5 °C (classe II: 3 °C)'}, ensaio não feito e o motivo`,
     { titulo: 'Opiniões e interpretações (opcional)', dica: 'recomendações ao cliente; saem separadas dos resultados' },
   )
   return passo(
@@ -2621,7 +2713,7 @@ function passoEncerramento(ctx: Contexto, n: number): No[] {
             margin: [0, 4, 0, 0],
           },
       // As observações, as assinaturas e o escritório: um bloco só, no fim da folha
-      { parte: { stack: [observacoes, ...assinaturas()], margin: [0, 4, 0, 0] }, id: ID_OBSERVACOES },
+      { parte: { stack: [observacoes, ...assinaturas(ctx)], margin: [0, 4, 0, 0] }, id: ID_OBSERVACOES },
     ],
   )
 }
@@ -2633,13 +2725,23 @@ function passoEncerramento(ctx: Contexto, n: number): No[] {
  * 7.11.6), o nº do certificado e a folha digitalizada na pasta da OS (o sistema não guarda anexos da
  * calibração).
  */
-function quadroEscritorio(): NoObjeto {
+function quadroEscritorio(ctx: Contexto): NoObjeto {
   const tracejado = { dash: { length: 2, space: 1.6 } }
   // Um nó novo para cada célula: o pdfmake guarda a medida no próprio nó (o mesmo nó duas vezes sai em branco)
   const data = () => escrever('Em', { formato: '___/___/_____' }).no
+  // Com o nº reservado na impressão, ele já vem impresso (o escritório confere que o certificado saiu com ele)
+  const certificado = ctx.certificado ? previsto('Certificado nº', ctx.certificado).no : escrever('Certificado nº').no
   return {
     table: {
-      widths: [100, '*', 46, '*', 46, 56],
+      // A coluna do nº cabe o nº impresso numa linha (com o respiro da célula)
+      widths: [
+        100,
+        '*',
+        46,
+        '*',
+        46,
+        ctx.certificado ? Math.max(76, Math.ceil(larguraTexto(ctx.certificado, { tamanho: 8.2 })) + 12) : 56,
+      ],
       body: [
         [
           {
@@ -2652,7 +2754,7 @@ function quadroEscritorio(): NoObjeto {
           data(),
           escrever('Conferido com a folha por').no,
           data(),
-          escrever('Certificado nº').no,
+          certificado,
         ],
       ],
     },
@@ -2673,10 +2775,36 @@ function quadroEscritorio(): NoObjeto {
 }
 
 /**
- * O passo 10 (assinaturas e o quadro do escritório). Não é um passo à parte: sai no mesmo bloco das
- * observações (o fim do passo 9), e as assinaturas nunca ficam sozinhas numa página.
+ * Nota da etiqueta de calibração (com o nº reservado), embaixo do título do passo 10, que traz o nº: o
+ * técnico copia o nº do certificado na etiqueta que cola na balança, no fim do serviço; a validade fica para
+ * o cliente.
  */
-function assinaturas(): No[] {
+function notaEtiqueta(): NoObjeto {
+  return {
+    table: {
+      widths: ['*'],
+      // Numa linha só (o nº está logo acima, no título do passo): a nota não empurra as assinaturas
+      body: [[{ text: AVISO_ETIQUETA, fontSize: 7, lineHeight: 1.1, color: T.texto }]],
+    },
+    layout: {
+      hLineWidth: () => 0,
+      vLineWidth: (i: number) => (i === 0 ? 2.2 : 0),
+      vLineColor: () => T.texto,
+      paddingLeft: () => 7,
+      paddingRight: () => 0,
+      paddingTop: () => 1.2,
+      paddingBottom: () => 1.2,
+    },
+    margin: [0, 0, 0, 3],
+  }
+}
+
+/**
+ * O passo 10 (assinaturas e o quadro do escritório). Não é um passo à parte: sai no mesmo bloco das
+ * observações (o fim do passo 9), e as assinaturas nunca ficam sozinhas numa página. Com o nº do
+ * certificado reservado, a nota da etiqueta de calibração vem antes das assinaturas.
+ */
+function assinaturas(ctx: Contexto): No[] {
   // Uma linha: nome e assinatura de quem executou (o previsto pode não ser quem foi) e de quem acompanhou
   // pelo cliente (ciente das condições e acordos desta folha, não dos resultados), a data e a hora do fim
   const campo = grade(
@@ -2693,10 +2821,25 @@ function assinaturas(): No[] {
     ],
     ['*', '*', 58, 66],
   )
+  // Com o nº reservado, ele vai no título (na mesma linha, sem altura a mais) e a nota da etiqueta embaixo
+  const etiqueta: No[] = ctx.certificado
+    ? [
+        {
+          text: '   ETIQUETA · CERTIFICADO Nº ',
+          font: 'InterMedio',
+          bold: false,
+          fontSize: 6.4,
+          characterSpacing: 0.3,
+          color: T.rotulo,
+        },
+        { text: ctx.certificado, characterSpacing: 0.2 },
+      ]
+    : []
   return [
-    { ...tituloPasso(N.assinaturas, 'Assinaturas', e2(E.cliente, E.revisao)), margin: [0, 5, 0, 2.5] },
+    { ...tituloPasso(N.assinaturas, 'Assinaturas', e2(E.cliente, E.revisao), false, etiqueta), margin: [0, 5, 0, 2.5] },
+    ...(ctx.certificado ? [notaEtiqueta()] : []),
     campo,
-    quadroEscritorio(),
+    quadroEscritorio(ctx),
   ]
 }
 
@@ -2830,6 +2973,42 @@ function faixaIdentificacao(ctx: Contexto): NoObjeto {
 /** Lado do QR do nº da folha, no cabeçalho de toda página (≈ 12 mm; módulos de ≈ 0,5 mm). */
 const LADO_QR = 34
 
+/** Dica embaixo do nº do certificado, só na página 1: a nota inteira da etiqueta está no passo das assinaturas. */
+export const DICA_ETIQUETA = `Vai na etiqueta (passo ${N.assinaturas})`
+
+/**
+ * Nº do certificado reservado, no alto de toda página, à esquerda do nº da folha e do mesmo tamanho (é o que o
+ * técnico copia na etiqueta de calibração), separado dele por um fio.
+ */
+function colunasCertificado(ctx: Contexto, pagina: number): NoObjeto[] {
+  if (!ctx.certificado) return []
+  return [
+    {
+      width: 'auto',
+      alignment: 'right',
+      margin: [0, -1.5, 0, 0],
+      lineHeight: 1,
+      stack: [
+        { text: 'CERTIFICADO Nº', font: 'InterMedio', fontSize: 6.3, characterSpacing: 0.5, color: COR.marcaTexto },
+        {
+          text: ctx.certificado,
+          font: 'Poppins',
+          fontSize: 12.5,
+          lineHeight: 0.8,
+          color: TIMBRADO.texto,
+          margin: [0, -1.5, 0, 0],
+        },
+        { text: pagina === 1 ? DICA_ETIQUETA : ' ', fontSize: 7, color: TIMBRADO.secundario, margin: [0, 4.6, 0, 0] },
+      ],
+    },
+    {
+      width: 'auto',
+      canvas: [{ type: 'line', x1: 0, y1: 0, x2: 0, y2: 32, lineWidth: 0.6, lineColor: T.linhaClara }],
+      margin: [11, -1, 11, 0],
+    },
+  ]
+}
+
 function cabecalho(ctx: Contexto) {
   const numero = ctx.d.numero.trim()
   // Desenhado uma vez e repetido em cada página
@@ -2840,6 +3019,7 @@ function cabecalho(ctx: Contexto) {
       {
         columns: [
           ...colunasMarca(ctx.d.empresa),
+          ...colunasCertificado(ctx, pagina),
           {
             width: 'auto',
             alignment: 'right',
@@ -2962,6 +3142,7 @@ export function definicaoFolhaCampo(d: DadosFolhaCampo, o: { extras?: Extras } =
       keywords: [
         'folha de campo',
         d.numero,
+        ctx.certificado ? `certificado ${ctx.certificado}` : '',
         FORMULARIO_FOLHA_CAMPO.codigo,
         referenciaDoFormulario(d.procedimento),
         FORMULARIO_FOLHA_CAMPO.referencia,

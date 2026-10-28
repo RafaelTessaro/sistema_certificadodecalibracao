@@ -200,6 +200,11 @@ const MIGRACOES: Migracao[] = [
   // código e a revisão saem em toda página do certificado. O código que estava nas configurações vira a
   // revisão 1, a menos que fosse o exemplo de fábrica (PT-CAL-01 rev. 0). (c) Os nomes dos anexos de cada envio.
   arquivosEPop,
+
+  // 8: o nº do certificado reservado na impressão da folha de campo (o técnico o copia na etiqueta da balança
+  // e o certificado é emitido com ele), da mesma sequência da emissão. Cada nº fica registrado com a situação:
+  // reservado, emitido ou não utilizado (com o motivo), e nunca é usado de novo. A folha guarda o nº impresso nela.
+  numerosReservados,
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
@@ -237,6 +242,33 @@ function folhasEmArquivo(db: Banco) {
     );
     CREATE INDEX IF NOT EXISTS folhas_campo_passagens_numero ON folhas_campo_passagens(numero);
   `)
+}
+
+/** Migração 8 (ver acima). Repetível: só cria o que falta. */
+function numerosReservados(db: Banco) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS numeros_reservados (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero        TEXT NOT NULL,                -- como sai no certificado (CC-2026-00042), formatado na reserva
+      ano           INTEGER NOT NULL,             -- ano e nº da sequência dos certificados (a mesma da emissão)
+      sequencia     INTEGER NOT NULL,
+      calibracao_id TEXT NOT NULL DEFAULT '',     -- '' = de uma folha avulsa ainda não ligada a uma calibração
+      folha         TEXT NOT NULL DEFAULT '',     -- folha de campo em que foi impresso a primeira vez (FC-2026-00042)
+      reservado_em  TEXT NOT NULL,                -- ISO
+      reservado_por TEXT NOT NULL DEFAULT '',
+      situacao      TEXT NOT NULL DEFAULT 'reservado' CHECK (situacao IN ('reservado','emitido','nao_utilizado')),
+      motivo        TEXT NOT NULL DEFAULT '',     -- por que não foi utilizado
+      situacao_em   TEXT NOT NULL DEFAULT '',     -- ISO: quando foi emitido ou ficou não utilizado
+      situacao_por  TEXT NOT NULL DEFAULT ''
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS numeros_reservados_sequencia ON numeros_reservados(ano, sequencia);
+    CREATE UNIQUE INDEX IF NOT EXISTS numeros_reservados_calibracao ON numeros_reservados(calibracao_id)
+      WHERE situacao = 'reservado' AND calibracao_id <> '';
+    CREATE INDEX IF NOT EXISTS numeros_reservados_folha ON numeros_reservados(folha);
+    CREATE INDEX IF NOT EXISTS numeros_reservados_dono ON numeros_reservados(calibracao_id, situacao);
+  `)
+  // O nº do certificado impresso na folha ('' = nenhum: folha anterior a esta versão, ou de uma revisão)
+  acrescentarColuna(db, 'folhas_campo', 'numero_certificado', "TEXT NOT NULL DEFAULT ''")
 }
 
 /** O código de procedimento de exemplo que vinha nas configurações até a versão 1.0.1 (não é o POP de ninguém). */

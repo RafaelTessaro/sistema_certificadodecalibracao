@@ -200,7 +200,8 @@ function TabelaPontos({
       {ensaio.pontos.length === 0 ? (
         <div className="flex flex-col items-center gap-3 border-t border-line px-6 py-10 text-center">
           <p className="max-w-md text-sm text-muted">
-            Sugerimos 0, 25 %, 50 %, 75 % e 100 % da capacidade, mais as cargas onde muda o erro máximo admissível da classe.
+            Sugerimos 0, a carga mínima (Min, quando marcada), 25 %, 50 %, 75 % e 100 % da capacidade, mais as cargas onde muda o
+            erro máximo admissível da classe.
           </p>
           <Button variante="primary" icone={<Wand2 className="h-4 w-4" />} onClick={sugerir}>
             Sugerir os pontos

@@ -5,10 +5,12 @@
 // DOQ-CGCRE-097, para laboratório NÃO acreditado: sem RBC, sem marcas do Inmetro e sem "validade"
 // (docs/pesquisa/01-normas-certificado.md §3, §6 e §8). Layout em docs/pesquisa/03 §5 e 04 §5.
 //
-// Enxuto: só o obrigatório, em 2 páginas (3 no pior caso: ajuste com "como encontrado", multi-intervalo,
-// rodoviária com substituição e conformidade). Grade de identificação compacta, resultados em tabelas,
-// uma legenda só para as tabelas, sem gráfico nem desenho das posições. O procedimento (POP) sai no
-// cabeçalho de toda página e no método.
+// Enxuto: só o obrigatório, em 2 páginas (3 no pior caso: ajuste com "como encontrado", reparo,
+// multi-intervalo, rodoviária com substituição e conformidade). Grade de identificação compacta, resultados
+// em tabelas, uma legenda só para as tabelas, sem gráfico nem desenho das posições, a ressalva das opiniões
+// na linha do título e a área das assinaturas baixa. O procedimento (POP) sai no cabeçalho de toda página e
+// no método. Com 3 páginas, a última nunca fica só com as declarações e as assinaturas: a montagem mede e
+// leva para ela uma seção inteira da penúltima (`montarCertificado`).
 
 import { casasDecimais, faixaDoValor, faixasOrdenadas, formatarNumero, ordemDeGrandeza } from '#shared/metrologia/index.ts'
 import type { ResultadoCalculo, ResultadoPonto } from '#shared/metrologia/tipos.ts'
@@ -80,7 +82,7 @@ const ESTILOS: Record<string, NoObjeto> = {
   th: { font: 'InterMedio', fontSize: 7, color: COR.textoSecundario, lineHeight: 1.08 },
   td: { fontSize: 8, lineHeight: 1.05 },
   nota: { fontSize: 7, color: COR.textoSecundario, lineHeight: 1.25 },
-  declaracao: { fontSize: 7, lineHeight: 1.19, color: COR.texto },
+  declaracao: { fontSize: 7, lineHeight: 1.15, color: COR.texto },
 }
 
 /** Espaço mínimo (pt) que precisa sobrar abaixo de um título; menos que isso, o título vai para a próxima página. */
@@ -122,11 +124,29 @@ function fio(cor: string = COR.fio, largura = 0.5, margem: number[] = [0, 3, 0, 
 /** Bloco inteiro quando pequeno; senão, divisível (com o cabeçalho das tabelas repetido). */
 const bloco = (conteudo: No[], pequeno: boolean): NoObjeto => (pequeno ? inteiro(conteudo) : { stack: conteudo })
 
-/** Título de seção numerado: número e título em verde escuro, caixa alta, com um fio fino abaixo. */
-function secao(numero: number | string, titulo: string, espaco = ESPACO_TITULO): No[] {
+/**
+ * Título de seção numerado: número e título em verde escuro, caixa alta, com um fio fino abaixo. `complemento`:
+ * nota curta na mesma linha, depois do título (sem linha a mais).
+ */
+function secao(numero: number | string, titulo: string, espaco = ESPACO_TITULO, complemento = ''): No[] {
   return [
     {
-      text: [{ text: `${numero}`, color: COR.marca }, { text: ` ${titulo.toUpperCase()}` }],
+      text: [
+        { text: `${numero}`, color: COR.marca },
+        { text: ` ${titulo.toUpperCase()}` },
+        ...(complemento
+          ? [
+              {
+                text: `  ${complemento}`,
+                font: 'Inter',
+                bold: false,
+                fontSize: 7,
+                characterSpacing: 0,
+                color: COR.textoSecundario,
+              },
+            ]
+          : []),
+      ],
       style: 'secao',
       headlineLevel: espaco,
       margin: [0, 7, 0, 0],
@@ -387,10 +407,15 @@ function linhaAmbiente(ctx: Contexto): Campo[] {
     .filter((p) => p.tipo === 'TERMOHIGROMETRO' || p.tipo === 'BAROMETRO')
     .map((p) => p.identificacao)
     .filter(Boolean)
+  // A pressão só com o barômetro que a mediu entre os padrões (valor rastreável; a emissão confere os dois)
+  const comBarometro = ctx.e.padroes.some((p) => p.tipo === 'BAROMETRO')
   return [
     { rotulo: 'Temperatura (início → fim)', valor: { text: par(a.temperaturaInicial, a.temperaturaFinal, 1, '°C') } },
     { rotulo: 'Umidade relativa (início → fim)', valor: { text: par(a.umidadeInicial, a.umidadeFinal, 0, '%') } },
-    { rotulo: 'Pressão atmosférica', valor: { text: a.pressao !== null ? `${num(a.pressao, 0)} hPa` : '—' } },
+    {
+      rotulo: 'Pressão atmosférica',
+      valor: { text: a.pressao !== null && comBarometro ? `${num(a.pressao, 0)} hPa` : '—' },
+    },
     { rotulo: 'Monitoramento ambiental', valor: monitoramento.join(', ') },
   ]
 }
@@ -991,14 +1016,19 @@ function legendaResultados(ctx: Contexto): NoObjeto {
   return { text: partes.join(' '), style: 'nota', margin: [0, 2, 0, 0] }
 }
 
-function secaoResultados(ctx: Contexto, n: number): No[] {
-  return [
-    ...repetibilidade(ctx, secao(n, 'Resultados')),
-    ...excentricidade(ctx),
-    ...erroIndicacao(ctx),
-    ...comoEncontrado(ctx),
-    legendaResultados(ctx),
-  ]
+/**
+ * Resultados em grupos (cada subseção é um ponto onde a página pode ser quebrada, ver `montarCertificado`); a
+ * legenda vai no fim do último, junto com a tabela de cima.
+ */
+function secaoResultados(ctx: Contexto, n: number): Grupo[] {
+  const grupos: Grupo[] = [
+    { id: 'repetibilidade', nos: repetibilidade(ctx, secao(n, 'Resultados')) },
+    { id: 'excentricidade', nos: excentricidade(ctx) },
+    { id: 'indicacao', nos: erroIndicacao(ctx) },
+    { id: 'como-encontrado', nos: comoEncontrado(ctx) },
+  ].filter((g) => g.nos.length)
+  grupos.at(-1)!.nos.push(legendaResultados(ctx))
+  return grupos
 }
 
 // ---- 5. Declaração de conformidade ----------------------------------------------------------------
@@ -1109,28 +1139,19 @@ function secaoObservacoes(ctx: Contexto, n: number): No[] {
   return [inteiro([...secao(n, 'Observações'), lista(itens.slice(0, 1))]), ...(itens.length > 1 ? [lista(itens.slice(1))] : [])]
 }
 
+/** Ressalva das opiniões e interpretações (ISO/IEC 17025, 7.8.7): curta, cabe na linha do título da seção. */
+export const RESSALVA_OPINIOES =
+  'Baseadas nos resultados; não fazem parte dos resultados de medição. Emitidas por pessoal autorizado.'
+
 function secaoOpinioes(ctx: Contexto, n: number): No[] {
   const texto = ctx.k.opinioes.trim()
   if (!texto) return []
+  // A ressalva (ISO/IEC 17025, 7.8.7) na linha do título: a caixa fica só com a opinião
   return [
     bloco(
       [
-        ...secao(n, 'Opiniões e interpretações'),
-        destaque(
-          {
-            stack: [
-              {
-                text: 'Baseadas nos resultados desta calibração; não fazem parte dos resultados de medição e foram emitidas por pessoal autorizado.',
-                style: 'nota',
-                margin: [0, 0, 0, 1.5],
-              },
-              { text: texto, style: 'paragrafo' },
-            ],
-          },
-          COR.grafite,
-          COR.fundoCabecalho,
-          [0, 0, 0, 1],
-        ),
+        ...secao(n, 'Opiniões e interpretações', ESPACO_TITULO, RESSALVA_OPINIOES),
+        destaque({ text: texto, style: 'paragrafo' }, COR.grafite, COR.fundoCabecalho, [0, 0, 0, 1]),
       ],
       texto.length < 1500,
     ),
@@ -1155,7 +1176,7 @@ function secaoDeclaracoes(ctx: Contexto, n: number, fim: No[]): No[] {
       { text: `${i + 1}.`, width: 11, style: 'declaracao', color: COR.marcaTexto, bold: true },
       { text: x, width: '*', style: 'declaracao' },
     ],
-    margin: [0, 0, 0, 1.5],
+    margin: [0, 0, 0, 1.2],
   }))
   return [inteiro([...secao(n, 'Declarações'), ...itens, ...fim])]
 }
@@ -1172,60 +1193,91 @@ function imagemAssinatura(dataUrl: string): string | null {
   return png || jpeg ? `data:image/${png ? 'png' : 'jpeg'};base64,${m[2].replace(/\s/g, '')}` : null
 }
 
+/**
+ * Área de uma assinatura, baixa (≈ 20 mm com o nome e o cargo): o rótulo, a imagem da assinatura (até 22 pt de
+ * altura, ≈ 8 mm) ou o espaço para assinar à mão, o fio, o nome e o cargo com o registro.
+ */
+const ALTURA_ASSINATURA = 22
+
 function assinatura(papel: string, s: Signatario, comImagem: boolean): NoObjeto {
   const imagem = comImagem ? imagemAssinatura(s.assinatura) : null
   return {
     stack: [
-      { text: papel.toUpperCase(), style: 'rotulo', margin: [0, 0, 0, 1] },
-      imagem ? { image: imagem, fit: [120, 26], margin: [0, 0, 0, 1] } : { text: ' ', fontSize: 21, lineHeight: 1 },
-      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 180, y2: 0, lineWidth: 0.6, lineColor: COR.grafite }], margin: [0, 1, 0, 3] },
+      { text: papel.toUpperCase(), style: 'rotulo', margin: [0, 0, 0, 0.5] },
+      imagem
+        ? { image: imagem, fit: [110, ALTURA_ASSINATURA], margin: [0, 0, 0, 0.5] }
+        : { text: ' ', fontSize: ALTURA_ASSINATURA / 1.21, lineHeight: 1, margin: [0, 0, 0, 0.5] },
+      {
+        canvas: [{ type: 'line', x1: 0, y1: 0, x2: 180, y2: 0, lineWidth: 0.6, lineColor: COR.grafite }],
+        margin: [0, 0.5, 0, 2],
+      },
       { text: ou(s.nome), bold: true, fontSize: 8.2 },
       {
         text: [s.cargo, s.registro].filter((x) => !vazio(x)).join(' · ') || ' ',
         fontSize: 7.2,
         color: COR.textoSecundario,
-        margin: [0, 0.5, 0, 0],
       },
     ],
   }
 }
 
-/** Fim do certificado: as assinaturas, a data da emissão e a linha de fim (vai inteiro, com as declarações). */
+/**
+ * Fim do certificado: as assinaturas, a data da emissão e a linha de fim (vai inteiro, com as declarações).
+ * Com uma assinatura só (quem executou também autorizou), a data e a linha de fim vão na coluna ao lado dela,
+ * alinhadas ao pé (sem linha a mais); com duas, numa linha embaixo delas.
+ */
 function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
   const { e } = ctx
   const mesmo = e.tecnico.id && e.tecnico.id === e.signatario.id
   const emissao = dataHoraBrasilia(e.emitidoEm)
   const cidade = [e.empresa.cidade, e.empresa.uf].filter((x) => !vazio(x)).join('/')
-  const assinaturas: NoObjeto = mesmo
-    ? { columns: [assinatura('Executado e autorizado por', e.signatario, comImagem), { text: '' }], columnGap: 24 }
-    : {
-        columns: [assinatura('Executado por', e.tecnico, comImagem), assinatura('Autorizado por', e.signatario, comImagem)],
+  // A prévia não foi emitida: diz quando foi gerada e que não tem valor
+  const emitido: NoObjeto = {
+    text: !emissao
+      ? ''
+      : ctx.d.previa
+        ? `Prévia gerada em ${emissao.data}, às ${emissao.hora} (horário de Brasília), sem valor.`
+        : `${cidade ? `${cidade}, ` : ''}emitido em ${emissao.data}, às ${emissao.hora} (horário de Brasília).`,
+    fontSize: 7.2,
+  }
+  const fim: NoObjeto = {
+    text: `— Fim do Certificado de Calibração nº ${ctx.numero} —`,
+    fontSize: 7.4,
+    characterSpacing: 0.3,
+  }
+  if (mesmo)
+    return [
+      fio(COR.fio, 0.5, [0, 4, 0, 3]),
+      {
+        columns: [
+          { width: 210, ...assinatura('Executado e autorizado por', e.signatario, comImagem) },
+          {
+            width: '*',
+            // As duas linhas no pé da coluna da assinatura (alinhadas com o nome e o cargo)
+            stack: [emitido, { ...fim, margin: [0, 1, 0, 0] }],
+            alignment: 'right',
+            color: COR.textoSecundario,
+            margin: [0, ALTURA_ASSINATURA + 13, 0, 0],
+          },
+        ],
         columnGap: 24,
-      }
+      },
+    ]
   return [
-    fio(COR.fio, 0.5, [0, 5, 0, 4]),
-    assinaturas,
+    fio(COR.fio, 0.5, [0, 4, 0, 3]),
+    {
+      columns: [assinatura('Executado por', e.tecnico, comImagem), assinatura('Autorizado por', e.signatario, comImagem)],
+      columnGap: 24,
+    },
     // A data da emissão à esquerda e a linha de fim à direita, numa linha só
     {
       columns: [
-        {
-          width: '*',
-          text: emissao
-            ? `${cidade ? `${cidade}, ` : ''}emitido em ${emissao.data}, às ${emissao.hora} (horário de Brasília).`
-            : '',
-          fontSize: 7.2,
-        },
-        {
-          width: 'auto',
-          text: `— Fim do Certificado de Calibração nº ${ctx.numero} —`,
-          alignment: 'right',
-          fontSize: 7.4,
-          characterSpacing: 0.3,
-        },
+        { width: '*', ...emitido },
+        { width: 'auto', ...fim, alignment: 'right' },
       ],
       columnGap: 12,
       color: COR.textoSecundario,
-      margin: [0, 5, 0, 0],
+      margin: [0, 3.5, 0, 0],
     },
   ]
 }
@@ -1399,28 +1451,70 @@ function dataDoDocumento(d: DadosCertificadoPdf): Date {
   return Number.isNaN(calibrado.getTime()) ? new Date(0) : calibrado
 }
 
-/** Definição do documento do pdfmake (exportada para testes e para a prévia). */
-export function definicaoCertificado(d: DadosCertificadoPdf, opcoes: { assinaturas?: boolean } = {}): NoObjeto {
-  const ctx = contexto(d)
+/**
+ * As imagens das assinaturas vão no certificado emitido; na prévia (ninguém autorizou ainda) e quando a imagem
+ * não pode ser desenhada (`assinaturas: false`), só as linhas.
+ */
+const comImagens = (d: DadosCertificadoPdf, opcoes: { assinaturas?: boolean }) => opcoes.assinaturas !== false && !d.previa
+
+/** Uma seção (ou subseção dos resultados) do certificado: onde a página pode ser quebrada no equilíbrio. */
+interface Grupo {
+  id: string
+  nos: No[]
+}
+
+/** Id do grupo final (declarações e assinaturas), o último do certificado. */
+const ID_FINAL = 'declaracoes'
+
+/** As seções na ordem, numeradas na sequência (as que não se aplicam não ocupam número). */
+function grupos(ctx: Contexto, comImagem: boolean): Grupo[] {
   let n = 0
-  const conteudo: No[] = [
-    ...secaoDadosCalibracao(ctx, ++n),
-    ...secaoInstrumento(ctx, ++n),
-    ...secaoPadroes(ctx, ++n),
+  const lista: Grupo[] = [
+    { id: 'dados', nos: secaoDadosCalibracao(ctx, ++n) },
+    { id: 'instrumento', nos: secaoInstrumento(ctx, ++n) },
+    { id: 'padroes', nos: secaoPadroes(ctx, ++n) },
     ...secaoResultados(ctx, ++n),
   ]
-  if (d.calibracao.conformidade.solicitada) conteudo.push(...secaoConformidade(ctx, ++n))
+  if (ctx.k.conformidade.solicitada) lista.push({ id: 'conformidade', nos: secaoConformidade(ctx, ++n) })
+  // Observações e opiniões só ocupam número quando existem
   const observacoes = secaoObservacoes(ctx, n + 1)
-  if (observacoes.length) {
-    n++
-    conteudo.push(...observacoes)
-  }
+  if (observacoes.length) lista.push({ id: 'observacoes', nos: observacoes })
+  n += observacoes.length ? 1 : 0
   const opinioes = secaoOpinioes(ctx, n + 1)
-  if (opinioes.length) {
-    n++
-    conteudo.push(...opinioes)
-  }
-  conteudo.push(...secaoDeclaracoes(ctx, ++n, blocoFinal(ctx, opcoes.assinaturas !== false)))
+  if (opinioes.length) lista.push({ id: 'opinioes', nos: opinioes })
+  n += opinioes.length ? 1 : 0
+  lista.push({ id: ID_FINAL, nos: secaoDeclaracoes(ctx, ++n, blocoFinal(ctx, comImagem)) })
+  return lista
+}
+
+/**
+ * Marca invisível (≈ 0,1 pt) depois de um grupo, fora dele: a montagem lê em que página e altura ela ficou (o
+ * fim do grupo). A última (`fim:declaracoes`) só sai na medição: depois dela não há nada, e ela não pode abrir
+ * uma página sozinha.
+ */
+const marcaFim = (id: string): NoObjeto => ({ text: ' ', id: `fim:${id}`, fontSize: 0.1, lineHeight: 1 })
+
+/** O primeiro nó do grupo começando uma página nova. */
+function comQuebra(nos: No[]): No[] {
+  const [primeiro, ...resto] = nos
+  const no: NoObjeto =
+    primeiro && typeof primeiro === 'object' && !Array.isArray(primeiro) ? { ...primeiro } : { stack: [primeiro] }
+  return [{ ...no, pageBreak: 'before' }, ...resto]
+}
+
+/**
+ * Definição do documento do pdfmake (exportada para testes e para a prévia). `quebras`: grupos que começam
+ * uma página nova (o equilíbrio das páginas, medido em `montarCertificado`); `medir`: com a marca do fim.
+ */
+export function definicaoCertificado(
+  d: DadosCertificadoPdf,
+  opcoes: { assinaturas?: boolean; quebras?: string[]; medir?: boolean } = {},
+): NoObjeto {
+  const ctx = contexto(d)
+  const conteudo: No[] = grupos(ctx, comImagens(d, opcoes)).flatMap((g) => [
+    ...(opcoes.quebras?.includes(g.id) && g.id !== ID_FINAL ? comQuebra(g.nos) : g.nos),
+    ...(g.id !== ID_FINAL || opcoes.medir ? [marcaFim(g.id)] : []),
+  ])
 
   const e = d.emissao
   const data = dataDoDocumento(d)
@@ -1467,12 +1561,131 @@ export function definicaoCertificado(d: DadosCertificadoPdf, opcoes: { assinatur
  */
 export async function gerarCertificadoPdf(d: DadosCertificadoPdf): Promise<Buffer> {
   try {
-    return await pdfmake().createPdf(definicaoCertificado(d)).getBuffer()
+    return (await montarCertificado(d)).pdf
   } catch (erro) {
-    const temImagem = [d.emissao.tecnico.assinatura, d.emissao.signatario.assinatura].some((a) => !vazio(a))
+    const temImagem = !d.previa && [d.emissao.tecnico.assinatura, d.emissao.signatario.assinatura].some((a) => !vazio(a))
     if (!temImagem) throw erro
-    return pdfmake()
-      .createPdf(definicaoCertificado(d, { assinaturas: false }))
-      .getBuffer()
+    return (await montarCertificado(d, { assinaturas: false })).pdf
   }
+}
+
+// ---- Equilíbrio das páginas ----------------------------------------------------------------------------------
+
+/**
+ * Última página com menos que isto ocupado (fração da altura útil) num certificado de 3 páginas ou mais: a
+ * montagem tenta levar uma seção inteira da penúltima para ela (nunca fica só com as declarações e as
+ * assinaturas).
+ */
+export const OCUPACAO_MINIMA_ULTIMA = 0.5
+/** Ganho mínimo (fração da página) para trocar a paginação natural pela equilibrada. */
+const GANHO_MINIMO = 0.05
+/** Quebras previstas conferidas no máximo (cada uma é uma montagem a mais). */
+const MAX_TENTATIVAS = 2
+/** Ocupação prevista da última página acima da qual a quebra não é tentada (o que passou não caberia). */
+const OCUPACAO_MAXIMA_PREVISTA = 0.97
+
+/**
+ * O certificado montado: o PDF, o nº de páginas, a fração ocupada de cada página (pela marca do fim do último
+ * grupo nela) e os grupos que começam uma página nova.
+ */
+export interface CertificadoMontado {
+  pdf: Buffer
+  paginas: number
+  ocupacao: number[]
+  quebras: string[]
+}
+
+interface Medicao extends CertificadoMontado {
+  /** Fim de cada grupo (id → página e altura do fim). */
+  fins: Map<string, { pagina: number; topo: number }>
+  /** Altura útil da página (pt), entre as margens. */
+  alturaUtil: number
+  /** A marca do fim ficou sozinha no alto de uma página (o fim do conteúdo encostou no pé da anterior). */
+  marcaSozinha: boolean
+}
+
+async function medirCertificado(d: DadosCertificadoPdf, opcoes: { assinaturas?: boolean; quebras: string[] }) {
+  const definicao = definicaoCertificado(d, { ...opcoes, medir: true })
+  const margemBase = (definicao.pageMargins as number[])[3]
+  const util = A4.altura - margemBase - MARGEM_TOPO
+  const fins = new Map<string, { pagina: number; topo: number }>()
+  definicao.pageBreakBefore = (
+    no: Parameters<typeof quebraAntes>[0] & { id?: string; startPosition?: { pageNumber: number; top: number } },
+  ) => {
+    if (no.id?.startsWith('fim:') && no.startPosition && !fins.has(no.id.slice(4)))
+      fins.set(no.id.slice(4), { pagina: no.startPosition.pageNumber, topo: no.startPosition.top })
+    return quebraAntes(no)
+  }
+  const pdf: Buffer = await pdfmake().createPdf(definicao).getBuffer()
+  const final = fins.get(ID_FINAL)
+  // A marca do fim sozinha no alto de uma página: o conteúdo acabou no pé da anterior (cheia)
+  const marcaSozinha = !!final && final.topo <= MARGEM_TOPO + 0.5
+  const paginas = (final?.pagina ?? 0) - (marcaSozinha ? 1 : 0)
+  const ocupacao = Array.from({ length: paginas }, (_, i) => {
+    if (marcaSozinha && i === paginas - 1) return 1
+    const topos = [...fins.values()].filter((x) => x.pagina === i + 1).map((x) => x.topo)
+    // Página sem o fim de nenhum grupo: um grupo que a atravessa inteira
+    return topos.length ? Math.min(1, Math.max(0, (Math.max(...topos) - MARGEM_TOPO) / util)) : 1
+  })
+  return { pdf, paginas, ocupacao, quebras: opcoes.quebras, fins, alturaUtil: util, marcaSozinha } satisfies Medicao
+}
+
+/** A menor ocupação entre as duas últimas páginas (o que o equilíbrio aumenta). */
+const menorDasUltimas = (m: Medicao) => Math.min(...m.ocupacao.slice(-2))
+
+/**
+ * Onde quebrar a página para equilibrar as duas últimas, previsto pela medição natural: tudo o que vem depois
+ * do fim do grupo anterior na penúltima página passa para a última (e empurra o que já estava nela). Os
+ * candidatos são os grupos que começam na penúltima página; vale o que deixa a menor das duas mais cheia, sem
+ * passar do pé da última. Em ordem do melhor para o pior previsto.
+ */
+function quebrasPrevistas(natural: Medicao, ordem: string[]): Array<{ id: string; menor: number }> {
+  const n = natural.paginas
+  const [penultima, ultima] = natural.ocupacao.slice(-2)
+  const util = (topo: number) => (topo - MARGEM_TOPO) / natural.alturaUtil
+  return ordem
+    .flatMap((id, i) => {
+      const anterior = natural.fins.get(ordem[i - 1] ?? '')
+      if (i === 0 || id === ID_FINAL || anterior?.pagina !== n - 1) return []
+      const fica = util(anterior.topo)
+      const vai = ultima + (penultima - fica)
+      return vai <= OCUPACAO_MAXIMA_PREVISTA ? [{ id, menor: Math.min(fica, vai) }] : []
+    })
+    .sort((a, b) => b.menor - a.menor)
+}
+
+/**
+ * Monta o certificado. Com 3 páginas ou mais e a última quase vazia (só as declarações e as assinaturas, por
+ * exemplo), leva para ela uma seção inteira da penúltima (a que deixa as duas mais parecidas), sem mudar o nº
+ * de páginas: nada de uma página final só com o fim do certificado. A quebra é prevista pela medição natural e
+ * conferida montando de novo (no máximo `MAX_TENTATIVAS`). Determinístico (mede e decide sempre igual).
+ */
+export async function montarCertificado(
+  d: DadosCertificadoPdf,
+  opcoes: { assinaturas?: boolean } = {},
+): Promise<CertificadoMontado> {
+  const natural = await medirCertificado(d, { ...opcoes, quebras: [] })
+  let melhor = natural
+  const n = natural.paginas
+  if (n >= 3 && natural.ocupacao[n - 1] < OCUPACAO_MINIMA_ULTIMA) {
+    const ordem = grupos(contexto(d), comImagens(d, opcoes)).map((g) => g.id)
+    const previstas = quebrasPrevistas(natural, ordem).filter((x) => x.menor >= menorDasUltimas(natural) + GANHO_MINIMO)
+    for (const { id } of previstas.slice(0, MAX_TENTATIVAS)) {
+      const m = await medirCertificado(d, { ...opcoes, quebras: [id] })
+      // Conferida: o mesmo nº de páginas e as duas últimas mais equilibradas que na paginação natural
+      if (m.paginas === n && menorDasUltimas(m) >= menorDasUltimas(natural) + GANHO_MINIMO) {
+        melhor = m
+        break
+      }
+    }
+  }
+  // A marca do fim sozinha numa página (o fim encostou no pé da anterior): monta de novo sem ela
+  if (melhor.marcaSozinha) {
+    const pdf = await pdfmake()
+      .createPdf(definicaoCertificado(d, { ...opcoes, quebras: melhor.quebras }))
+      .getBuffer()
+    return { pdf, paginas: melhor.paginas, ocupacao: melhor.ocupacao, quebras: melhor.quebras }
+  }
+  const { pdf, paginas, ocupacao, quebras } = melhor
+  return { pdf, paginas, ocupacao, quebras }
 }

@@ -19,6 +19,7 @@ import { rotasCalibracoes } from './rotas/calibracoes.ts'
 import { rotasConsultas } from './rotas/consultas.ts'
 import { rotasFolhaCampo } from './rotas/folhaCampo.ts'
 import { rotasGeral } from './rotas/geral.ts'
+import { rotasNumeros } from './rotas/numeros.ts'
 import { rotasUsuarios } from './rotas/usuarios.ts'
 import type { ParametrosSenha } from './senha.ts'
 import { TempoReal } from './tempoReal.ts'
@@ -273,6 +274,7 @@ export async function criarApp(opcoes: OpcoesApp) {
   await rotasGeral(app, ctx)
   await rotasCalibracoes(app, ctx, email)
   await rotasFolhaCampo(app, ctx)
+  await rotasNumeros(app, ctx)
   await rotasConsultas(app, ctx)
   await email.rotas(app)
 

@@ -180,6 +180,7 @@ export async function cenarioCalibracao(t: AppComLogin) {
     classe: 'M1',
     certificado: 'LAB-0456/2026',
     laboratorio: 'Laboratório de Massa Exemplo',
+    acreditacao: 'CAL 0123',
     dataCalibracao: '2026-01-10',
     validade: '2099-01-10',
     pesos: [
@@ -198,10 +199,18 @@ export async function cenarioCalibracao(t: AppComLogin) {
     const { calibracao: k } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: balanca.id }, cookie)) as {
       calibracao: Calibracao
     }
+    // Com o barômetro entre os padrões, a pressão medida com ele (a emissão confere os dois)
+    const comBarometro = outrosPadroes.some((id) => t.ctx.repo.obterPadrao(id)?.tipo === 'BAROMETRO')
     const dados: CalibracaoInput = {
       ...k,
       padroesIds: [pesos.id, ...outrosPadroes],
-      ambiente: { temperaturaInicial: 22.1, temperaturaFinal: 22.6, umidadeInicial: 55, umidadeFinal: 57, pressao: null },
+      ambiente: {
+        temperaturaInicial: 22.1,
+        temperaturaFinal: 22.6,
+        umidadeInicial: 55,
+        umidadeFinal: 57,
+        pressao: comBarometro ? 927 : null,
+      },
       repetibilidade: [{ id: 'r1', carga: 15, leituras: [15, 15, 15.01, 15, 15, 15] }],
       excentricidade: {
         aplicavel: true,
