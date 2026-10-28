@@ -20,7 +20,7 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
         <CardHeader
           icone={<Scale3d className="h-4 w-4" />}
           titulo="Declaração de conformidade"
-          descricao="Só quando o cliente pediu (confirme na chegada, antes das leituras): diz se os erros ficaram dentro de um limite, com a regra de decisão."
+          descricao="Só quando o cliente pediu: diz se os erros ficaram dentro de um limite, com a regra de decisão."
           acoes={
             <label className="flex cursor-pointer items-center gap-2 text-[13px] font-medium text-ink-2">
               <input

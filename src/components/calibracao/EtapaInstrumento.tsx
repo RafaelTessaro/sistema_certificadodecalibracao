@@ -11,7 +11,7 @@ import {
   ROTULO_CLASSE,
   TIPOS_BALANCA,
 } from '#shared/dominio.ts'
-import type { AjusteRealizado, CalibracaoInput, RespostaVerificacao, ZeroAutomatico } from '#shared/tipos.ts'
+import type { AjusteRealizado, CalibracaoInput, Verificacao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
@@ -32,8 +32,6 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
   const prel = f.preliminar
   const setPrel = (k: keyof CalibracaoInput['preliminar'], v: string) =>
     alterar((s) => ({ ...s, preliminar: { ...s.preliminar, [k]: v } }))
-  const semResposta = Object.values(prel).filter((v) => !v).length
-  const algumNao = Object.values(prel).includes('NAO')
   const setAjuste = (realizado: AjusteRealizado) =>
     alterar((s) => ({
       ...s,
@@ -115,17 +113,16 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
         <CardHeader
           icone={<ClipboardCheck className="h-4 w-4" />}
           titulo="Verificação antes de calibrar"
-          descricao="Condições da balança no início (EURAMET cg-18, 4.1.3). Responda cada item como encontrou na balança."
+          descricao="Condições da balança no início (EURAMET cg-18, 4.1.3)"
         />
         <ul className="divide-y divide-line border-t border-line">
           {VERIFICACOES.map((v) => (
             <li key={v.chave} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-sm text-ink-2">{v.texto}</span>
-              {/* Sem resposta (''), nenhuma opção fica marcada */}
-              <Segmented<RespostaVerificacao>
+              <Segmented
                 tamanho="sm"
                 valor={prel[v.chave]}
-                aoMudar={(x) => setPrel(v.chave, x)}
+                aoMudar={(x: Verificacao) => setPrel(v.chave, x)}
                 opcoes={[
                   { valor: 'SIM', label: 'Sim' },
                   { valor: 'NAO', label: 'Não' },
@@ -136,7 +133,7 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
           ))}
           <li className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-sm text-ink-2">Zero automático / rastreamento de zero</span>
-            <Segmented<ZeroAutomatico | ''>
+            <Segmented
               tamanho="sm"
               valor={prel.zeroAutomatico}
               aoMudar={(x) => setPrel('zeroAutomatico', x)}
@@ -144,25 +141,14 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
                 { valor: 'LIGADO', label: 'Ligado' },
                 { valor: 'DESLIGADO', label: 'Desligado' },
                 { valor: 'NAO_POSSUI', label: 'Não possui' },
-                { valor: 'NAO_VERIFICADO', label: 'Não verificado' },
               ]}
             />
           </li>
         </ul>
-        {(semResposta > 0 || algumNao) && (
-          <div className="flex flex-col gap-2 px-5 py-4">
-            {semResposta > 0 && (
-              <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[13px] text-ink-2">
-                {semResposta === 1 ? 'Falta responder 1 item' : `Faltam responder ${semResposta} itens`}. O certificado só é
-                emitido com todos respondidos.
-              </p>
-            )}
-            {algumNao && (
-              <p className="rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
-                Algum item não foi atendido. Registre o que aconteceu nas observações do certificado (etapa “Conclusão”).
-              </p>
-            )}
-          </div>
+        {Object.values(prel).includes('NAO') && (
+          <p className="mx-5 my-4 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
+            Algum item não foi atendido. Registre o que aconteceu nas observações do certificado (etapa “Conclusão”).
+          </p>
         )}
       </Card>
 

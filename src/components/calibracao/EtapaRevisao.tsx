@@ -1,6 +1,6 @@
 import { CircleAlert, CircleCheck, Eye, FileBadge2, Hourglass, Loader2, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
-import { avisoDeltaT, formatarNumeroCertificado } from '#shared/dominio.ts'
+import { formatarNumeroCertificado } from '#shared/dominio.ts'
 import { podeEmitir } from '#shared/permissoes.ts'
 import { hojeISO } from '../../lib/format'
 import { useSessao } from '../../store/sessao'
@@ -36,12 +36,7 @@ export function EtapaRevisao({
   const [emitindo, setEmitindo] = useState(false)
   // A numeração segue o ano da emissão (hoje)
   const exemplo = formatarNumeroCertificado(config.numeracao, 1, Number(hojeISO().slice(0, 4)), f.substituiId ? 1 : 0)
-  const deltaT = avisoDeltaT(f.ambiente, ctx.balanca.classe)
-  const avisos = [
-    ...(deltaT ? [{ nivel: 'atencao' as const, mensagem: deltaT }] : []),
-    ...(r?.avisos ?? []),
-    ...(calc?.comoEncontrado?.avisos ?? []),
-  ].filter((a) => a.nivel !== 'info')
+  const avisos = [...(r?.avisos ?? []), ...(calc?.comoEncontrado?.avisos ?? [])].filter((a) => a.nivel !== 'info')
   const pronto = pendencias.length === 0
 
   return (
@@ -71,7 +66,7 @@ export function EtapaRevisao({
         )}
         {avisos.length > 0 && (
           <div className="mx-5 mb-5 rounded-xl border border-line bg-surface-2/50 px-4 py-3">
-            <p className="mb-2 text-xs font-semibold text-muted">Avisos (não impedem a emissão)</p>
+            <p className="mb-2 text-xs font-semibold text-muted">Avisos do cálculo (não impedem a emissão)</p>
             <ul className="flex flex-col gap-1.5">
               {avisos.map((a, i) => (
                 <AvisoItem key={i} aviso={a} />

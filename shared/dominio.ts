@@ -41,9 +41,8 @@ import type {
   TipoPadrao,
   Tone,
   Unidade,
-  RespostaVerificacao,
   UsoPesos,
-  ZeroAutomatico,
+  Verificacao,
 } from './tipos.ts'
 
 export interface Resultado<T> {
@@ -272,62 +271,6 @@ export const METODOS_CARREGAMENTO: Record<MetodoCarregamento, { label: string; d
   DECRESCENTE: { label: 'Decrescente', descricao: 'Parte de Max e vai descarregando (tremonhas, silos).' },
 }
 
-/** Respostas da verificação antes de calibrar ('' = sem resposta), como saem no certificado. */
-export const ROTULO_VERIFICACAO: Record<RespostaVerificacao, string> = {
-  SIM: 'sim',
-  NAO: 'não',
-  NA: 'n/a',
-  '': 'sem resposta',
-}
-
-/** Situação do zero automático na calibração ('' = sem resposta), como sai no certificado. */
-export const ROTULO_ZERO_AUTOMATICO: Record<ZeroAutomatico | '', string> = {
-  LIGADO: 'ligado',
-  DESLIGADO: 'desligado',
-  NAO_POSSUI: 'não possui',
-  NAO_VERIFICADO: 'não verificado',
-  '': 'sem resposta',
-}
-
-/** Itens da verificação antes de calibrar, na ordem da tela e da folha, com o nome curto (pendências). */
-export const ITENS_PRELIMINAR: Array<{ chave: keyof CalibracaoInput['preliminar']; nome: string }> = [
-  { chave: 'identificavel', nome: 'identificação' },
-  { chave: 'limpa', nome: 'limpeza' },
-  { chave: 'nivelada', nome: 'nivelamento' },
-  { chave: 'aquecida', nome: 'aquecimento' },
-  { chave: 'preCarga', nome: 'pré-carga' },
-  { chave: 'zeroAutomatico', nome: 'zero automático' },
-]
-
-/** Verificação antes de calibrar sem nenhuma resposta: o rascunho novo e o "calibrar de novo" começam assim. */
-export const PRELIMINAR_SEM_RESPOSTA: CalibracaoInput['preliminar'] = {
-  identificavel: '',
-  limpa: '',
-  nivelada: '',
-  aquecida: '',
-  preCarga: '',
-  zeroAutomatico: '',
-}
-
-/**
- * Variação máxima da temperatura durante a calibração (política da empresa, PT-CAL-01): 3 °C na classe II
- * (e na I, fora do escopo); 5 °C nas classes III e IIII e na balança sem classe.
- */
-export function limiteDeltaT(classe: ClasseExatidao): number {
-  return classe === 'I' || classe === 'II' ? 3 : 5
-}
-
-/** Aviso (não bloqueia) da temperatura que variou mais que o limite da classe; null dentro do limite ou sem as duas leituras. */
-export function avisoDeltaT(ambiente: CondicoesAmbientais, classe: ClasseExatidao): string | null {
-  const { temperaturaInicial: ti, temperaturaFinal: tf } = ambiente
-  if (ti === null || tf === null) return null
-  const delta = Math.round(Math.abs(tf - ti) * 10) / 10
-  const limite = limiteDeltaT(classe)
-  if (delta <= limite) return null
-  const qual = classe ? `na classe ${classe}` : 'sem classe'
-  return `A temperatura variou ${numeroBr(delta)} °C durante a calibração; o limite ${qual} é ${limite} °C. Registre nas observações.`
-}
-
 export const METODOS_EXCENTRICIDADE: Record<MetodoExcentricidade, string> = {
   1: 'Zera e desloca a carga pelas posições',
   2: 'Tara com a carga no centro e desloca',
@@ -382,12 +325,11 @@ export const EMPRESA_PADRAO: DadosEmpresa = {
  * {empresa} vira a razão social. Ver docs/pesquisa/01-normas-certificado.md, seção 6.
  */
 export const TEXTOS_PADRAO: TextosCertificado = {
-  procedimento: 'PT-CAL-01 rev. 00',
+  procedimento: 'PT-CAL-01 rev. 0',
   procedimentoDescricao:
-    'Calibração por comparação com pesos padrão (nas balanças rodoviárias e ferroviárias, também com cargas de ' +
-    'substituição), conforme o procedimento PT-CAL-01, baseado no EURAMET Calibration Guide No. 18, versão 4.0 ' +
-    '(2015): ensaios de repetibilidade, excentricidade e erro de indicação. Incerteza de medição avaliada conforme ' +
-    'o Guia para a Expressão da Incerteza de Medição (JCGM 100:2008).',
+    'Calibração por comparação direta com pesos padrão, conforme o EURAMET Calibration Guide No. 18, versão 4.0 (2015): ' +
+    'ensaios de repetibilidade, excentricidade e erro de indicação. Incerteza de medição avaliada conforme o ' +
+    'Guia para a Expressão da Incerteza de Medição (JCGM 100:2008).',
   rastreabilidade:
     'Os resultados desta calibração são metrologicamente rastreáveis ao Sistema Internacional de Unidades (SI) por meio ' +
     'dos padrões relacionados em "Padrões utilizados", calibrados por laboratório(s) acreditado(s) pela Cgcre/Inmetro ' +
@@ -419,25 +361,6 @@ export const TEXTOS_PADRAO: TextosCertificado = {
     'é de responsabilidade do usuário, considerando a frequência e as condições de uso, o histórico e a estabilidade ' +
     'do instrumento e os requisitos aplicáveis.',
   observacoesPadrao: '',
-}
-
-/**
- * Textos que nenhum certificado pode deixar de ter (calibração fora da RBC): a empresa não é acreditada, a
- * calibração não substitui a verificação do Inmetro/IPEM, a rastreabilidade e a declaração da incerteza. Com o
- * nome que têm em Configurações.
- */
-export const TEXTOS_OBRIGATORIOS: Partial<Record<keyof TextosCertificado, string>> = {
-  naoAcreditado: 'Empresa não acreditada',
-  controleLegal: 'Verificação do Inmetro / IPEM',
-  rastreabilidade: 'Rastreabilidade',
-  incerteza: 'Declaração da incerteza',
-}
-
-/** Os textos obrigatórios em branco (com o nome de Configurações). */
-export function textosObrigatoriosVazios(textos: Partial<TextosCertificado>): string[] {
-  return (Object.keys(TEXTOS_OBRIGATORIOS) as Array<keyof TextosCertificado>)
-    .filter((k) => !String(textos[k] ?? '').trim())
-    .map((k) => TEXTOS_OBRIGATORIOS[k]!)
 }
 
 export const OPCOES_CALCULO_PADRAO: OpcoesCalculo = {
@@ -1184,8 +1107,14 @@ export function calibracaoVazia(opcoes: OpcoesCalculo = OPCOES_CALCULO_PADRAO): 
     signatarioId: '',
     padroesIds: [],
     ambiente: { ...AMBIENTE_VAZIO },
-    // Sem resposta: o técnico responde cada item na balança (nada vem marcado)
-    preliminar: { ...PRELIMINAR_SEM_RESPOSTA },
+    preliminar: {
+      identificavel: 'SIM',
+      limpa: 'SIM',
+      nivelada: 'SIM',
+      aquecida: 'SIM',
+      preCarga: 'SIM',
+      zeroAutomatico: 'LIGADO',
+    },
     ajuste: { realizado: 'NAO', descricao: '' },
     comoEncontrado: null,
     repetibilidade: [],
@@ -1204,8 +1133,7 @@ export function calibracaoVazia(opcoes: OpcoesCalculo = OPCOES_CALCULO_PADRAO): 
   }
 }
 
-const VERIFICACOES: RespostaVerificacao[] = ['SIM', 'NAO', 'NA', '']
-const ZEROS_AUTOMATICOS: Array<ZeroAutomatico | ''> = ['LIGADO', 'DESLIGADO', 'NAO_POSSUI', 'NAO_VERIFICADO', '']
+const VERIFICACOES: Verificacao[] = ['SIM', 'NAO', 'NA']
 
 function normalizarPecas(v: unknown): PecaCarga[] {
   return (Array.isArray(v) ? v : [])
@@ -1369,14 +1297,13 @@ export function normalizarCalibracao(entrada: unknown): Resultado<CalibracaoInpu
         umidadeFinal: numOuNuloAmb(amb.umidadeFinal, 0, 100),
         pressao: numOuNuloAmb(amb.pressao, 300, 1200),
       },
-      // O que não veio fica sem resposta (nunca um "Sim" que o técnico não marcou)
       preliminar: {
-        identificavel: umDe(pre.identificavel, VERIFICACOES, ''),
-        limpa: umDe(pre.limpa, VERIFICACOES, ''),
-        nivelada: umDe(pre.nivelada, VERIFICACOES, ''),
-        aquecida: umDe(pre.aquecida, VERIFICACOES, ''),
-        preCarga: umDe(pre.preCarga, VERIFICACOES, ''),
-        zeroAutomatico: umDe(pre.zeroAutomatico, ZEROS_AUTOMATICOS, ''),
+        identificavel: umDe(pre.identificavel, VERIFICACOES, 'SIM'),
+        limpa: umDe(pre.limpa, VERIFICACOES, 'SIM'),
+        nivelada: umDe(pre.nivelada, VERIFICACOES, 'SIM'),
+        aquecida: umDe(pre.aquecida, VERIFICACOES, 'SIM'),
+        preCarga: umDe(pre.preCarga, VERIFICACOES, 'SIM'),
+        zeroAutomatico: umDe(pre.zeroAutomatico, ['LIGADO', 'DESLIGADO', 'NAO_POSSUI'] as const, 'LIGADO'),
       },
       ajuste: { realizado: ajusteRealizado, descricao: texto(aj.descricao, 300) },
       comoEncontrado: ajusteRealizado !== 'NAO' && r.comoEncontrado ? normalizarIndicacao(r.comoEncontrado) : null,
@@ -1415,28 +1342,14 @@ export function normalizarCalibracao(entrada: unknown): Resultado<CalibracaoInpu
  */
 export function pendenciasEmissao(
   c: CalibracaoInput,
-  contexto: {
-    padroes: Padrao[]
-    hoje: string
-    temPesos: boolean
-    /** Os textos do certificado (Configurações): os obrigatórios não podem estar em branco. */
-    textos?: Partial<TextosCertificado>
-  },
+  contexto: { padroes: Padrao[]; hoje: string; temPesos: boolean },
 ): string[] {
   const p: string[] = []
   if (!dataIsoValida(c.dataCalibracao)) p.push('Informe a data da calibração.')
   else if (c.dataCalibracao > contexto.hoje) p.push('A data da calibração não pode ser futura.')
   if (!c.tecnicoId) p.push('Informe o técnico que executou a calibração.')
-  // A verificação antes de calibrar começa sem resposta: cada item é respondido na balança
-  const semResposta = ITENS_PRELIMINAR.filter((x) => !c.preliminar[x.chave]).map((x) => x.nome)
-  if (semResposta.length)
-    p.push(
-      `Responda a verificação antes de calibrar (etapa “Balança e ajuste”): ${semResposta.length > 1 ? `${semResposta.slice(0, -1).join(', ')} e ${semResposta.at(-1)}` : semResposta[0]}.`,
-    )
   if (!c.padroesIds.length) p.push('Escolha os padrões utilizados.')
   if (!contexto.temPesos) p.push('Escolha pelo menos um jogo de pesos padrão.')
-  if (!contexto.padroes.some((x) => x.tipo === 'TERMOHIGROMETRO'))
-    p.push('Escolha o termo-higrômetro usado (etapa “Padrões e ambiente”).')
   for (const pad of contexto.padroes) {
     if (!pad.ativo) p.push(`O padrão ${pad.identificacao} está desativado.`)
     if (!pad.validade) p.push(`O padrão ${pad.identificacao} está sem a data da próxima calibração.`)
@@ -1447,17 +1360,12 @@ export function pendenciasEmissao(
   const amb = c.ambiente
   if (amb.temperaturaInicial === null || amb.temperaturaFinal === null)
     p.push('Registre a temperatura no início e no fim da calibração.')
-  if (amb.umidadeInicial === null || amb.umidadeFinal === null)
-    p.push('Registre a umidade relativa no início e no fim da calibração.')
   if (c.local === 'CLIENTE' && !c.localEndereco.trim()) p.push('Informe o endereço onde a calibração foi feita.')
   if (c.ajuste.realizado === 'EXTERNO' && !c.ajuste.descricao.trim()) p.push('Descreva o ajuste externo (peso usado).')
   if (c.reparo.houve && !c.ordemServico.trim()) p.push('Houve reparo: informe o número da ordem de serviço.')
   if (c.conformidade.solicitada && c.conformidade.criterio === 'CLIENTE' && !(c.conformidade.toleranciaCliente > 0))
     p.push('Informe a tolerância do cliente para a declaração de conformidade.')
   if (c.proximaNoCertificado && !c.proximaCalibracao) p.push('Informe a data da próxima calibração pedida pelo cliente.')
-  if (contexto.textos)
-    for (const nome of textosObrigatoriosVazios(contexto.textos))
-      p.push(`O texto “${nome}” do certificado está em branco: preencha em Configurações → Certificado.`)
   return p
 }
 
@@ -1504,13 +1412,6 @@ export function normalizarConfig(entrada: unknown, atual: Configuracoes = CONFIG
   const textos = Object.fromEntries(
     (Object.keys(TEXTOS_PADRAO) as Array<keyof TextosCertificado>).map((k) => [k, multilinha(t[k] ?? atual.textos[k], 3000)]),
   ) as unknown as TextosCertificado
-  // Os obrigatórios em branco: recusa ao gravar e volta ao texto de fábrica (uma configuração antiga já gravada
-  // assim é lida com o de fábrica)
-  for (const k of Object.keys(TEXTOS_OBRIGATORIOS) as Array<keyof TextosCertificado>)
-    if (!textos[k].trim()) {
-      erros.push(`Preencha o texto “${TEXTOS_OBRIGATORIOS[k]}”: ele é obrigatório no certificado.`)
-      textos[k] = TEXTOS_PADRAO[k]
-    }
   const formato = texto(n.formato ?? atual.numeracao.formato, 40)
   if (!formato.includes('{seq}')) erros.push('O formato do número precisa ter {seq} (a sequência).')
   const urlVerificacao = texto(r.urlVerificacao ?? atual.urlVerificacao, 200)

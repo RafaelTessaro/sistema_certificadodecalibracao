@@ -621,12 +621,10 @@ describe('regras do cálculo', () => {
     expect(texto).toMatch(/atencao: Erro de indicação com 3 ponto\(s\)/)
     expect(texto).toMatch(/atencao: A maior carga ensaiada \(25\u00a0000 g\) é menor que 90 %/)
     expect(texto).toMatch(/erro: Leitura\(s\) mais de 10 % fora da carga.*50\u00a0000 em 5000 g/)
+    expect(texto).toMatch(/atencao: Carga sem padrões em 5000 g/)
     expect(texto).toMatch(/atencao: Classe dos pesos insuficiente em 25\u00a0000 g/)
     expect(texto).toMatch(/info: U menor que a divisão em 0 g; 5000 g:/)
-    // Ponto sem pesos padrão (e sem substituição) não tem referência: é pendência, não aviso
-    expect(texto).not.toMatch(/sem padrões/)
-    expect(r.pendencias).toContain('Erro de indicação: o ponto de 5000 g está sem pesos padrão; escolha as peças usadas.')
-    // Na tela, ao vivo, a referência do ponto sem padrões é a carga digitada
+    // a referência do ponto sem padrões é a carga digitada
     expect(r.pontos[1].referencia).toBe(5000)
   })
 
@@ -634,11 +632,7 @@ describe('regras do cálculo', () => {
     const e = exemplo30kg()
     e.excentricidade.carga = 2000
     const r = calcular(e)
-    expect(r.avisos).toContainEqual({
-      nivel: 'atencao',
-      mensagem:
-        'Carga de excentricidade (2000 g) abaixo do mínimo de Max/3 (10\u00a0000 g) do DOQ-CGCRE-097, 10.4; a sugerida é 10\u00a0000 g.',
-    })
+    expect(r.avisos.some((a) => a.mensagem.includes('muito diferente da sugerida (10\u00a0000 g'))).toBe(true)
 
     const pesada = exemplo30kg()
     pesada.instrumento = { unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 3000, e: 1, d: 1 }] }
@@ -657,168 +651,5 @@ describe('regras do cálculo', () => {
     const r = calcular(e)
     expect(r.conformidade).toBeNull()
     expect(r.pendencias.some((p) => p.startsWith('Conformidade'))).toBe(true)
-  })
-})
-
-// ---- Excentricidade com carga rolante (cg-18 H3) -------------------------------------------------------
-
-describe('excentricidade com carga rolante (rodoviária, cg-18 H3)', () => {
-  // H3: veículo de ~24 160 kg; ida (início, meio, fim) e volta; zero antes da ida e antes da volta
-  const H3 = [24160, 24157, 24181, 24177, 24157, 24162]
-  const entrada = (cargaRolante: boolean): EntradaCalculo => {
-    const e = exemplo30kg()
-    e.instrumento = { unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30000, e: 10, d: 10 }] }
-    e.excentricidade = {
-      aplicavel: true,
-      carga: 24160,
-      metodo: 1,
-      posicoes: ['Início (ida)', 'Meio (ida)', 'Fim (ida)', 'Início (volta)', 'Meio (volta)', 'Fim (volta)'].map((rotulo, i) => ({
-        rotulo,
-        leitura: H3[i],
-        referencia: null,
-      })),
-      cargaRolante,
-    }
-    return e
-  }
-
-  it('o desvio é contra o meio da mesma passagem: |ΔI|máx = 24 kg, como no H3', () => {
-    const r = calcular(entrada(true)).excentricidade
-    expect(r.referencias).toEqual([1, 4])
-    expect(r.desvios).toEqual([3, 0, 24, 20, 0, 5])
-    expect(r).toMatchObject({ maiorDesvio: 24, posicaoMaior: 2 })
-    perto(r.incertezaRelativa, 24 / (2 * 24160 * Math.sqrt(3)), 1e-12, 'u_rel ecc')
-  })
-
-  it('sem carga rolante (contra a posição 1), o mesmo vetor daria 21 kg: a incerteza sairia 12,5 % menor', () => {
-    const r = calcular(entrada(false)).excentricidade
-    expect(r.referencias).toEqual([0])
-    expect(r.desvios).toEqual([0, -3, 21, 17, -3, 2])
-    expect(r.maiorDesvio).toBe(21)
-  })
-
-  it('a volta sem leitura no meio fica sem desvio (a ida continua valendo)', () => {
-    const e = entrada(true)
-    e.excentricidade.posicoes[4].leitura = null
-    const r = calcular(e)
-    expect(r.excentricidade.desvios).toEqual([3, 0, 24, null, null, null])
-    expect(r.avisos.some((a) => a.mensagem === 'Excentricidade: 3 posição(ões) sem leitura.')).toBe(true)
-  })
-
-  it('método 3 (zero lido antes de cada posição) também contra o meio da passagem', () => {
-    const e = entrada(true)
-    e.excentricidade.metodo = 3
-    e.excentricidade.posicoes = e.excentricidade.posicoes.map((p, i) => ({ ...p, referencia: i === 3 ? 10 : 0 }))
-    expect(calcular(e).excentricidade.desvios).toEqual([3, 0, 24, 10, 0, 5])
-  })
-})
-
-describe('regras do PT-CAL-01 no cálculo', () => {
-  it('excentricidade aplicável sem a carga usada é pendência', () => {
-    const e = exemplo30kg()
-    e.excentricidade.carga = 0
-    expect(calcular(e).pendencias).toContain('Excentricidade: informe a carga usada.')
-    e.excentricidade.aplicavel = false
-    expect(calcular(e).pendencias).not.toContain('Excentricidade: informe a carga usada.')
-  })
-
-  it('carga de excentricidade igual ou acima da fração não avisa; muito acima, só informa', () => {
-    const e = exemplo30kg()
-    e.excentricidade.carga = 10000
-    expect(calcular(e).avisos.some((a) => a.mensagem.startsWith('Carga de excentricidade'))).toBe(false)
-    e.excentricidade.carga = 9995
-    expect(calcular(e).avisos.find((a) => a.mensagem.startsWith('Carga de excentricidade'))?.nivel).toBe('atencao')
-    // 10 t: Max/10 = 1000 kg; 3500 kg passa de 3 × a sugerida
-    e.instrumento = { unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 10000, e: 5, d: 5 }] }
-    e.excentricidade.carga = 3500
-    expect(calcular(e).avisos.find((a) => a.mensagem.startsWith('Carga de excentricidade'))).toEqual({
-      nivel: 'info',
-      mensagem: 'Carga de excentricidade (3500 kg) muito maior que a sugerida (1000 kg, DOQ-CGCRE-097, 10.4).',
-    })
-  })
-
-  it('o mínimo do aviso sai na casa de d, arredondado para cima (500 kg: Max/3 = 166,7 kg)', () => {
-    const e = exemplo30kg()
-    e.instrumento = { unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 500, e: 0.1, d: 0.1 }] }
-    e.excentricidade.carga = 150
-    expect(calcular(e).avisos.find((a) => a.mensagem.startsWith('Carga de excentricidade'))?.mensagem).toBe(
-      'Carga de excentricidade (150,0 kg) abaixo do mínimo de Max/3 (166,7 kg) do DOQ-CGCRE-097, 10.4; a sugerida é 200,0 kg.',
-    )
-  })
-
-  it('pontos sem pesos padrão e sem substituição são pendência (no plural, numa linha só)', () => {
-    const e = exemplo30kg()
-    e.indicacao.pontos[1].pecas = []
-    e.indicacao.pontos[2].pecas = []
-    expect(calcular(e).pendencias).toContain(
-      'Erro de indicação: os pontos de 5000 g; 10\u00a0000 g estão sem pesos padrão; escolha as peças usadas.',
-    )
-    // O zero não tem peças e não é pendência; ponto sem leitura também não entra
-    const so = exemplo30kg()
-    so.indicacao.pontos[1] = { ...so.indicacao.pontos[1], pecas: [], crescente: null, decrescente: null }
-    expect(calcular(so).pendencias).toEqual([])
-  })
-
-  it('ponto com peças de um jogo que saiu da calibração é pendência', () => {
-    const e = exemplo30kg()
-    e.indicacao.pontos[2].pecasAusentes = 1
-    expect(calcular(e).pendencias).toContain(
-      'Erro de indicação: o ponto de 10\u00a0000 g usa peças de um jogo que não está mais escolhido; escolha as peças de novo.',
-    )
-  })
-
-  it('com substituição, o retorno ao zero vazio é pendência', () => {
-    const m1: PecaCalculo = { nominal: 1000, correcao: 0, incerteza: 0, k: 2, ema: 0.05, usarCertificado: false, quantidade: 10 }
-    const e = exemplo30kg()
-    e.instrumento = { unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30000, e: 10, d: 10 }] }
-    e.excentricidade = { aplicavel: false, carga: 0, metodo: 1, posicoes: [] }
-    e.repetibilidade = [{ id: 'r', carga: 10000, leituras: [10000, 10010, 10000] }]
-    e.indicacao = {
-      metodo: 'CONTINUO',
-      retornoZero: null,
-      substituicao: { ativa: true, pecas: [m1], etapas: [{ leituraPadroes: 10000, leituraSubstituicao: 10010 }] },
-      pontos: [ponto('0', 0, [], 0), ponto('10', 10000, [m1], 10000), ponto('20', 20000, [m1], 20010, null, 1)],
-    }
-    expect(calcular(e).pendencias).toEqual(['Com substituição, registre o retorno ao zero.'])
-    e.indicacao.retornoZero = 0
-    expect(calcular(e).pendencias).toEqual([])
-    // Sem substituição, o retorno ao zero continua opcional
-    const sem = exemplo30kg()
-    sem.indicacao.retornoZero = null
-    expect(calcular(sem).pendencias).toEqual([])
-  })
-
-  it('multi-intervalo: avisa o intervalo de d diferente sem ensaio de repetibilidade (DOQ-CGCRE-097, 10.3)', () => {
-    const e = exemplo30kg()
-    e.instrumento = {
-      unidade: 'g',
-      classe: 'III',
-      tipoFaixas: 'MULTI_INTERVALO',
-      faixas: [
-        { max: 6000, e: 2, d: 2 },
-        { max: 15000, e: 5, d: 5 },
-        { max: 30000, e: 10, d: 10 },
-      ],
-    }
-    // O ensaio de 15 kg fica no intervalo 2 (até 15 kg, d = 5 g): faltam o 1 e o 3
-    const r = calcular(e)
-    const faltas = r.avisos.filter((a) => a.mensagem.startsWith('Repetibilidade: falta'))
-    expect(faltas).toEqual([
-      {
-        nivel: 'atencao',
-        mensagem:
-          'Repetibilidade: falta ensaio no intervalo com d = 2 g (até 6000 g); faça um com carga logo abaixo de 6000 g, como 5000 g (DOQ-CGCRE-097, 10.3).',
-      },
-      {
-        nivel: 'atencao',
-        mensagem:
-          'Repetibilidade: falta ensaio no intervalo com d = 10 g (acima de 15\u00a0000 g até 30\u00a0000 g); faça um com carga logo abaixo de 30\u00a0000 g, como 25\u00a0000 g (DOQ-CGCRE-097, 10.3).',
-      },
-    ])
-    // Múltiplas faixas: "na faixa"; com os três ensaios, nenhum aviso
-    e.instrumento.tipoFaixas = 'MULTIPLAS_FAIXAS'
-    expect(calcular(e).avisos.some((a) => a.mensagem.startsWith('Repetibilidade: falta ensaio na faixa com d = 2 g'))).toBe(true)
-    e.repetibilidade = [5000, 14000, 25000].map((c, i) => ({ id: `r${i}`, carga: c, leituras: [c, c, c + 5, c, c] }))
-    expect(calcular(e).avisos.some((a) => a.mensagem.startsWith('Repetibilidade: falta'))).toBe(false)
   })
 })

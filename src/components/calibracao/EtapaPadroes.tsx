@@ -1,16 +1,7 @@
 import { Check, Droplets, Gauge, Thermometer, TriangleAlert, Weight } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import {
-  avisoDeltaT,
-  formatarDataBr,
-  limiteDeltaT,
-  massaLegivel,
-  resumoPesos,
-  situacaoValidade,
-  TIPOS_PADRAO,
-  totalPesos,
-} from '#shared/dominio.ts'
+import { formatarDataBr, resumoPesos, situacaoValidade, totalPesos, TIPOS_PADRAO, massaLegivel } from '#shared/dominio.ts'
 import type { CondicoesAmbientais, Padrao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { hojeISO } from '../../lib/format'
@@ -20,7 +11,7 @@ import { Field } from '../ui/Form'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
 
-export function EtapaPadroes({ f, alterar, padroes, config, balanca }: ContextoEtapa) {
+export function EtapaPadroes({ f, alterar, padroes, config }: ContextoEtapa) {
   const escolhidos = new Set(f.padroesIds)
   const alternar = (p: Padrao) =>
     alterar((s) => ({
@@ -35,12 +26,8 @@ export function EtapaPadroes({ f, alterar, padroes, config, balanca }: ContextoE
     amb.temperaturaInicial !== null && amb.temperaturaFinal !== null
       ? Math.abs(amb.temperaturaFinal - amb.temperaturaInicial)
       : null
-  // Limite da variação pela classe (PT-CAL-01): classe II, 3 °C; III, IIII e sem classe, 5 °C
-  const limiteT = limiteDeltaT(balanca.classe)
-  const avisoT = avisoDeltaT(amb, balanca.classe)
   const pesos = padroes.filter((p) => p.tipo === 'PESOS')
   const instrumentos = padroes.filter((p) => p.tipo !== 'PESOS')
-  const semTermo = !padroes.some((p) => p.tipo === 'TERMOHIGROMETRO' && escolhidos.has(p.id))
 
   return (
     <div className="flex flex-col gap-6">
@@ -85,14 +72,6 @@ export function EtapaPadroes({ f, alterar, padroes, config, balanca }: ContextoE
           descricao="No início e no fim da calibração. Escolha também o termo-higrômetro usado."
         />
         <div className="flex flex-col gap-5 px-5 pb-5">
-          {semTermo && (
-            <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
-              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-              {instrumentos.some((p) => p.tipo === 'TERMOHIGROMETRO')
-                ? 'Marque o termo-higrômetro usado: sem ele, o certificado não é emitido.'
-                : 'Nenhum termo-higrômetro cadastrado. Cadastre em Padrões: sem ele, o certificado não é emitido.'}
-            </p>
-          )}
           {instrumentos.length > 0 && (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {instrumentos.map((p) => (
@@ -120,10 +99,10 @@ export function EtapaPadroes({ f, alterar, padroes, config, balanca }: ContextoE
                 extra={
                   deltaT !== null && (
                     <span
-                      title={`Variação da temperatura durante a calibração (limite: ${limiteT} °C)`}
+                      title="Variação da temperatura durante a calibração"
                       className={cn(
                         'tnum rounded-md px-1.5 text-[11px] leading-5 font-medium whitespace-nowrap',
-                        deltaT > limiteT ? 'bg-warning-soft text-warning' : 'bg-surface-3 text-muted',
+                        deltaT > 5 ? 'bg-warning-soft text-warning' : 'bg-surface-3 text-muted',
                       )}
                     >
                       Δ {numeroCurto(deltaT)} °C
@@ -185,10 +164,10 @@ export function EtapaPadroes({ f, alterar, padroes, config, balanca }: ContextoE
               </GrupoAmbiente>
             </div>
           </div>
-          {avisoT && (
+          {deltaT !== null && deltaT > 5 && (
             <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
-              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-              {avisoT}
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />A temperatura variou {numeroCurto(deltaT)} °C durante a
+              calibração. O recomendado para balanças classe III é até 5 °C; registre nas observações.
             </p>
           )}
         </div>

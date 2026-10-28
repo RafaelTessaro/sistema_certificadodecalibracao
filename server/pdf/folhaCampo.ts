@@ -999,11 +999,10 @@ const N = {
 
 /**
  * Roteiro de digitação: de quais passos da folha sai cada etapa do assistente, na ordem da tela
- * (a folha segue a ordem do serviço no local; o escritório digita na ordem do sistema). As anotações
- * internas do passo 9 (leituras a mais, posições extras, o que foi combinado) são um campo da etapa 1.
+ * (a folha segue a ordem do serviço no local; o escritório digita na ordem do sistema).
  */
 export const ROTEIRO_DIGITACAO: Array<{ etapa: string; passos: string }> = [
-  { etapa: E.cliente, passos: `${N.chegada}, ${N.encerramento} (Anotações internas) e ${N.assinaturas}` },
+  { etapa: E.cliente, passos: `${N.chegada} e ${N.assinaturas}` },
   { etapa: E.balanca, passos: `${N.balanca}, ${N.verificacao} e ${N.ajuste}` },
   { etapa: E.padroes, passos: `${N.padroes}, ${N.verificacao} e ${N.encerramento}` },
   { etapa: E.repetibilidade, passos: `${N.repetibilidade}` },
@@ -1111,14 +1110,8 @@ function passoPadroes(ctx: Contexto, n: number): No[] {
       fontSize: 7.4,
     }),
     // Sem plano, as peças de cada jogo são escritas no local (caixa branca); instrumento não tem peças
-    // Lista longa de peças (um jogo inteiro) em letra um pouco menor, como a descrição: quebra menos
     plano
-      ? pre(
-          separar.length > 28
-            ? { text: semQuebra(separar), fontSize: 7.4 }
-            : semQuebra(separar) || (p.tipo === 'PESOS' ? '—' : 'levar'),
-          'left',
-        )
+      ? pre(semQuebra(separar) || (p.tipo === 'PESOS' ? '—' : 'levar'), 'left')
       : p.tipo === 'PESOS'
         ? livre()
         : pre('—', 'center'),
@@ -1259,15 +1252,9 @@ function passoChegada(ctx: Contexto, n: number): No[] {
       [escrever('Contato e telefone', { span: 2 }), escrever('E-mail para o certificado', { span: 2 })],
     ]
   }
-  // Os acordos do certificado (conformidade, limite, regra de decisão, data da próxima calibração) são
-  // combinados antes das leituras (ISO/IEC 17025, 7.1.3; ILAC-G8): marcados no passo 9 já na chegada
-  const texto: No = [
-    c
-      ? 'Confira o cliente e o endereço da balança (filial, obra…). Anote a data e a hora de início. '
-      : 'Preencha o cliente como deve sair no certificado. Anote a data e a hora de início. ',
-    { text: `Antes do passo ${N.indicacao}:`, bold: true },
-    ` confirme com o cliente a declaração de conformidade, o limite, a regra de decisão e se a data da próxima calibração sai no certificado; marque no passo ${N.encerramento}.`,
-  ]
+  const texto = c
+    ? 'Confira o cliente e o endereço onde a balança está (filial, obra…). Anote a data e a hora de início.'
+    : 'Preencha o cliente como deve sair no certificado. Anote a data e a hora de início.'
   // OS, técnico, data e hora numa grade colada embaixo, com a coluna do técnico larga: o previsto cabe
   // ao lado do rótulo, e a caixa fica livre para o nome
   return passo(ctx, n, 'Chegada ao cliente', E.cliente, texto, [
@@ -1278,47 +1265,38 @@ function passoChegada(ctx: Contexto, n: number): No[] {
 
 // ---- 3. Identificação da balança -----------------------------------------------------------------------------
 
-/** Nota legal do passo 4, para qualquer finalidade (e na folha em branco): a calibração não é a verificação legal. */
-export function notaLegal(b: Balanca | null): string {
-  const uso =
-    b?.finalidade === 'COMERCIAL'
-      ? 'Balança de uso comercial (venda por peso): a'
-      : b?.finalidade === 'SAUDE'
-        ? 'Balança de uso na saúde: a'
-        : 'A'
-  return `${uso} calibração não substitui a verificação do Inmetro/IPEM. Selos violados ou marca vencida: anote nas observações.`
-}
-
 /**
- * Como a balança foi encontrada, antes de mexer nela (primeiro quadro do passo da verificação): selos,
- * marca de verificação do Inmetro/IPEM e as fotos da plaqueta, do mostrador e dos selos (evidência do que
- * foi conferido) e a nota de que a calibração não substitui a verificação legal.
+ * Como a balança foi encontrada, antes de mexer nela (passo da verificação): selos, marca de verificação
+ * do Inmetro/IPEM e as fotos da plaqueta e do mostrador (evidência do que foi conferido). Balança de uso
+ * comercial ou na saúde: a nota de que a calibração não substitui a verificação legal.
  */
 function selos(b: Balanca | null): NoObjeto {
-  const tamanho = { tamanho: 7.4, espaco: 7 }
+  const legal = !b || b.finalidade === 'COMERCIAL' || b.finalidade === 'SAUDE'
+  const avisoLegal = !!b && legal
   return {
     stack: [
       grade(
         [
           [
-            marcar(
-              'Selos / lacres encontrados',
-              [{ rotulo: 'intactos' }, { rotulo: 'violados' }, { rotulo: 'sem selo' }],
-              tamanho,
-            ),
-            escrever('Marca de verificação Inmetro/IPEM: ano'),
-            marcar(
-              'Fotos tiradas antes de mexer',
-              [{ rotulo: 'plaqueta' }, { rotulo: 'mostrador' }, { rotulo: 'selos' }],
-              tamanho,
-            ),
+            marcar('Selos / lacres encontrados', [{ rotulo: 'intactos' }, { rotulo: 'violados' }, { rotulo: 'sem selo' }], {
+              tamanho: 7.4,
+              espaco: 8,
+            }),
+            escrever(legal ? 'Marca de verificação Inmetro/IPEM: ano' : 'Marca Inmetro/IPEM (se houver): ano'),
+            marcar('Fotos tiradas', [{ rotulo: 'plaqueta' }, { rotulo: 'mostrador' }], { tamanho: 7.4, espaco: 8 }),
           ],
         ],
-        ['*', 172, 172],
+        ['*', '*', 150],
       ),
-      nota(notaLegal(b)),
+      ...(avisoLegal
+        ? [
+            nota(
+              `Balança de uso ${b!.finalidade === 'COMERCIAL' ? 'comercial (venda por peso)' : 'na saúde'}: a calibração não substitui a verificação do Inmetro/IPEM. Selos violados ou marca vencida: anote nas observações.`,
+            ),
+          ]
+        : []),
     ],
-    margin: [0, 0, 0, 5],
+    margin: [0, 5, 0, 0],
   }
 }
 
@@ -1599,8 +1577,7 @@ function passoVerificacao(ctx: Contexto, n: number): No[] {
       { text: 'não calibre', bold: true },
       '.',
     ],
-    // Como a balança foi encontrada vem antes dos itens 1 a 6: as fotos são do estado de antes de mexer nela
-    [selos(b), lista, condicoes],
+    [lista, selos(b), condicoes],
     [gradeAmbiente(ctx, 'Início', [0, 5, 0, 0])],
   )
 }
@@ -1860,17 +1837,15 @@ function notaFaixa(ctx: Contexto): No[] {
   const f = ctx.plano?.faixaAceitavel
   if (!f || !ctx.plano?.pontos.some((p) => p.ema !== null)) return []
   const criterio = `${CRITERIOS_EMA[f.criterio].label}${f.criterio === 'CLIENTE' ? `, ±${numeroBr(f.toleranciaCliente)} ${ctx.u}` : ''}`
-  // O técnico nunca ajusta por conta própria: fora da faixa, propõe; quem decide é o cliente (passo 6)
-  const fora = 'fora dela, proponha o ajuste ao cliente.'
   return [
     nota(
       [
         { text: `${FAIXA_AJUSTE}: `, bold: true, color: T.texto },
         f.daConformidade
-          ? `carga ± EMA (${criterio}); ${fora} A conformidade inclui a incerteza.`
+          ? `carga ± EMA (${criterio}); fora dela, ajuste. A conformidade do certificado considera também a incerteza.`
           : f.toleranciaPendente
-            ? `carga ± EMA (${criterio}, classe ${ctx.b?.classe}); ${fora} A tolerância do cliente ainda não foi informada: pergunte e anote no passo ${N.encerramento}.`
-            : `carga ± EMA (${criterio}, classe ${ctx.b?.classe}); ${fora} Não é declaração de conformidade (o cliente não pediu).`,
+            ? `carga ± EMA (${criterio}, classe ${ctx.b?.classe}); fora dela, ajuste. A tolerância do cliente ainda não foi informada: pergunte e anote no passo ${N.encerramento}.`
+            : `carga ± EMA (${criterio}, classe ${ctx.b?.classe}); fora dela, ajuste. Não é declaração de conformidade (o cliente não pediu).`,
       ],
       [0, 3, 0, 0],
     ),
@@ -2136,37 +2111,34 @@ function passoAjuste(ctx: Contexto, n: number, indicacao: number): No[] {
     ],
     [190, '*', '*', 100],
   )
-  return passo(ctx, n, 'Ajuste e reparo', E.balanca, instrucaoAjuste(ctx, indicacao), [grid])
-}
-
-/**
- * Instrução do passo 6: o técnico nunca ajusta por conta própria. Quando propor o ajuste (fora da faixa da
- * última coluna dos pontos; na folha em branco, fora do EMA da classe; com a tolerância do cliente ainda
- * por informar, fora dela; sem faixa, só a pedido do cliente) e a regra de sempre: ajuste só com a
- * autorização do cliente e pelos meios permitidos (romper selo só em oficina permissionária, com a
- * comunicação ao órgão metrológico da Portaria Inmetro 457/2021).
- */
-function instrucaoAjuste(ctx: Contexto, indicacao: number): No[] {
-  const { k } = ctx
+  // Critério para decidir o ajuste: a última coluna dos pontos; na folha em branco, a tabela do EMA por
+  // classe; sem a faixa, a tolerância do cliente que ainda vai ser informada ou só o pedido do cliente
   const comFaixa = !!ctx.plano?.pontos.some((p) => p.ema !== null)
   const toleranciaPendente =
     k?.conformidade.solicitada && k.conformidade.criterio === 'CLIENTE' && !(k.conformidade.toleranciaCliente > 0)
-  const proponha = ': proponha o ajuste ao cliente. '
   const quando: No[] = comFaixa
-    ? [{ text: `Fora da ${FAIXA_AJUSTE.toLowerCase()}`, bold: true }, ` (passo ${indicacao})${proponha}`]
+    ? [{ text: `Fora da ${FAIXA_AJUSTE.toLowerCase()}`, bold: true }, ` (passo ${indicacao}) ou a pedido do cliente: ajuste e `]
     : ctx.plano
       ? toleranciaPendente
-        ? [{ text: 'Fora da tolerância do cliente', bold: true }, ` (anote-a no passo ${N.encerramento})${proponha}`]
+        ? [
+            { text: 'Fora da tolerância do cliente', bold: true },
+            ` (anote-a no passo ${N.encerramento}) ou a pedido dele: ajuste e `,
+          ]
         : ctx.b?.classe
-          ? ['Sem faixa para comparar: o ajuste é só a pedido do cliente. ']
-          : ['Balança sem classe: não há EMA para comparar; o ajuste é só a pedido do cliente. ']
-      : [{ text: 'Erro fora do EMA da classe', bold: true }, ` (tabela embaixo dos pontos, no passo ${indicacao})${proponha}`]
-  return [
-    ...quando,
-    'Ajuste só com autorização do cliente e pelos meios permitidos (sem romper selo, salvo oficina permissionária): ajuste e ',
-    { text: `refaça o passo ${indicacao} nas colunas “depois do ajuste”`, bold: true },
-    '.',
-  ]
+          ? ['A pedido do cliente: ajuste e ']
+          : ['A pedido do cliente (balança sem classe: não há EMA para comparar): ajuste e ']
+      : [
+          { text: 'Erro fora do EMA da classe', bold: true },
+          ` (tabela embaixo dos pontos, no passo ${indicacao}) ou a pedido do cliente: ajuste e `,
+        ]
+  return passo(
+    ctx,
+    n,
+    'Ajuste e reparo',
+    E.balanca,
+    [...quando, { text: `refaça o passo ${indicacao} nas colunas “depois do ajuste”`, bold: true }, '.'],
+    [grid],
+  )
 }
 
 /**
@@ -2262,11 +2234,10 @@ function blocoRepetibilidade(ctx: Contexto, r: PlanoFolha['repetibilidade'][numb
   const uc = unidadeColuna(ctx)
   const n = r ? r.leituras : 5
   const minimo = r ? r.minimo : 5
-  // Três blocos lado a lado. Carga de 100 kg ou mais (mínimo 3): 6 linhas bastam; nas menores, 9. Com mais
-  // leituras, k fica mais perto de 2 (k = t de Student, sempre acima de 2 com s > 0): as que não couberem vão
-  // nas Anotações internas do passo 9 (as Observações saem no certificado)
+  // Três blocos lado a lado. Carga de 100 kg ou mais (mínimo 3): 6 linhas bastam; nas menores, 9 (com 10
+  // leituras, k = 2: a que não couber vai nas observações)
   const total = Math.max(minimo === 3 ? 6 : 9, Math.ceil(n / 3) * 3)
-  const sobra = total < 10 ? ` As que não couberem: em Anotações internas (passo ${N.encerramento}).` : ''
+  const sobra = total < 10 ? '; as que não couberem, nas observações' : ''
   const terco = total / 3
   const linhasDe = (de: number, ate: number): CelulaTabela[][] =>
     Array.from({ length: ate - de }, (_, i) => [nro(String(de + i + 1)), livre(), livre()])
@@ -2275,10 +2246,7 @@ function blocoRepetibilidade(ctx: Contexto, r: PlanoFolha['repetibilidade'][numb
     { titulo: 'Com a carga', unidade: uc, largura: '*' },
     { titulo: 'Zero após retirar', unidade: uc, largura: '*' },
   ]
-  // Rodoviária e ferroviária: a carga é um veículo (a carga aplicada é a indicação dele na 1ª leitura)
-  const cabeca = comVeiculo(ctx)
-    ? cargaDoVeiculo(ctx, 'Carga aplicada', '1ª leitura')
-    : cargaDoEnsaio(ctx, r, 'Carga aplicada', 'Pesos previstos (não precisa ser padrão: uma peça só é o ideal)')
+  const cabeca = cargaDoEnsaio(ctx, r, 'Carga aplicada', 'Pesos previstos (não precisa ser padrão: uma peça só é o ideal)')
   return [
     ...(titulo ? [subtitulo(titulo, [0, 2, 0, 3])] : []),
     cabeca,
@@ -2292,64 +2260,27 @@ function blocoRepetibilidade(ctx: Contexto, r: PlanoFolha['repetibilidade'][numb
     },
     nota(
       r
-        ? `Faça as ${n} leituras previstas (mínimo ${minimo}${minimo === 3 ? ', por ser carga de 100 kg ou mais' : ''}). ${total > n ? (total === n + 1 ? `Linha ${total}: opcional; ` : `Linhas ${n + 1} a ${total}: opcionais; `) : ''}mais leituras deixam a incerteza menor (com 10 leituras, k fica mais perto de 2).${sobra}`
-        : `Mínimo de 5 leituras (3 se a carga for de 100 kg ou mais); com 10 leituras, k fica mais perto de 2.${sobra}`,
+        ? `Faça as ${n} leituras previstas (mínimo ${minimo}${minimo === 3 ? ', por ser carga de 100 kg ou mais' : ''}). ${total > n ? (total === n + 1 ? `Linha ${total}: opcional; ` : `Linhas ${n + 1} a ${total}: opcionais; `) : ''}mais leituras deixam a incerteza menor (com 10, k = 2${sobra}).`
+        : `Mínimo de 5 leituras (3 se a carga for de 100 kg ou mais); com 10, a incerteza sai com k = 2${sobra}.`,
     ),
   ]
-}
-
-/** Rodoviária ou ferroviária: a repetibilidade e a excentricidade são feitas com um veículo, não com blocos. */
-const comVeiculo = (ctx: Contexto) => !!ctx.b && ehRodoviaria(ctx.b)
-
-/** "nº do desenho = nº da linha" sem quebra em volta do "=". */
-const DESENHO_LINHA = `nº do desenho${NBSP}=${NBSP}nº da linha`
-
-/** Com um veículo, o que se faz em cada parada (passos 7 e 8). */
-const PARADA_VEICULO = 'motor desligado, freio puxado, motorista sempre na mesma condição'
-
-/**
- * Carga de um ensaio feito com um veículo (passos 7 e 8): a carga é a indicação do veículo (na 1ª leitura
- * ou na posição 1), escrita no local, e o veículo usado; a hora ao lado. Nada de pesos previstos.
- */
-function cargaDoVeiculo(ctx: Contexto, rotuloCarga: string, onde: string): NoObjeto {
-  return grade(
-    [
-      [
-        escrever(`${rotuloCarga} (${ctx.u})`, { aoLado: `= indicação na ${onde}` }),
-        escrever('Veículo / carga', { span: 2, aoLado: 'tipo e placa' }),
-        escrever('Hora', { formato: '____:____' }),
-      ],
-    ],
-    [176, '*', '*', 70],
-  )
 }
 
 function passoRepetibilidade(ctx: Contexto, n: number): No[] {
   const { plano, u } = ctx
   const lista = plano?.repetibilidade ?? []
   const primeiro = lista[0]
-  const veiculo = comVeiculo(ctx)
-  const vezes = primeiro ? primeiro.leituras : 3
-  const texto: No = veiculo
+  const texto: No = primeiro
     ? [
-        `Zere. Use um veículo de massa constante; pare na marca do centro, ${PARADA_VEICULO}. Anote a indicação estável, saia e anote o zero. `,
-        { text: `Repita ${vezes} vezes`, bold: true },
+        `Zere. Coloque ${numeroBr(primeiro.carga)} ${u} no centro ${centro(ctx.b)}, anote a indicação estável, retire e anote o zero. `,
+        { text: `Repita ${primeiro.leituras} vezes`, bold: true },
         ', do mesmo jeito.',
       ]
-    : primeiro
-      ? [
-          `Zere. Coloque ${numeroBr(primeiro.carga)} ${u} no centro ${centro(ctx.b)}, anote a indicação estável, retire e anote o zero. `,
-          { text: `Repita ${primeiro.leituras} vezes`, bold: true },
-          ', do mesmo jeito.',
-        ]
-      : [
-          'Zere. Coloque uma carga de ',
-          { text: 'cerca de metade de Max', bold: true },
-          ' no centro, anote a indicação, retire e anote o zero. Repita 5 vezes (3 se a carga for de 100 kg ou mais). ',
-          // Em branco, a balança pode ser uma rodoviária
-          { text: 'Rodoviária:', bold: true },
-          ` use um veículo de massa constante (${PARADA_VEICULO}); carga aplicada = indicação na 1ª leitura.`,
-        ]
+    : [
+        'Zere. Coloque uma carga de ',
+        { text: 'cerca de metade de Max', bold: true },
+        ' no centro, anote a indicação, retire e anote o zero. Repita 5 vezes (3 se a carga for de 100 kg ou mais).',
+      ]
   const blocos = lista.length
     ? lista.map((r, i) => blocoRepetibilidade(ctx, r, lista.length > 1 ? `Ensaio ${i + 1}` : ''))
     : [blocoRepetibilidade(ctx, null, '')]
@@ -2391,15 +2322,10 @@ function passoExcentricidade(ctx: Contexto, n: number): No[] {
         [
           [
             previsto('Por que o ensaio não foi feito (sai no certificado)', ecc.motivo || '—', { confere: true }),
-            // As posições e leituras de um ensaio não previsto vão nas anotações internas (as observações saem no certificado)
-            marcar(
-              'Ensaio realizado',
-              [{ rotulo: 'não', prevista: true }, { rotulo: 'sim: anote posições e leituras em Anotações internas' }],
-              { vertical: true, tamanho: 7.6 },
-            ),
+            marcar('Ensaio realizado', [{ rotulo: 'não', prevista: true }, { rotulo: 'sim: descreva nas observações' }]),
           ],
         ],
-        ['*', 240],
+        ['*', 190],
       ),
     ])
   }
@@ -2429,29 +2355,19 @@ function passoExcentricidade(ctx: Contexto, n: number): No[] {
         ]),
   )
   const comCarga = !!ecc && ecc.carga > 0
-  // Rodoviária e ferroviária: carga rolante, com um veículo; a carga usada é a indicação na posição 1
-  const veiculo = comVeiculo(ctx)
-  const cabeca = veiculo
-    ? cargaDoVeiculo(ctx, 'Carga usada', 'posição 1')
-    : cargaDoEnsaio(ctx, ecc ?? null, 'Carga usada', 'Pesos previstos')
+  const cabeca = cargaDoEnsaio(ctx, ecc ?? null, 'Carga usada', 'Pesos previstos')
   // Sem carga prevista, a regra da carga vai na instrução (a caixa da carga fica livre para escrever)
-  const texto: No = veiculo
-    ? [
-        'Zere vazia. Use um veículo de massa constante; pare nas marcas de início, meio e fim, na ida e na volta, ',
-        { text: 'na ordem do desenho', bold: true },
-        ` (${DESENHO_LINHA}); em cada parada, ${PARADA_VEICULO}.`,
-      ]
-    : [
-        ...(comCarga
-          ? [`Zere vazia e coloque ${numeroBr(ecc!.carga)} ${u} em cada posição, `]
-          : [
-              'Zere vazia e coloque a carga (',
-              { text: 'Max/3 até 500 kg · Max/5 até 3 t · Max/10 acima', bold: true },
-              ') em cada posição, ',
-            ]),
-        { text: 'na ordem do desenho', bold: true },
-        ` (${DESENHO_LINHA}). Frente = lado do indicador.`,
-      ]
+  const texto: No = [
+    ...(comCarga
+      ? [`Zere vazia e coloque ${numeroBr(ecc!.carga)} ${u} em cada posição, `]
+      : [
+          'Zere vazia e coloque a carga (',
+          { text: 'Max/3 até 500 kg · Max/5 até 3 t · Max/10 acima', bold: true },
+          ') em cada posição, ',
+        ]),
+    { text: 'na ordem do desenho', bold: true },
+    ' (nº do desenho = nº da linha). Frente = lado do indicador.',
+  ]
   const metodo = ecc ? ecc.metodo : null
   const desenho: No = diagrama
     ? {
@@ -2494,7 +2410,7 @@ function passoExcentricidade(ctx: Contexto, n: number): No[] {
             ? []
             : [
                 nota(
-                  'Escreva a posição de cada linha (ex.: centro, frente esquerda). Prato retangular ou redondo: na ordem dos desenhos. Mais de 4 apoios ou tanque: uma posição por apoio (apoio 1, 2…). Rodoviária: com um veículo, pare no início, no meio e no fim, na ida e na volta; carga usada = indicação na posição 1.',
+                  'Escreva a posição de cada linha (ex.: centro, frente esquerda). Prato retangular ou redondo: na ordem dos desenhos. Mais de 4 apoios ou tanque: uma posição por apoio (apoio 1, 2…). Rodoviária: início, meio e fim, na ida e na volta.',
                   [0, 4, 0, 0],
                 ),
               ]),
@@ -2546,18 +2462,6 @@ const CRITERIO_CURTO: Record<CriterioEma, string> = {
   OIML_SERVICO: 'OIML R76 — em serviço',
   OIML_INICIAL: 'OIML R76 — verif. inicial',
   CLIENTE: 'Tolerância do cliente ↓',
-}
-
-/**
- * Variação de temperatura que vai nas observações (dica da caixa): o limite da política da empresa pela
- * classe da balança — 3 °C na classe II (e na I, fora do escopo, a mais exigente), 5 °C nas III e IIII;
- * sem classe ou em branco, os dois. Exportada para os testes.
- */
-export function limiteDeltaT(b: Pick<Balanca, 'classe'> | null): string {
-  const classe = b?.classe ?? ''
-  if (classe === 'I' || classe === 'II') return 'ΔT acima de 3 °C'
-  if (classe === 'III' || classe === 'IIII') return 'ΔT acima de 5 °C'
-  return 'ΔT acima do limite (5 °C; classe II: 3 °C)'
 }
 
 function passoEncerramento(ctx: Contexto, n: number): No[] {
@@ -2663,14 +2567,14 @@ function passoEncerramento(ctx: Contexto, n: number): No[] {
   const observacoes = linhasGuia(
     LINHAS_OBSERVACOES + ctx.extras.linhas,
     TITULO_OBSERVACOES,
-    `itens “Não” da verificação, ${limiteDeltaT(ctx.b)}, faixa ou carga fora do previsto, ensaio não feito e o motivo`,
+    'itens “Não” da verificação, ΔT acima de 5 °C, faixa ou carga diferentes do previsto, ensaio não feito e o motivo',
   )
   return passo(
     ctx,
     n,
     'Encerramento: ambiente no fim e conclusão',
     e2(E.padroes, E.conclusao),
-    'Meça o ambiente de novo, no mesmo lugar e com o mesmo instrumento. Confira que os acordos marcados na chegada não mudaram.',
+    'Meça o ambiente de novo, no mesmo lugar e com o mesmo instrumento; depois, confirme com o cliente o que sai no certificado.',
     [gradeAmbiente(ctx, 'Fim')],
     [
       { ...grade([...conformidade, ...proxima], ['*', '*', '*', 150]), margin: [0, 6, 0, 0] },
@@ -2997,9 +2901,6 @@ function cabecalho(ctx: Contexto) {
   })
 }
 
-/** Código do procedimento que a folha segue (o primeiro item da referência do formulário: "PT-CAL-01"). */
-export const PROCEDIMENTO = FORMULARIO_FOLHA_CAMPO.referencia.split(' · ')[0]
-
 function rodape(ctx: Contexto) {
   const f = FORMULARIO_FOLHA_CAMPO
   const { impresso, d } = ctx
@@ -3016,8 +2917,7 @@ function rodape(ctx: Contexto) {
           {
             text: [
               { text: `${f.codigo} rev. ${f.revisao}`, bold: true, color: TIMBRADO.texto },
-              // O procedimento sem a revisão: a folha não precisa ser reimpressa a cada revisão do PT
-              ` · ${PROCEDIMENTO} · registro de dados brutos (ISO/IEC 17025, 7.5) · não é certificado de calibração`,
+              ' · registro de dados brutos (ISO/IEC 17025, 7.5) · não é certificado de calibração',
             ],
           },
           { text: `${quem} · guarde o original com a OS` },

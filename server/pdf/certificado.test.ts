@@ -8,7 +8,7 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { definicaoCertificado, gerarCertificadoPdf, textoVerificacaoAposReparo, ufDoLocalDaCalibracao } from './certificado.ts'
+import { definicaoCertificado, gerarCertificadoPdf } from './certificado.ts'
 import { exemploBancada, exemploPlataforma, exemploRodoviaria } from './exemplosCertificado.ts'
 import type { DadosCertificadoPdf } from './tipos.ts'
 
@@ -201,67 +201,6 @@ describe('gerarCertificadoPdf', () => {
   })
 })
 
-describe('verificação após reparo: órgão pela UF do local da calibração (Portaria Inmetro 457/2021, 10.1)', () => {
-  const empresa = { uf: 'SP' }
-  it('acha a UF no endereço da calibração ("Cidade/UF", "Cidade - UF", antes do CEP), nunca num código de rodovia', () => {
-    const uf = (localEndereco: string, local: 'CLIENTE' | 'LABORATORIO' = 'CLIENTE') =>
-      ufDoLocalDaCalibracao({ local, localEndereco }, empresa)
-    expect(uf('Avenida Brasil, 2450 – Jardim Paulista – Rio Claro/SP (expedição)')).toBe('SP')
-    expect(uf('Rua das Flores, 10 – Centro – Uberaba/MG – CEP 38010-000')).toBe('MG')
-    expect(uf('Rua das Flores, 10, Uberaba - mg')).toBe('')
-    expect(uf('Rua das Flores, 10, Uberaba - MG')).toBe('MG')
-    expect(uf('Rua das Flores, 10, Uberaba/mg')).toBe('MG')
-    expect(uf('Rodovia SP-191, km 37 – Zona Rural – Ipeúna, SP CEP 13537-000')).toBe('SP')
-    expect(uf('Rodovia MG-050, km 12, Itaúna, MG')).toBe('MG')
-    // Só o código da rodovia: não dá para saber o estado
-    expect(uf('Rodovia SP-191, km 37 (portaria 1)')).toBe('')
-    // Duas UFs: vale a última (a da cidade, depois da rua)
-    expect(uf('Av. São Paulo/SP 100 – Campo Grande/MS')).toBe('MS')
-    expect(uf('')).toBe('')
-    // No laboratório, sem a UF no endereço: a da empresa; nas instalações do cliente, sem UF: não se sabe
-    expect(uf('Rua Sete, 123', 'LABORATORIO')).toBe('SP')
-    expect(uf('Rua Sete, 123', 'CLIENTE')).toBe('')
-  })
-
-  it('texto fiel à Portaria: "fica sujeito", sem "antes de ser utilizado"', () => {
-    expect(textoVerificacaoAposReparo('SP')).toBe(
-      'O instrumento fica sujeito à verificação após reparo pelo órgão metrológico competente (IPEM-SP), conforme a legislação metrológica.',
-    )
-    for (const uf of ['MG', 'PR', '']) {
-      expect(textoVerificacaoAposReparo(uf)).toContain('pelo órgão metrológico competente (Inmetro/RBMLQ-I)')
-      expect(textoVerificacaoAposReparo(uf)).not.toContain('IPEM-SP')
-    }
-  })
-
-  it('no certificado, o órgão é o do local da calibração, não o da UF do cadastro do cliente', () => {
-    const texto = (d: DadosCertificadoPdf) => JSON.stringify(definicaoCertificado(d).content)
-    // Cliente com sede em MG, balança calibrada em Rio Claro/SP
-    const sedeMg = exemploPlataforma()
-    sedeMg.emissao.cliente = { ...sedeMg.emissao.cliente, uf: 'MG', cidade: 'Uberaba' }
-    expect(texto(sedeMg)).toContain('órgão metrológico competente (IPEM-SP)')
-    // Cliente com sede em SP, balança calibrada numa filial em MG
-    const filialMg = exemploPlataforma()
-    filialMg.calibracao = { ...filialMg.calibracao, localEndereco: 'Rua das Flores, 10 – Centro – Uberaba/MG' }
-    expect(texto(filialMg)).toContain('órgão metrológico competente (Inmetro/RBMLQ-I)')
-    expect(texto(filialMg)).not.toContain('competente (IPEM-SP)')
-    expect(texto(filialMg)).not.toContain('antes de ser utilizado')
-  })
-})
-
-describe('verificação preliminar: respostas novas do rascunho', () => {
-  it('zero automático "não verificado" sai escrito; sem resposta (só numa prévia), um travessão', () => {
-    const d = exemploPlataforma()
-    d.calibracao = {
-      ...d.calibracao,
-      preliminar: { ...d.calibracao.preliminar, zeroAutomatico: 'NAO_VERIFICADO', limpa: '' },
-    }
-    const json = JSON.stringify(definicaoCertificado(d).content)
-    expect(json).toContain('zero automático: não verificado')
-    expect(json).toContain('limpo: —')
-    expect(json).not.toContain('undefined')
-  })
-})
-
 describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', () => {
   it('plataforma 300 kg: ajuste, como encontrado, reparo, conformidade e próxima calibração a pedido', async () => {
     const d = exemploPlataforma()
@@ -285,11 +224,6 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', () => {
     expect(t).toContain('registrado(a) na Ordem de Serviço nº OS-2026-0456')
     expect(t).toContain('marca de reparo nº MR-SP 004512')
     expect(t).toContain('Os serviços de reparo e manutenção não fazem parte da calibração')
-    // Verificação após reparo como na Portaria Inmetro 457/2021 (10.1), pelo órgão do local da calibração
-    expect(t).toContain(
-      'O instrumento fica sujeito à verificação após reparo pelo órgão metrológico competente (IPEM-SP), conforme a legislação metrológica.',
-    )
-    expect(t).not.toContain('antes de ser utilizado')
     // Resultados
     expect(t).toContain('Repetibilidade')
     expect(t).toContain('Excentricidade')

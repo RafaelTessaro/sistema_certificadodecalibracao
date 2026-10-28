@@ -121,11 +121,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     return reply.code(201).send({ calibracao: k })
   })
 
-  /**
-   * Calibrar de novo a mesma balança: mesmos pontos e padrões, sem as leituras. Como num rascunho novo, a
-   * verificação antes de calibrar começa sem resposta e os pedidos do cliente (declaração de conformidade e
-   * data no certificado) começam desmarcados, para o técnico confirmar.
-   */
+  /** Calibrar de novo a mesma balança: mesmos pontos e padrões, sem as leituras. */
   app.post('/api/calibracoes/:id/recalibrar', async (req: ComId, reply) => {
     const u = autor(req)
     const anterior = obter(req.params.id)
@@ -146,10 +142,10 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
         localEndereco: cliente ? enderecoCliente(cliente) : anterior.localEndereco,
         padroesIds: anterior.padroesIds.filter((id) => ativos.has(id)),
         opcoes: entrada.opcoes,
-        conformidade: { ...entrada.conformidade, solicitada: false },
+        conformidade: entrada.conformidade,
         dataCalibracao: hoje,
         proximaCalibracao: config.mesesProximaPadrao ? somarMeses(hoje, config.mesesProximaPadrao) : '',
-        proximaNoCertificado: false,
+        proximaNoCertificado: anterior.proximaNoCertificado,
         tecnicoId: u.id,
       },
       u,

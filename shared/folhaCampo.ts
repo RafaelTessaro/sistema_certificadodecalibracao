@@ -4,15 +4,7 @@
 // as mesmas sugestões do assistente ("Sugerir pontos", "Começar com a carga sugerida", "Preparar
 // posições"): as linhas do papel batem com as da tela na hora de digitar. Puro (navegador e servidor).
 
-import {
-  avisoForaDaSequencia,
-  cargaDaEtapa,
-  cargaDasPecas,
-  cargasAcumuladas,
-  descreverPecas,
-  montarCarga,
-  montarPontos,
-} from './calibracao.ts'
+import { cargaDaEtapa, cargaDasPecas, descreverPecas, diferencaDoPonto, montarCarga, montarPonto } from './calibracao.ts'
 import {
   converterMassa,
   ehRodoviaria,
@@ -26,10 +18,8 @@ import {
   emaInstrumento,
   faixaDoValor,
   faixasOrdenadas,
-  faixasSemRepetibilidade,
-  fracaoExcentricidade,
   posicoesExcentricidade,
-  repetibilidadesSugeridas,
+  repetibilidadeSugerida,
   sugerirPontos,
 } from './metrologia/index.ts'
 import type {
@@ -61,11 +51,6 @@ export interface CargaPlanejada {
   pesos: string
   /** Quanto falta para os pesos escolhidos fecharem a carga (0 = fecha). */
   falta: number
-  /**
-   * Feito com um veículo (rodoviária e ferroviária: repetibilidade e excentricidade), não com pesos padrão:
-   * sem peças, e a carga é a indicação lida.
-   */
-  veiculo?: boolean
 }
 
 export interface PontoPlanejado extends CargaPlanejada {
@@ -81,11 +66,6 @@ export interface PontoPlanejado extends CargaPlanejada {
    * ou peças escolhidas à mão a mais), na unidade da balança; 0 = não passam (o que falta vai em `falta`).
    */
   excesso: number
-  /**
-   * Sem descarga ("Crescente e decrescente", "Crescente contínuo", "Decrescente"), as peças deste ponto não
-   * saem das do ponto de baixo mais outras (seria preciso trocar peças no meio da subida): ver o aviso.
-   */
-  foraDaSequencia?: boolean
 }
 
 /**
@@ -282,41 +262,19 @@ export function planoDaFolha(
         )
       : null
   const cargaEtapa = substituicaoAtiva ? cargaDaEtapa(ensaio!, pesos, u) : (subSugerida?.carga ?? 0)
-  const niveis = pontosBase.map((p) =>
-    substituicaoAtiva && cargaEtapa > 0
-      ? p.nivel
-      : subSugerida && !p.pecas && montarCarga(p.carga, u, pesos).falta > 0
-        ? nivelSugerido(p.carga, cargaEtapa)
-        : 0,
-  )
-  const maiorNivel = Math.max(0, ...niveis)
-  // Com substituição (a do rascunho ou a sugerida), as cargas só sobem: descer de um ponto para o de baixo,
-  // ou descarregar entre um e outro, pediria tirar o material de substituição (e refazer as etapas). Num
-  // ensaio ainda sem leituras, a folha prevê o "crescente contínuo": no lugar do "crescente e decrescente"
-  // (o padrão de um rascunho novo) e também do método do último certificado, com aviso (o sistema ainda está
-  // com o outro). Com leituras, fica o método do ensaio: é o que foi feito
-  const metodoDe = (m: MetodoCarregamento, e: EnsaioIndicacao | null | undefined): MetodoCarregamento =>
-    maiorNivel > 0 && !temLeituras(e) ? 'CONTINUO' : m
-  const metodoRascunho = ensaio?.metodo ?? 'CRESCENTE_DECRESCENTE'
-  const metodo = metodoDe(metodoRascunho, ensaio)
-  const comoEncontrado = calibracao?.comoEncontrado ?? ensaio
-  const metodoComoEncontrado = metodoDe(comoEncontrado?.metodo ?? metodoRascunho, comoEncontrado)
-  // Sem descarga (em qualquer das duas colunas), as cargas se somam: cada ponto leva as peças do de baixo mais
-  // as que faltam. Com substituição, a carga do ponto é nível × carga da etapa + os pesos por cima (como no
-  // cálculo): as peças automáticas completam só o resto. O editor monta igual (`recomporCargas`)
-  const acumular = cargasAcumuladas(metodo) || cargasAcumuladas(metodoComoEncontrado)
-  const montados = montarPontos(
-    pontosBase.map((p, i) => ({ carga: p.carga, nivel: niveis[i], pecasManuais: p.pecas ?? null })),
-    acumular,
-    cargaEtapa,
-    u,
-    pesos,
-  )
-  const pontos: PontoPlanejado[] = pontosBase.map((p, i) => {
+  const pontos: PontoPlanejado[] = pontosBase.map((p) => {
     const faixa = faixas.length ? faixaDoValor(p.carga, balanca) : { d: 0, e: 0 }
-    const nivel = niveis[i]
-    const { pecas, diferenca, foraDaSequencia } = montados[i]
+    const nivel =
+      substituicaoAtiva && cargaEtapa > 0
+        ? p.nivel
+        : subSugerida && !p.pecas && montarCarga(p.carga, u, pesos).falta > 0
+          ? nivelSugerido(p.carga, cargaEtapa)
+          : 0
+    // Com substituição, a carga do ponto é nível × carga da etapa + os pesos por cima (como no cálculo): as
+    // peças automáticas completam só o resto (como o editor monta, `montagemDoPonto`)
+    const pecas = p.pecas ?? montarPonto(p.carga, nivel, cargaEtapa, u, pesos).pecas
     const base = cargaPlanejada(p.carga, u, pesos, p.carga > 0 ? pecas : undefined)
+    const diferenca = p.carga > 0 ? diferencaDoPonto(p.carga, nivel * cargaEtapa, cargaDasPecas(pecas, pesos, u)) : 0
     const ema = faixaAceitavel
       ? emaInstrumento(p.carga, balanca, faixaAceitavel.criterio, faixaAceitavel.toleranciaCliente)
       : null
@@ -328,31 +286,30 @@ export function planoDaFolha(
       e: faixa.e,
       ema,
       nivelSubstituicao: nivel,
-      ...(foraDaSequencia ? { foraDaSequencia } : {}),
     }
   })
   const semFechar = pontos.filter((p) => p.falta > 0)
-  const rodoviaria = ehRodoviaria(balanca)
+  const maiorNivel = Math.max(0, ...pontos.map((p) => p.nivelSubstituicao))
+  // Com substituição (a do rascunho ou a sugerida), as cargas só sobem: descer de um ponto para o de baixo,
+  // ou descarregar entre um e outro, pediria tirar o material de substituição (e refazer as etapas). Num
+  // ensaio ainda sem leituras, a folha prevê o "crescente contínuo": no lugar do "crescente e decrescente"
+  // (o padrão de um rascunho novo) e também do método do último certificado, com aviso (o sistema ainda está
+  // com o outro). Com leituras, fica o método do ensaio: é o que foi feito
+  const metodoDe = (m: MetodoCarregamento, e: EnsaioIndicacao | null | undefined): MetodoCarregamento =>
+    maiorNivel > 0 && !temLeituras(e) ? 'CONTINUO' : m
+  const metodoRascunho = ensaio?.metodo ?? 'CRESCENTE_DECRESCENTE'
+  const metodo = metodoDe(metodoRascunho, ensaio)
+  const comoEncontrado = calibracao?.comoEncontrado ?? ensaio
+  const metodoComoEncontrado = metodoDe(comoEncontrado?.metodo ?? metodoRascunho, comoEncontrado)
   if (subSugerida && maiorNivel > 0)
     avisos.push(
       `Os pesos previstos não chegam às cargas acima de ${numeroBr(cargaEtapa)} ${u}: a folha sugere ${maiorNivel === 1 ? 'uma etapa' : `até ${maiorNivel} etapas`} de substituição de ${numeroBr(cargaEtapa)} ${u} (${descreverPecas(subSugerida.pecas, pesos)}); combine o material (caminhão, lastro) com o cliente.`,
     )
-  // A substituição só existe na rodoviária e na ferroviária: nas outras, mais pesos ou a faixa parcial combinada
   if (semFechar.length && pesos.length)
     avisos.push(
       `Os pesos previstos não fecham ${semFechar.length === 1 ? 'a carga' : 'as cargas'} de ${semFechar
         .map((p) => `${numeroBr(p.carga)} ${u}`)
-        .join(', ')}: ${rodoviaria ? 'leve mais pesos ou use cargas de substituição' : 'leve mais pesos ou combine uma faixa parcial com o cliente'}.`,
-    )
-  const foraDaSequencia = pontos.filter((p) => p.foraDaSequencia)
-  if (foraDaSequencia.length)
-    avisos.push(
-      avisoForaDaSequencia(
-        foraDaSequencia.map((p) => `${numeroBr(p.carga)} ${u}`),
-        cargasAcumuladas(metodo) ? metodo : metodoComoEncontrado,
-        'previstos',
-        maiorNivel > 0,
-      ),
+        .join(', ')}: leve mais pesos ou use cargas de substituição.`,
     )
   // Etapas por baixo que, com os pesos por cima, passam da carga do ponto: o cálculo usaria a soma
   for (const p of pontos.filter((x) => x.excesso > 0))
@@ -380,26 +337,17 @@ export function planoDaFolha(
       `Com cargas de substituição, as cargas só sobem: a folha prevê ${rotuloMetodo('CONTINUO')} (${noSistema}); acerte no sistema.`,
     )
 
-  // ---- Repetibilidade (em multi-intervalo e múltiplas faixas, um ensaio por intervalo ou faixa de d diferente)
+  // ---- Repetibilidade
+  const sugerida = repetibilidadeSugerida(max, u)
   const minimoPara = (carga: number) => (converterMassa(carga, u, 'kg') >= 100 * (1 - TOL) ? 3 : 5)
   const ensaiosRep = calibracao?.repetibilidade.length
     ? calibracao.repetibilidade.map((r) => ({ carga: r.carga, leituras: r.leituras.length }))
-    : repetibilidadesSugeridas(balanca, u).map((r) => ({ carga: r.carga, leituras: Math.max(r.leituras, 5) }))
-  // Rodoviária e ferroviária: a repetibilidade e a excentricidade são feitas com um veículo, sem pesos padrão
-  const comVeiculo = (carga: number): CargaPlanejada => ({ carga: Math.max(carga, 0), pecas: [], pesos: '', falta: 0, veiculo: true })
+    : [{ carga: sugerida.carga, leituras: Math.max(sugerida.leituras, 5) }]
   const repetibilidade = ensaiosRep.map((r) => ({
-    ...(rodoviaria ? comVeiculo(r.carga) : cargaPlanejada(r.carga, u, pesos)),
+    ...cargaPlanejada(r.carga, u, pesos),
     leituras: Math.max(r.leituras, minimoPara(r.carga)),
     minimo: minimoPara(r.carga),
   }))
-  const nomeFaixa = balanca.tipoFaixas === 'MULTI_INTERVALO' ? 'no intervalo' : 'na faixa'
-  for (const x of faixasSemRepetibilidade(
-    balanca,
-    ensaiosRep.map((r) => r.carga),
-  ))
-    avisos.push(
-      `Repetibilidade: falta ensaio ${nomeFaixa} com d = ${numeroBr(x.faixa.d)} ${u} (${x.inferior > 0 ? `acima de ${numeroBr(x.inferior)} ${u} ` : ''}até ${numeroBr(x.faixa.max)} ${u}); acrescente no sistema um com carga logo abaixo de ${numeroBr(x.faixa.max)} ${u}, como ${numeroBr(x.sugerida)} ${u}.`,
-    )
 
   // ---- Excentricidade
   const ecc = calibracao?.excentricidade
@@ -411,25 +359,18 @@ export function planoDaFolha(
       : balanca.receptor === 'GANCHO'
         ? 'Balança suspensa (gancho): a carga se centraliza sozinha.'
         : ''
-  const cargaEcc = aplicavel ? ecc?.carga || cargaExcentricidade(max, u) : 0
   const excentricidade = {
     aplicavel,
     motivo: aplicavel ? '' : motivo,
     metodo: ecc?.metodo ?? 1,
     posicoes: aplicavel ? (ecc?.posicoes.length ? ecc.posicoes.map((p) => p.rotulo) : posicoesSugeridas) : [],
-    ...(rodoviaria && cargaEcc > 0 ? comVeiculo(cargaEcc) : cargaPlanejada(cargaEcc, u, pesos)),
+    ...cargaPlanejada(aplicavel ? ecc?.carga || cargaExcentricidade(max, u) : 0, u, pesos),
   }
-  // A carga do rascunho (a do último certificado) abaixo da fração do DOQ-CGCRE-097, 10.4
-  const fracao = fracaoExcentricidade(max, u)
-  if (aplicavel && cargaEcc > 0 && cargaEcc < fracao.minimo * (1 - TOL))
-    avisos.push(
-      `Excentricidade: a carga no sistema (${numeroBr(cargaEcc)} ${u}) é menor que Max/${fracao.divisor}; use ${numeroBr(cargaExcentricidade(max, u))} ${u} e acerte no sistema.`,
-    )
 
   // Repetibilidade e excentricidade com pesos que não fecham a carga: o técnico conferiria a carga
-  // prevista aplicando menos (e a da excentricidade entra no cálculo). Na rodoviária, é o veículo
+  // prevista aplicando menos (e a da excentricidade entra no cálculo)
   const faltaTexto = (c: CargaPlanejada) => `${numeroBr(c.carga)} ${u} (faltam ${numeroBr(c.falta)} ${u})`
-  if (pesos.length && !rodoviaria) {
+  if (pesos.length) {
     repetibilidade.forEach((r, i) => {
       if (r.falta > 0)
         avisos.push(

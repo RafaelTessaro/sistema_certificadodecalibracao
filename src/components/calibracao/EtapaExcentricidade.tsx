@@ -1,13 +1,7 @@
 import { Crosshair, Wand2 } from 'lucide-react'
 import { useEffect } from 'react'
-import { ehRodoviaria, METODOS_EXCENTRICIDADE } from '#shared/dominio.ts'
-import {
-  cargaExcentricidade,
-  formatarNumero,
-  fracaoExcentricidade,
-  posicoesExcentricidade,
-  referenciasExcentricidade,
-} from '#shared/metrologia/index.ts'
+import { METODOS_EXCENTRICIDADE } from '#shared/dominio.ts'
+import { cargaExcentricidade, formatarNumero, posicoesExcentricidade } from '#shared/metrologia/index.ts'
 import type { MetodoExcentricidade, Receptor } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
@@ -25,11 +19,7 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
   const r = calc?.resultado.excentricidade
   const set = (mudar: (e: typeof ecc) => typeof ecc) => alterar((s) => ({ ...s, excentricidade: mudar(s.excentricidade) }))
   const sugerida = cargaExcentricidade(maxDe(balanca), u)
-  const fracao = fracaoExcentricidade(maxDe(balanca), u)
   const posicoesSugeridas = posicoesExcentricidade(balanca.receptor, balanca.apoios)
-  // Carga rolante (rodoviária e ferroviária): cada passagem tem a sua referência, o meio
-  const rolante = ehRodoviaria(balanca)
-  const referencias = new Set(r?.referencias ?? referenciasExcentricidade(ecc.posicoes.length, rolante))
   const preparar = () =>
     set((e) => ({
       ...e,
@@ -87,7 +77,7 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
             <Field
               label="Carga usada"
               htmlFor="ecc-carga"
-              hint={`Sugerida: ${formatarNumero(sugerida, casas)} ${u} (no mínimo Max/${fracao.divisor}; DOQ-CGCRE-097, 10.4)`}
+              hint={`Sugerida: ${formatarNumero(sugerida, casas)} ${u} (cerca de 1/3 da capacidade)`}
             >
               <CampoNumero
                 id="ecc-carga"
@@ -122,9 +112,7 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                 ? ecc.metodo === 3
                   ? 'Registre o zero antes de cada posição e a indicação com a carga.'
                   : 'Registre a leitura no centro logo antes de cada posição e a indicação na posição.'
-                : rolante
-                  ? 'Em cada passagem (ida e volta), o meio é a referência: os desvios do início e do fim são calculados em relação a ele.'
-                  : 'A posição 1 é a referência: os desvios são calculados em relação a ela.'
+                : 'A posição 1 é a referência: os desvios são calculados em relação a ela.'
             }
             acoes={
               ecc.posicoes.length !== posicoesSugeridas.length && (
@@ -207,13 +195,9 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                             />
                           </td>
                           <td className={cn('tnum py-2 pl-3 text-right', maior ? 'font-semibold text-warning' : 'text-ink-2')}>
-                            {referencias.has(i) ? (
-                              <span className="text-xs text-muted">referência</span>
-                            ) : desvio === null || desvio === undefined ? (
-                              '—'
-                            ) : (
-                              `${desvio > 0 ? '+' : ''}${formatarNumero(desvio, casas)}`
-                            )}
+                            {desvio === null || desvio === undefined
+                              ? '—'
+                              : `${desvio > 0 ? '+' : ''}${formatarNumero(desvio, casas)}`}
                           </td>
                         </tr>
                       )
