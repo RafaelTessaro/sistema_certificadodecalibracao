@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Download, FileBadge2, FilePlus2, Printer } f
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { STATUS_CALIBRACAO } from '#shared/dominio.ts'
+import { BotaoPop } from '../components/BotaoPop'
 import { CertificadosTabela } from '../components/CertificadosTabela'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
@@ -96,6 +97,7 @@ export function Certificados() {
             >
               Folha em branco
             </Button>
+            <BotaoPop />
             <Button variante="primary" icone={<FilePlus2 className="h-4 w-4" />} onClick={() => navegar('/calibracoes/nova')}>
               Nova calibração
             </Button>

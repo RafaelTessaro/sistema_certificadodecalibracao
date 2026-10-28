@@ -4,10 +4,13 @@
 //   2. bancada 30 kg × 5 g, sem ajuste, histerese pela MÉDIA (exemplo numérico da pesquisa 02, §9),
 //      calibrada no laboratório, executada e autorizada pela mesma pessoa, com opiniões;
 //   3. rodoviária 80 t × 20 kg, 4 apoios, cargas de substituição, faixa parcial, revisão (substitui o nº …)
-//      e marca d'água "PRÉVIA — SEM VALOR".
+//      e marca d'água "PRÉVIA — SEM VALOR";
+//   4. o pior caso, para conferir o limite de 3 páginas: rodoviária multi-intervalo 30/60/80 t, cargas de
+//      substituição até Max, ajuste com "como encontrado" (também com substituição), reparo, revisão,
+//      conformidade, 4 padrões, verificação preliminar com item "não", observações e opiniões.
 // Os resultados saem do motor de cálculo de verdade (shared/calibracao.ts).
 
-import { calcularCalibracao, montarCarga } from '#shared/calibracao.ts'
+import { calcularCalibracao, montarCarga, montarPonto } from '#shared/calibracao.ts'
 import { calibracaoVazia, EMPRESA_PADRAO, TEXTOS_PADRAO } from '#shared/dominio.ts'
 import type {
   Balanca,
@@ -683,9 +686,199 @@ export function exemploRodoviaria(): DadosCertificadoPdf {
     padroes,
     tecnico: TECNICO,
     signatario: RESPONSAVEL,
-    textos: { ...TEXTOS_PADRAO, observacoesPadrao: 'Separador decimal: vírgula. Separador de milhar: espaço.' },
+    textos: TEXTOS_PADRAO,
     substituiNumero: 'CC-2026-00098',
     substituiEmissao: '2026-09-30T14:20:00.000Z',
   }
   return montar(k, e, { marcaDagua: 'PRÉVIA — SEM VALOR' })
+}
+
+// ---- 4. Pior caso: rodoviária multi-intervalo 30/60/80 t (ajuste, substituição, conformidade) ---------
+
+export function exemploPiorCaso(): DadosCertificadoPdf {
+  const padroes = [PP500, PP20, TH01, BR01]
+  const pesos = [PP500, PP20]
+  const b = balanca({
+    id: 'bal-rodo-multi',
+    clienteId: 'cli-coop',
+    tipo: 'RODOVIARIA',
+    fabricante: 'Toledo do Brasil',
+    modelo: '9098 Plus',
+    numeroSerie: '9098-773104',
+    identificacao: 'BR-03 (balança de saída)',
+    plataformaFabricante: 'Toledo do Brasil',
+    plataformaModelo: 'Conquista 24 m',
+    plataformaSerie: 'CQ24-2021-0088',
+    tipoFaixas: 'MULTI_INTERVALO',
+    faixas: [
+      { max: 30_000, e: 10, d: 10 },
+      { max: 60_000, e: 20, d: 20 },
+      { max: 80_000, e: 50, d: 50 },
+    ],
+    min: 200,
+    classe: 'III',
+    portariaAprovacao: 'Portaria Inmetro/Dimel nº 0098/2019',
+    receptor: 'RODOVIARIA',
+    apoios: 8,
+    dimensoes: '24,0 × 3,2 m',
+    finalidade: 'COMERCIAL',
+    localInstalacao: 'Expedição — saída de grãos, portaria 2',
+    anoFabricacao: '2021',
+  })
+  const c = cliente({
+    id: 'cli-coop',
+    nome: 'Coopervale',
+    razaoSocial: 'COOPERATIVA AGROINDUSTRIAL DOS PRODUTORES DO VALE DO CORUMBATAÍ',
+    documento: '33.592.510/0001-54',
+    contato: 'Eng. Paula Ribeiro (Qualidade e Metrologia)',
+    telefone: '(19) 3526-4400',
+    email: 'metrologia@coopervale.coop.br',
+    cep: '13505-600',
+    logradouro: 'Rodovia Washington Luís (SP-310), km 182,5',
+    numero: 's/n',
+    complemento: 'galpão 14',
+    bairro: 'Distrito Industrial Norte',
+    cidade: 'Rio Claro',
+    uf: 'SP',
+  })
+  const L = 10_000
+  /** Ponto com `nivel` etapas de substituição por baixo e os pesos por cima completando a carga. */
+  const comNivel = (id: string, carga: number, nivel: number, leituraCrescente: number): PontoIndicacao => ({
+    ...ponto(id, carga, leituraCrescente, null, pesos, 'kg', { nivelSubstituicao: nivel }),
+    pecas: montarPonto(carga, nivel, L, 'kg', pesos).pecas,
+  })
+  const etapas = (leituras: Array<[number, number]>) =>
+    leituras.map(([leituraPadroes, leituraSubstituicao]) => ({ leituraPadroes, leituraSubstituicao }))
+  const indicacao: EnsaioIndicacao = {
+    metodo: 'CONTINUO',
+    retornoZero: 0,
+    pontos: [
+      ponto('p0', 0, 0, null, pesos, 'kg'),
+      ponto('p1', 2_000, 2_000, null, pesos, 'kg'),
+      ponto('p2', 5_000, 5_000, null, pesos, 'kg'),
+      ponto('p3', L, 10_000, null, pesos, 'kg'),
+      comNivel('p4', 2 * L, 1, 20_010),
+      comNivel('p5', 3 * L, 2, 30_010),
+      comNivel('p6', 4 * L, 3, 40_020),
+      comNivel('p7', 5 * L, 4, 50_020),
+      comNivel('p8', 6 * L, 5, 60_040),
+      comNivel('p9', 7 * L, 6, 70_050),
+      comNivel('p10', 8 * L, 7, 80_050),
+    ],
+    substituicao: {
+      ativa: true,
+      pecas: montarCarga(L, 'kg', pesos).pecas,
+      etapas: etapas([
+        [10_000, 10_010],
+        [20_010, 20_000],
+        [30_000, 30_010],
+        [40_020, 40_000],
+        [50_000, 50_020],
+        [60_040, 60_000],
+        [70_000, 70_050],
+      ]),
+    },
+  }
+  const comoEncontrado: EnsaioIndicacao = {
+    metodo: 'CONTINUO',
+    retornoZero: 20,
+    pontos: [
+      ponto('a0', 0, 0, null, pesos, 'kg'),
+      ponto('a1', L, 10_020, null, pesos, 'kg'),
+      comNivel('a2', 2 * L, 1, 20_040),
+      comNivel('a3', 4 * L, 3, 40_100),
+      comNivel('a4', 6 * L, 5, 60_160),
+      comNivel('a5', 8 * L, 7, 80_250),
+    ],
+    substituicao: {
+      ativa: true,
+      pecas: montarCarga(L, 'kg', pesos).pecas,
+      etapas: etapas([
+        [10_020, 10_010],
+        [20_030, 20_020],
+        [30_040, 30_020],
+        [40_080, 40_060],
+        [50_100, 50_080],
+        [60_140, 60_100],
+        [70_200, 70_150],
+      ]),
+    },
+  }
+  const k: Calibracao = {
+    ...calibracaoBase('cal-pior'),
+    numero: 'CC-2026-00131-R1',
+    sequencia: 131,
+    revisao: 1,
+    clienteId: c.id,
+    balancaId: b.id,
+    ordemServico: 'OS-2026-0541',
+    dataCalibracao: '2026-10-20',
+    dataEmissao: '2026-10-22',
+    local: 'CLIENTE',
+    localEndereco:
+      'Rodovia Washington Luís (SP-310), km 182,5, galpão 14 – Distrito Industrial Norte – Rio Claro/SP (portaria 2)',
+    tecnicoId: TECNICO.id,
+    signatarioId: RESPONSAVEL.id,
+    padroesIds: padroes.map((p) => p.id),
+    ambiente: { temperaturaInicial: 24.6, temperaturaFinal: 29.8, umidadeInicial: 61, umidadeFinal: 47, pressao: 938 },
+    preliminar: {
+      identificavel: 'SIM',
+      limpa: 'SIM',
+      nivelada: 'NA',
+      aquecida: 'SIM',
+      preCarga: 'NAO',
+      zeroAutomatico: 'DESLIGADO',
+    },
+    ajuste: { realizado: 'EXTERNO', descricao: 'ajuste de span com 10 000 kg de pesos padrão, após a troca das células' },
+    comoEncontrado,
+    repetibilidade: [{ id: 'rep1', carga: L, leituras: [10_000, 10_010, 10_000, 10_000, 10_010] }],
+    excentricidade: {
+      aplicavel: true,
+      motivo: '',
+      carga: L,
+      metodo: 1,
+      posicoes: [
+        { rotulo: 'Início (ida)', leitura: 10_000, referencia: null },
+        { rotulo: 'Meio (ida)', leitura: 10_010, referencia: null },
+        { rotulo: 'Fim (ida)', leitura: 10_000, referencia: null },
+        { rotulo: 'Início (volta)', leitura: 10_010, referencia: null },
+        { rotulo: 'Meio (volta)', leitura: 9_990, referencia: null },
+        { rotulo: 'Fim (volta)', leitura: 10_000, referencia: null },
+      ],
+    },
+    indicacao,
+    conformidade: { solicitada: true, criterio: 'PORTARIA_SERVICO', toleranciaCliente: 0, regra: 'SIMPLES' },
+    proximaCalibracao: '2027-10-20',
+    proximaNoCertificado: true,
+    reparo: {
+      houve: true,
+      descricao: 'troca de duas células de carga e do cabo de ligação ao indicador',
+      marcaReparo: 'MR-SP 004611',
+      selosRetirados: '773104-A e 773104-B',
+      selosColocados: '0461120 e 0461121',
+    },
+    substituiId: 'cal-pior-original',
+    motivoRevisao: 'inclusão do resultado “como encontrado”, omitido no certificado original',
+    observacoes:
+      'Cargas de substituição: caminhão graneleiro carregado com milho, posicionado conforme as marcações da plataforma. Pré-carga perto de Max não aplicada: o material de substituição não chegava a 80 t antes do ensaio.',
+    opinioes:
+      'Os erros encontrados antes do ajuste ultrapassavam o EMA em serviço acima de 40 t; recomenda-se verificar as pesagens de saída do período desde a última calibração.',
+  }
+  const e: EmissaoCertificado = {
+    emitidoEm: '2026-10-22T14:30:00.000Z',
+    emitidoPor: RESPONSAVEL.id,
+    codigo: 'P1OR-CA5O',
+    hashPdf: '',
+    arquivo: '',
+    empresa: EMPRESA_PADRAO,
+    cliente: c,
+    balanca: b,
+    padroes,
+    tecnico: TECNICO,
+    signatario: RESPONSAVEL,
+    textos: TEXTOS_PADRAO,
+    substituiNumero: 'CC-2026-00131',
+    substituiEmissao: '2026-10-21T12:10:00.000Z',
+  }
+  return montar(k, e)
 }

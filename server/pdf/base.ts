@@ -80,9 +80,10 @@ const fontesAbertas = new Map<string, FonteMedida>()
  */
 export function larguraTexto(
   texto: string,
-  o: { fonte?: keyof typeof FONTES; negrito?: boolean; tamanho: number; espacamento?: number },
+  o: { fonte?: keyof typeof FONTES; negrito?: boolean; italico?: boolean; tamanho: number; espacamento?: number },
 ): number {
-  const arquivo = FONTES[o.fonte ?? 'Inter'][o.negrito ? 'bold' : 'normal']
+  const estilo = o.negrito ? (o.italico ? 'bolditalics' : 'bold') : o.italico ? 'italics' : 'normal'
+  const arquivo = FONTES[o.fonte ?? 'Inter'][estilo]
   let f = fontesAbertas.get(arquivo)
   if (!f) {
     f = fontkit.openSync(arquivo)

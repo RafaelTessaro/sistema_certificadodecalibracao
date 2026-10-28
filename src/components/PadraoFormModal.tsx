@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useId, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { GRAMAS } from '#shared/calibracao.ts'
 import {
+  arquivoDoCertificadoAnterior,
   CLASSES_PESO,
   dataIsoValida,
   LIMITES,
@@ -21,8 +22,10 @@ import { cn } from '../lib/cn'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
 import { CampoNumerico, LinhaInterruptor, SecaoFormulario } from './BalancaFormModal'
+import { CampoArquivo } from './CampoArquivo'
 import { ValidadePadraoBadge } from './Selos'
 import { Button } from './ui/Button'
+import { confirmar } from './ui/Feedback'
 import { Field, Input, Select, Textarea } from './ui/Form'
 import { Segmented } from './ui/Misc'
 import { Modal } from './ui/Modal'
@@ -259,7 +262,7 @@ export function PadraoFormModal({
   modelo?: { dados: PadraoInput; de: string }
   aoSalvar?: (p: Padrao) => void
 }) {
-  const [salvando, setSalvando] = useState(false)
+  const [salvando, setSalvando] = useState<false | 'arquivo' | 'dados'>(false)
   // Enquanto a janela se fecha, continua mostrando o padrão de antes (a página pode já ter limpado)
   const [ultimos, setUltimos] = useState({ padrao: padraoAtual, modelo: modeloAtual })
   if (aberto && (ultimos.padrao?.id !== padraoAtual?.id || ultimos.modelo?.de !== modeloAtual?.de))
@@ -281,8 +284,14 @@ export function PadraoFormModal({
       rodape={
         <>
           <Button onClick={aoFechar}>Cancelar</Button>
-          <Button variante="primary" type="submit" form="form-padrao" disabled={salvando}>
-            {salvando ? 'Salvando…' : padrao ? 'Salvar alterações' : 'Cadastrar padrão'}
+          <Button variante="primary" type="submit" form="form-padrao" disabled={!!salvando}>
+            {salvando === 'arquivo'
+              ? 'Enviando o arquivo…'
+              : salvando
+                ? 'Salvando…'
+                : padrao
+                  ? 'Salvar alterações'
+                  : 'Cadastrar padrão'}
           </Button>
         </>
       }
@@ -310,7 +319,7 @@ function FormularioPadrao({
   modelo?: PadraoInput
   aoSalvar?: (p: Padrao) => void
   aoFechar: () => void
-  setSalvando: (v: boolean) => void
+  setSalvando: (v: false | 'arquivo' | 'dados') => void
 }) {
   const ids = useId()
   const formRef = useRef<HTMLFormElement>(null)
@@ -318,6 +327,8 @@ function FormularioPadrao({
   const [f, setF] = useState<FormPadrao>(() => formularioInicial(padrao, modelo))
   const [versaoBase, setVersaoBase] = useState(padrao?.versao)
   const [tentou, setTentou] = useState(false)
+  /** Arquivo do certificado escolhido agora: é enviado ao salvar. */
+  const [arquivoNovo, setArquivoNovo] = useState<File | null>(null)
   /** Erro do servidor na identificação (código já usado por outro padrão). */
   const [erroIdentServidor, setErroIdentServidor] = useState<{ codigo: string; mensagem: string } | null>(null)
 
@@ -335,6 +346,28 @@ function FormularioPadrao({
   const erroPesos = ehPesos ? erros.find((e) => /peça|peças/i.test(e)) : undefined
   const erroValidade = erros.find((e) => /próxima calibração/i.test(e))
   const sugestao = ehPesos && !f.descricao.trim() ? descricaoSugerida(conferencias.map((c) => c.gramas)) : ''
+  // Outro nº de certificado com o mesmo arquivo: o arquivo é o do certificado anterior (padrão recalibrado)
+  const arquivoAnterior =
+    !!padrao &&
+    !arquivoNovo &&
+    arquivoDoCertificadoAnterior(padrao, { certificado: f.certificado, sha256: f.certificadoArquivo?.sha256 })
+
+  /** Nº mudou e o arquivo não: anexar o novo, ou confirmar que só corrigiu o nº do mesmo certificado. */
+  const confirmarArquivo = async () => {
+    const ok = await confirmar({
+      titulo: 'O arquivo é do certificado novo?',
+      descricao:
+        `O nº do certificado mudou de ${padrao!.certificado.trim()} para ${f.certificado.trim()}, mas o arquivo anexado ` +
+        `continua o mesmo (${f.certificadoArquivo?.nome}). Se o padrão foi calibrado de novo, anexe o arquivo do ` +
+        'certificado novo: o antigo iria aos clientes com o nº novo. Se você só corrigiu o nº, continue.',
+      confirmar: 'Só corrigi o nº',
+    })
+    if (!ok)
+      formRef.current
+        ?.querySelector(`label[for="${CSS.escape(`${ids}-arquivo`)}"]`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    return ok
+  }
 
   const salvar = async (e: FormEvent) => {
     e.preventDefault()
@@ -348,9 +381,22 @@ function FormularioPadrao({
       requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus())
       return
     }
-    setSalvando(true)
+    const arquivoConfirmado = arquivoAnterior && (await confirmarArquivo())
+    if (arquivoAnterior && !arquivoConfirmado) return
     try {
-      const r = padrao ? await api.atualizarPadrao(padrao.id, valor, versaoBase) : await api.criarPadrao(valor)
+      // O arquivo escolhido vai primeiro; se o cadastro falhar, a referência fica no formulário (não envia de novo)
+      let certificadoArquivo = f.certificadoArquivo ?? null
+      if (arquivoNovo) {
+        setSalvando('arquivo')
+        certificadoArquivo = await api.enviarArquivo(arquivoNovo, arquivoNovo.name, 'padrao')
+        set('certificadoArquivo', certificadoArquivo)
+        setArquivoNovo(null)
+      }
+      setSalvando('dados')
+      const dados = { ...valor, certificadoArquivo }
+      const r = padrao
+        ? await api.atualizarPadrao(padrao.id, dados, versaoBase, { arquivoConfirmado })
+        : await api.criarPadrao(dados)
       useTempoReal.getState().mudou('padrao')
       toast.sucesso(
         padrao ? 'Padrão atualizado' : 'Padrão cadastrado',
@@ -538,6 +584,31 @@ function FormularioPadrao({
             aria-invalid={erroValidade ? true : undefined}
             value={f.validade}
             onChange={(e) => set('validade', e.target.value)}
+          />
+        </Field>
+        <Field
+          label="Certificado de calibração (arquivo)"
+          htmlFor={`${ids}-arquivo`}
+          className="sm:col-span-6"
+          hint={
+            arquivoAnterior ? (
+              <span className="font-medium text-warning">
+                O nº do certificado mudou e o arquivo ainda é o do certificado anterior. Anexe o arquivo do certificado novo.
+              </span>
+            ) : (
+              'O PDF (ou a foto) do certificado emitido pelo laboratório. Vai junto no e-mail dos certificados emitidos com este padrão.'
+            )
+          }
+        >
+          <CampoArquivo
+            id={`${ids}-arquivo`}
+            finalidade="padrao"
+            rotulo="Anexar o certificado do padrão"
+            valor={arquivoNovo ?? f.certificadoArquivo ?? null}
+            aoMudar={(arquivo) => {
+              setArquivoNovo(arquivo)
+              if (!arquivo) set('certificadoArquivo', null)
+            }}
           />
         </Field>
       </SecaoFormulario>

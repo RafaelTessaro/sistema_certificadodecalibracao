@@ -1,7 +1,8 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { parteSeparada, semIndicadorLegado, textoBusca, textoBuscaBalanca } from '#shared/dominio.ts'
+import { separarProcedimento } from '#shared/arquivos.ts'
+import { hojeLocalIso, parteSeparada, semIndicadorLegado, textoBusca, textoBuscaBalanca } from '#shared/dominio.ts'
 import type { Balanca, Calibracao } from '#shared/tipos.ts'
 
 export type Banco = DatabaseSync
@@ -192,6 +193,13 @@ const MIGRACOES: Migracao[] = [
   // cadeia de revisões que terminou cancelada) para a calibração refeita a partir do mesmo papel: o
   // cancelado continua mostrando a folha dele, e ela volta para ele se a refeita for excluída.
   folhasEmArquivo,
+
+  // 7: (a) arquivos guardados no próprio banco (o certificado de calibração de cada padrão e o POP), pelo
+  // SHA-256 do conteúdo: o mesmo arquivo enviado de novo não ocupa espaço outra vez, e cada cópia de
+  // segurança do banco leva os arquivos junto. (b) As revisões do POP (Procedimento Operacional Padrão): o
+  // código e a revisão saem em toda página do certificado. O código que estava nas configurações vira a
+  // revisão 1, a menos que fosse o exemplo de fábrica (PT-CAL-01 rev. 0). (c) Os nomes dos anexos de cada envio.
+  arquivosEPop,
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
@@ -229,6 +237,64 @@ function folhasEmArquivo(db: Banco) {
     );
     CREATE INDEX IF NOT EXISTS folhas_campo_passagens_numero ON folhas_campo_passagens(numero);
   `)
+}
+
+/** O código de procedimento de exemplo que vinha nas configurações até a versão 1.0.1 (não é o POP de ninguém). */
+export const PROCEDIMENTO_EXEMPLO_ANTIGO = 'PT-CAL-01 rev. 0'
+
+/** Migração 7 (ver acima). Repetível: só cria o que falta e só traz o código das configurações uma vez. */
+function arquivosEPop(db: Banco) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS arquivos (
+      sha256     TEXT PRIMARY KEY,               -- do conteúdo (hex): o mesmo arquivo é guardado uma vez só
+      nome       TEXT NOT NULL,                  -- nome do primeiro envio
+      tipo       TEXT NOT NULL,                  -- MIME conferido pelo conteúdo
+      tamanho    INTEGER NOT NULL,
+      conteudo   BLOB NOT NULL,
+      criado_em  TEXT NOT NULL,
+      criado_por TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS pop_versoes (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT, -- a maior é a vigente
+      codigo     TEXT NOT NULL,                  -- BALANÇAS-POP-123
+      revisao    TEXT NOT NULL,                  -- 00, 01…
+      data       TEXT NOT NULL DEFAULT '',       -- yyyy-MM-dd da revisão
+      arquivo    TEXT REFERENCES arquivos(sha256), -- null = arquivo ainda não anexado
+      observacao TEXT NOT NULL DEFAULT '',
+      criado_em  TEXT NOT NULL,
+      criado_por TEXT NOT NULL DEFAULT ''
+    );
+  `)
+  acrescentarColuna(db, 'envios', 'anexos', "TEXT NOT NULL DEFAULT ''") // JSON: nomes dos arquivos anexados
+  if (db.prepare('SELECT 1 FROM pop_versoes LIMIT 1').get()) return
+  const linha = db.prepare("SELECT valor FROM config WHERE chave = 'geral'").get() as { valor: string } | undefined
+  let procedimento = ''
+  try {
+    const t = JSON.parse(linha?.valor ?? '{}')?.textos?.procedimento
+    procedimento = typeof t === 'string' ? t.replace(/\s+/g, ' ').trim().slice(0, 80) : ''
+  } catch {
+    /* configuração ilegível: sem POP (o dono registra) */
+  }
+  if (!procedimento || procedimento === PROCEDIMENTO_EXEMPLO_ANTIGO) return
+  const { codigo, revisao } = separarProcedimento(procedimento)
+  const em = new Date()
+  db.prepare(
+    `INSERT INTO pop_versoes (codigo, revisao, data, arquivo, observacao, criado_em, criado_por)
+     VALUES (?, ?, ?, NULL, ?, ?, 'Atualização do sistema')`,
+  ).run(
+    codigo.slice(0, 60),
+    revisao.slice(0, 10),
+    hojeLocalIso(em),
+    'Código e revisão que estavam nas configurações do certificado.',
+    em.toISOString(),
+  )
+  db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)").run(
+    em.toISOString(),
+    `O procedimento das configurações do certificado (${procedimento}) passou a ser a revisão vigente do POP, em Configurações → Certificado. Anexe lá o arquivo do POP.`.slice(
+      0,
+      300,
+    ),
+  )
 }
 
 /**

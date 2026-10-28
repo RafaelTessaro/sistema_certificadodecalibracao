@@ -222,9 +222,90 @@ export interface Padrao {
   ativo: boolean
   criadoEm: string
   atualizadoEm: string
+  /**
+   * Arquivo do certificado de calibração do padrão (PDF ou imagem), guardado no sistema: vai junto no e-mail
+   * dos certificados emitidos com ele. Trocar o arquivo não apaga o anterior: os certificados emitidos com
+   * outro nº de certificado do padrão continuam com o deles; os do mesmo nº passam a levar o novo (a correção).
+   * Mudar o nº mantendo o arquivo é recusado (seria o arquivo do certificado anterior), salvo confirmação.
+   * Ausente ou null = não anexado.
+   */
+  certificadoArquivo?: ArquivoAnexo | null
+  /**
+   * O arquivo de cada certificado anterior do padrão (o último de cada nº), guardado quando o nº muda: os
+   * certificados emitidos com um nº antigo levam o arquivo daquele certificado (com a correção, se o arquivo
+   * foi trocado antes da nova calibração). Do mais recente para o mais antigo. Ausente = nenhum.
+   */
+  certificadosAnteriores?: Array<{ certificado: string; arquivo: ArquivoAnexo }>
 }
 
 export type PadraoInput = Omit<Padrao, 'id' | 'versao' | 'criadoEm' | 'atualizadoEm'>
+
+// ---- Arquivos guardados e POP --------------------------------------------------------
+
+/**
+ * Referência a um arquivo guardado no sistema (tabela `arquivos`, pelo SHA-256 do conteúdo: o mesmo
+ * arquivo enviado duas vezes é guardado uma vez só).
+ */
+export interface ArquivoAnexo {
+  sha256: string
+  /** Nome do arquivo como foi enviado (ex.: "Certificado RBC 0456-2026.pdf"). */
+  nome: string
+  tamanho: number
+  /** Tipo MIME conferido pelo conteúdo (application/pdf, image/jpeg, image/png ou .docx). */
+  tipo: string
+  /** Quando foi anexado (ISO). */
+  enviadoEm: string
+}
+
+/** Uma revisão registrada do POP (Procedimento Operacional Padrão de calibração). */
+export interface VersaoPop {
+  id: number
+  /** Código do documento, ex.: "BALANÇAS-POP-123". */
+  codigo: string
+  /** Revisão com dois algarismos, ex.: "00". */
+  revisao: string
+  /** Data da revisão (yyyy-MM-dd). */
+  data: string
+  /** Arquivo do POP (PDF ou Word); null = ainda não anexado. */
+  arquivo: ArquivoAnexo | null
+  observacao: string
+  criadoEm: string
+  criadoPor: string
+  /** A revisão que vale hoje (a última registrada); as outras foram substituídas. */
+  vigente: boolean
+}
+
+/** POP congelado na emissão do certificado: a revisão que valia (sai em todas as páginas). */
+export type PopEmitido = Pick<VersaoPop, 'id' | 'codigo' | 'revisao' | 'data' | 'arquivo'>
+
+/** Certificado de calibração de um padrão usado numa calibração (para o e-mail e a ficha do certificado). */
+export interface CertificadoDoPadrao {
+  padraoId: ID
+  identificacao: string
+  descricao: string
+  /** Nº do certificado do padrão (o congelado na emissão). */
+  certificado: string
+  arquivo: ArquivoAnexo | null
+  /**
+   * De onde veio o arquivo: EMISSAO = congelado no certificado emitido; CADASTRO = o do cadastro do padrão
+   * (em andamento; ou, no emitido, o anexado ou trocado no cadastro depois da emissão, com o mesmo nº de
+   * certificado: a correção do arquivo daquele certificado).
+   */
+  origem: 'EMISSAO' | 'CADASTRO' | ''
+}
+
+/** Um anexo possível do e-mail do certificado. */
+export interface AnexoEmailDisponivel {
+  /** 'certificado' (o PDF do certificado, sempre vai) ou 'arquivo:<sha256>'. */
+  id: string
+  /** Nome como chega ao cliente. */
+  nome: string
+  tipo: string
+  tamanho: number
+  obrigatorio: boolean
+  /** Padrões cujo certificado é este arquivo (identificações). */
+  padroes: string[]
+}
 
 // ---- Calibração e certificado ----------------------------------------------------
 
@@ -506,6 +587,8 @@ export interface EmissaoCertificado {
   /** Número do certificado substituído (revisão). */
   substituiNumero: string
   substituiEmissao: string
+  /** Revisão do POP que valia na emissão (o texto que sai no certificado é `textos.procedimento`). */
+  pop?: PopEmitido | null
 }
 
 export interface Signatario {
@@ -536,7 +619,10 @@ export interface DadosEmpresa {
 }
 
 export interface TextosCertificado {
-  /** Código e revisão do procedimento, ex.: "PT-CAL-01 rev. 0". */
+  /**
+   * Código e revisão do POP, ex.: "BALANÇAS-POP-123 rev. 00". Vem da revisão vigente do POP (Configurações →
+   * Certificado), não é digitado aqui; '' = nenhum POP registrado.
+   */
   procedimento: string
   /** Descrição curta do procedimento (sai no certificado). */
   procedimentoDescricao: string
@@ -646,6 +732,8 @@ export interface Envio {
   assunto: string
   usuarioNome: string
   em: string
+  /** Nomes dos arquivos anexados (envios a partir desta versão). */
+  anexos?: string[]
 }
 
 // ---- Usuários e sessão -------------------------------------------------------------

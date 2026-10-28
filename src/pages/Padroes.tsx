@@ -3,6 +3,8 @@ import {
   CopyPlus,
   Ellipsis,
   FileBadge2,
+  FileWarning,
+  Paperclip,
   Pencil,
   Plus,
   Power,
@@ -80,6 +82,7 @@ function copiaDe(p: Padrao, usados: string[]): PadraoInput {
     validade: '',
     observacoes: '',
     ativo: true,
+    certificadoArquivo: null,
     pesos: p.pesos.map((x) => ({ ...x, id: novoId(), correcao: 0, incerteza: 0 })),
   }
 }
@@ -448,6 +451,14 @@ function CartaoPadrao({
             Só nominal
           </Badge>
         )}
+        {p.ativo && !p.certificadoArquivo && (
+          <span title="Anexe o PDF do certificado do padrão: ele vai junto no e-mail dos certificados emitidos">
+            <Badge tom="warning" ponto={false}>
+              <FileWarning className="h-3 w-3" />
+              Sem o arquivo do certificado
+            </Badge>
+          </span>
+        )}
       </div>
 
       <div className="flex-1 px-5 pt-3.5 pb-4">
@@ -491,6 +502,19 @@ function CartaoPadrao({
             {p.laboratorio && ` · ${p.laboratorio}`}
             {p.acreditacao && ` (${p.acreditacao})`}
           </span>
+          {p.certificadoArquivo && (
+            // Por cima do botão que cobre o cartão (abrir o arquivo não abre a edição)
+            <a
+              href={api.urlArquivo(p.certificadoArquivo.sha256)}
+              target="_blank"
+              rel="noopener"
+              className="relative z-10 ml-auto inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-brand-ink transition-colors hover:bg-brand-soft"
+              title={`Abrir ${p.certificadoArquivo.nome}`}
+            >
+              <Paperclip className="h-3 w-3" />
+              Arquivo
+            </a>
+          )}
         </p>
         <p className="flex items-center gap-2">
           <CalendarClock className="h-3.5 w-3.5 shrink-0" />

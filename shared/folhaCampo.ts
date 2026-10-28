@@ -35,13 +35,27 @@ import type {
   Unidade,
 } from './tipos.ts'
 
-/** Código e revisão do formulário (documento controlado, ISO/IEC 17025 8.3): muda a cada alteração do layout. */
+/**
+ * Código e revisão do formulário (documento controlado, ISO/IEC 17025 8.3): muda a cada alteração do layout.
+ * Rev. 01: folha enxuta (dado impresso diferente vai no verso, sem caixas de correção). O procedimento de
+ * referência é o POP configurado no sistema (sai no rodapé, ver `referenciaDoFormulario`); `referencia` é o
+ * guia técnico (metadados do PDF).
+ */
 export const FORMULARIO_FOLHA_CAMPO = {
   codigo: 'FOR-CAL-01',
-  revisao: '00',
+  revisao: '01',
   titulo: 'Folha de campo de calibração de balança',
-  referencia: 'PT-CAL-01 · EURAMET cg-18 v4.0',
+  referencia: 'EURAMET cg-18 v4.0',
 } as const
+
+/**
+ * Referência do formulário no rodapé de toda página: o POP configurado (`textos.procedimento`, ex.:
+ * "BALANÇAS-POP-123 rev. 00" → "POP BALANÇAS-POP-123 rev. 00"); sem POP, nada.
+ */
+export function referenciaDoFormulario(procedimento: string | null | undefined): string {
+  const pop = (procedimento ?? '').trim()
+  return pop ? `POP ${pop}` : ''
+}
 
 export interface CargaPlanejada {
   /** Carga nominal, na unidade da balança. */

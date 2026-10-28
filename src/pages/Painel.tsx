@@ -329,8 +329,16 @@ function GraficoMensal({ dados }: { dados: Array<{ mes: string; quantidade: numb
 function PrimeirosPassos() {
   const navegar = useNavigate()
   const passos = [
-    { titulo: 'Confira os dados da empresa', texto: 'Razão social, CNPJ e endereço saem no certificado.', to: '/configuracoes' },
-    { titulo: 'Cadastre os pesos padrão', texto: 'Com o nº do certificado e a validade de cada jogo.', to: '/padroes?novo=1' },
+    {
+      titulo: 'Confira a empresa e o POP',
+      texto: 'Razão social, CNPJ, endereço e o código do POP saem no certificado.',
+      to: '/configuracoes',
+    },
+    {
+      titulo: 'Cadastre os pesos padrão',
+      texto: 'Com o nº, a validade e o PDF do certificado de cada jogo.',
+      to: '/padroes?novo=1',
+    },
     { titulo: 'Cadastre um cliente', texto: 'Digite o CNPJ e o resto é preenchido sozinho.', to: '/clientes?novo=1' },
     { titulo: 'Faça a primeira calibração', texto: 'Registre os ensaios e emita o certificado.', to: '/calibracoes/nova' },
   ]

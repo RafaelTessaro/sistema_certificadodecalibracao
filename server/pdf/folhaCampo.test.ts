@@ -1,16 +1,19 @@
 // Testes da folha de campo em PDF: gera as cinco amostras (server/pdf/exemplosFolhaCampo.ts), confere que
 // a geração é determinística e, com o pdftotext (poppler-utils), o conteúdo de cada página: cabeçalho de
-// identificação, rótulos iguais aos da tela do assistente, plano de cargas e o que NÃO pode aparecer
-// (número de certificado, aprovado/reprovado, validade).
+// identificação, rótulos iguais aos da tela do assistente, plano de cargas, o POP no rodapé, o tamanho da
+// folha (enxuta: dado impresso diferente vai no verso) e o que NÃO pode aparecer (número de certificado,
+// aprovado/reprovado, validade, caixas de "confere").
 
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { FORMULARIO_FOLHA_CAMPO } from '#shared/folhaCampo.ts'
+import { TEXTOS_PADRAO } from '#shared/dominio.ts'
 import type { Padrao } from '#shared/tipos.ts'
 import { A4, BASE_RODAPE, MODULO, TOPO_CABECALHO } from './base.ts'
 import {
   folhaEmBranco,
+  folhaEmBrancoOitoPadroes,
   folhaMultiIntervalo,
   folhaPlataforma,
   folhaRodoviaria,
@@ -18,13 +21,14 @@ import {
   padroesDaEmpresa,
 } from './exemplosFolhaCampo.ts'
 import {
+  AVISO_VERSO,
   type DadosFolhaCampo,
   definicaoFolhaCampo,
+  descricaoPadraoNaFolha,
   ETAPAS_SISTEMA,
   gerarFolhaCampoPdf,
   montar,
   nomeArquivoFolhaCampo,
-  ROTEIRO_DIGITACAO,
   textosDaFaixa,
   VERIFICACOES_FOLHA,
 } from './folhaCampo.ts'
@@ -113,12 +117,19 @@ function livreEmbaixo(pdf: Buffer, paginas: Palavra[][], rotulo: string[]): { pa
   throw new Error(`rótulo não achado: ${rotulo.join(' ')}`)
 }
 
-const EXEMPLOS: Array<{ nome: string; dados: () => DadosFolhaCampo }> = [
-  { nome: 'plataforma 300 kg (rascunho do último certificado)', dados: folhaPlataforma },
-  { nome: 'balcão multi-intervalo 6/15/33 kg (sem histórico)', dados: folhaMultiIntervalo },
-  { nome: 'rodoviária 80 t com substituição', dados: folhaRodoviaria },
-  { nome: 'em branco', dados: folhaEmBranco },
-  { nome: 'rodoviária 60 t sem calibração anterior', dados: folhaRodoviariaSemHistorico },
+/**
+ * As amostras e o máximo de páginas de cada uma (folha enxuta: 3 páginas). A folha em branco fica em 4: sem
+ * balança, todos os campos que o sistema imprimiria saem vazios para escrever (cliente, identificação com as
+ * faixas, 10 pontos, as etapas de substituição e a tabela do EMA por classe), também com os 8 padrões ativos
+ * de uma empresa maior.
+ */
+const EXEMPLOS: Array<{ nome: string; dados: () => DadosFolhaCampo; maxPaginas: number }> = [
+  { nome: 'plataforma 300 kg (rascunho do último certificado)', dados: folhaPlataforma, maxPaginas: 3 },
+  { nome: 'balcão multi-intervalo 6/15/33 kg (sem histórico)', dados: folhaMultiIntervalo, maxPaginas: 3 },
+  { nome: 'rodoviária 80 t com substituição', dados: folhaRodoviaria, maxPaginas: 3 },
+  { nome: 'em branco', dados: folhaEmBranco, maxPaginas: 4 },
+  { nome: 'rodoviária 60 t sem calibração anterior', dados: folhaRodoviariaSemHistorico, maxPaginas: 3 },
+  { nome: 'em branco com 8 padrões', dados: folhaEmBrancoOitoPadroes, maxPaginas: 4 },
 ]
 
 const gerados = new Map<string, Promise<Buffer>>()
@@ -203,8 +214,37 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     for (const id of abrem) expect(m.extras.continuacoes).toContain(id)
   })
 
-  it('o roteiro de digitação cobre as etapas 1 a 7 do assistente, na ordem da tela', () => {
-    expect(ROTEIRO_DIGITACAO.map((r) => r.etapa)).toEqual(Object.values(ETAPAS_SISTEMA).slice(0, 7))
+  it.each(EXEMPLOS)('folha enxuta: $nome em no máximo $maxPaginas páginas', async (e) => {
+    const m = await montar(e.dados())
+    expect(m.paginas).toBeLessThanOrEqual(e.maxPaginas)
+    expect(m.faltando).toEqual([])
+  })
+
+  it('sem "confere" nem caixas de correção: dado impresso diferente vai no verso (uma linha no alto da página 1)', () => {
+    for (const e of EXEMPLOS) {
+      const json = JSON.stringify((definicaoFolhaCampo(e.dados()) as { content: unknown }).content)
+      expect(json, e.nome).not.toMatch(/"confere"|escreva o certo/)
+      expect(json, e.nome).toContain(AVISO_VERSO)
+    }
+  })
+
+  it('rodapé: o código e a revisão do formulário e o POP configurado (sem POP, nada no lugar)', () => {
+    const rodape = (d: DadosFolhaCampo) => JSON.stringify((definicaoFolhaCampo(d) as { footer: () => unknown }).footer())
+    const comPop = rodape({ ...folhaPlataforma(), procedimento: 'BALANÇAS-POP-123 rev. 00' })
+    expect(comPop).toContain(`${FORMULARIO_FOLHA_CAMPO.codigo} rev. ${FORMULARIO_FOLHA_CAMPO.revisao}`)
+    expect(comPop).toContain('"POP BALANÇAS-POP-123 rev. 00"')
+    expect(comPop).not.toContain('PT-CAL-01')
+    for (const sem of ['', undefined]) {
+      const t = rodape({ ...folhaPlataforma(), procedimento: sem })
+      expect(t).not.toMatch(/POP|PT-CAL/)
+      expect(t).toContain('registro de dados brutos')
+    }
+    // Nos metadados também, com o guia técnico
+    const doc = definicaoFolhaCampo({ ...folhaPlataforma(), procedimento: 'BALANÇAS-POP-123 rev. 00' }) as {
+      info: { keywords: string }
+    }
+    expect(doc.info.keywords).toContain('POP BALANÇAS-POP-123 rev. 00')
+    expect(doc.info.keywords).toContain(FORMULARIO_FOLHA_CAMPO.referencia)
   })
 
   it('usa os mesmos rótulos do assistente (validação da transcrição, ISO/IEC 17025 7.11)', () => {
@@ -221,14 +261,17 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
   /** Em toda página: título, nº da folha, "Página i de N", código do formulário e a identificação da tarefa. */
   function conferirPaginas(texto: string, numero: string, identificacao: string[]) {
     const paginas = paginasDe(texto)
-    expect(paginas.length).toBeGreaterThanOrEqual(4)
-    expect(paginas.length).toBeLessThanOrEqual(5)
+    expect(paginas.length).toBeGreaterThanOrEqual(3)
+    expect(paginas.length).toBeLessThanOrEqual(4)
     paginas.forEach((p, i) => {
       const t = corrido(p)
       expect(t).toContain('FOLHA DE CAMPO — CALIBRAÇÃO DE BALANÇA')
       expect(t).toContain(numero)
       expect(t).toContain(`Página ${i + 1} de ${paginas.length}`)
-      expect(t).toContain(`${FORMULARIO_FOLHA_CAMPO.codigo} rev. ${FORMULARIO_FOLHA_CAMPO.revisao}`)
+      // O formulário e o POP configurado (as amostras levam o dos certificados de exemplo)
+      expect(t).toContain(
+        `${FORMULARIO_FOLHA_CAMPO.codigo} rev. ${FORMULARIO_FOLHA_CAMPO.revisao} · POP ${TEXTOS_PADRAO.procedimento}`,
+      )
       expect(t).toContain('não é certificado de calibração')
       // Folha solta ou digitalizada sozinha: quem imprimiu e quando, rubrica e data em toda página
       expect(t).toMatch(/Impressa em \d\d\/\d\d\/\d{4}, às \d\d:\d\d por /)
@@ -276,18 +319,26 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain('SELOS / LACRES ENCONTRADOS')
     expect(t).toContain('FOTOS TIRADAS')
     expect(t).toContain('LIGADA DESDE')
-    expect(t).toContain('PESOS NO LOCAL HÁ (MIN)')
+    expect(t).toMatch(/PESOS NO LOCAL HÁ/)
     expect(t).toContain('INSTRUMENTO USADO')
     // Conclusão com os mesmos campos da tela
-    expect(t).toContain('O CLIENTE PEDIU DECLARAÇÃO DE')
+    expect(t).toContain('O CLIENTE PEDIU CONFORMIDADE?')
     expect(t).toMatch(/LIMITE \(ERRO MÁXIMO/)
     expect(t).toContain('REGRA DE DECISÃO')
     expect(t).toContain('O CLIENTE PEDIU A DATA NO CERTIFICADO?')
     expect(t).toContain('OBSERVAÇÕES (SAEM NO CERTIFICADO)')
-    expect(t).toContain('TÉCNICO QUE EXECUTOU')
-    expect(t).toContain('CERTIFICADO Nº (PREENCHIDO NO ESCRITÓRIO)')
-    expect(t).toContain('PARA DIGITAR, NA ORDEM DO SISTEMA')
+    expect(t).toContain('TÉCNICO QUE EXECUTOU — NOME E ASSINATURA')
+    expect(t).toContain('PELO CLIENTE — NOME, FUNÇÃO E ASSINATURA')
+    expect(t).toContain('quem acompanhou; ciente das condições, não dos resultados')
+    // O escritório numa linha só: quem digitou, quem conferiu com a folha, o nº do certificado e o arquivo
+    expect(t).toMatch(
+      /ESCRITÓRIO DIGITADO NO SISTEMA POR EM CONFERIDO COM A FOLHA POR EM CERTIFICADO Nº digitalizada na pasta da OS/,
+    )
     expect(t).toContain('Grampeie as folhas')
+    // Dado impresso diferente: no verso (sem caixas de "confere" nem de correção)
+    expect(corrido(paginasDe(texto)[0])).toContain(AVISO_VERSO)
+    expect(t).not.toMatch(/\bconfere\b/)
+    expect(t).toContain('OPINIÕES E INTERPRETAÇÕES (OPCIONAL)')
     // Nada de número de certificado, aprovação ou "validade" numa folha de campo
     expect(t).not.toContain('CERTIFICADO DE CALIBRAÇÃO Nº')
     expect(t).not.toMatch(/\baprovad[oa]\b|\breprovad[oa]\b/i)
@@ -298,8 +349,8 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     const e = EXEMPLOS[0]
     const texto = textoDoPdf(await pdfDe(e))
     const paginas = conferirPaginas(texto, 'FC-2026-00042', ['OS-2026-0512', 'Frigorífico Vale do Corumbataí', '9091-118832'])
-    // Duas folhas, frente e verso, sem parte de passo solta no alto de uma página
-    expect(paginas).toHaveLength(4)
+    // Três páginas, sem parte de passo solta no alto de uma página
+    expect(paginas).toHaveLength(3)
     for (const p of paginas.slice(1))
       expect(corrido(p)).toMatch(/BALANÇA nº de série 9091-118832 · TAG BAL-EXP-07 \d{1,2} [A-ZÇÃÁÉÍÓÚÊ]/)
     conferirComum(texto)
@@ -307,22 +358,21 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain('FRIGORÍFICO VALE DO CORUMBATAÍ LTDA')
     expect(t).toContain('Avenida Brasil, 2450')
     expect(t).toContain('Carlos Eduardo Lima')
-    // O cliente sai no certificado: "□ confere" e a caixa para o certo; o técnico previsto é só uma dica, numa
-    // caixa branca, e o nome ao lado da assinatura fica para quem executou escrever
-    expect(corrido(paginas[0])).toMatch(/RAZÃO SOCIAL confere CONTATO NO CLIENTE CNPJ confere/)
+    // O cliente impresso, compacto (sem "confere" nem caixa para o certo: diferente, no verso); o técnico
+    // previsto é só uma dica, numa caixa branca, e o nome ao lado da assinatura fica para quem executou escrever
+    expect(corrido(paginas[0])).toMatch(/RAZÃO SOCIAL CONTATO NO CLIENTE CNPJ FRIGORÍFICO VALE DO CORUMBATAÍ LTDA/)
     expect(corrido(paginas[0])).toMatch(/TÉCNICO QUE EXECUTOU ● .{0,80}previsto: Carlos Eduardo Lima/)
-    const assinaturas = corrido(paginas[3]).slice(corrido(paginas[3]).indexOf('ASSINATURAS'))
-    expect(assinaturas).toContain('TÉCNICO QUE EXECUTOU (NOME)')
+    const ultima = corrido(paginas.at(-1)!)
+    const assinaturas = ultima.slice(ultima.indexOf('ASSINATURAS'))
+    expect(assinaturas).toContain('TÉCNICO QUE EXECUTOU — NOME E ASSINATURA')
     expect(assinaturas.slice(0, assinaturas.indexOf('ESCRITÓRIO'))).not.toContain('Carlos')
-    // "□ confere" ao lado do rótulo do previsto; o certo vai na caixa branca embaixo, livre para escrever
-    expect(t).toContain('certo, marque “confere”; diferente, escreva o certo na caixa branca embaixo')
-    expect(t).not.toContain('ou escreva o certo:')
-    expect(t.match(/\bconfere\b/g)?.length).toBeGreaterThanOrEqual(20)
+    expect(t).toContain('Algum dado impresso está diferente? Anote o certo no verso da folha, com o nº do passo.')
+    expect(t).toContain('Diferente? Anote o certo no verso (passo 3) e avise o cliente.')
     expect(t).toContain('Marque com X')
-    expect(t).toMatch(/nas instalações do cliente\s+PREVISTO/)
-    // Troca de pesos: na última linha da tabela de pontos, com o nº da linha e as peças usadas
-    expect(t).toContain('PESOS DIFERENTES DO PREVISTO')
-    expect(t).toContain('nº da linha e as peças usadas de fato')
+    expect(t).toMatch(/no cliente\s+PREVISTO/)
+    // Troca de pesos: no verso, com o nº da linha e as peças usadas (a nota embaixo da tabela de pontos diz)
+    expect(t).not.toContain('PESOS DIFERENTES DO PREVISTO')
+    expect(t).toContain('Pesos diferentes dos impressos: anote no verso o nº da linha e as peças usadas.')
     expect(t).toContain('Portaria Inmetro/Dimel nº')
     expect(t).toContain('0236/2009')
     expect(t).toContain('Processo / produção')
@@ -353,18 +403,21 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain('FRENTE · INDICADOR')
     expect(t).toContain('a normal (d = 50 g)')
     expect(t).toContain('21/10/2027')
-    expect(t).toContain('1 · Cliente e OS ← passos 2 e 10')
+    // A identificação da balança impressa numa grade só, em três linhas
+    expect(t).toMatch(
+      /TIPO DE BALANÇA FABRICANTE \(INDICADOR\) MODELO \(INDICADOR\) Nº DE SÉRIE \(INDICADOR\) IDENTIFICAÇÃO \/ TAG \(\*\) ANO DE FABRICAÇÃO Plataforma Toledo do Brasil 9091 9091-118832 BAL-EXP-07 2019/,
+    )
   })
 
   it('balcão multi-intervalo: pontos sugeridos pelo sistema, d de cada intervalo e EMA por intervalo', async () => {
     const texto = textoDoPdf(await pdfDe(EXEMPLOS[1]))
     const paginas = conferirPaginas(texto, 'FC-2026-00043', ['OS-2026-0519', 'Supermercado Bom Preço', 'UR33-204718'])
-    // A balança mais simples cabe em duas folhas, frente e verso, com as observações numa caixa só
-    expect(paginas).toHaveLength(4)
+    // O balcão cabe em três páginas, com as observações numa caixa só
+    expect(paginas).toHaveLength(3)
     expect(texto).not.toContain('OBSERVAÇÕES (CONTINUAÇÃO)')
     // O erro de indicação inteiro na página 2, com o retorno ao zero e os pesos diferentes na tabela
     expect(texto).not.toContain('ERRO DE INDICAÇÃO (CONTINUAÇÃO)')
-    for (const x of ['ERRO DE INDICAÇÃO', '33,00', 'RETORNO AO ZERO', 'PESOS DIFERENTES DO PREVISTO'])
+    for (const x of ['ERRO DE INDICAÇÃO', '33,00', 'RETORNO AO ZERO', 'Pesos diferentes dos impressos'])
       expect(corrido(paginas[1])).toContain(x)
     conferirComum(texto)
     const t = corrido(texto)
@@ -376,12 +429,12 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain('8,250')
     expect(t).toContain('33,00')
     expect(t).toContain('32,96 a 33,04')
-    expect(t).toContain('Balança de uso comercial (venda por peso)')
-    expect(t).toContain('Marca de verificação Inmetro/IPEM: ano'.toUpperCase())
-    // Repetibilidade em 9 linhas (5 previstas), com a carga nas casas de d do intervalo (16,5 kg: d = 10 g)
+    expect(t).toContain('Uso comercial (venda por peso): a calibração não substitui a verificação do Inmetro/IPEM.')
+    expect(t).toContain('MARCA INMETRO/IPEM:')
+    // Repetibilidade em 6 linhas (5 previstas), com a carga nas casas de d do intervalo (16,5 kg: d = 10 g)
     expect(t).toContain('16,50')
-    expect(t).toContain('Linhas 6 a 9: opcionais')
-    expect(t).toContain('as que não couberem, nas observações')
+    expect(t).toContain('Linha 6: opcional')
+    expect(t).toContain('as que não couberem, no verso')
     // Faixa para decidir o ajuste, e o passo 6 aponta para ela
     expect(t).toContain('Fora da faixa para decidir o ajuste (passo 5)')
   })
@@ -402,20 +455,19 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     // Etapas de substituição antes e depois do ajuste, cada uma na sua aba do sistema
     const sub = t.slice(t.indexOf('Cargas de substituição'))
     expect(sub).toMatch(/COMO ENCONTRADO.*DEPOIS DO AJUSTE/)
-    expect(sub).toContain('Refaça as etapas nas colunas “depois do ajuste”')
-    expect(t).toContain('cada uma com o seu método, o seu retorno ao zero e as suas etapas de substituição')
+    expect(sub).toContain('Ajustou? Refaça as etapas em “depois do ajuste”.')
     // Pontos e etapas de substituição, preenchidos intercalados, na mesma página
     const comEtapas = paginas.find((p) => p.includes('Cargas de substituição —'))!
     expect(corrido(comEtapas)).toMatch(/40 000 +3 +20 × 500 kg/)
     expect(corrido(comEtapas)).toContain('ERRO DE INDICAÇÃO')
     // Observações numa caixa só, sem continuação
     expect(t).not.toContain('OBSERVAÇÕES (CONTINUAÇÃO)')
-    expect(paginas).toHaveLength(5)
+    expect(paginas).toHaveLength(3)
     for (const p of ['Início (ida)', 'Meio (ida)', 'Fim (ida)', 'Início (volta)', 'Meio (volta)', 'Fim (volta)'])
       expect(t).toContain(p)
     expect(t).toContain('Tolerância do cliente')
     expect(t).toContain('39 940 a 40 060')
-    expect(t).toContain('Faça as 3 leituras previstas (mínimo 3, por ser carga de 100 kg ou mais)')
+    expect(t).toContain('Faça as 3 leituras previstas (mínimo 3: carga de 100 kg ou mais)')
     // Os pontos param em 40 t de 80 t: o técnico confirma com o cliente antes de sair
     expect(t).toContain('Resolva antes de sair')
     expect(t).toContain('Os pontos vão só até 40 000 kg (50 % de Max)')
@@ -469,7 +521,6 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
       const linhas = [...tabela.matchAll(/(\d)ª 10 000/g)].map((x) => Number(x[1]))
       expect(linhas).toEqual(Array.from({ length: etapas }, (_, i) => i + 1))
       expect(tabela).toMatch(new RegExp(`${etapas}ª 10 000 \\+ `))
-      expect(t).toContain('cada uma com o seu método, o seu retorno ao zero e as suas etapas de substituição')
       // Pontos e etapas na mesma página
       const pagina = paginasDe(texto).find((p) => p.includes('Cargas de substituição'))!
       expect(pagina).toContain('ERRO DE INDICAÇÃO')
@@ -499,10 +550,11 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     for (const c of ['Portaria 157 — em serviço', 'Portaria 157 — verificação', 'Tolerância do cliente']) expect(t).toContain(c)
   })
 
-  it('etapas para escrever: 8 na folha em branco; 2 numa rodoviária cujos pesos fecham todas as cargas', async () => {
+  it('etapas para escrever: 4 na folha em branco (mais, no verso); 2 numa rodoviária cujos pesos fecham todas as cargas', async () => {
     const branco = corrido(textoDoPdf(await pdfDe(EXEMPLOS[3])))
     const tabela = branco.slice(branco.indexOf('Cargas de substituição — só em rodoviária'))
-    expect(tabela).toMatch(/1ª 2ª 3ª 4ª 5ª 6ª 7ª 8ª/)
+    expect(tabela).toMatch(/1ª 2ª 3ª 4ª/)
+    expect(tabela).not.toContain('5ª')
     const d = folhaRodoviariaSemHistorico()
     d.balanca = { ...d.balanca!, faixas: [{ max: 10_000, e: 5, d: 5 }] }
     const t = corrido(textoDoPdf(await gerarFolhaCampoPdf(d)))
@@ -512,26 +564,22 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).not.toContain('sugeridas')
   })
 
-  it('em branco: a tabela de pontos vai inteira para a página seguinte; o título, a instrução e o método ficam, com o aviso', async () => {
+  it('em branco: a tabela de pontos vai inteira, na página do título do passo, com a tabela do EMA por classe', async () => {
     const m = await montar(folhaEmBranco())
-    // As 12 linhas cabem numa página: a tabela não se divide (o técnico não vira a folha na subida nem na descida)
+    // As 10 linhas cabem numa página: a tabela não se divide (o técnico não vira a folha na subida nem na descida)
     expect(m.extras.cortes).toEqual([])
-    expect(m.extras.avisoPontos).toBe(true)
-    const linhas = Array.from({ length: 12 }, (_, i) => m.marcas.get(`linha-pontos:${i}`)?.pagina)
+    expect(m.extras.avisoPontos).toBeFalsy()
+    const linhas = Array.from({ length: 10 }, (_, i) => m.marcas.get(`linha-pontos:${i}`)?.pagina)
     expect(new Set(linhas).size).toBe(1)
+    expect(linhas[0]).toBe(m.marcas.get('fim:passo-5')?.pagina)
     const paginas = paginasDe(textoDoPdf(m.pdf))
-    const i = paginas.findIndex((p) => corrido(p).includes('5 ERRO DE INDICAÇÃO NO SISTEMA'))
-    const titulo = corrido(paginas[i])
+    const titulo = corrido(paginas[linhas[0]! - 1])
     expect(titulo).toMatch(/COMO AS CARGAS FORAM APLICADAS .*COMO ENCONTRADO .*DEPOIS DO AJUSTE/)
-    expect(titulo).toMatch(/Tabela dos pontos na próxima página\. FOR-CAL-01/)
     // Em branco (pode ser rodoviária): com substituição, só crescente
     expect(titulo).toContain('Zere, aplique e anote a indicação estável. Com cargas de substituição: só crescente.')
-    expect(titulo).not.toContain('RETORNO AO ZERO')
-    const tabela = corrido(paginas[i + 1])
-    expect(tabela).toMatch(/^ ?FOLHA DE CAMPO .* 5 ERRO DE INDICAÇÃO \(CONTINUAÇÃO\) NO SISTEMA 6 · Erro de indicação Nº Carga/)
-    expect(linhas[0]).toBe(i + 2)
-    expect(tabela).toContain('RETORNO AO ZERO')
-    expect(tabela).toContain('Para decidir o ajuste: EMA em serviço')
+    expect(titulo).toContain('RETORNO AO ZERO')
+    expect(titulo).toContain('Para decidir o ajuste: EMA em serviço')
+    expect(titulo).not.toMatch(/na próxima página/)
   })
 
   it('padrão vencido também sem plano (folha em branco ou só do cliente): VENCIDO e aviso antes de sair', async () => {
@@ -591,19 +639,20 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).not.toContain('FRIGORÍFICO')
     expect(t).not.toContain('Faixa para decidir o ajuste:')
     // O endereço do cadastro do cliente, que o certificado também traz
-    expect(t).toContain('ENDEREÇO DO CLIENTE (SAI NO CERTIFICADO)')
-    expect(t).toContain('o mesmo do local da calibração')
+    expect(t).toMatch(/ENDEREÇO DO CLIENTE \(SAI NO/)
+    expect(t).toContain('o mesmo do')
     // Rodoviária ainda não cadastrada: substituições nos pontos e as etapas, antes e depois do ajuste
     expect(t).toMatch(/Substi- .{0,150}tuições/)
     expect(t).toContain('Cargas de substituição — só em rodoviária')
     expect(t).toMatch(/4ª/)
-    // 12 linhas de pontos (multi-intervalo) e 8 de excentricidade, com a posição escrita no local
-    expect(t).toMatch(/\b12\b/)
+    // 10 linhas de pontos e 6 de excentricidade (mais, no verso), com a posição escrita no local
+    expect(t).toMatch(/\b10\b/)
     expect(t).toContain('Escreva a posição de cada linha')
+    expect(t).toContain('as que passarem de 6, no verso')
     expect(t).not.toContain('Frente esquerda')
     expect(t).toMatch(/retangular .*redondo/)
-    // Sem plano não há pesos previstos para trocar
-    expect(t).not.toContain('PESOS DIFERENTES DO PREVISTO')
+    // Sem plano não há pesos impressos para trocar
+    expect(t).not.toContain('Pesos diferentes dos impressos')
   })
 })
 
@@ -663,13 +712,13 @@ describe.runIf(temPdftotext)(
   'correções da revisão: o que a folha leva, a identificação e o espaço da escrita',
   { timeout: 120_000 },
   () => {
-    it('balcão sem calibração anterior, com todos os padrões da empresa: inteiros só os que vão a campo, os outros numa linha, 4 páginas', async () => {
+    it('balcão sem calibração anterior, com todos os padrões da empresa: inteiros só os que vão a campo, os outros numa linha, 3 páginas', async () => {
       const d = folhaMultiIntervalo()
       // Como o sistema faz sem histórico: o rascunho prevê todos os padrões ativos (os 6 de exemplo)
       expect(d.padroes).toHaveLength(6)
       expect(d.calibracao!.padroesIds).toHaveLength(6)
       const m = await montar(d)
-      expect(m.paginas).toBe(4)
+      expect(m.paginas).toBe(3)
       const paginas = paginasDe(textoDoPdf(m.pdf))
       const p1 = corrido(paginas[0])
       expect(p1).toContain('Também previstos no sistema, mas o plano não usa: BR-01 · JP-05 · PP500-01 a 20.')
@@ -680,7 +729,7 @@ describe.runIf(temPdftotext)(
       // O instrumento do ambiente previsto é o termo-higrômetro (o barômetro é opcional)
       expect(corrido(paginas.join(' '))).toMatch(/previsto: TH-01(?!, BR-01)/)
       // A última página não fica só com as assinaturas
-      expect(corrido(paginas[3])).toMatch(/ENCERRAMENTO: AMBIENTE NO FIM E CONCLUSÃO|OBSERVAÇÕES/)
+      expect(corrido(paginas[2])).toMatch(/ENCERRAMENTO: AMBIENTE NO FIM E CONCLUSÃO|OBSERVAÇÕES/)
     })
 
     it('padrão vencido que o plano não usa: "(vencido)" na linha dos outros, sem "resolva antes de sair"', async () => {
@@ -824,7 +873,7 @@ describe.runIf(temPdftotext)(
 
     it('escritório: a folha digitalizada vai para a pasta da OS (o sistema não guarda anexos da calibração)', async () => {
       const t = corrido(textoDoPdf(await gerarFolhaCampoPdf(folhaPlataforma())))
-      expect(t).toContain('Folha digitalizada e guardada na pasta da OS:')
+      expect(t).toMatch(/ESCRITÓRIO .*digitalizada na pasta da OS/)
       expect(t).not.toMatch(/anexad/)
     })
   },
@@ -878,6 +927,105 @@ describe.runIf(temPdftotext)('nada some do PDF (bloco maior que a página)', { t
     for (const x of TITULOS_PASSOS) expect(t).toContain(x)
     expect(t).toMatch(/55 000 +5 /)
     expect(t).toMatch(/6ª 10 000/)
+  })
+
+  /** Os 6 padrões ativos do uso real (pasta de dados nova): 2 jogos de pesos com a classe na descrição, 2 termo-higrômetros e 2 barômetros. */
+  function padroesDoUso(): Padrao[] {
+    const base = padroesDaEmpresa()
+    const [pesos, th, br] = (['pad-jp01', 'pad-th01', 'pad-br01'] as const).map((id) => base.find((p) => p.id === id)!)
+    return [
+      { ...br, id: 'u-br01', identificacao: 'BR-01', descricao: 'Barômetro digital', certificado: 'B-889/2026' },
+      { ...br, id: 'u-br02', identificacao: 'BR-02', descricao: 'Barômetro 2', certificado: 'B-2/2026' },
+      {
+        ...pesos,
+        id: 'u-jp01',
+        identificacao: 'JP-01',
+        descricao: 'Jogo de pesos 20 kg (15 peças) classe M1',
+        certificado: 'M-09999/2027',
+      },
+      {
+        ...pesos,
+        id: 'u-jp02',
+        identificacao: 'JP-02',
+        descricao: 'Jogo de pesos 1 kg a 10 kg classe M1',
+        certificado: 'M-07777/2026',
+      },
+      { ...th, id: 'u-th01', identificacao: 'TH-01', descricao: 'Termo-higrômetro digital', certificado: 'T-1123/2026' },
+      { ...th, id: 'u-th02', identificacao: 'TH-02', descricao: 'Termo-higrômetro 2', certificado: 'T-2/2026' },
+    ]
+  }
+
+  it('em branco com os 6 padrões do uso real: 4 páginas, um padrão por linha, sem repetir a classe', async () => {
+    const d = { ...folhaEmBranco(), padroes: padroesDoUso() }
+    const m = await montar(d)
+    expect(m.paginas).toBe(4)
+    expect(m.faltando).toEqual([])
+    const texto = textoDoPdf(m.pdf)
+    const linhas = paginasDe(texto)[0].split('\n')
+    // Cada padrão numa linha só do texto, com o certificado e a próxima calibração na mesma linha
+    for (const [id, resto] of [
+      ['JP-01', /JP-01 +Jogo de pesos 20 kg \(15 peças\) · M1 +M-09999\/2027 +\d{2}\/\d{2}\/\d{4}$/],
+      ['JP-02', /JP-02 +Jogo de pesos 1 kg a 10 kg classe M1 +M-07777\/2026 +\d{2}\/\d{2}\/\d{4}$/],
+      ['BR-02', /BR-02 +Barômetro 2 +— +B-2\/2026 +\d{2}\/\d{2}\/\d{4}$/],
+    ] as const) {
+      const linha = linhas.find((l) => l.includes(id))
+      expect(linha, id).toMatch(resto)
+    }
+    expect(corrido(texto)).not.toMatch(/classe M1 · M1/)
+    // As observações e as assinaturas ficam na página 4 (nada de uma 5ª só com elas)
+    const ultima = corrido(paginasDe(texto).at(-1)!)
+    expect(ultima).toMatch(/OBSERVAÇÕES \(SAEM NO CERTIFICADO\) .* 10 ASSINATURAS/)
+  })
+
+  it.each([6, 8, 10])('em branco com %i padrões: no máximo 4 páginas, e a tabela dos pontos não se divide', async (n) => {
+    const base = folhaEmBrancoOitoPadroes().padroes
+    const d = {
+      ...folhaEmBranco(),
+      padroes: Array.from({ length: n }, (_, i): Padrao => ({
+        ...base[i % base.length],
+        id: `pad-${i}`,
+        identificacao: `${base[i % base.length].identificacao}${i >= base.length ? '-B' : ''}`,
+      })),
+    }
+    const m = await montar(d)
+    expect(m.paginas).toBeLessThanOrEqual(4)
+    expect(m.faltando).toEqual([])
+    expect(m.extras.cortes).toEqual([])
+    const linhas = Array.from({ length: 10 }, (_, i) => m.marcas.get(`linha-pontos:${i}`)?.pagina)
+    expect(new Set(linhas).size).toBe(1)
+    expect(linhas[0]).toBe(m.marcas.get('fim:passo-5')?.pagina)
+    // O EMA por classe, logo depois dos pontos (na mesma página ou, sem caber, no alto da seguinte, com o título)
+    const ema = m.marcas.get('fim:parte-5-8')!.pagina
+    expect([linhas[0], linhas[0]! + 1]).toContain(ema)
+    if (ema > linhas[0]!)
+      expect(corrido(paginasDe(textoDoPdf(m.pdf))[ema - 1])).toMatch(
+        /5 ERRO DE INDICAÇÃO \(CONTINUAÇÃO\) .*Para decidir o ajuste: EMA em serviço/,
+      )
+  })
+
+  it('descrição do padrão: a classe não se repete; sem plano, numa linha só (o que sobra, com "…")', () => {
+    const p = (descricao: string, classe: string, tipo: Padrao['tipo'] = 'PESOS') =>
+      ({ ...padroesDaEmpresa()[1], descricao, classe, tipo }) as Padrao
+    const texto = (no: { text?: unknown }) => (no.text as Array<{ text: string }>).map((t) => t.text).join('')
+    // Com o plano (largura livre): inteira, com a classe só se ela ainda não estiver escrita
+    expect(texto(descricaoPadraoNaFolha(p('Jogo de pesos 20 kg (15 peças) classe M1', 'M1')))).toBe(
+      'Jogo de pesos 20 kg (15 peças) classe M1',
+    )
+    expect(texto(descricaoPadraoNaFolha(p('Pesos padrão de 20 kg', 'M1')))).toBe('Pesos padrão de 20 kg · M1')
+    expect(texto(descricaoPadraoNaFolha(p('Pesos M1 de 20 kg', 'M1')))).toBe('Pesos M1 de 20 kg')
+    // "AM1" não é a classe M1
+    expect(texto(descricaoPadraoNaFolha(p('Kit AM1', 'M1')))).toBe('Kit AM1 · M1')
+    // Sem descrição, o tipo (nunca o código interno)
+    expect(texto(descricaoPadraoNaFolha(p('', '', 'BAROMETRO')))).toBe('Barômetro')
+    // Numa largura curta: a classe escrita na descrição vai para o fim, e o resto encurta com "…"
+    expect(texto(descricaoPadraoNaFolha(p('Jogo de pesos 20 kg (15 peças) classe M1', 'M1'), 140))).toBe(
+      'Jogo de pesos 20 kg (15 peças) · M1',
+    )
+    const longa = texto(
+      descricaoPadraoNaFolha(p('Termo-higrômetro digital com sonda externa e registrador', '', 'TERMOHIGROMETRO'), 140),
+    )
+    expect(longa).toMatch(/^Termo-higrômetro digital .*…$/)
+    expect(longa.length).toBeLessThan(45)
   })
 
   it('folha em branco de uma empresa com 36 padrões: a tabela dos padrões se divide, com o cabeçalho de novo', async () => {
@@ -951,8 +1099,6 @@ describe.runIf(temPdftotext)(
       const cabecalho = t.slice(t.indexOf('COMO ENCONTRADO DEPOIS DO AJUSTE · SÓ SE AJUSTOU'))
       expect(cabecalho).toMatch(/^COMO ENCONTRADO DEPOIS DO AJUSTE · SÓ SE AJUSTOU .{0,120}só se descer/)
       expect(cabecalho.slice(0, 200).match(/só se descer/g)).toHaveLength(1)
-      // Cada aba com o seu método e o seu retorno ao zero, no roteiro do escritório
-      expect(t).toContain('cada uma com o seu método e o seu retorno ao zero.')
       // O retorno ao zero tem uma célula por coluna (no sistema, um campo em cada aba)
       expect(t).toMatch(/RETORNO AO ZERO indicação depois de retirar toda a carga/)
     })
@@ -979,27 +1125,39 @@ describe.runIf(temPdftotext)(
     it.each([
       { nome: 'rodoviária 80 t', dados: folhaRodoviaria },
       { nome: 'rodoviária sem histórico', dados: folhaRodoviariaSemHistorico },
-    ])(
-      '$nome: o que se preenche antes das tabelas fica na página do passo 4; pontos e etapas, juntos, na seguinte',
-      async ({ dados }) => {
-        const m = await montar(dados())
-        expect(m.paginas).toBeLessThanOrEqual(5)
-        expect(m.extras.avisoPontos).toBe(true)
-        const paginas = paginasDe(textoDoPdf(m.pdf)).map(corrido)
-        const i = paginas.findIndex((p) => p.includes('5 ERRO DE INDICAÇÃO NO SISTEMA'))
-        expect(paginas[i]).toContain('4 VERIFICAÇÃO ANTES DE CALIBRAR')
-        expect(paginas[i]).toMatch(/COMO AS CARGAS FORAM APLICADAS .* Cargas de substituição: em cada etapa/)
-        expect(paginas[i]).toContain('Tabelas na próxima página: os pontos e as etapas de substituição, juntos.')
-        const seguinte = paginas[i + 1]
-        expect(seguinte).toMatch(/5 ERRO DE INDICAÇÃO \(CONTINUAÇÃO\) NO SISTEMA 6 · Erro de indicação Nº Carga Substi-/)
-        expect(seguinte).toContain('RETORNO AO ZERO')
-        expect(seguinte).toMatch(/Cargas de substituição( sugeridas)? — 10 000 kg de pesos padrão em cada etapa/)
-        // O "como fazer" das etapas não se repete na página das tabelas
-        expect(seguinte).not.toContain('em cada etapa, com os pesos padrão')
-        // Liberado o espaço do título e do método, o passo 6 sobe para a página das tabelas
-        expect(seguinte).toContain('6 AJUSTE E REPARO')
-      },
-    )
+    ])('$nome: pontos e etapas de substituição, juntos, na página do título do passo 5 (4 páginas)', async ({ dados }) => {
+      const m = await montar(dados())
+      expect(m.paginas).toBeLessThanOrEqual(4)
+      expect(m.extras.avisoPontos).toBeFalsy()
+      const paginas = paginasDe(textoDoPdf(m.pdf)).map(corrido)
+      const i = paginas.findIndex((p) => p.includes('5 ERRO DE INDICAÇÃO NO SISTEMA'))
+      expect(paginas[i]).toMatch(/COMO AS CARGAS FORAM APLICADAS .* Cargas de substituição: em cada etapa/)
+      expect(paginas[i]).toContain('RETORNO AO ZERO')
+      expect(paginas[i]).toMatch(/Cargas de substituição( sugeridas)? — 10 000 kg de pesos padrão em cada etapa/)
+      expect(paginas[i]).not.toMatch(/na próxima página/)
+    })
+
+    it('rodoviária com anotações longas na chegada: as tabelas passam juntas para a página seguinte, com o aviso', async () => {
+      const d = folhaRodoviariaSemHistorico()
+      d.calibracao = {
+        ...d.calibracao!,
+        anotacoesInternas:
+          'Procurar a Juliana na portaria 2; acesso à doca só com botina, capacete e protetor auricular. Integração de segurança obrigatória (30 min) antes de entrar. Não estacionar na doca 1. Levar nota fiscal dos pesos para a portaria. ' +
+          'Ligar para o Eng. Ricardo 30 min antes de chegar; a balança fica desligada aos domingos e o caminhão de lastro precisa ser agendado com dois dias de antecedência na logística.',
+      }
+      const m = await montar(d)
+      expect(m.extras.avisoPontos).toBe(true)
+      const paginas = paginasDe(textoDoPdf(m.pdf)).map(corrido)
+      const i = paginas.findIndex((p) => p.includes('5 ERRO DE INDICAÇÃO NO SISTEMA'))
+      expect(paginas[i]).toMatch(/COMO AS CARGAS FORAM APLICADAS .* Cargas de substituição: em cada etapa/)
+      expect(paginas[i]).toContain('Tabelas na próxima página: os pontos e as etapas de substituição, juntos.')
+      const seguinte = paginas[i + 1]
+      expect(seguinte).toMatch(/5 ERRO DE INDICAÇÃO \(CONTINUAÇÃO\) NO SISTEMA 6 · Erro de indicação Nº Carga Substi-/)
+      expect(seguinte).toContain('RETORNO AO ZERO')
+      expect(seguinte).toMatch(/Cargas de substituição sugeridas — 10 000 kg de pesos padrão em cada etapa/)
+      // O "como fazer" das etapas não se repete na página das tabelas
+      expect(seguinte).not.toContain('em cada etapa, anote a indicação')
+    })
 
     it('tabela que cabe na página: o passo inteiro, sem aviso de continuação', async () => {
       const m = await montar(folhaPlataforma())
@@ -1007,11 +1165,13 @@ describe.runIf(temPdftotext)(
       const t = corrido(textoDoPdf(m.pdf))
       expect(t).not.toMatch(/na próxima página/)
       const pontos = Array.from({ length: 7 }, (_, i) => m.marcas.get(`linha-pontos:${i}`)?.pagina)
-      expect(pontos.every((p) => p === m.marcas.get('passo-5')?.pagina)).toBe(true)
+      // A marca do fim do título do passo (a do começo fica na página de antes, se ele passou para a seguinte)
+      expect(pontos.every((p) => p === m.marcas.get('fim:passo-5')?.pagina)).toBe(true)
     })
 
     it('tabela longa (que não cabe numa página): continua se dividindo, com o título e o cabeçalho de novo', async () => {
-      const m = await montar(comPontos(folhaPlataforma, 26))
+      // Com a folha enxuta, até ≈ 30 linhas cabem numa página: 36 pontos não cabem
+      const m = await montar(comPontos(folhaPlataforma, 36))
       expect(m.faltando).toEqual([])
       expect(m.extras.cortes.length).toBeGreaterThan(0)
       const t = corrido(textoDoPdf(m.pdf))
@@ -1046,7 +1206,7 @@ describe.runIf(temPdftotext)(
 )
 
 /** Altura útil da página (pt), entre a faixa de identificação e o rodapé (as margens da folha). */
-const TOPO_UTIL = TOPO_CABECALHO + MODULO + 30
+const TOPO_UTIL = TOPO_CABECALHO + MODULO + 27
 const PE_UTIL = A4.altura - Math.ceil(A4.altura - BASE_RODAPE + 30)
 
 /** Branco no pé de cada página (mm): do fim do conteúdo até o rodapé, medido na imagem (pdftoppm). */
@@ -1098,14 +1258,12 @@ describe.runIf(temPdftotext)('correções da 4ª revisão: páginas sem grandes 
     for (const [i, mm] of brancos.entries()) expect(mm, `página ${i + 1}`).toBeLessThan(MEIA_PAGINA_MM)
   })
 
-  it('rodoviária 80 t: 5 páginas; o vazio da p.2 é o lugar que pontos + etapas (juntos) não cabem', async () => {
+  it('rodoviária 80 t: 3 páginas; pontos e etapas (juntos) na p.2, com o título do passo 5', async () => {
     const m = await montar(folhaRodoviaria())
-    expect(m.paginas).toBe(5)
-    const [, p2] = brancoNoPe(m.pdf, m.paginas)
-    // A p.2 fica com o passo 4 e o que se preenche antes das tabelas; as tabelas, juntas, não caberiam no resto
+    expect(m.paginas).toBe(3)
     const tabelas = m.marcas.get(`fim:${'parte-5-1'}`)!
-    expect(tabelas.pagina).toBe(3)
-    expect((tabelas.topo - TOPO_UTIL) * (25.4 / 72)).toBeGreaterThan(p2)
+    expect(tabelas.pagina).toBe(2)
+    expect(m.marcas.get('fim:passo-5')?.pagina).toBe(2)
   })
 
   it('textos longos: a tabela dos pontos vai inteira; a última página não fica só com as assinaturas', async () => {
@@ -1113,22 +1271,63 @@ describe.runIf(temPdftotext)('correções da 4ª revisão: páginas sem grandes 
     expect(m.extras.cortes).toEqual([])
     const linhas = Array.from({ length: 7 }, (_, i) => m.marcas.get(`linha-pontos:${i}`)?.pagina)
     expect(new Set(linhas).size).toBe(1)
-    // As observações vão para a última página, com o título do passo 9 e "(continuação)", e crescem lá
-    expect(m.extras.observacoesAdiante).toBe(true)
     const paginas = paginasDe(textoDoPdf(m.pdf)).map(corrido)
     expect(paginas).toHaveLength(m.paginas)
-    expect(paginas.at(-1)).toMatch(
-      /9 ENCERRAMENTO: AMBIENTE NO FIM E CONCLUSÃO \(CONTINUAÇÃO\) .* OBSERVAÇÕES \(SAEM NO CERTIFICADO\) .* OPINIÕES .* 10 ASSINATURAS/,
-    )
-    expect(paginas.at(-2)).toContain('9 ENCERRAMENTO: AMBIENTE NO FIM E CONCLUSÃO NO SISTEMA')
-    expect(paginas.at(-2)).not.toContain('OBSERVAÇÕES (SAEM NO CERTIFICADO)')
-    expect(m.extras.linhas).toBeGreaterThan(8)
+    expect(paginas.at(-1)).toMatch(/OBSERVAÇÕES \(SAEM NO CERTIFICADO\) .* OPINIÕES .* 10 ASSINATURAS/)
     for (const [i, mm] of brancoNoPe(m.pdf, m.paginas).entries()) expect(mm, `página ${i + 1}`).toBeLessThan(MEIA_PAGINA_MM)
   })
 
-  it('com as observações já na página das assinaturas, nada muda', async () => {
-    const m = await montar(folhaPlataforma())
-    expect(m.extras.observacoesAdiante).toBeFalsy()
-    expect(corrido(paginasDe(textoDoPdf(m.pdf)).at(-1)!)).toMatch(/OBSERVAÇÕES \(SAEM NO CERTIFICADO\) .* 10 ASSINATURAS/)
+  it.each(EXEMPLOS)(
+    '$nome: observações, assinaturas e escritório num bloco só (as assinaturas nunca ficam sozinhas)',
+    async (e) => {
+      const doc = definicaoFolhaCampo(e.dados()) as { content: Array<{ id?: string; unbreakable?: boolean }> }
+      const bloco = doc.content.find((x) => x.id === 'parte-observacoes')!
+      expect(bloco.unbreakable).toBe(true)
+      const json = JSON.stringify(bloco)
+      for (const x of ['OBSERVAÇÕES (SAEM NO CERTIFICADO)', 'OPINIÕES E INTERPRETAÇÕES', 'ASSINATURAS', 'ESCRITÓRIO'])
+        expect(json).toContain(x)
+      // O passo 10 não é mais um bloco à parte, depois do 9
+      expect(doc.content.some((x) => x.id === 'passo-10')).toBe(false)
+      const m = await montar(e.dados())
+      const ultima = corrido(paginasDe(textoDoPdf(m.pdf)).at(-1)!)
+      expect(ultima).toMatch(/OBSERVAÇÕES \(SAEM NO CERTIFICADO\) .* OPINIÕES .* 10 ASSINATURAS .* ESCRITÓRIO/)
+    },
+  )
+
+  it('as observações ganham no máximo 4 linhas no espaço que sobra: a caixa não estica até o pé da página', async () => {
+    for (const e of EXEMPLOS) expect((await montar(e.dados())).extras.linhas, e.nome).toBeLessThanOrEqual(4)
+    // Na plataforma sobra espaço na última página: 4 linhas a mais, e não mais que isso
+    expect((await montar(folhaPlataforma())).extras.linhas).toBe(4)
+  })
+
+  it('fim da folha enxuto: o escritório numa linha, as duas assinaturas numa linha, sem conformidade pedida o pedido, o limite e a regra numa linha', async () => {
+    const doc = definicaoFolhaCampo(folhaRodoviariaSemHistorico()) as { content: unknown[] }
+    // Tabelas pelo rótulo: a do escritório e a das assinaturas têm uma linha só
+    const tabelas: Array<{ body: unknown[][] }> = []
+    const visitar = (no: unknown) => {
+      if (Array.isArray(no)) no.forEach(visitar)
+      else if (no && typeof no === 'object') {
+        const x = no as { table?: { body: unknown[][] } }
+        if (x.table) tabelas.push(x.table)
+        Object.values(no).forEach(visitar)
+      }
+    }
+    visitar(doc.content)
+    const tabela = (texto: string) =>
+      tabelas
+        .filter((t) => JSON.stringify(t.body[0]).includes(texto))
+        .sort((a, b) => JSON.stringify(a).length - JSON.stringify(b).length)[0]
+    expect(tabela('ESCRITÓRIO').body).toHaveLength(1)
+    expect(tabela('TÉCNICO QUE EXECUTOU — NOME E ASSINATURA').body).toHaveLength(1)
+    expect(tabela('O CLIENTE PEDIU CONFORMIDADE?').body).toHaveLength(1)
+    const texto = textoDoPdf(await gerarFolhaCampoPdf(folhaRodoviariaSemHistorico()))
+    const linhas = texto.split('\n')
+    expect(linhas.find((l) => l.includes('O CLIENTE PEDIU CONFORMIDADE?'))).toMatch(
+      /LIMITE \(ERRO MÁXIMO ADMISSÍVEL\) +REGRA DE DECISÃO/,
+    )
+    expect(linhas.find((l) => l.includes('Portaria 157 — em serviço'))).toMatch(
+      /OIML R76 — em serviço +Tolerância do cliente +banda de guarda/,
+    )
+    expect(corrido(texto)).toMatch(/± _+ kg/)
   })
 })

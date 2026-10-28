@@ -8,7 +8,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync,
 import { dirname, join } from 'node:path'
 
 import {
+  arquivoDoCertificadoAnterior,
   calibracaoEmOutraUnidade,
+  certificadosAnterioresApos,
   completarConfig,
   CONFIG_PADRAO,
   dataIsoValida,
@@ -25,9 +27,11 @@ import {
   textoBusca,
   textoBuscaBalanca,
 } from '#shared/dominio.ts'
+import { normalizarPop, textoPop, tipoDoMime, TIPOS_DA_FINALIDADE, type FinalidadeArquivo } from '#shared/arquivos.ts'
 import { somenteDigitos, normalizarCnpj } from '#shared/documentos.ts'
 import { novoId } from '#shared/id.ts'
 import type {
+  ArquivoAnexo,
   Balanca,
   BalancaResumo,
   Calibracao,
@@ -44,6 +48,7 @@ import type {
   ResumoPainel,
   StatusCalibracao,
   Vencimento,
+  VersaoPop,
 } from '#shared/tipos.ts'
 import { type Banco, gravarMeta, lerMeta, transacao } from './db.ts'
 import { ErroApi } from './erros.ts'
@@ -80,6 +85,17 @@ export function dataDaImpressaoNoPdf(pdf: Buffer): string | null {
 }
 
 type Linha = { dados: string }
+
+/** Nomes dos anexos gravados com o envio (JSON); [] nos envios antigos. */
+function anexosDoEnvio(v: string | undefined): string[] {
+  if (!v) return []
+  try {
+    const lista = JSON.parse(v)
+    return Array.isArray(lista) ? lista.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
 
 function validar<T>(r: { valor: T; erros: string[] }): T {
   if (r.erros.length) throw new ErroApi(400, r.erros[0], { erros: r.erros })
@@ -148,14 +164,24 @@ export class Repositorio {
 
   // ---- Configurações ------------------------------------------------------------
 
+  /**
+   * Configurações. O código e a revisão do procedimento (`textos.procedimento`) vêm sempre da revisão
+   * vigente do POP ('' sem POP registrado), não do que foi gravado nas configurações.
+   */
   obterConfig(): Configuracoes {
     const l = this.db.prepare("SELECT valor FROM config WHERE chave = 'geral'").get() as { valor: string } | undefined
-    if (!l) return structuredClone(CONFIG_PADRAO)
+    let config: Configuracoes
     try {
-      return completarConfig(JSON.parse(l.valor))
+      config = l ? completarConfig(JSON.parse(l.valor)) : structuredClone(CONFIG_PADRAO)
     } catch {
-      return structuredClone(CONFIG_PADRAO)
+      config = structuredClone(CONFIG_PADRAO)
     }
+    return this.comPop(config)
+  }
+
+  private comPop(c: Configuracoes): Configuracoes {
+    const pop = this.popVigente()
+    return { ...c, textos: { ...c.textos, procedimento: pop ? textoPop(pop) : '' } }
   }
 
   salvarConfig(entrada: unknown): Configuracoes {
@@ -166,7 +192,144 @@ export class Repositorio {
         .run(JSON.stringify(config))
       this.mudou('config')
     })
-    return config
+    return this.comPop(config)
+  }
+
+  // ---- Arquivos guardados (certificados dos padrões e POP) -------------------------------
+
+  /**
+   * Guarda o conteúdo (já conferido: tipo e tamanho) e devolve a referência com o nome deste envio. O mesmo
+   * conteúdo já guardado é reaproveitado (a linha é a mesma, pelo SHA-256).
+   */
+  guardarArquivo(conteudo: Buffer, e: { nome: string; tipo: string; por: string }): ArquivoAnexo {
+    const sha256 = createHash('sha256').update(conteudo).digest('hex')
+    const em = this.agora().toISOString()
+    transacao(this.db, () => {
+      this.db
+        .prepare(
+          `INSERT INTO arquivos (sha256, nome, tipo, tamanho, conteudo, criado_em, criado_por) VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(sha256) DO NOTHING`,
+        )
+        .run(sha256, e.nome, e.tipo, conteudo.length, conteudo, em, e.por)
+    })
+    const info = this.infoArquivo(sha256)!
+    return { sha256, nome: e.nome, tamanho: info.tamanho, tipo: info.tipo, enviadoEm: em }
+  }
+
+  /** Dados de um arquivo guardado, sem o conteúdo. */
+  infoArquivo(sha256: string): { sha256: string; nome: string; tipo: string; tamanho: number; criadoEm: string } | undefined {
+    const l = this.db.prepare('SELECT sha256, nome, tipo, tamanho, criado_em FROM arquivos WHERE sha256 = ?').get(sha256) as
+      { sha256: string; nome: string; tipo: string; tamanho: number; criado_em: string } | undefined
+    return l ? { sha256: l.sha256, nome: l.nome, tipo: l.tipo, tamanho: Number(l.tamanho), criadoEm: l.criado_em } : undefined
+  }
+
+  /** Conteúdo de um arquivo guardado. */
+  lerArquivo(sha256: string): { nome: string; tipo: string; conteudo: Buffer } | undefined {
+    const l = this.db.prepare('SELECT nome, tipo, conteudo FROM arquivos WHERE sha256 = ?').get(sha256) as
+      { nome: string; tipo: string; conteudo: Uint8Array } | undefined
+    return l ? { nome: l.nome, tipo: l.tipo, conteudo: Buffer.from(l.conteudo) } : undefined
+  }
+
+  /**
+   * Confere uma referência vinda de uma tela: o arquivo precisa estar guardado e ser de um tipo aceito para
+   * a finalidade; o tamanho e o tipo são os do arquivo guardado. `atual`: a referência de antes (o mesmo
+   * arquivo mantém a data em que foi anexado).
+   */
+  private conferirArquivo(
+    ref: ArquivoAnexo,
+    finalidade: FinalidadeArquivo,
+    atual: ArquivoAnexo | null | undefined,
+    oQue: string,
+  ): ArquivoAnexo {
+    const info = this.infoArquivo(ref.sha256)
+    if (!info) throw new ErroApi(400, `O arquivo ${oQue} não foi encontrado no servidor. Anexe o arquivo de novo.`)
+    const tipo = tipoDoMime(info.tipo)
+    if (!tipo || !TIPOS_DA_FINALIDADE[finalidade].includes(tipo))
+      throw new ErroApi(400, `Este tipo de arquivo não serve para ${oQue}.`)
+    const mesmo = atual?.sha256 === ref.sha256 && !!atual.enviadoEm
+    return {
+      sha256: info.sha256,
+      nome: ref.nome || info.nome,
+      tamanho: info.tamanho,
+      tipo: info.tipo,
+      enviadoEm: mesmo ? atual!.enviadoEm : this.agora().toISOString(),
+    }
+  }
+
+  // ---- POP (Procedimento Operacional Padrão) ---------------------------------------------
+
+  /** Revisões do POP, da mais nova (a vigente) para a mais antiga. */
+  versoesPop(): VersaoPop[] {
+    const linhas = this.db
+      .prepare(
+        `SELECT p.id, p.codigo, p.revisao, p.data, p.arquivo, p.observacao, p.criado_em, p.criado_por,
+                a.nome AS arquivo_nome, a.tipo AS arquivo_tipo, a.tamanho AS arquivo_tamanho, a.criado_em AS arquivo_em
+           FROM pop_versoes p LEFT JOIN arquivos a ON a.sha256 = p.arquivo
+          ORDER BY p.id DESC`,
+      )
+      .all() as Array<Record<string, string | number | null>>
+    return linhas.map((l, i) => ({
+      id: Number(l.id),
+      codigo: String(l.codigo),
+      revisao: String(l.revisao),
+      data: String(l.data ?? ''),
+      arquivo:
+        l.arquivo && l.arquivo_nome !== null
+          ? {
+              sha256: String(l.arquivo),
+              nome: String(l.arquivo_nome),
+              tamanho: Number(l.arquivo_tamanho),
+              tipo: String(l.arquivo_tipo),
+              enviadoEm: String(l.arquivo_em),
+            }
+          : null,
+      observacao: String(l.observacao ?? ''),
+      criadoEm: String(l.criado_em),
+      criadoPor: String(l.criado_por ?? ''),
+      vigente: i === 0,
+    }))
+  }
+
+  /** A revisão do POP que vale hoje (a última registrada), ou null se nenhuma foi registrada. */
+  popVigente(): VersaoPop | null {
+    return this.versoesPop()[0] ?? null
+  }
+
+  /** Registra uma revisão nova do POP: passa a valer para os próximos certificados (os emitidos não mudam). */
+  registrarPop(entrada: unknown, por: string): VersaoPop {
+    const valor = validar(normalizarPop(entrada))
+    return transacao(this.db, () => {
+      // Maiúsculas e minúsculas não contam, com acento ("Ç" = "ç", que o NOCASE do SQLite não iguala)
+      const chave = (c: string) => c.normalize('NFC').toLocaleUpperCase('pt-BR')
+      const repetida = this.versoesPop().some((v) => chave(v.codigo) === chave(valor.codigo) && v.revisao === valor.revisao)
+      if (repetida)
+        throw new ErroApi(409, `A revisão ${valor.revisao} do ${valor.codigo} já está registrada. Confira o número da revisão.`)
+      const arquivo = valor.arquivo
+        ? this.conferirArquivo({ sha256: valor.arquivo, nome: '', tamanho: 0, tipo: '', enviadoEm: '' }, 'pop', null, 'do POP')
+        : null
+      this.db
+        .prepare(
+          `INSERT INTO pop_versoes (codigo, revisao, data, arquivo, observacao, criado_em, criado_por)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(valor.codigo, valor.revisao, valor.data, arquivo?.sha256 ?? null, valor.observacao, this.agora().toISOString(), por)
+      this.mudou('config')
+      return this.popVigente()!
+    })
+  }
+
+  /** Anexa (ou troca) o arquivo de uma revisão do POP já registrada (ex.: registrada antes do arquivo ficar pronto). */
+  anexarArquivoPop(id: number, sha256: unknown): VersaoPop {
+    const sha = typeof sha256 === 'string' ? sha256.toLowerCase() : ''
+    if (!/^[0-9a-f]{64}$/.test(sha)) throw new ErroApi(400, 'Envie o arquivo do POP.')
+    return transacao(this.db, () => {
+      if (!this.db.prepare('SELECT 1 FROM pop_versoes WHERE id = ?').get(id))
+        throw new ErroApi(404, 'Revisão do POP não encontrada.')
+      this.conferirArquivo({ sha256: sha, nome: '', tamanho: 0, tipo: '', enviadoEm: '' }, 'pop', null, 'do POP')
+      this.db.prepare('UPDATE pop_versoes SET arquivo = ? WHERE id = ?').run(sha, id)
+      this.mudou('config')
+      return this.versoesPop().find((v) => v.id === id)!
+    })
   }
 
   // ---- Clientes -----------------------------------------------------------------
@@ -472,7 +635,14 @@ export class Repositorio {
     return transacao(this.db, () => {
       this.verificarIdentificacao(valor.identificacao)
       const em = this.agora().toISOString()
-      const padrao: Padrao = { ...valor, id: novoId(), versao: 1, criadoEm: em, atualizadoEm: em }
+      const padrao: Padrao = {
+        ...valor,
+        certificadoArquivo: this.arquivoDoPadrao(valor.certificadoArquivo, null),
+        id: novoId(),
+        versao: 1,
+        criadoEm: em,
+        atualizadoEm: em,
+      }
       this.gravarPadrao(padrao, true)
       this.mudou('padrao', padrao.id)
       return padrao
@@ -487,7 +657,27 @@ export class Repositorio {
       const versao = versaoDe(entrada)
       if (versao !== undefined && versao !== atual.versao) throw conflito('este padrão')
       this.verificarIdentificacao(valor.identificacao, id)
-      const padrao: Padrao = { ...atual, ...valor, versao: atual.versao + 1, atualizadoEm: this.agora().toISOString() }
+      const certificadoArquivo = this.arquivoDoPadrao(valor.certificadoArquivo, atual.certificadoArquivo)
+      // Padrão calibrado de novo (outro nº) com o arquivo do certificado anterior: o arquivo antigo iria aos
+      // clientes com o nº novo. Só passa se quem edita confirmar que corrigiu o nº do mesmo certificado.
+      if (
+        arquivoDoCertificadoAnterior(atual, { certificado: valor.certificado, sha256: certificadoArquivo?.sha256 }) &&
+        (entrada as { arquivoConfirmado?: unknown } | null)?.arquivoConfirmado !== true
+      )
+        throw new ErroApi(
+          400,
+          'O nº do certificado mudou, mas o arquivo anexado é o do certificado anterior. Anexe o arquivo do certificado novo ou tire o arquivo antigo.',
+          { codigo: 'ARQUIVO_DO_CERTIFICADO_ANTERIOR' },
+        )
+      const anteriores = certificadosAnterioresApos(atual, valor.certificado)
+      const padrao: Padrao = {
+        ...atual,
+        ...valor,
+        certificadoArquivo,
+        ...(anteriores.length ? { certificadosAnteriores: anteriores } : {}),
+        versao: atual.versao + 1,
+        atualizadoEm: this.agora().toISOString(),
+      }
       this.gravarPadrao(padrao, false)
       this.mudou('padrao', id)
       return padrao
@@ -506,6 +696,12 @@ export class Repositorio {
       this.db.prepare('DELETE FROM padroes WHERE id = ?').run(id)
       this.mudou('padrao', id)
     })
+  }
+
+  /** Arquivo do certificado do padrão: `undefined` (tela antiga, sem o campo) mantém o de antes. */
+  private arquivoDoPadrao(novo: ArquivoAnexo | null | undefined, atual: ArquivoAnexo | null | undefined): ArquivoAnexo | null {
+    if (novo === undefined) return atual ?? null
+    return novo ? this.conferirArquivo(novo, 'padrao', atual, 'do certificado do padrão') : null
   }
 
   private verificarIdentificacao(identificacao: string, exceto = '') {
@@ -1518,8 +1714,8 @@ export class Repositorio {
     transacao(this.db, () => {
       this.db
         .prepare(
-          `INSERT INTO envios (id, calibracao_id, cliente_id, tipo, para, assunto, usuario_id, usuario_nome, em)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO envios (id, calibracao_id, cliente_id, tipo, para, assunto, usuario_id, usuario_nome, em, anexos)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           novoId(),
@@ -1531,6 +1727,7 @@ export class Repositorio {
           e.usuarioId,
           e.usuarioNome,
           this.agora().toISOString(),
+          e.anexos?.length ? JSON.stringify(e.anexos) : '',
         )
       this.mudou('calibracao', e.calibracaoId || undefined)
     })
@@ -1559,6 +1756,7 @@ export class Repositorio {
       assunto: l.assunto,
       usuarioNome: l.usuario_nome,
       em: l.em,
+      anexos: anexosDoEnvio(l.anexos),
     }))
   }
 

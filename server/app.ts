@@ -13,6 +13,7 @@ import { criarModuloEmail, type CriarTransporte } from './email.ts'
 import { ErroApi } from './erros.ts'
 import { idDaInstalacao, novaInstancia } from './identidade.ts'
 import { Repositorio } from './repositorio.ts'
+import { rotasArquivos } from './rotas/arquivos.ts'
 import { rotasCadastros } from './rotas/cadastros.ts'
 import { rotasCalibracoes } from './rotas/calibracoes.ts'
 import { rotasConsultas } from './rotas/consultas.ts'
@@ -268,6 +269,7 @@ export async function criarApp(opcoes: OpcoesApp) {
 
   await rotasUsuarios(app, { usuarios, tempoReal, nomeCookie })
   await rotasCadastros(app, ctx)
+  await rotasArquivos(app, ctx)
   await rotasGeral(app, ctx)
   await rotasCalibracoes(app, ctx, email)
   await rotasFolhaCampo(app, ctx)

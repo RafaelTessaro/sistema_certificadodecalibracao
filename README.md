@@ -20,27 +20,33 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
   8. Revisão
 
   O cálculo de erro, incerteza (k e νeff) e conformidade é feito **ao vivo** pelo método EURAMET cg-18.
+
 - **Folha de campo** para levar ao cliente e preencher à caneta (o registro de dados brutos da ISO/IEC 17025, 7.5):
   - roteiro na ordem do serviço no local (padrões, chegada, plaqueta, verificação e ambiente, erro de indicação, ajuste, repetibilidade, excentricidade, encerramento e assinaturas), e cada passo diz em que etapa do sistema é digitado;
-  - já vem com o que o sistema sabe: cliente, endereço, OS, balança (cada dado com "confere ou escreva o certo"), os pontos com os pesos de cada carga, a faixa aceitável, a carga e as posições da excentricidade e os padrões a separar, com aviso de padrão vencido ou de pesos que não fecham a carga (dos pontos, da repetibilidade ou da excentricidade);
+  - já vem com o que o sistema sabe: cliente, endereço, OS, balança (dado impresso diferente do real: o técnico anota o certo no verso), os pontos com os pesos de cada carga, a faixa aceitável, a carga e as posições da excentricidade e os padrões a separar, com aviso de padrão vencido ou de pesos que não fecham a carga (dos pontos, da repetibilidade ou da excentricidade);
   - nº **FC-AAAA-NNNNN**, com QR, rubrica e data em toda página; o mesmo nº é sempre o mesmo documento: a reimpressão é o arquivo da primeira impressão, byte a byte (o PDF fica em `dados/folhas-campo/<ano>/`, com o sha256 no banco: copie essa pasta junto com a de certificados), e a folha em branco ligada depois a uma calibração reimprime em branco, como foi a campo; o nº aparece na calibração (e na revisão dela, que usa a folha do certificado revisado, sem nº novo);
   - imprime pelo assistente da calibração, ao criar a calibração (antes da visita), pela balança, ou **em branco**, para uma balança ainda não cadastrada; a folha avulsa (em branco, do cliente ou da balança) é ligada depois à calibração digitada pelo nº dela, na etapa 1 (Cliente e OS); a folha de um rascunho excluído fica livre para ser ligada à calibração refeita, e a de um certificado cancelado (ou de uma revisão cancelada) passa para ela pelo administrador, continua aparecendo no cancelado e volta para ele se a refeita for excluída; a avulsa ligada por engano e trocada fica livre de novo; a de outra calibração que vale, não (a mensagem diz qual); impressa para outra balança (cadastro duplicado e excluído, rascunho refeito com a balança certa), só confirmando;
   - calibração que já tem folha pergunta ao imprimir: **reimprimir** a mesma ou **folha nova (novo nº)**, com os dados atuais (o plano mudou antes da visita); a de antes continua registrada como substituída (não usada) e a troca vai para o registro de atividades;
   - certificado emitido só reimprime a folha que a calibração teve (nenhum nº novo depois da emissão), e a revisão de um certificado feito sem folha também não ganha nº novo (é a mesma visita);
-  - rodoviária sem cargas de substituição no plano: a folha sugere as etapas (os pesos previstos em cada uma) e o nº de substituições de cada ponto, como o cálculo soma.
-- **Certificado em PDF** com:
-  - número único, "Página X de Y" e "Fim do certificado";
+  - rodoviária sem cargas de substituição no plano: a folha sugere as etapas (os pesos previstos em cada uma) e o nº de substituições de cada ponto, como o cálculo soma;
+  - enxuta: 3 páginas (a folha em branco, com todos os campos para escrever, 4); as observações, as assinaturas e o quadro do escritório (numa linha) vão sempre juntos.
+- **Certificado em PDF** enxuto (2 páginas; 3 com ajuste e "como encontrado" ou muitos ensaios), com:
+  - número único, o POP, "Página X de Y" em toda página e "Fim do certificado" (as assinaturas nunca ficam sozinhas na última página: vão com a última declaração);
+  - a cláusula de reprodução (só na íntegra) no rodapé de toda página;
   - rastreabilidade, incerteza expandida com k e νeff, condições ambientais e resultados antes e depois do ajuste;
   - declaração de laboratório não acreditado.
 - **Revisão** (o certificado novo ganha o sufixo "-R1" e diz qual substitui) e **cancelamento** com motivo. O PDF emitido nunca muda.
-- **Envio por e-mail** do PDF ao cliente, com histórico de envios, e **lembretes** de calibração para as balanças que vão vencer.
+- **POP** (Procedimento Operacional Padrão) em Configurações → Certificado: código, revisão, data e o arquivo (PDF ou Word), com o histórico das revisões. O código e a revisão vigentes saem em todas as páginas do certificado e na folha de campo; sem POP registrado, o certificado não é emitido. O botão **POP** (Certificados e calibração) abre o arquivo para qualquer pessoa da equipe.
+- **Padrões** com o arquivo do certificado de calibração (PDF, JPG ou PNG, até 10 MB), conferido pelo conteúdo. Trocar o arquivo com o mesmo nº de certificado corrige também os certificados já emitidos com ele; quando o padrão é calibrado de novo (outro nº), os já emitidos continuam com o arquivo do certificado deles, guardado no cadastro. Mudar o nº mantendo o arquivo antigo é recusado (o arquivo iria aos clientes com o nº novo), salvo confirmação de que só se corrigiu o nº.
+- **Envio por e-mail** do PDF ao cliente junto com os certificados dos padrões usados (o arquivo do certificado de cada padrão com o nº que saiu no certificado; até 20 anexos e 18 MB), com histórico de envios e dos anexos, e **lembretes** de calibração para as balanças que vão vencer.
 - **Usuários**:
   - administrador;
   - técnico;
   - signatário, quem autoriza a emissão, com a assinatura digitalizada.
 
   Há também o registro de atividades.
-- **Backup** automático todo dia, cópia manual e restauração. As cópias são do banco; os PDFs dos certificados e das folhas de campo ficam nas pastas `certificados` e `folhas-campo` da pasta de dados (copie a pasta inteira). Para voltar uma cópia antiga, siga o [LEIA-ME do instalador](instalador/LEIA-ME.md#depois-de-instalado): com `redefinir-senha.mjs transplantar` antes de pôr a cópia no lugar, as folhas de campo impressas depois dela continuam registradas, ligadas às calibrações; sem ele (ou com o banco atual estragado), elas voltam sozinhas pela pasta `folhas-campo` quando o servidor sobe, como folhas livres com a data da impressão, e o papel é ligado à calibração confirmando. Nenhuma calibração fica com duas folhas vigentes (fica a mais nova; a outra pode ser ligada de novo pelo nº), e a numeração FC nunca volta para trás.
+
+- **Backup** automático todo dia, cópia manual e restauração. As cópias são do banco (com os arquivos anexados: certificados dos padrões e POP); os PDFs dos certificados e das folhas de campo ficam nas pastas `certificados` e `folhas-campo` da pasta de dados (copie a pasta inteira). Para voltar uma cópia antiga, siga o [LEIA-ME do instalador](instalador/LEIA-ME.md#depois-de-instalado): com `redefinir-senha.mjs transplantar` antes de pôr a cópia no lugar, as folhas de campo impressas depois dela continuam registradas, ligadas às calibrações; sem ele (ou com o banco atual estragado), elas voltam sozinhas pela pasta `folhas-campo` quando o servidor sobe, como folhas livres com a data da impressão, e o papel é ligado à calibração confirmando. Nenhuma calibração fica com duas folhas vigentes (fica a mais nova; a outra pode ser ligada de novo pelo nº), e a numeração FC nunca volta para trás.
 - **Modo claro e escuro**, e funciona no celular e no tablet da oficina.
 
 ## Instalação no servidor (Windows)
@@ -62,6 +68,7 @@ Detalhes, atualização e desinstalação estão em [`instalador/LEIA-ME.md`](in
 2. Crie a conta do **administrador**. Ela já é signatária.
 
    Por segurança, a primeira conta só pode ser criada no próprio servidor, nunca pela rede.
+
 3. Em **Configurações**, confira:
    - os dados da empresa;
    - os textos do certificado;
@@ -111,13 +118,13 @@ No GitHub, o workflow **Instalador Windows** também gera o instalador.
 
 ### Organização do código
 
-| Pasta | Conteúdo |
-|---|---|
-| `shared/` | Tipos, regras de cadastro, textos do certificado, permissões e o **motor metrológico** (`shared/metrologia`) usado igual no navegador e no servidor |
-| `server/` | Fastify + SQLite embutido do Node (`node:sqlite`), geração do PDF (`server/pdf`), e-mail, backup, consultas de CNPJ/CEP e controle de acesso |
-| `src/` | Interface em React + Tailwind |
-| `instalador/` | Script do NSIS, serviço (WinSW), ferramentas do instalador e o programa das estações (`instalador/estacao`) |
-| `docs/pesquisa/` | Pesquisa que embasou o sistema, com as fontes: normas, cálculo de incerteza, modelos de certificado, design e instalador |
+| Pasta            | Conteúdo                                                                                                                                            |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shared/`        | Tipos, regras de cadastro, textos do certificado, permissões e o **motor metrológico** (`shared/metrologia`) usado igual no navegador e no servidor |
+| `server/`        | Fastify + SQLite embutido do Node (`node:sqlite`), geração do PDF (`server/pdf`), e-mail, backup, consultas de CNPJ/CEP e controle de acesso        |
+| `src/`           | Interface em React + Tailwind                                                                                                                       |
+| `instalador/`    | Script do NSIS, serviço (WinSW), ferramentas do instalador e o programa das estações (`instalador/estacao`)                                         |
+| `docs/pesquisa/` | Pesquisa que embasou o sistema, com as fontes: normas, cálculo de incerteza, modelos de certificado, design e instalador                            |
 
 ## Sobre o certificado (não RBC)
 

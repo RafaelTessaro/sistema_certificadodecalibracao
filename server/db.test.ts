@@ -9,7 +9,7 @@ import { detalheTrocaIndicador, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 6
+const ULTIMA = 7
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -366,5 +366,90 @@ describe('migração 6: PDF da folha de campo em arquivo e passagens de certific
     db.exec('PRAGMA user_version = 5')
     migrar(db)
     expect(versao(db)).toBe(ULTIMA)
+  })
+})
+
+describe('migração 7: arquivos guardados no banco, revisões do POP e anexos dos envios', () => {
+  /** Instalação da versão 1.0.1 (banco na versão 2), com as configurações gravadas e um envio. */
+  function banco101(procedimento: string | null) {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 2)
+    if (procedimento !== null)
+      db.prepare("INSERT INTO config (chave, valor) VALUES ('geral', ?)").run(
+        JSON.stringify({ empresa: { razaoSocial: 'X' }, textos: { procedimento, procedimentoDescricao: 'Método' } }),
+      )
+    db.prepare(
+      `INSERT INTO envios (id, calibracao_id, cliente_id, tipo, para, assunto, usuario_id, usuario_nome, em)
+       VALUES ('e1', 'k1', 'c1', 'CERTIFICADO', 'a@b.com', 'Certificado', 'u1', 'Ana', ?)`,
+    ).run(EM)
+    return db
+  }
+  const pops = (db: DatabaseSync) =>
+    db.prepare('SELECT id, codigo, revisao, arquivo, criado_por FROM pop_versoes ORDER BY id').all() as Array<
+      Record<string, unknown>
+    >
+  const colunas = (db: DatabaseSync, tabela: string) =>
+    (db.prepare(`PRAGMA table_info(${tabela})`).all() as Array<{ name: string }>).map((c) => c.name)
+
+  it('o procedimento digitado nas configurações vira a revisão vigente do POP (e o registro de atividades avisa)', () => {
+    const db = banco101('PT-CAL-02 rev. 3')
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(pops(db)).toEqual([{ id: 1, codigo: 'PT-CAL-02', revisao: '3', arquivo: null, criado_por: 'Atualização do sistema' }])
+    expect(registros(db)).toEqual([
+      {
+        acao: 'SISTEMA_ATUALIZADO',
+        ip: 'local',
+        detalhe:
+          'O procedimento das configurações do certificado (PT-CAL-02 rev. 3) passou a ser a revisão vigente do POP, em Configurações → Certificado. Anexe lá o arquivo do POP.',
+      },
+    ])
+    expect(colunas(db, 'arquivos')).toEqual(['sha256', 'nome', 'tipo', 'tamanho', 'conteudo', 'criado_em', 'criado_por'])
+    expect(colunas(db, 'pop_versoes')).toEqual([
+      'id',
+      'codigo',
+      'revisao',
+      'data',
+      'arquivo',
+      'observacao',
+      'criado_em',
+      'criado_por',
+    ])
+    // Os envios de antes ficam sem a lista de anexos
+    expect(db.prepare('SELECT anexos FROM envios').get()).toEqual({ anexos: '' })
+  })
+
+  it('o código de exemplo de fábrica (PT-CAL-01 rev. 0) não vira POP: o dono registra o dele', () => {
+    const db = banco101('PT-CAL-01 rev. 0')
+    migrar(db)
+    expect(pops(db)).toEqual([])
+    expect(registros(db)).toEqual([])
+  })
+
+  it('sem configurações gravadas, ou com o procedimento vazio, também não', () => {
+    for (const p of [null, '', '   ']) {
+      const db = banco101(p)
+      migrar(db)
+      expect(pops(db)).toEqual([])
+    }
+  })
+
+  it('procedimento sem "rev.": o texto inteiro vira o código', () => {
+    const db = banco101('Procedimento interno de calibração')
+    migrar(db)
+    expect(pops(db)).toEqual([expect.objectContaining({ codigo: 'Procedimento interno de calibração', revisao: '' })])
+  })
+
+  it('pode ser repetida: não cria a revisão de novo nem perde os arquivos', () => {
+    const db = banco101('PT-CAL-02 rev. 3')
+    migrar(db)
+    db.prepare(
+      "INSERT INTO arquivos (sha256, nome, tipo, tamanho, conteudo, criado_em) VALUES (?, 'a.pdf', 'application/pdf', 3, ?, ?)",
+    ).run('f'.repeat(64), Buffer.from('abc'), EM)
+    db.exec('PRAGMA user_version = 6')
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(pops(db)).toHaveLength(1)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM arquivos').get()).toEqual({ n: 1 })
   })
 })

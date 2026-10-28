@@ -58,8 +58,24 @@ export async function rotasCadastros(app: FastifyInstance, { repo }: Contexto) {
     const q = req.query as Consulta
     return { padroes: repo.listarPadroes({ inativos: sim(q.inativos) }) }
   })
-  app.post('/api/padroes', async (req, reply) => reply.code(201).send({ padrao: repo.criarPadrao(req.body) }))
-  app.put('/api/padroes/:id', async (req: ComId) => ({ padrao: repo.atualizarPadrao(req.params.id, req.body) }))
+  // O registro de atividades diz quando o arquivo do certificado do padrão foi anexado, trocado ou removido
+  app.post('/api/padroes', async (req, reply) => {
+    const padrao = repo.criarPadrao(req.body)
+    if (padrao.certificadoArquivo) req.detalheAuditoria = 'com o arquivo do certificado'
+    return reply.code(201).send({ padrao })
+  })
+  app.put('/api/padroes/:id', async (req: ComId) => {
+    const antes = repo.obterPadrao(req.params.id)?.certificadoArquivo?.sha256 ?? ''
+    const padrao = repo.atualizarPadrao(req.params.id, req.body)
+    const depois = padrao.certificadoArquivo?.sha256 ?? ''
+    if (antes !== depois)
+      req.detalheAuditoria = !depois
+        ? 'arquivo do certificado removido'
+        : antes
+          ? 'arquivo do certificado trocado'
+          : 'arquivo do certificado anexado'
+    return { padrao }
+  })
   app.delete('/api/padroes/:id', async (req: ComId, reply) => {
     repo.excluirPadrao(req.params.id)
     return reply.code(204).send()

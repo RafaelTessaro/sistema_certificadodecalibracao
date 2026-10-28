@@ -52,6 +52,7 @@ import {
   UFS,
 } from '#shared/dominio.ts'
 import type { ConfigNumeracao, Configuracoes as Config, DadosEmpresa, OpcoesCalculo, TextosCertificado } from '#shared/tipos.ts'
+import { CartaoPop } from '../components/CartaoPop'
 import { Logo } from '../components/Logo'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
@@ -1069,7 +1070,11 @@ const TEXTOS_FIXOS: Array<{ chave: ChaveTextoFixo; titulo: string; ajuda: string
     titulo: 'Abrangência dos resultados',
     ajuda: 'Os resultados valem só para a balança calibrada e nas condições do dia da calibração.',
   },
-  { chave: 'reproducao', titulo: 'Reprodução', ajuda: 'O certificado só pode ser copiado inteiro, nunca em partes.' },
+  {
+    chave: 'reproducao',
+    titulo: 'Reprodução',
+    ajuda: 'Sai no rodapé de toda página: o certificado só pode ser copiado inteiro. Curto, cabe ao lado do endereço.',
+  },
   {
     chave: 'naoAcreditado',
     titulo: 'Empresa não acreditada',
@@ -1103,21 +1108,8 @@ function avisosDoTexto(chave: string, t: string) {
   return termosSensiveis(t).filter((m) => !/validade/i.test(m) && !(citaAcreditacao && m.startsWith('Evite "acreditado"')))
 }
 
-/** "PT-CAL-01 rev. 0" → código e revisão (textos sem "rev." ficam inteiros no código). */
-function separarProcedimento(p: string) {
-  const m = p.match(/^(.*?)\s+rev\.?\s*(\S+)$/i)
-  return m ? { codigo: m[1], revisao: m[2] } : { codigo: p, revisao: '' }
-}
-function juntarProcedimento(codigo: string, revisao: string) {
-  const c = codigo.trim()
-  const r = revisao.trim()
-  return r ? `${c} rev. ${r}` : c
-}
-
 interface RascunhoCertificado {
   numeracao: ConfigNumeracao
-  procCodigo: string
-  procRevisao: string
   exigirRevisor: boolean
   textos: TextosCertificado
 }
@@ -1129,16 +1121,10 @@ const MARCAS_NUMERO = [
 ]
 
 function SecaoCertificado({ config, salvarParte, aoSujo }: PropsSecao) {
-  const atual = useMemo<RascunhoCertificado>(() => {
-    const p = separarProcedimento(config.textos.procedimento)
-    return {
-      numeracao: config.numeracao,
-      procCodigo: p.codigo,
-      procRevisao: p.revisao,
-      exigirRevisor: config.exigirRevisor,
-      textos: config.textos,
-    }
-  }, [config])
+  const atual = useMemo<RascunhoCertificado>(
+    () => ({ numeracao: config.numeracao, exigirRevisor: config.exigirRevisor, textos: config.textos }),
+    [config],
+  )
   const s = useSecao('certificado', atual, aoSujo)
   const v = s.valor
   const formatoRef = useRef<HTMLInputElement>(null)
@@ -1195,22 +1181,16 @@ function SecaoCertificado({ config, salvarParte, aoSujo }: PropsSecao) {
       return toast.erro('Confira os textos do certificado', ERRO_VALIDADE)
     }
     void s.gravar(async () => {
+      // O código e a revisão do POP não vão daqui: vêm da revisão vigente (registrada no cartão do POP)
       const nova = await salvarParte(
         {
           numeracao: { formato: v.numeracao.formato.trim(), digitos: v.numeracao.digitos },
           exigirRevisor: v.exigirRevisor,
-          textos: { ...v.textos, procedimento: juntarProcedimento(v.procCodigo, v.procRevisao) },
+          textos: v.textos,
         },
         'Certificado',
       )
-      const p = separarProcedimento(nova.textos.procedimento)
-      return {
-        numeracao: nova.numeracao,
-        procCodigo: p.codigo,
-        procRevisao: p.revisao,
-        exigirRevisor: nova.exigirRevisor,
-        textos: nova.textos,
-      }
+      return { numeracao: nova.numeracao, exigirRevisor: nova.exigirRevisor, textos: nova.textos }
     })
   }
 
@@ -1219,7 +1199,7 @@ function SecaoCertificado({ config, salvarParte, aoSujo }: PropsSecao) {
       id="certificado"
       icone={<FileBadge2 className="h-4 w-4" />}
       titulo="Certificado"
-      descricao="Numeração, procedimento, revisão antes da emissão e os textos fixos. Valem para os próximos certificados: os já emitidos não mudam."
+      descricao="Numeração, POP, revisão antes da emissão e os textos fixos. Valem para os próximos certificados: os já emitidos não mudam."
       sujo={s.sujo}
       salvando={s.salvando}
       aoDescartar={s.descartar}
@@ -1296,33 +1276,14 @@ function SecaoCertificado({ config, salvarParte, aoSujo }: PropsSecao) {
       <Divisor />
 
       <Bloco
-        titulo="Procedimento de calibração"
-        descricao="O documento interno que descreve como a empresa calibra. O código, a revisão e a descrição saem no certificado."
+        titulo="POP — Procedimento Operacional Padrão"
+        descricao="O documento que descreve como a empresa calibra. O código e a revisão saem em todas as páginas do certificado; o arquivo fica guardado aqui para mostrar a quem pedir (cliente, auditor, fiscalização)."
       >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_150px]">
-          <Field label="Código" htmlFor="cert-proc">
-            <Input
-              id="cert-proc"
-              placeholder="PT-CAL-01"
-              value={v.procCodigo}
-              onChange={(x) => s.mudar((r) => ({ ...r, procCodigo: x.target.value }))}
-              maxLength={60}
-            />
-          </Field>
-          <Field label="Revisão" htmlFor="cert-proc-rev" hint="Ex.: 0, 1, 2…">
-            <Input
-              id="cert-proc-rev"
-              placeholder="0"
-              value={v.procRevisao}
-              onChange={(x) => s.mudar((r) => ({ ...r, procRevisao: x.target.value.replace(/\s/g, '') }))}
-              maxLength={10}
-            />
-          </Field>
-        </div>
+        <CartaoPop />
         <CampoTexto
           id="cert-texto-procedimentoDescricao"
-          titulo="Descrição"
-          ajuda="Resumo do método e das normas seguidas."
+          titulo="Descrição do método"
+          ajuda="Resumo do método e das normas seguidas; sai no certificado ao lado do código do POP."
           valor={v.textos.procedimentoDescricao}
           padrao={TEXTOS_PADRAO.procedimentoDescricao}
           aoMudar={(t) => setTexto('procedimentoDescricao', t)}

@@ -15,6 +15,7 @@ import {
   Loader2,
   Mail,
   MoreHorizontal,
+  Paperclip,
   Printer,
   RefreshCcw,
   Repeat,
@@ -75,7 +76,7 @@ export function CalibracaoDetalhe() {
 function Certificado({ dados }: { dados: DetalheCalibracao }) {
   const navegar = useNavigate()
   const podeCancelar = usePode('cancelarCertificado')
-  const { calibracao: k, cliente, balanca, padroes, envios, revisoes, folhaCampo } = dados
+  const { calibracao: k, cliente, balanca, padroes, envios, revisoes, folhaCampo, certificadosPadroes, pop } = dados
   const emissao = k.emissao
   const [enviando, setEnviando] = useState(false)
   const [pedido, setPedido] = useState<'revisar' | 'cancelar' | null>(null)
@@ -270,6 +271,23 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
               <Dado rotulo="Local">{LOCAIS[k.local]?.replace(/^(Nas|No) /, '')}</Dado>
               <Dado rotulo="Executado por">{emissao?.tecnico.nome}</Dado>
               <Dado rotulo="Autorizado por">{emissao?.signatario.nome}</Dado>
+              {emissao?.textos.procedimento && (
+                <Dado rotulo="Procedimento (POP)" largo>
+                  <span className="tnum">{emissao.textos.procedimento}</span>
+                  {pop?.arquivo && (
+                    <a
+                      href={api.urlArquivo(pop.arquivo.sha256)}
+                      target="_blank"
+                      rel="noopener"
+                      className="ml-2 inline-flex items-center gap-1 text-[13px] font-medium text-brand-ink hover:underline"
+                      title={`Abrir ${pop.arquivo.nome}`}
+                    >
+                      Abrir o POP
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                </Dado>
+              )}
               {folhaCampo && (
                 <Dado rotulo="Folha de campo" largo>
                   <button
@@ -358,17 +376,47 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
           </Card>
 
           <Card>
-            <CardHeader icone={<Weight className="h-4 w-4" />} titulo="Padrões utilizados" />
-            <ul className="flex flex-col gap-2 px-5 pb-5 text-sm">
+            <CardHeader
+              icone={<Weight className="h-4 w-4" />}
+              titulo="Padrões utilizados"
+              descricao="Certificados dos padrões: vão junto no e-mail do certificado."
+            />
+            <ul className="flex flex-col px-5 pb-4 text-sm">
               {padroes.length === 0 && <li className="text-muted">—</li>}
-              {padroes.map((p) => (
-                <li key={p.id} className="flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 truncate text-ink-2">
-                    <span className="font-medium text-ink">{p.identificacao}</span> {p.descricao}
-                  </span>
-                  <span className="shrink-0 text-xs text-muted">{p.certificado ? `Cert. ${p.certificado}` : ''}</span>
-                </li>
-              ))}
+              {padroes.map((p) => {
+                const cert = certificadosPadroes.find((x) => x.padraoId === p.id)
+                const arquivo = cert?.arquivo
+                return (
+                  <li key={p.id} className="border-t border-line py-2.5 first:border-t-0 first:pt-0">
+                    <p className="min-w-0 truncate text-ink-2" title={p.descricao}>
+                      <span className="font-medium text-ink">{p.identificacao}</span> {p.descricao}
+                    </p>
+                    <div className="mt-0.5 flex items-center justify-between gap-3 text-xs">
+                      <span className="tnum min-w-0 truncate text-muted">
+                        {p.certificado ? `Cert. ${p.certificado}` : 'Sem nº de certificado'}
+                      </span>
+                      {arquivo ? (
+                        <a
+                          href={api.urlArquivo(arquivo.sha256)}
+                          target="_blank"
+                          rel="noopener"
+                          className="inline-flex shrink-0 items-center gap-1 font-medium text-brand-ink hover:underline"
+                          title={
+                            cert?.origem === 'CADASTRO' && emissao
+                              ? `${arquivo.nome} (anexado ou trocado no padrão depois da emissão, do mesmo certificado)`
+                              : arquivo.nome
+                          }
+                        >
+                          <Paperclip className="h-3 w-3" />
+                          Certificado do padrão
+                        </a>
+                      ) : (
+                        <span className="shrink-0 text-warning">sem o arquivo</span>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           </Card>
 
@@ -405,6 +453,12 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
                       <p className="text-muted">
                         {dataHora(e.em)} · {e.usuarioNome}
                       </p>
+                      {!!e.anexos?.length && (
+                        <p className="flex items-center gap-1 text-muted" title={e.anexos.join('\n')}>
+                          <Paperclip className="h-3 w-3 shrink-0" />
+                          {e.anexos.length === 1 ? 'Só o certificado' : `${e.anexos.length} anexos (certificado e padrões)`}
+                        </p>
+                      )}
                     </div>
                   </li>
                 ))}

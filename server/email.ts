@@ -6,6 +6,13 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync }
 import { join } from 'node:path'
 import type { FastifyInstance } from 'fastify'
 import nodemailer, { type Transporter } from 'nodemailer'
+import {
+  detectarTipoArquivo,
+  LIMITE_EMAIL_ANEXOS,
+  LIMITE_EMAIL_BYTES,
+  MIME_ARQUIVO,
+  problemaDosAnexos,
+} from '#shared/arquivos.ts'
 import { emailValido } from '#shared/dominio.ts'
 import { pode } from '#shared/permissoes.ts'
 import type { Contexto } from './contexto.ts'
@@ -32,8 +39,8 @@ export type ConfigEmailPublica = Omit<ConfigEmail, 'senha'> & { senhaDefinida: b
 export interface AnexoEmail {
   nome: string
   tipo: string
-  /** Conteúdo em base64. */
-  conteudo: string
+  /** Conteúdo (ou em base64, como texto). */
+  conteudo: Buffer | string
 }
 
 export interface MensagemEmail {
@@ -57,15 +64,25 @@ const VAZIA: ConfigEmail = {
 }
 
 /**
- * Limites de segurança do envio: um PDF (o certificado, gerado pelo próprio servidor); o limite por
- * hora impede que o SMTP da empresa seja usado para disparar e-mails em massa.
+ * Limites de segurança do envio: até 20 anexos (o certificado e os certificados dos padrões usados) somando
+ * até 18 MB (cabe no Gmail depois de codificado); o limite por hora impede que o SMTP da empresa seja usado
+ * para disparar e-mails em massa.
  */
 export const LIMITES_EMAIL = {
   destinatarios: 10,
-  anexos: 1,
-  bytesAnexos: 15 * 1024 * 1024,
+  anexos: LIMITE_EMAIL_ANEXOS,
+  bytesAnexos: LIMITE_EMAIL_BYTES,
   texto: 20_000,
   enviosPorHora: 60,
+}
+
+const bytesDe = (a: AnexoEmail) => (typeof a.conteudo === 'string' ? Math.floor((a.conteudo.length * 3) / 4) : a.conteudo.length)
+
+/** Recusa (413/400) anexos demais ou grandes demais para um e-mail só. */
+export function conferirAnexos(anexos: Array<{ tamanho: number }>) {
+  const total = anexos.reduce((s, a) => s + a.tamanho, 0)
+  const problema = problemaDosAnexos(anexos.length, total)
+  if (problema) throw new ErroApi(total > LIMITES_EMAIL.bytesAnexos ? 413 : 400, problema)
 }
 
 const texto = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
@@ -167,20 +184,19 @@ export function normalizarMensagem(entrada: unknown): MensagemEmail {
   const assunto = texto(r.assunto, 200)
   if (!assunto) throw new ErroApi(400, 'Informe o assunto do e-mail.')
   const anexosBrutos = Array.isArray(r.anexos) ? r.anexos : []
-  if (anexosBrutos.length > LIMITES_EMAIL.anexos) throw new ErroApi(400, 'Envie no máximo um PDF por e-mail.')
-  // Só o PDF gerado pelo sistema
-  let total = 0
+  if (anexosBrutos.length > LIMITES_EMAIL.anexos)
+    throw new ErroApi(400, `Envie no máximo ${LIMITES_EMAIL.anexos} anexos por e-mail.`)
+  // Só PDF ou imagem, conferidos pelo conteúdo
   const anexos = anexosBrutos.map((a) => {
     const x = (a && typeof a === 'object' ? a : {}) as Record<string, unknown>
     const conteudo = typeof x.conteudo === 'string' ? x.conteudo.replace(/\s/g, '') : ''
     if (!conteudo || !/^[A-Za-z0-9+/=]+$/.test(conteudo)) throw new ErroApi(400, 'Anexo inválido.')
-    total += Math.floor((conteudo.length * 3) / 4)
     const nome = texto(x.nome, 150).replace(/[\\/:*?"<>|\r\n]+/g, '-') || 'documento.pdf'
-    const ehPdf = Buffer.from(conteudo.slice(0, 12), 'base64').toString('latin1').startsWith('%PDF-')
-    if (!ehPdf || !/\.pdf$/i.test(nome)) throw new ErroApi(400, 'O anexo precisa ser o PDF gerado pelo sistema.')
-    return { nome, tipo: 'application/pdf', conteudo }
+    const tipo = detectarTipoArquivo(Buffer.from(conteudo.slice(0, 1400), 'base64'))
+    if (tipo !== 'pdf' && tipo !== 'jpg' && tipo !== 'png') throw new ErroApi(400, 'Os anexos precisam ser PDF, JPG ou PNG.')
+    return { nome, tipo: MIME_ARQUIVO[tipo], conteudo }
   })
-  if (total > LIMITES_EMAIL.bytesAnexos) throw new ErroApi(413, 'Os anexos passam de 15 MB.')
+  conferirAnexos(anexos.map((a) => ({ tamanho: bytesDe(a) })))
   return { para: destinatarios(r.para), assunto, texto: texto(r.texto, LIMITES_EMAIL.texto), anexos }
 }
 
@@ -225,13 +241,14 @@ export function criarModuloEmail(ctx: Contexto, criarTransporte: CriarTransporte
     if (!configPublica(c).configurado) {
       throw new ErroApi(409, 'O envio de e-mail ainda não foi configurado. Configure em Configurações → E-mail.')
     }
+    conferirAnexos(msg.anexos.map((a) => ({ tamanho: bytesDe(a) })))
     const agora = Date.now()
     envios = envios.filter((t) => agora - t < 3_600_000)
     if (envios.length >= LIMITES_EMAIL.enviosPorHora) {
       throw new ErroApi(429, `Limite de ${LIMITES_EMAIL.enviosPorHora} e-mails por hora atingido. Tente de novo mais tarde.`)
     }
     envios.push(agora)
-    ctx.log.info({ para: msg.para, assunto: msg.assunto }, 'envio de e-mail')
+    ctx.log.info({ para: msg.para, assunto: msg.assunto, anexos: msg.anexos.map((a) => a.nome) }, 'envio de e-mail')
     try {
       const info = await criarTransporte(c).sendMail({
         from: c.remetenteNome ? { name: c.remetenteNome, address: c.remetenteEmail } : c.remetenteEmail,
@@ -241,7 +258,7 @@ export function criarModuloEmail(ctx: Contexto, criarTransporte: CriarTransporte
         attachments: msg.anexos.map((a) => ({
           filename: a.nome,
           contentType: a.tipo,
-          content: Buffer.from(a.conteudo, 'base64'),
+          content: typeof a.conteudo === 'string' ? Buffer.from(a.conteudo, 'base64') : a.conteudo,
         })),
       })
       return { ok: true as const, para: msg.para, id: String(info.messageId ?? '') }

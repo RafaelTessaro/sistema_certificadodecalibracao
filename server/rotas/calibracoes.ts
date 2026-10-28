@@ -14,10 +14,18 @@ import {
   somarMeses,
 } from '#shared/dominio.ts'
 import type { Calibracao, StatusCalibracao } from '#shared/tipos.ts'
-import { emitirCertificado, padroesDa, pdfDaCalibracao, pendenciasDa, previa } from '../certificados.ts'
+import {
+  anexosDoCertificado,
+  certificadosDosPadroes,
+  emitirCertificado,
+  padroesDa,
+  pdfDaCalibracao,
+  pendenciasDa,
+  previa,
+} from '../certificados.ts'
 import type { Contexto } from '../contexto.ts'
 import type { criarModuloEmail } from '../email.ts'
-import { destinatarios } from '../email.ts'
+import { conferirAnexos, destinatarios, LIMITES_EMAIL } from '../email.ts'
 import { ErroApi } from '../erros.ts'
 import { naUnidadeAtual as naUnidadeAtualDe, rascunhoInicial, semLeituras } from '../rascunhos.ts'
 
@@ -56,6 +64,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
   app.get('/api/calibracoes/:id', async (req: ComId) => {
     const k = obter(req.params.id)
     const aberta = k.status === 'RASCUNHO' || k.status === 'REVISAO'
+    const versoesPop = repo.versoesPop()
     return {
       calibracao: k,
       cliente: k.emissao?.cliente ?? repo.obterCliente(k.clienteId),
@@ -65,6 +74,25 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       pendencias: aberta ? pendenciasDa(ctx, k) : [],
       revisoes: repo.revisoesDe(k.id),
       folhaCampo: repo.folhaCampoDaCalibracao(k.id),
+      certificadosPadroes: certificadosDosPadroes(ctx, k),
+      // Emitido: a revisão do POP da emissão (com o arquivo, mesmo se anexado depois); em andamento: a vigente
+      pop: k.emissao
+        ? k.emissao.pop
+          ? (versoesPop.find((v) => v.id === k.emissao!.pop!.id) ?? null)
+          : null
+        : (versoesPop[0] ?? null),
+    }
+  })
+
+  /** Anexos do e-mail do certificado: o PDF (sempre) e os certificados dos padrões usados; e os padrões sem arquivo. */
+  app.get('/api/calibracoes/:id/anexos', async (req: ComId) => {
+    const k = obter(req.params.id)
+    if (k.status !== 'EMITIDO') throw new ErroApi(409, 'Só é possível enviar um certificado emitido e válido.')
+    const { anexos, semArquivo } = await anexosDoCertificado(ctx, k)
+    return {
+      anexos: anexos.map(({ ler: _ler, ...a }) => a),
+      semArquivo,
+      limites: { anexos: LIMITES_EMAIL.anexos, bytes: LIMITES_EMAIL.bytesAnexos },
     }
   })
 
@@ -186,12 +214,16 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
         .trim()
         .slice(0, 200) || `Certificado de calibração ${k.numero}`
     const texto = String(c.texto ?? '').slice(0, 20_000)
-    const pdf = await pdfDaCalibracao(ctx, k)
+    // `anexos`: os ids marcados na tela (sem a lista, vão todos). O PDF do certificado vai sempre.
+    const { anexos } = await anexosDoCertificado(ctx, k)
+    const marcados = Array.isArray(c.anexos) ? new Set(c.anexos.filter((x): x is string => typeof x === 'string')) : null
+    const escolhidos = anexos.filter((a) => a.obrigatorio || !marcados || marcados.has(a.id))
+    conferirAnexos(escolhidos)
     const r = await email.enviar({
       para,
       assunto,
       texto,
-      anexos: [{ nome: nomeArquivoCertificado(k.numero), tipo: 'application/pdf', conteudo: pdf.toString('base64') }],
+      anexos: escolhidos.map((a) => ({ nome: a.nome, tipo: a.tipo, conteudo: a.ler() })),
     })
     repo.registrarEnvio({
       calibracaoId: k.id,
@@ -201,8 +233,10 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       assunto,
       usuarioId: u.id,
       usuarioNome: u.nome,
+      anexos: escolhidos.map((a) => a.nome),
     })
-    return r
+    req.detalheAuditoria = `${escolhidos.length} ${escolhidos.length === 1 ? 'anexo' : 'anexos'}`
+    return { ...r, anexos: escolhidos.map((a) => a.nome) }
   })
 
   /** Lembrete de calibração para o cliente (uma mensagem com as balanças que vencem). */

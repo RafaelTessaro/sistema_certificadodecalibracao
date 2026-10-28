@@ -28,6 +28,9 @@ const ROTAS: Record<string, readonly [Verbo, string, TipoLink?]> = {
   'POST /api/padroes': [CADASTRAR, 'um padrão'],
   'PUT /api/padroes/:id': [ALTERAR, 'um padrão'],
   'DELETE /api/padroes/:id': [EXCLUIR, 'um padrão'],
+  'POST /api/arquivos': [ENVIAR, 'um arquivo'],
+  'POST /api/pop': [['Registrou', 'registrar'], 'uma revisão do POP'],
+  'PUT /api/pop/:id/arquivo': [['Anexou', 'anexar'], 'o arquivo de uma revisão do POP'],
   'POST /api/calibracoes': [INICIAR, 'uma calibração'],
   'PUT /api/calibracoes/:id': [['Salvou', 'salvar'], 'uma calibração em andamento', 'calibracao'],
   'DELETE /api/calibracoes/:id': [EXCLUIR, 'uma calibração em andamento'],
@@ -57,8 +60,18 @@ const ROTAS: Record<string, readonly [Verbo, string, TipoLink?]> = {
   'GET /api/auditoria': [VER, 'o registro de atividades'],
 }
 
-/** Gravações cujo detalhe (depois de " | ") aparece na segunda linha: os nºs das folhas de campo. */
-const COM_DETALHE = new Set(['GET /api/calibracoes/:id/folha-campo', 'PUT /api/calibracoes/:id/folha-campo'])
+/**
+ * Gravações cujo detalhe (depois de " | ") aparece na segunda linha: os nºs das folhas de campo, o arquivo do
+ * certificado do padrão (anexado, trocado, removido), o tipo do arquivo enviado e se o POP veio com o arquivo.
+ */
+const COM_DETALHE = new Set([
+  'GET /api/calibracoes/:id/folha-campo',
+  'PUT /api/calibracoes/:id/folha-campo',
+  'POST /api/padroes',
+  'PUT /api/padroes/:id',
+  'POST /api/arquivos',
+  'POST /api/pop',
+])
 
 /** Ações próprias dos certificados: o alvo é a calibração (a frase leva a ela). */
 const ACOES_DO_CERTIFICADO = new Set<AcaoAuditoria>(['CERTIFICADO_EMITIDO', 'CERTIFICADO_CANCELADO', 'CERTIFICADO_ENVIADO'])

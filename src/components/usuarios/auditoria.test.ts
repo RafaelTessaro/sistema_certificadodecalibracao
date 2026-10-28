@@ -157,3 +157,30 @@ describe('autorDoRegistro (linha de baixo: quem fez)', () => {
     expect(grupoDaAcao('SISTEMA_ATUALIZADO')).toBe('dados')
   })
 })
+
+describe('arquivos e POP no registro de atividades', () => {
+  it('o arquivo do padrão (anexado, trocado, removido), o envio de arquivo e o POP viram frase com o detalhe', () => {
+    expect(descreverRegistro(registro({ alvo: 'p1', detalhe: 'PUT /api/padroes/:id | arquivo do certificado anexado' }))).toEqual(
+      {
+        titulo: 'Alterou um padrão',
+        detalhe: 'arquivo do certificado anexado',
+      },
+    )
+    expect(descreverRegistro(registro({ detalhe: 'POST /api/arquivos | certificado de padrão (PDF)' }))).toEqual({
+      titulo: 'Enviou um arquivo',
+      detalhe: 'certificado de padrão (PDF)',
+    })
+    expect(descreverRegistro(registro({ detalhe: 'POST /api/pop | sem o arquivo (anexar depois)' }))).toEqual({
+      titulo: 'Registrou uma revisão do POP',
+      detalhe: 'sem o arquivo (anexar depois)',
+    })
+    expect(descreverRegistro(registro({ alvo: '3', detalhe: 'PUT /api/pop/:id/arquivo' }))).toEqual({
+      titulo: 'Anexou o arquivo de uma revisão do POP',
+      detalhe: '',
+    })
+    // Sem permissão: a frase do que tentou fazer
+    expect(descreverRegistro(registro({ acao: 'ACESSO_NEGADO', detalhe: 'POST /api/pop' })).detalhe).toBe(
+      'Tentou registrar uma revisão do POP.',
+    )
+  })
+})

@@ -1,12 +1,16 @@
 import { novoId } from '#shared/id.ts'
+import type { FinalidadeArquivo } from '#shared/arquivos.ts'
 import type {
   AlteracaoUsuario,
+  AnexoEmailDisponivel,
+  ArquivoAnexo,
   Balanca,
   BalancaInput,
   BalancaResumo,
   Calibracao,
   CalibracaoInput,
   CalibracaoResumo,
+  CertificadoDoPadrao,
   Cliente,
   ClienteInput,
   ClienteResumo,
@@ -29,6 +33,7 @@ import type {
   Usuario,
   UsuarioSessao,
   Vencimento,
+  VersaoPop,
 } from '#shared/tipos.ts'
 
 /** Configuração do envio de e-mail como a tela recebe (sem a senha). */
@@ -80,6 +85,25 @@ export interface DetalheCalibracao {
   revisoes: Array<{ id: string; numero: string; status: StatusCalibracao }>
   /** Folha de campo já impressa desta calibração (null = ainda não). */
   folhaCampo: FolhaCampoImpressa | null
+  /** Certificado (arquivo) de cada padrão usado: o congelado na emissão, ou o do cadastro. */
+  certificadosPadroes: CertificadoDoPadrao[]
+  /** POP: a revisão da emissão (emitido) ou a vigente (em andamento); null = nenhum. */
+  pop: VersaoPop | null
+}
+
+/** GET /api/calibracoes/:id/anexos */
+export interface AnexosEmail {
+  anexos: AnexoEmailDisponivel[]
+  /** Padrões usados sem o arquivo do certificado anexado. */
+  semArquivo: CertificadoDoPadrao[]
+  limites: { anexos: number; bytes: number }
+}
+
+/** GET /api/pop */
+export interface DadosPop {
+  atual: VersaoPop | null
+  /** Da mais nova (a vigente) para a mais antiga. */
+  versoes: VersaoPop[]
 }
 
 export interface FiltroCalibracoesTela {
@@ -220,8 +244,13 @@ export const api = {
   // ---- Padrões ----
   padroes: (inativos = false) => requisitar<{ padroes: Padrao[] }>('GET', `/api/padroes${inativos ? '?inativos=1' : ''}`),
   criarPadrao: (dados: PadraoInput) => requisitar<{ padrao: Padrao }>('POST', '/api/padroes', dados),
-  atualizarPadrao: (id: string, dados: PadraoInput, versao?: number) =>
-    requisitar<{ padrao: Padrao }>('PUT', `/api/padroes/${enc(id)}`, { ...dados, versao }),
+  /** `arquivoConfirmado`: o nº do certificado mudou e o arquivo não, mas é do mesmo certificado (só corrigiu o nº). */
+  atualizarPadrao: (id: string, dados: PadraoInput, versao?: number, o: { arquivoConfirmado?: boolean } = {}) =>
+    requisitar<{ padrao: Padrao }>('PUT', `/api/padroes/${enc(id)}`, {
+      ...dados,
+      versao,
+      ...(o.arquivoConfirmado ? { arquivoConfirmado: true } : {}),
+    }),
   excluirPadrao: (id: string) => requisitar<void>('DELETE', `/api/padroes/${enc(id)}`),
 
   // ---- Calibrações e certificados ----
@@ -285,11 +314,54 @@ export const api = {
     }
     return resp.blob()
   },
-  enviarCertificado: (id: string, dados: { para: string; assunto: string; texto: string }) =>
-    requisitar<{ ok: true; para: string[] }>('POST', `/api/calibracoes/${enc(id)}/email`, dados, 120_000),
+  /** O que pode ir no e-mail do certificado (o PDF e os certificados dos padrões). */
+  anexosEmail: (id: string) => requisitar<AnexosEmail>('GET', `/api/calibracoes/${enc(id)}/anexos`, undefined, 60_000),
+  /** `anexos`: os ids marcados (o PDF do certificado vai sempre). */
+  enviarCertificado: (id: string, dados: { para: string; assunto: string; texto: string; anexos?: string[] }) =>
+    requisitar<{ ok: true; para: string[]; anexos: string[] }>('POST', `/api/calibracoes/${enc(id)}/email`, dados, 180_000),
   enviarLembrete: (dados: { clienteId: string; balancas: string[]; para: string; assunto: string; texto: string }) =>
     requisitar<{ ok: true; para: string[] }>('POST', '/api/lembretes', dados, 120_000),
   verificar: (codigo: string) => requisitar<VerificacaoCertificado>('GET', `/api/verificar/${enc(codigo)}`),
+
+  // ---- Arquivos guardados e POP ----
+  /** Envia o arquivo puro (até 10 MB); o servidor confere o tipo pelo conteúdo e devolve a referência. */
+  enviarArquivo: async (arquivo: Blob, nome: string, finalidade: FinalidadeArquivo): Promise<ArquivoAnexo> => {
+    const caminho = `/api/arquivos${consulta({ finalidade, nome })}`
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 180_000)
+    try {
+      let resp: Response
+      try {
+        resp = await fetch(caminho, {
+          method: 'POST',
+          headers: { 'x-bc-calibracao': '1', 'Content-Type': 'application/octet-stream' },
+          body: arquivo,
+          signal: ctrl.signal,
+          cache: 'no-store',
+        })
+      } catch {
+        throw new ErroApi(0, SEM_CONEXAO)
+      }
+      let json: Record<string, unknown> = {}
+      try {
+        json = await resp.json()
+      } catch {
+        /* sem JSON */
+      }
+      if (!resp.ok) throw erroDaResposta(resp.status, caminho, json)
+      return json.arquivo as ArquivoAnexo
+    } finally {
+      clearTimeout(timer)
+    }
+  },
+  /** Abre (PDF, imagem) ou baixa (Word, ou `baixar`) um arquivo guardado; `nome` troca o nome do arquivo baixado. */
+  urlArquivo: (sha256: string, o: { baixar?: boolean; nome?: string } = {}) =>
+    `/api/arquivos/${enc(sha256)}${consulta({ baixar: o.baixar ? 1 : '', nome: o.nome })}`,
+  pop: () => requisitar<DadosPop>('GET', '/api/pop'),
+  registrarPop: (e: { codigo: string; revisao: string; data: string; arquivo: string; observacao: string }) =>
+    requisitar<{ versao: VersaoPop }>('POST', '/api/pop', e),
+  anexarArquivoPop: (id: number, arquivo: string) =>
+    requisitar<{ versao: VersaoPop }>('PUT', `/api/pop/${id}/arquivo`, { arquivo }),
 
   // ---- Geral ----
   config: () => requisitar<{ config: Configuracoes }>('GET', '/api/config'),

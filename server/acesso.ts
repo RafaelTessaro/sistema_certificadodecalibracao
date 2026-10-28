@@ -78,6 +78,13 @@ export const TABELA_ACESSO: Record<string, RegraAcesso> = {
   'PUT /api/padroes/:id': 'logado',
   'DELETE /api/padroes/:id': 'excluirPadrao',
 
+  // rotas/arquivos.ts (certificados dos padrões e POP: quem entrou baixa; o POP, só o administrador registra)
+  'POST /api/arquivos': 'logado', // o arquivo puro, até 10 MB; tipo conferido pelo conteúdo
+  'GET /api/arquivos/:sha256': 'logado',
+  'GET /api/pop': 'logado',
+  'POST /api/pop': 'configuracoes',
+  'PUT /api/pop/:id/arquivo': 'configuracoes',
+
   // rotas/geral.ts
   'GET /api/config': 'logado',
   'PUT /api/config': 'configuracoes',
@@ -99,6 +106,7 @@ export const TABELA_ACESSO: Record<string, RegraAcesso> = {
   'GET /api/calibracoes/:id/pdf': 'logado',
   'POST /api/calibracoes/:id/previa': 'logado',
   'POST /api/calibracoes/:id/email': 'logado',
+  'GET /api/calibracoes/:id/anexos': 'logado', // o que vai no e-mail do certificado
   'POST /api/lembretes': 'logado',
   'GET /api/verificar/:codigo': 'publico', // autenticidade (QR code): só o essencial do certificado
 

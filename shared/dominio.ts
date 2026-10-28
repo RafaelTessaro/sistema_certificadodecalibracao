@@ -1,10 +1,12 @@
 // Regras do domínio: valores padrão, rótulos, normalização das entradas (servidor e telas) e
 // validações. O servidor é a fonte da verdade; as telas usam as mesmas funções para avisar na hora.
 
+import { normalizarArquivoAnexo } from './arquivos.ts'
 import { cnpjValido, cpfValido, mascaraCep, mascaraCnpj, mascaraCpf, normalizarCnpj, somenteDigitos } from './documentos.ts'
 import { novoId } from './id.ts'
 import type {
   AjusteRealizado,
+  ArquivoAnexo,
   Balanca,
   BalancaInput,
   CalibracaoInput,
@@ -326,40 +328,34 @@ export const EMPRESA_PADRAO: DadosEmpresa = {
  */
 export const TEXTOS_PADRAO: TextosCertificado = {
   procedimento: 'PT-CAL-01 rev. 0',
+  // Curtos (certificado em 2 páginas): só o que a ISO/IEC 17025 (7.8.2.1 e 7.8.4.1) e a regulamentação pedem
   procedimentoDescricao:
-    'Calibração por comparação direta com pesos padrão, conforme o EURAMET Calibration Guide No. 18, versão 4.0 (2015): ' +
-    'ensaios de repetibilidade, excentricidade e erro de indicação. Incerteza de medição avaliada conforme o ' +
-    'Guia para a Expressão da Incerteza de Medição (JCGM 100:2008).',
+    'Calibração por comparação direta com pesos padrão, conforme o EURAMET Calibration Guide No. 18 (versão 4.0, ' +
+    '2015): repetibilidade, excentricidade e erro de indicação; incerteza de medição conforme o JCGM 100:2008.',
   rastreabilidade:
     'Os resultados desta calibração são metrologicamente rastreáveis ao Sistema Internacional de Unidades (SI) por meio ' +
-    'dos padrões relacionados em "Padrões utilizados", calibrados por laboratório(s) acreditado(s) pela Cgcre/Inmetro ' +
-    'para as respectivas calibrações, conforme os certificados indicados.',
+    'dos padrões abaixo, calibrados por laboratório(s) acreditado(s) pela Cgcre/Inmetro para as respectivas calibrações.',
   incerteza:
     'A incerteza expandida de medição relatada (U) é declarada como a incerteza padrão de medição multiplicada pelo ' +
     'fator de abrangência k, o qual, para uma distribuição t com νeff graus de liberdade efetivos, corresponde a uma ' +
-    'probabilidade de abrangência de aproximadamente 95 %. Os valores de k e νeff de cada ponto constam das tabelas. ' +
-    'A incerteza declarada vale quando o erro de indicação é levado em conta (corrigido).',
+    'probabilidade de abrangência de aproximadamente 95 %.',
   abrangencia:
-    'Os resultados apresentados neste certificado referem-se exclusivamente ao instrumento calibrado, não sendo ' +
-    'extensivos a outros instrumentos, ainda que do mesmo fabricante e modelo. Os resultados referem-se às condições ' +
-    'existentes no momento da calibração; a incerteza declarada não inclui efeitos de longo prazo (deriva), de ' +
-    'transporte, de reinstalação ou de condições de uso diferentes das registradas.',
+    'Os resultados referem-se exclusivamente ao instrumento calibrado, nas condições existentes no momento da ' +
+    'calibração; a incerteza declarada não inclui efeitos de longo prazo (deriva), de transporte ou de reinstalação.',
+  // Sai no rodapé de toda página, uma frase por linha, ao lado do endereço e dos contatos da empresa
   reproducao:
-    'Este certificado somente pode ser reproduzido na íntegra. A reprodução parcial depende de autorização prévia, ' +
-    'por escrito, da {empresa}.',
+    'Este certificado somente pode ser reproduzido na íntegra. A reprodução parcial requer autorização prévia, por escrito.',
   naoAcreditado:
     'A {empresa} não é acreditada pela Coordenação-Geral de Acreditação do Inmetro (Cgcre). Esta calibração não foi ' +
     'realizada sob acreditação e este certificado não está abrangido pelos acordos de reconhecimento mútuo dos quais ' +
     'a Cgcre é signatária.',
   controleLegal:
-    'Esta calibração não isenta o instrumento do controle metrológico estabelecido na regulamentação metrológica: ' +
-    'este certificado não substitui a verificação inicial, periódica ou após reparo realizada pelo Inmetro ou por ' +
-    'órgão da RBMLQ-I (IPEM-SP), obrigatória para instrumentos utilizados nas finalidades previstas no art. 1º, § 1º, ' +
-    'da Portaria Inmetro nº 157/2022, e não atesta a conformidade do instrumento ao Regulamento Técnico Metrológico.',
-  intervalo:
-    'Este certificado não contém recomendação de intervalo de calibração. A definição da periodicidade das calibrações ' +
-    'é de responsabilidade do usuário, considerando a frequência e as condições de uso, o histórico e a estabilidade ' +
-    'do instrumento e os requisitos aplicáveis.',
+    'Esta calibração não isenta o instrumento do controle metrológico legal: este certificado não substitui a ' +
+    'verificação inicial, periódica ou após reparo realizada pelo Inmetro ou por órgão da RBMLQ-I (IPEM-SP), ' +
+    'obrigatória nas finalidades previstas no art. 1º, § 1º, da Portaria Inmetro nº 157/2022, nem atesta a ' +
+    'conformidade do instrumento ao Regulamento Técnico Metrológico.',
+  // A ISO/IEC 17025 (7.8.4.3) só proíbe recomendar o intervalo sem acordo com o cliente: uma linha basta
+  intervalo: 'Este certificado não contém recomendação de intervalo de calibração; a periodicidade é definida pelo usuário.',
   observacoesPadrao: '',
 }
 
@@ -981,6 +977,7 @@ export const PADRAO_VAZIO: PadraoInput = {
   incertezaTexto: '',
   observacoes: '',
   ativo: true,
+  certificadoArquivo: null,
 }
 
 export function normalizarPadrao(entrada: unknown): Resultado<PadraoInput> {
@@ -1036,9 +1033,62 @@ export function normalizarPadrao(entrada: unknown): Resultado<PadraoInput> {
       incertezaTexto: texto(r.incertezaTexto, 200),
       observacoes: multilinha(r.observacoes),
       ativo: booleano(r.ativo, true),
+      // O servidor confere se o arquivo existe e completa o tamanho e o tipo (ver Repositorio). Sem o campo
+      // (uma tela de antes desta versão), undefined: a alteração mantém o arquivo que já estava
+      certificadoArquivo: r.certificadoArquivo === undefined ? undefined : normalizarArquivoAnexo(r.certificadoArquivo),
     },
     erros,
   }
+}
+
+/** Nº de certificado para comparar: sem espaços e em maiúsculas ("lab-0456/2026 " é o mesmo que "LAB-0456/2026"). */
+export const chaveCertificado = (c: string) => c.replace(/\s+/g, '').toUpperCase()
+
+/**
+ * O arquivo do certificado do padrão ficou o do certificado anterior: o nº do certificado mudou (o padrão foi
+ * calibrado de novo) e o arquivo é o mesmo. Iria ao cliente com o nº novo. Preencher um nº que estava vazio,
+ * apagar o nº ou mudar só espaços e maiúsculas não conta.
+ */
+export function arquivoDoCertificadoAnterior(
+  antes: { certificado: string; certificadoArquivo?: { sha256: string } | null },
+  depois: { certificado: string; sha256: string | null | undefined },
+): boolean {
+  const [a, b] = [chaveCertificado(antes.certificado), chaveCertificado(depois.certificado)]
+  return !!a && !!b && a !== b && !!antes.certificadoArquivo && depois.sha256 === antes.certificadoArquivo.sha256
+}
+
+/**
+ * O arquivo que o cadastro do padrão tem para um nº de certificado: o atual, se for o mesmo nº; senão, o
+ * guardado quando o nº mudou (`certificadosAnteriores`). null = o cadastro não tem arquivo desse certificado.
+ */
+export function arquivoDoCertificado(
+  p: Pick<Padrao, 'certificado' | 'certificadoArquivo' | 'certificadosAnteriores'>,
+  certificado: string,
+): ArquivoAnexo | null {
+  const chave = chaveCertificado(certificado)
+  if (!chave) return null
+  if (chaveCertificado(p.certificado) === chave) return p.certificadoArquivo ?? null
+  return (p.certificadosAnteriores ?? []).find((h) => chaveCertificado(h.certificado) === chave)?.arquivo ?? null
+}
+
+/** Quantos certificados anteriores (com arquivo) o cadastro de um padrão guarda. */
+export const MAX_CERTIFICADOS_ANTERIORES = 30
+
+/**
+ * `certificadosAnteriores` depois de uma alteração do padrão: quando o nº muda, o arquivo do nº de antes entra
+ * no começo (no lugar de um registro antigo do mesmo nº).
+ */
+export function certificadosAnterioresApos(
+  antes: Pick<Padrao, 'certificado' | 'certificadoArquivo' | 'certificadosAnteriores'>,
+  certificadoNovo: string,
+): Array<{ certificado: string; arquivo: ArquivoAnexo }> {
+  const lista = antes.certificadosAnteriores ?? []
+  const chave = chaveCertificado(antes.certificado)
+  if (!chave || !antes.certificadoArquivo || chave === chaveCertificado(certificadoNovo)) return lista
+  return [
+    { certificado: antes.certificado, arquivo: antes.certificadoArquivo },
+    ...lista.filter((h) => chaveCertificado(h.certificado) !== chave),
+  ].slice(0, MAX_CERTIFICADOS_ANTERIORES)
 }
 
 /** Resumo das peças de um jogo: "1 × 10 kg, 4 × 5 kg, 2 × 2 kg". */
@@ -1436,6 +1486,60 @@ export function normalizarConfig(entrada: unknown, atual: Configuracoes = CONFIG
   }
 }
 
+/**
+ * A cláusula de reprodução padrão até a versão 1.0.1, quando ela saía nas declarações. Agora ela sai no
+ * rodapé (ao lado da razão social, que por isso não se repete): a configuração com o texto antigo, sem
+ * mudança, passa a ter o novo (ver `completarConfig`); um texto mudado pela empresa fica como está.
+ */
+export const REPRODUCAO_ANTIGA =
+  'Este certificado somente pode ser reproduzido na íntegra. A reprodução parcial depende de autorização prévia, ' +
+  'por escrito, da {empresa}.'
+
+/**
+ * Os textos de fábrica do certificado até a versão 1.0.1, mais longos (o certificado chegava a 3 páginas por
+ * causa deles). A configuração com um deles, sem mudança, passa a ter o novo, curto (ver `completarConfig`);
+ * um texto mudado pela empresa fica como está.
+ */
+export const TEXTOS_ANTIGOS: Partial<Record<keyof TextosCertificado, string>> = {
+  reproducao: REPRODUCAO_ANTIGA,
+  procedimentoDescricao:
+    'Calibração por comparação direta com pesos padrão, conforme o EURAMET Calibration Guide No. 18, versão 4.0 (2015): ' +
+    'ensaios de repetibilidade, excentricidade e erro de indicação. Incerteza de medição avaliada conforme o ' +
+    'Guia para a Expressão da Incerteza de Medição (JCGM 100:2008).',
+  rastreabilidade:
+    'Os resultados desta calibração são metrologicamente rastreáveis ao Sistema Internacional de Unidades (SI) por meio ' +
+    'dos padrões relacionados em "Padrões utilizados", calibrados por laboratório(s) acreditado(s) pela Cgcre/Inmetro ' +
+    'para as respectivas calibrações, conforme os certificados indicados.',
+  incerteza:
+    'A incerteza expandida de medição relatada (U) é declarada como a incerteza padrão de medição multiplicada pelo ' +
+    'fator de abrangência k, o qual, para uma distribuição t com νeff graus de liberdade efetivos, corresponde a uma ' +
+    'probabilidade de abrangência de aproximadamente 95 %. Os valores de k e νeff de cada ponto constam das tabelas. ' +
+    'A incerteza declarada vale quando o erro de indicação é levado em conta (corrigido).',
+  abrangencia:
+    'Os resultados apresentados neste certificado referem-se exclusivamente ao instrumento calibrado, não sendo ' +
+    'extensivos a outros instrumentos, ainda que do mesmo fabricante e modelo. Os resultados referem-se às condições ' +
+    'existentes no momento da calibração; a incerteza declarada não inclui efeitos de longo prazo (deriva), de ' +
+    'transporte, de reinstalação ou de condições de uso diferentes das registradas.',
+  controleLegal:
+    'Esta calibração não isenta o instrumento do controle metrológico estabelecido na regulamentação metrológica: ' +
+    'este certificado não substitui a verificação inicial, periódica ou após reparo realizada pelo Inmetro ou por ' +
+    'órgão da RBMLQ-I (IPEM-SP), obrigatória para instrumentos utilizados nas finalidades previstas no art. 1º, § 1º, ' +
+    'da Portaria Inmetro nº 157/2022, e não atesta a conformidade do instrumento ao Regulamento Técnico Metrológico.',
+  intervalo:
+    'Este certificado não contém recomendação de intervalo de calibração. A definição da periodicidade das calibrações ' +
+    'é de responsabilidade do usuário, considerando a frequência e as condições de uso, o histórico e a estabilidade ' +
+    'do instrumento e os requisitos aplicáveis.',
+}
+
+/** Os textos gravados, com os de fábrica antigos (sem mudança da empresa) trocados pelos novos. */
+function textosAtualizados(gravados: Record<string, unknown>): Record<string, unknown> {
+  const mesmo = (a: unknown, b: string) => typeof a === 'string' && a.replace(/\s+/g, ' ').trim() === b
+  const novos: Record<string, unknown> = { ...gravados }
+  for (const [chave, antigo] of Object.entries(TEXTOS_ANTIGOS))
+    if (antigo && mesmo(gravados[chave], antigo)) novos[chave] = TEXTOS_PADRAO[chave as keyof TextosCertificado]
+  return novos
+}
+
 /** Completa uma configuração salva por uma versão anterior com os valores padrão que faltarem. */
 export function completarConfig(salva: unknown): Configuracoes {
   const r = obj(salva)
@@ -1444,7 +1548,7 @@ export function completarConfig(salva: unknown): Configuracoes {
       ...CONFIG_PADRAO,
       ...r,
       empresa: { ...EMPRESA_PADRAO, ...obj(r.empresa) },
-      textos: { ...TEXTOS_PADRAO, ...obj(r.textos) },
+      textos: { ...TEXTOS_PADRAO, ...textosAtualizados(obj(r.textos)) },
       numeracao: { ...CONFIG_PADRAO.numeracao, ...obj(r.numeracao) },
       opcoesPadrao: { ...OPCOES_CALCULO_PADRAO, ...obj(r.opcoesPadrao) },
     },

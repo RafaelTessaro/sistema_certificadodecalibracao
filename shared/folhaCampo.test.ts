@@ -6,7 +6,14 @@ import {
   folhaRodoviaria,
   folhaRodoviariaSemHistorico,
 } from '../server/pdf/exemplosFolhaCampo.ts'
-import { padroesPrevistos, planoDaFolha, temLeituras, validadeDosPadroes } from './folhaCampo.ts'
+import {
+  FORMULARIO_FOLHA_CAMPO,
+  padroesPrevistos,
+  planoDaFolha,
+  referenciaDoFormulario,
+  temLeituras,
+  validadeDosPadroes,
+} from './folhaCampo.ts'
 
 const plano = (d: ReturnType<typeof folhaPlataforma>) =>
   planoDaFolha(d.calibracao, d.balanca!, d.padroes, d.calibracao!.dataCalibracao)
@@ -365,5 +372,16 @@ describe('padroesPrevistos', () => {
     ])
     const ids = [d.padroes[1].id, d.padroes[0].id]
     expect(padroesPrevistos({ padroesIds: ids }, d.padroes).map((p) => p.identificacao)).toEqual(['JP-01', 'PP20-01 a 15'])
+  })
+})
+
+describe('referência do formulário', () => {
+  it('o POP configurado (sem ele, nada): nunca mais o PT-CAL-01 fixo', () => {
+    expect(referenciaDoFormulario('BALANÇAS-POP-123 rev. 00')).toBe('POP BALANÇAS-POP-123 rev. 00')
+    expect(referenciaDoFormulario('  BALANÇAS-POP-123 rev. 01 ')).toBe('POP BALANÇAS-POP-123 rev. 01')
+    for (const vazio of ['', '   ', null, undefined]) expect(referenciaDoFormulario(vazio)).toBe('')
+    expect(JSON.stringify(FORMULARIO_FOLHA_CAMPO)).not.toContain('PT-CAL-01')
+    // Layout novo (folha enxuta): revisão nova do formulário controlado
+    expect(FORMULARIO_FOLHA_CAMPO.revisao).toBe('01')
   })
 })

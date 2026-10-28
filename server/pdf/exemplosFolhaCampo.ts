@@ -6,13 +6,13 @@
 //      prevê todos os padrões ativos da empresa (como o POST /api/calibracoes faz sem histórico): a folha
 //      lista inteiros só os que vão a campo;
 //   3. rodoviária 80 t com cargas de substituição (do último certificado);
-//   4. folha em branco, para uma balança ainda não cadastrada;
+//   4. folha em branco, para uma balança ainda não cadastrada (também com os 8 padrões de uma empresa maior);
 //   5. rodoviária 60 t sem calibração anterior: o plano sai das sugestões, sem a substituição no rascunho (a
 //      folha sugere as etapas, com os 20 × 500 kg em cada uma, e o nº de substituições de cada ponto) e sem
 //      declaração de conformidade pedida.
-// Os cadastros (empresa, clientes, padrões) são os dos certificados de exemplo.
+// Os cadastros (empresa, clientes, padrões) e o POP do rodapé são os dos certificados de exemplo.
 
-import { calibracaoVazia, EMPRESA_PADRAO } from '#shared/dominio.ts'
+import { calibracaoVazia, EMPRESA_PADRAO, TEXTOS_PADRAO } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
 import { exemploPlataforma, exemploRodoviaria, exemploBancada } from './exemplosCertificado.ts'
 import type { DadosFolhaCampo } from './folhaCampo.ts'
@@ -92,6 +92,7 @@ export function folhaPlataforma(): DadosFolhaCampo {
     tecnico: 'Carlos Eduardo Lima',
     impressoEm: '2026-10-20T17:35:00.000Z',
     impressoPor: IMPRESSO_POR,
+    procedimento: TEXTOS_PADRAO.procedimento,
   }
 }
 
@@ -172,6 +173,7 @@ export function folhaMultiIntervalo(): DadosFolhaCampo {
     tecnico: 'Fábio de Godoy Lima',
     impressoEm: '2026-10-21T11:02:00.000Z',
     impressoPor: 'Fábio de Godoy Lima',
+    procedimento: TEXTOS_PADRAO.procedimento,
   }
 }
 
@@ -192,6 +194,7 @@ export function folhaRodoviaria(): DadosFolhaCampo {
     tecnico: 'Carlos Eduardo Lima',
     impressoEm: '2026-10-23T19:20:00.000Z',
     impressoPor: IMPRESSO_POR,
+    procedimento: TEXTOS_PADRAO.procedimento,
   }
 }
 
@@ -208,7 +211,35 @@ export function folhaEmBranco(): DadosFolhaCampo {
     tecnico: '',
     impressoEm: '2026-10-21T12:00:00.000Z',
     impressoPor: IMPRESSO_POR,
+    procedimento: TEXTOS_PADRAO.procedimento,
   }
+}
+
+/**
+ * Folha em branco de uma empresa com 8 padrões ativos (os seis dos exemplos, um 2º termo-higrômetro e um 2º
+ * jogo de pesos com a classe já na descrição, como se cadastra no dia a dia): a folha não cresce por isso.
+ */
+export function folhaEmBrancoOitoPadroes(): DadosFolhaCampo {
+  const empresa = padroesDaEmpresa()
+  const th01 = empresa.find((p) => p.id === 'pad-th01')!
+  const jp01 = empresa.find((p) => p.id === 'pad-jp01')!
+  const extras: Padrao[] = [
+    {
+      ...th01,
+      id: 'pad-th02',
+      identificacao: 'TH-02',
+      descricao: 'Termo-higrômetro digital com sonda externa',
+      certificado: 'T-4588/2026',
+    },
+    {
+      ...jp01,
+      id: 'pad-jp02',
+      identificacao: 'JP-02',
+      descricao: 'Jogo de pesos 20 kg (15 peças) classe M1',
+      certificado: 'CAL-12988/2026',
+    },
+  ]
+  return { ...folhaEmBranco(), numero: 'FC-2026-00047', padroes: [...empresa, ...extras] }
 }
 
 export function folhaRodoviariaSemHistorico(): DadosFolhaCampo {
@@ -251,5 +282,6 @@ export function folhaRodoviariaSemHistorico(): DadosFolhaCampo {
     tecnico: 'Carlos Eduardo Lima',
     impressoEm: '2026-10-23T19:40:00.000Z',
     impressoPor: IMPRESSO_POR,
+    procedimento: TEXTOS_PADRAO.procedimento,
   }
 }

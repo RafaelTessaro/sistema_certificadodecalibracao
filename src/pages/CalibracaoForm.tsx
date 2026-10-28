@@ -23,6 +23,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { calcularCalibracao } from '#shared/calibracao.ts'
+import { PENDENCIA_POP } from '#shared/arquivos.ts'
 import { capacidadeTexto, pendenciasEmissao, TIPOS_BALANCA } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Configuracoes, FolhaCampoImpressa, Padrao } from '#shared/tipos.ts'
 import { BalancaFormModal } from '../components/BalancaFormModal'
@@ -38,6 +39,7 @@ import { EtapaRepetibilidade } from '../components/calibracao/EtapaRepetibilidad
 import { EtapaRevisao } from '../components/calibracao/EtapaRevisao'
 import { PainelResultados } from '../components/calibracao/PainelResultados'
 import { ClienteFormModal } from '../components/ClienteFormModal'
+import { BotaoPop } from '../components/BotaoPop'
 import { type EscolhaFolha, FolhaCampoModal } from '../components/FolhaCampoModal'
 import { StatusCalibracaoBadge } from '../components/Selos'
 import { Button } from '../components/ui/Button'
@@ -343,6 +345,7 @@ function EditorCalibracao({ id }: { id: string }) {
   const [etapa, setEtapa] = useState<IdEtapa>('identificacao')
   const [salvo, setSalvo] = useState<EstadoSalvo>('salvo')
   const [pendenciasServidor, setPendenciasServidor] = useState<string[]>([])
+  const { dados: pop } = useConsulta('pop', () => api.pop(), ['config'])
   const [editandoBalanca, setEditandoBalanca] = useState(false)
   const [previa, setPrevia] = useState<{ url: string } | { carregando: true } | null>(null)
   const [folha, setFolha] = useState<FolhaCampoImpressa | null>(null)
@@ -485,11 +488,13 @@ function EditorCalibracao({ id }: { id: string }) {
     return [
       ...new Set([
         ...locais,
+        // Sem POP registrado (o servidor também confere): o código e a revisão saem em toda página
+        ...(pop && !pop.atual ? [PENDENCIA_POP] : []),
         ...(calc?.resultado.pendencias ?? []),
         ...(calc?.comoEncontrado?.pendencias.map((p) => `Como encontrado: ${p}`) ?? []),
       ]),
     ]
-  }, [f, dados, selecionados, calc, pendenciasServidor])
+  }, [f, dados, selecionados, calc, pendenciasServidor, pop])
 
   if (erro)
     return (
@@ -674,6 +679,7 @@ function EditorCalibracao({ id }: { id: string }) {
                 Imprimir folha de campo
               </Button>
             )}
+            <BotaoPop />
             <Button icone={<ScanEye className="h-4 w-4" />} onClick={() => void verPrevia()}>
               Prévia
             </Button>

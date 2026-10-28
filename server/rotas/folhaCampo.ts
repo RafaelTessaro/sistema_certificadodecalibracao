@@ -90,6 +90,8 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       balanca: Balanca | null
       padroes: DadosFolhaCampo['padroes']
       tecnico: string
+      /** POP de referência no rodapé (o da emissão, numa calibração emitida; senão, o configurado). */
+      procedimento: string
     },
   ) {
     const u = quem(req)
@@ -104,14 +106,17 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     if (folha.substituiu.length) req.detalheAuditoria = detalheDaTroca(folha.numero, [], folha.substituiu, folha.liberadas)
     // Reimpressão: o arquivo da primeira impressão
     if (folha.pdf) return { pdf: folha.pdf, numero: folha.numero }
+    const config = repo.obterConfig()
     const pdf = await gerarFolhaCampoPdf({
       numero: folha.numero,
-      empresa: repo.obterConfig().empresa,
+      empresa: config.empresa,
       cliente: e.cliente,
       balanca: e.balanca,
       calibracao: e.calibracao,
       padroes: e.padroes,
       tecnico: e.tecnico,
+      // Código e revisão do POP (sai no rodapé de toda página da folha); '' sem POP registrado
+      procedimento: e.procedimento,
       // A data e quem imprimiu são os da reserva do nº (a primeira impressão)
       impressoEm: folha.impressaEm,
       impressoPor: folha.impressaPor || u.nome,
@@ -143,6 +148,8 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     const balanca = k.emissao?.balanca ?? repo.obterBalanca(k.balancaId) ?? null
     const padroes = k.emissao?.padroes ?? padroesDa(ctx, k)
     const tecnico = k.emissao?.tecnico.nome ?? ctx.usuarios.obter(k.tecnicoId)?.nome ?? ''
+    // Emitida: o POP que valia na emissão (o do certificado); senão, o vigente
+    const procedimento = k.emissao?.textos.procedimento ?? repo.obterConfig().textos.procedimento
     const { pdf, numero } = await gerar(req, {
       chave: nova ? `calibracao:${k.id}:${nova}` : `calibracao:${k.id}`,
       calibracao: entradaDe(k),
@@ -152,6 +159,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       balanca,
       padroes,
       tecnico,
+      procedimento,
     })
     return enviarPdf(reply, pdf, nomeArquivoDaFolha(k.ordemServico, numero), numero)
   })
@@ -209,6 +217,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       padroes,
       // O técnico da visita ainda não está definido: a folha sai com a linha para escrever
       tecnico: '',
+      procedimento: repo.obterConfig().textos.procedimento,
     })
     return enviarPdf(reply, pdf, nomeArquivoFolhaCampo(numero), numero)
   })
