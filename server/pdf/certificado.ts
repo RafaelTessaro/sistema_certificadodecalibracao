@@ -5,21 +5,25 @@
 // DOQ-CGCRE-097, para laboratório NÃO acreditado: sem RBC, sem marcas do Inmetro e sem "validade"
 // (docs/pesquisa/01-normas-certificado.md §3, §6 e §8). Layout em docs/pesquisa/03 §5 e 04 §5.
 //
-// Enxuto: só o obrigatório, em 2 páginas (3 no pior caso: ajuste com "como encontrado", reparo,
-// multi-intervalo, rodoviária com substituição e conformidade). Grade de identificação compacta, resultados
-// em tabelas, uma legenda só para as tabelas, sem gráfico nem desenho das posições, a ressalva das opiniões
-// na linha do título e a área das assinaturas baixa. O procedimento (POP) sai no cabeçalho de toda página e
-// no método. Com 3 páginas, a última nunca fica só com as declarações e as assinaturas: a montagem mede e
-// leva para ela uma seção inteira da penúltima (`montarCertificado`). Com as opções da classe I (empuxo pela
-// densidade do ar medida, convecção calculada), uma frase curta embaixo do método diz a densidade do ar e a
+// Visual da 1ª versão (seções numeradas com fio, grades "RÓTULO / valor", tabelas com zebra, o desenho das
+// posições da excentricidade e o gráfico do erro de indicação), em no máximo 3 páginas: só a redundância saiu
+// (a verificação preliminar numa linha, e só com item "não"; uma legenda só para as tabelas dos resultados; a
+// ressalva das opiniões na linha do título; a área das assinaturas baixa, com o fim colado nela). O procedimento
+// (POP) sai no cabeçalho de toda página e no método. Se o certificado passaria de 3 páginas, o gráfico encolhe;
+// depois os respiros apertam (o layout compacto); e, em último caso, o gráfico sai — o desenho das posições fica
+// sempre (`DIAGRAMACOES`, `montarCertificado`). Com 3 páginas, a última nunca fica só com as declarações e as
+// assinaturas: a montagem mede e leva para ela uma seção inteira da penúltima. Com as opções da classe I (empuxo
+// pela densidade do ar medida, convecção calculada), uma frase curta embaixo do método diz a densidade do ar e a
 // diferença de temperatura pesos − ar usadas (`notaEmpuxoConveccao`); sem elas, nada muda.
 
 import {
   casasDecimais,
   densidadePesosPlausivel,
+  emaInstrumento,
   faixaDoValor,
   faixasOrdenadas,
   formatarNumero,
+  LIMIARES_EMA,
   ordemDeGrandeza,
 } from '#shared/metrologia/index.ts'
 import type { ResultadoCalculo, ResultadoPonto } from '#shared/metrologia/tipos.ts'
@@ -55,6 +59,7 @@ import type {
   Signatario,
   Unidade,
 } from '#shared/tipos.ts'
+import { diagramaPosicoes, graficoErros, type PontoGrafico, type TrechoEma, type ValorGrafico } from './graficos.ts'
 import {
   A4,
   BASE_RODAPE,
@@ -79,29 +84,103 @@ const MARGEM_X = 45
 /** Largura útil (≈ 178 mm). */
 const LARGURA = A4.largura - 2 * MARGEM_X
 
-const MARGEM_TOPO = TOPO_CABECALHO + MODULO + 17
+const MARGEM_TOPO = TOPO_CABECALHO + MODULO + 20
 /** Texto do rodapé: corpo, entrelinha e respiro entre a última linha de base e o fio de base. */
 const RODAPE = { tamanho: 7, entrelinha: 9, respiro: 9 }
 const NUM: NoObjeto = { fontFeatures: ['tnum'] }
 
-/** Dados com 8 pt ou mais; notas e declarações com 7 pt; rótulos em versal de 6,3 pt. */
-const ESTILOS: Record<string, NoObjeto> = {
-  secao: { font: 'InterMedio', bold: true, fontSize: 8, color: COR.marcaTexto, characterSpacing: 0.45 },
-  subsecao: { bold: true, fontSize: 8.2, color: COR.texto },
-  rotulo: { font: 'InterMedio', fontSize: 6.3, color: COR.rotulo, characterSpacing: 0.2, lineHeight: 1.1 },
-  valor: { fontSize: 8, lineHeight: 1.16 },
-  paragrafo: { fontSize: 7.6, lineHeight: 1.26, color: COR.texto },
-  th: { font: 'InterMedio', fontSize: 7, color: COR.textoSecundario, lineHeight: 1.08 },
-  td: { fontSize: 8, lineHeight: 1.05 },
-  nota: { fontSize: 7, color: COR.textoSecundario, lineHeight: 1.25 },
-  declaracao: { fontSize: 7, lineHeight: 1.15, color: COR.texto },
+/**
+ * Respiros e entrelinhas do layout. O normal é o visual da 1ª versão; o compacto (o de antes, enxuto) só entra
+ * quando o certificado, mesmo com o gráfico menor, passaria de 3 páginas (`montarCertificado`). Nos dois, dados
+ * com 8 pt ou mais, notas e declarações com 7 pt ou mais e rótulos em versal de 6,3 pt.
+ */
+interface Ritmo {
+  estilos: Record<string, NoObjeto>
+  /** Acima do título de seção e, em volta do fio embaixo dele, antes e depois. */
+  secao: { topo: number; fio: [number, number] }
+  /**
+   * Acima do título de subseção e embaixo da linha de complemento (ou do título, sem ela); `naLinha`: o
+   * complemento na linha do título, depois dele (senão, numa linha embaixo, como na 1ª versão).
+   */
+  subsecao: { topo: number; base: number; naLinha: boolean }
+  /** Folgas de cada linha da grade "RÓTULO / valor" (em cima e embaixo) e entre o rótulo e o valor. */
+  grade: { topo: number; base: number; valor: number }
+  /** Folgas das células das tabelas de medição (em cima e embaixo). */
+  celula: { topo: number; base: number }
+  /** Folga interna das caixas de destaque e a margem delas. */
+  destaque: { folga: number; margem: number[] }
+  paragrafo: number[]
+  /** Entre os itens das listas e das declarações. */
+  item: number
+  /** Acima do gráfico e do fio das assinaturas. */
+  grafico: number
+  assinaturas: number
 }
 
-/** Espaço mínimo (pt) que precisa sobrar abaixo de um título; menos que isso, o título vai para a próxima página. */
-const ESPACO_TITULO = 70
+const ESTILOS_BASE = {
+  secao: { font: 'InterMedio', bold: true, color: COR.marcaTexto, characterSpacing: 0.45 },
+  subsecao: { bold: true, color: COR.texto },
+  rotulo: { font: 'InterMedio', fontSize: 6.3, color: COR.rotulo, characterSpacing: 0.3, lineHeight: 1.1 },
+  paragrafo: { color: COR.texto },
+  th: { font: 'InterMedio', fontSize: 7, color: COR.textoSecundario },
+  nota: { fontSize: 7, color: COR.textoSecundario },
+  declaracao: { color: COR.texto },
+}
 
-/** Número da seção dos resultados (as seções 1 a 3 saem sempre): o texto do ajuste cita as subseções. */
-const N_RESULTADOS = 4
+const RITMO_NORMAL: Ritmo = {
+  estilos: {
+    ...ESTILOS_BASE,
+    secao: { ...ESTILOS_BASE.secao, fontSize: 8.6 },
+    subsecao: { ...ESTILOS_BASE.subsecao, fontSize: 8.6 },
+    valor: { fontSize: 8.4, lineHeight: 1.17 },
+    paragrafo: { ...ESTILOS_BASE.paragrafo, fontSize: 7.9, lineHeight: 1.28 },
+    th: { ...ESTILOS_BASE.th, lineHeight: 1.1 },
+    td: { fontSize: 8, lineHeight: 1.08 },
+    nota: { ...ESTILOS_BASE.nota, lineHeight: 1.28 },
+    declaracao: { ...ESTILOS_BASE.declaracao, fontSize: 7.1, lineHeight: 1.26 },
+  },
+  secao: { topo: 10, fio: [3, 5] },
+  subsecao: { topo: 7, base: 2.5, naLinha: false },
+  grade: { topo: 1.5, base: 2.2, valor: 1.2 },
+  celula: { topo: 2.4, base: 2.1 },
+  destaque: { folga: 4, margem: [0, 3.5, 0, 2.5] },
+  paragrafo: [0, 2, 0, 3],
+  item: 2.3,
+  grafico: 9,
+  assinaturas: 7,
+}
+
+const RITMO_COMPACTO: Ritmo = {
+  estilos: {
+    ...ESTILOS_BASE,
+    secao: { ...ESTILOS_BASE.secao, fontSize: 8.2 },
+    subsecao: { ...ESTILOS_BASE.subsecao, fontSize: 8.3 },
+    valor: { fontSize: 8.2, lineHeight: 1.12 },
+    paragrafo: { ...ESTILOS_BASE.paragrafo, fontSize: 7.6, lineHeight: 1.24 },
+    th: { ...ESTILOS_BASE.th, lineHeight: 1.06 },
+    td: { fontSize: 8, lineHeight: 1.04 },
+    nota: { ...ESTILOS_BASE.nota, lineHeight: 1.22 },
+    declaracao: { ...ESTILOS_BASE.declaracao, fontSize: 7, lineHeight: 1.16 },
+  },
+  secao: { topo: 7, fio: [2.5, 3.5] },
+  subsecao: { topo: 5, base: 2, naLinha: true },
+  grade: { topo: 1, base: 1.8, valor: 0.8 },
+  celula: { topo: 2.1, base: 1.8 },
+  destaque: { folga: 3.2, margem: [0, 2.5, 0, 2] },
+  paragrafo: [0, 1.5, 0, 2],
+  item: 1.2,
+  grafico: 6,
+  assinaturas: 4,
+}
+
+export const RITMOS = { normal: RITMO_NORMAL, compacto: RITMO_COMPACTO }
+export type NomeRitmo = keyof typeof RITMOS
+
+/** Espaço mínimo (pt) que precisa sobrar abaixo de um título; menos que isso, o título vai para a próxima página. */
+const ESPACO_TITULO = 90
+
+/** Número da seção dos resultados (as seções 1 a 4 saem sempre): o texto do ajuste cita as subseções. */
+const N_RESULTADOS = 5
 
 // ---- Utilitários de texto e números ----------------------------------------------------------------
 
@@ -129,7 +208,7 @@ const UNIDADE_EM_GRAMAS: Record<Unidade, number> = { mg: 0.001, g: 1, kg: 1000, 
 
 // ---- Blocos de layout -----------------------------------------------------------------------------
 
-function fio(cor: string = COR.fio, largura = 0.5, margem: number[] = [0, 3, 0, 4]): NoObjeto {
+function fio(cor: string = COR.fio, largura = 0.5, margem: number[] = [0, 3, 0, 6]): NoObjeto {
   return { canvas: [{ type: 'line', x1: 0, y1: 0, x2: LARGURA, y2: 0, lineWidth: largura, lineColor: cor }], margin: margem }
 }
 
@@ -140,12 +219,13 @@ const bloco = (conteudo: No[], pequeno: boolean): NoObjeto => (pequeno ? inteiro
  * Título de seção numerado: número e título em verde escuro, caixa alta, com um fio fino abaixo. `complemento`:
  * nota curta na mesma linha, depois do título (sem linha a mais).
  */
-function secao(numero: number | string, titulo: string, espaco = ESPACO_TITULO, complemento = ''): No[] {
+function secao(r: Ritmo, numero: number | string, titulo: string, espaco = ESPACO_TITULO, complemento = ''): No[] {
   return [
     {
       text: [
         { text: `${numero}`, color: COR.marca },
-        { text: ` ${titulo.toUpperCase()}` },
+        // Com o complemento na linha, o espaço menor depois do número (a linha toda cabe na largura)
+        { text: `${complemento ? ' ' : ' '}${titulo.toUpperCase()}` },
         ...(complemento
           ? [
               {
@@ -161,24 +241,28 @@ function secao(numero: number | string, titulo: string, espaco = ESPACO_TITULO, 
       ],
       style: 'secao',
       headlineLevel: espaco,
-      margin: [0, 7, 0, 0],
+      margin: [0, r.secao.topo, 0, 0],
     },
-    fio(COR.fio, 0.5, [0, 2.5, 0, 3.5]),
+    fio(COR.fio, 0.5, [0, r.secao.fio[0], 0, r.secao.fio[1]]),
   ]
 }
 
-/** Título de subseção ("5.3 Erro de indicação"), com uma linha de complemento opcional ao lado. */
-function subsecao(numero: string, titulo: string, complemento: No = '', espaco = ESPACO_TITULO - 20): NoObjeto {
-  return {
-    text: [
-      { text: `${numero} `, color: COR.marcaTexto },
-      { text: titulo },
-      ...(complemento ? [{ text: ' ' }, { text: complemento, style: 'nota', bold: false, color: COR.textoSecundario }] : []),
-    ],
-    style: 'subsecao',
-    headlineLevel: espaco,
-    margin: [0, 5, 0, 2],
-  }
+/** Título de subseção ("5.3 Erro de indicação"), com um complemento opcional embaixo (ou na linha dele). */
+function subsecao(r: Ritmo, numero: string, titulo: string, complemento: No = '', espaco = ESPACO_TITULO - 20): No[] {
+  const naLinha = !!complemento && r.subsecao.naLinha
+  return [
+    {
+      text: [
+        { text: `${numero} `, color: COR.marcaTexto },
+        { text: titulo },
+        ...(naLinha ? [{ text: ' ' }, { text: complemento, style: 'nota', bold: false }] : []),
+      ],
+      style: 'subsecao',
+      headlineLevel: espaco,
+      margin: [0, r.subsecao.topo, 0, complemento && !naLinha ? 0.5 : r.subsecao.base],
+    },
+    ...(complemento && !naLinha ? [{ text: complemento, style: 'nota', margin: [0, 0, 0, r.subsecao.base] }] : []),
+  ]
 }
 
 interface Campo {
@@ -188,17 +272,8 @@ interface Campo {
   span?: number
 }
 
-const SEM_LINHAS: NoObjeto = {
-  hLineWidth: () => 0,
-  vLineWidth: () => 0,
-  paddingLeft: () => 0,
-  paddingRight: () => 6,
-  paddingTop: () => 1,
-  paddingBottom: () => 2,
-}
-
 /** Grade de campos "RÓTULO / valor" (formulário técnico), em colunas iguais ou com as larguras dadas. */
-function grade(linhas: Campo[][], larguras: number | Array<number | string> = 4): NoObjeto {
+function grade(r: Ritmo, linhas: Campo[][], larguras: number | Array<number | string> = 4): NoObjeto {
   const colunas = typeof larguras === 'number' ? larguras : larguras.length
   const body: No[][] = []
   for (const linha of linhas) {
@@ -212,7 +287,7 @@ function grade(linhas: Campo[][], larguras: number | Array<number | string> = 4)
         colSpan: span,
         stack: [
           { text: c.rotulo.toUpperCase(), style: 'rotulo' },
-          { text: valor, style: 'valor', margin: [0, 1, 0, 0] },
+          { text: valor, style: 'valor', margin: [0, r.grade.valor, 0, 0] },
         ],
       })
       for (let i = 1; i < span; i++) celulas.push({})
@@ -226,51 +301,40 @@ function grade(linhas: Campo[][], larguras: number | Array<number | string> = 4)
   }
   return {
     table: { widths: typeof larguras === 'number' ? Array(colunas).fill('*') : larguras, body, dontBreakRows: true },
-    layout: SEM_LINHAS,
+    layout: {
+      hLineWidth: () => 0,
+      vLineWidth: () => 0,
+      paddingLeft: () => 0,
+      paddingRight: () => 8,
+      paddingTop: () => r.grade.topo,
+      paddingBottom: () => r.grade.base,
+    },
   }
 }
 
-/** Distribui os campos em linhas de `colunas`, na ordem: um campo que não cabe no resto da linha começa outra. */
-function fluir(campos: Campo[], colunas: number): Campo[][] {
-  const linhas: Campo[][] = []
-  let atual: Campo[] = []
-  let usadas = 0
-  for (const c of campos) {
-    const span = Math.min(c.span ?? 1, colunas)
-    if (usadas + span > colunas) {
-      linhas.push(atual)
-      atual = []
-      usadas = 0
-    }
-    atual.push(c)
-    usadas += span
-  }
-  if (atual.length) linhas.push(atual)
-  return linhas
-}
-
-function paragrafo(texto: No, margem: number[] = [0, 1.5, 0, 2]): NoObjeto {
+function paragrafo(r: Ritmo, texto: No, margem: number[] = r.paragrafo): NoObjeto {
   return { text: texto, style: 'paragrafo', margin: margem }
 }
 
 /** Caixa de destaque com filete à esquerda (revisão, ajuste, reparo, opiniões). */
 function destaque(
+  r: Ritmo,
   conteudo: No,
   cor: string = COR.marca,
   fundo: string = COR.marcaFundo,
-  margem: number[] = [0, 3, 0, 2],
+  margem: number[] = r.destaque.margem,
 ): NoObjeto {
   return {
     table: { widths: ['*'], body: [[conteudo]] },
     layout: {
       hLineWidth: () => 0,
-      vLineWidth: (i: number) => (i === 0 ? 2 : 0),
+      vLineWidth: (i: number) => (i === 0 ? 2.2 : 0),
       vLineColor: () => cor,
       fillColor: () => fundo,
-      paddingLeft: () => 7,
-      paddingRight: () => 7,
-      paddingTop: () => 3.5,
-      paddingBottom: () => 3.5,
+      paddingLeft: () => 9,
+      paddingRight: () => 9,
+      paddingTop: () => r.destaque.folga,
+      paddingBottom: () => r.destaque.folga,
     },
     margin: margem,
     unbreakable: true,
@@ -278,7 +342,7 @@ function destaque(
 }
 
 /** Layout das tabelas de medição: sem linhas verticais, cabeçalho cinza, zebra suave, fios finos. */
-const LAYOUT_TABELA: NoObjeto = {
+const layoutTabela = (r: Ritmo): NoObjeto => ({
   hLineWidth: (i: number, no: { table: { body: unknown[]; headerRows?: number } }) =>
     i === 0 || i === no.table.body.length ? 0.6 : i === (no.table.headerRows ?? 1) ? 0.6 : 0.25,
   hLineColor: (i: number, no: { table: { body: unknown[]; headerRows?: number } }) =>
@@ -289,11 +353,11 @@ const LAYOUT_TABELA: NoObjeto = {
     if (linha < cab) return COR.fundoCabecalho
     return (linha - cab) % 2 === 1 ? COR.zebra : null
   },
-  paddingLeft: (i: number) => (i === 0 ? 5 : 3.5),
-  paddingRight: (i: number, no: { table: { widths: unknown[] } }) => (i === no.table.widths.length - 1 ? 5 : 3.5),
-  paddingTop: () => 2.2,
-  paddingBottom: () => 1.9,
-}
+  paddingLeft: (i: number) => (i === 0 ? 6 : 4),
+  paddingRight: (i: number, no: { table: { widths: unknown[] } }) => (i === no.table.widths.length - 1 ? 6 : 4),
+  paddingTop: () => r.celula.topo,
+  paddingBottom: () => r.celula.base,
+})
 
 type Alinhamento = 'left' | 'right' | 'center'
 
@@ -306,6 +370,7 @@ interface Coluna {
 
 /** Tabela de medição: cabeçalho repetido ao quebrar a página, linhas que não se partem, números à direita. */
 function tabela(
+  r: Ritmo,
   colunas: Coluna[],
   linhas: No[][],
   opcoes: { pequena?: boolean; margem?: number[]; tamanho?: number } = {},
@@ -336,8 +401,8 @@ function tabela(
       widths: colunas.map((c) => c.largura),
       body: [cabecalho, ...corpo],
     },
-    layout: LAYOUT_TABELA,
-    margin: opcoes.margem ?? [0, 1, 0, 2],
+    layout: layoutTabela(r),
+    margin: opcoes.margem ?? [0, 2, 0, 2],
     // Tabela pequena não se divide entre páginas
     ...(opcoes.pequena ? { unbreakable: true } : {}),
   }
@@ -353,11 +418,11 @@ const th = (titulo: No, unidade?: string): No => [
 const NU_EFF: No = [{ text: 'ν' }, { text: 'eff', sub: true }]
 
 /** Lista com marcadores discretos. */
-function lista(itens: No[]): NoObjeto {
+function lista(r: Ritmo, itens: No[]): NoObjeto {
   return {
-    ul: itens.map((t) => ({ text: t, style: 'paragrafo', margin: [0, 0, 0, 1] })),
+    ul: itens.map((t) => ({ text: t, style: 'paragrafo', margin: [0, 0, 0, r.item] })),
     markerColor: COR.marca,
-    margin: [2, 0, 0, 1],
+    margin: [2, 1, 0, 1],
   }
 }
 
@@ -372,9 +437,11 @@ interface Contexto {
   numero: string
   /** Divisão usada nas leituras na carga (divisão de teste, quando houver). */
   divisao: (carga: number) => number
+  /** Respiros do layout (normal ou compacto). */
+  r: Ritmo
 }
 
-function contexto(d: DadosCertificadoPdf): Contexto {
+function contexto(d: DadosCertificadoPdf, ritmo: NomeRitmo = 'normal'): Contexto {
   const k = d.calibracao
   const e = d.emissao
   const b = e.balanca
@@ -387,6 +454,7 @@ function contexto(d: DadosCertificadoPdf): Contexto {
     u: b.unidade,
     numero: ou(k.numero, 'PRÉVIA'),
     divisao: (carga) => (divisaoTeste > 0 ? divisaoTeste : b.faixas.length ? faixaDoValor(carga, b).d : 0),
+    r: RITMOS[ritmo],
   }
 }
 
@@ -400,14 +468,14 @@ const empresaNome = (e: EmissaoCertificado) => e.empresa.razaoSocial || e.empres
 /** Código do procedimento (POP) da emissão, ou '' (certificados emitidos sem ele). */
 const procedimento = (e: EmissaoCertificado) => (e.textos.procedimento ?? '').trim()
 
-// ---- 1. Dados da calibração: cliente, local, ambiente e método -------------------------------------------------
+// ---- 1. Dados da calibração (local, ambiente e método) e 2. Cliente -------------------------------------------
 
 function dataEmissao(ctx: Contexto): string {
   const pelaCalibracao = formatarDataBr(ctx.k.dataEmissao)
   return pelaCalibracao || dataHoraBrasilia(ctx.e.emitidoEm)?.data || ''
 }
 
-/** Condições ambientais (início e fim), numa linha da grade dos dados da calibração. */
+/** Condições ambientais (início e fim), numa linha da grade. */
 function linhaAmbiente(ctx: Contexto): Campo[] {
   const a = ctx.k.ambiente
   const par = (ini: number | null, fim: number | null, casas: number, unidade: string) => {
@@ -515,10 +583,6 @@ export function notaEmpuxoConveccao(ctx: Pick<Contexto, 'd' | 'k' | 'e'>): strin
 
 function secaoDadosCalibracao(ctx: Contexto, n: number): No[] {
   const { k, e } = ctx
-  const c = e.cliente
-  const pj = c.tipo === 'PJ'
-  const nome = pj ? c.razaoSocial || c.nome : c.nome
-  const contato = [c.contato, c.telefone || c.celular, c.email].filter((x) => !vazio(x)).join(' · ')
   const local = [LOCAIS[k.local], k.localEndereco.trim()].filter(Boolean).join(' — ')
   // O código do POP em negrito e a descrição curta; sem POP registrado, só a descrição
   const descricaoMetodo = (e.textos.procedimentoDescricao ?? '').trim()
@@ -535,25 +599,17 @@ function secaoDadosCalibracao(ctx: Contexto, n: number): No[] {
       { rotulo: 'Ordem de serviço', valor: k.ordemServico },
     ],
     [
-      { rotulo: pj ? 'Cliente (razão social)' : 'Cliente', valor: { text: ou(nome), bold: true }, span: 3 },
-      { rotulo: pj ? 'CNPJ' : 'CPF', valor: { text: ou(c.documento) } },
-    ],
-    [
-      { rotulo: 'Endereço do cliente', valor: enderecoCliente(c), span: contato ? 2 : 4 },
-      ...(contato ? [{ rotulo: 'Contato', valor: contato, span: 2 }] : []),
-    ],
-    [
       { rotulo: 'Local da calibração', valor: local, span: k.dataRecebimento ? 3 : 4 },
       ...(k.dataRecebimento ? [{ rotulo: 'Recebimento do item', valor: formatarDataBr(k.dataRecebimento) }] : []),
     ],
     linhaAmbiente(ctx),
     [{ rotulo: 'Método — procedimento (POP)', valor: valorMetodo(metodo, notaEmpuxoConveccao(ctx)), span: 4 }],
   ]
-  const blocos: No[] = [inteiro([...secao(n, 'Dados da calibração'), grade(linhas)])]
+  const blocos: No[] = [inteiro([...secao(ctx.r, n, 'Dados da calibração'), grade(ctx.r, linhas)])]
   if (!vazio(e.substituiNumero)) {
     const emitido = formatarDataBr(e.substituiEmissao) || dataHoraBrasilia(e.substituiEmissao)?.data || ''
     blocos.push(
-      destaque({
+      destaque(ctx.r, {
         text: [
           { text: 'Revisão: ', bold: true },
           `este certificado substitui integralmente o Certificado nº `,
@@ -569,7 +625,49 @@ function secaoDadosCalibracao(ctx: Contexto, n: number): No[] {
   return blocos
 }
 
-// ---- 2. Instrumento calibrado ---------------------------------------------------------------------
+/** Nome comparável: sem acentos, pontuação, caixa e o tipo da sociedade ("Ltda.", "ME", "S/A"…). */
+const nomeComparavel = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\b(ltda|me|epp|eireli|s ?a|cia)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+function secaoCliente(ctx: Contexto, n: number): No[] {
+  const c = ctx.e.cliente
+  const pj = c.tipo === 'PJ'
+  const nome = pj ? c.razaoSocial || c.nome : c.nome
+  // O nome fantasia ao lado da razão social só quando diz outra coisa (não a mesma razão social sem o "Ltda.")
+  const fantasia =
+    pj && !vazio(c.nome) && !vazio(c.razaoSocial) && nomeComparavel(c.nome) !== nomeComparavel(c.razaoSocial) ? c.nome.trim() : ''
+  const contato = [c.contato, c.telefone || c.celular, c.email].filter((x) => !vazio(x)).join(' · ')
+  const nomeValor: No = fantasia
+    ? [
+        { text: ou(nome), bold: true },
+        { text: `\u2003${fantasia}`, color: COR.textoSecundario, fontSize: 7.8 },
+      ]
+    : { text: ou(nome), bold: true }
+  return [
+    inteiro([
+      ...secao(ctx.r, n, 'Cliente'),
+      grade(ctx.r, [
+        [
+          { rotulo: pj ? 'Razão social' : 'Nome', valor: nomeValor, span: 3 },
+          { rotulo: pj ? 'CNPJ' : 'CPF', valor: { text: ou(c.documento) } },
+        ],
+        [
+          { rotulo: 'Endereço', valor: enderecoCliente(c), span: contato ? 2 : 4 },
+          ...(contato ? [{ rotulo: 'Contato', valor: contato, span: 2 }] : []),
+        ],
+      ]),
+    ]),
+  ]
+}
+
+// ---- 3. Instrumento calibrado ---------------------------------------------------------------------
 
 /** Divisões na unidade mais legível, separadas por barra: "50 g", "2 / 5 / 10 g". */
 function divisoesTexto(valores: number[], u: Unidade): string {
@@ -578,8 +676,12 @@ function divisoesTexto(valores: number[], u: Unidade): string {
   return `${l.valores.map((v) => numeroBr(v)).join(' / ')} ${l.unidade}`
 }
 
-/** Colunas da grade do instrumento: cada rótulo longo cabe numa linha (TAG na 6ª, "divisão de verificação" na 4ª). */
-const LARGURAS_INSTRUMENTO = [73, 73, 73, 94, 73, '*']
+/**
+ * Colunas das características metrológicas (sem as folgas de 8 pt): cada rótulo numa linha ("divisão de
+ * verificação" na 4ª). Multi-intervalo: a capacidade nas duas primeiras ("30 000 / 60 000 / 80 000 kg").
+ */
+const LARGURAS_METROLOGIA = [76, 76, 62, 112, 56, '*']
+const LARGURAS_METROLOGIA_MULTI = [66, 66, 60, 98, 74, '*']
 
 const PRELIMINAR: Array<[keyof Calibracao['preliminar'], string]> = [
   ['identificavel', 'identificável'],
@@ -589,9 +691,19 @@ const PRELIMINAR: Array<[keyof Calibracao['preliminar'], string]> = [
   ['preCarga', 'pré-carga aplicada'],
 ]
 
-/** Ajuste, reparo e verificação preliminar: uma ou duas frases cada. */
+/** Verificação preliminar (numa linha, só com algum item "não"), ajuste e reparo: uma ou duas frases cada. */
 function condicaoDoItem(ctx: Contexto): No[] {
   const { k } = ctx
+  const blocos: No[] = []
+  const naoAtendidos = PRELIMINAR.filter(([chave]) => k.preliminar[chave] === 'NAO').map(([, t]) => t)
+  if (naoAtendidos.length)
+    blocos.push(
+      paragrafo(
+        ctx.r,
+        [{ text: 'Verificação preliminar: ', bold: true }, `item(ns) não atendido(s): ${naoAtendidos.join(', ')}.`],
+        [0, 3, 0, 0],
+      ),
+    )
   const ajuste: No[] = []
   if (k.ajuste.realizado === 'NAO') {
     ajuste.push(
@@ -609,11 +721,7 @@ function condicaoDoItem(ctx: Contexto): No[] {
       `antes da calibração foi realizado ${tipo}${descricao}. ${resultados} O ajuste não faz parte da calibração.`,
     )
   }
-  const naoAtendidos = PRELIMINAR.filter(([chave]) => k.preliminar[chave] === 'NAO').map(([, t]) => t)
-  const preliminar: No[] = naoAtendidos.length
-    ? [{ text: '\nVerificação preliminar: ', bold: true }, `item(ns) não atendido(s): ${naoAtendidos.join(', ')}.`]
-    : []
-  const blocos: No[] = [destaque({ text: [...ajuste, ...preliminar], style: 'paragrafo' })]
+  blocos.push(destaque(ctx.r, { text: ajuste, style: 'paragrafo' }))
 
   if (k.reparo.houve) {
     const r = k.reparo
@@ -630,6 +738,7 @@ function condicaoDoItem(ctx: Contexto): No[] {
       !ctx.e.cliente.uf || ctx.e.cliente.uf === 'SP' ? 'pelo órgão metrológico (IPEM-SP)' : 'pelo órgão metrológico competente'
     blocos.push(
       destaque(
+        ctx.r,
         {
           text: [
             { text: 'Reparo: ', bold: true },
@@ -639,7 +748,7 @@ function condicaoDoItem(ctx: Contexto): No[] {
         },
         COR.alerta,
         COR.alertaFundo,
-        [0, 1.5, 0, 2],
+        [0, 2, 0, 3],
       ),
     )
   }
@@ -664,19 +773,35 @@ function secaoInstrumento(ctx: Contexto, n: number): No[] {
   const maxes = faixas.map((f) => numeroBr(f.max)).join(' / ')
   const tipoFaixas = b.tipoFaixas === 'MULTI_INTERVALO' ? 'multi-intervalo' : 'múltiplas faixas'
 
-  const identificacao: Campo[] = [
-    {
-      rotulo: 'Instrumento',
-      valor: { text: `Balança ${(TIPOS_BALANCA[b.tipo] ?? 'de pesagem').toLowerCase()}`, bold: true },
-      span: 2,
-    },
-    { rotulo: 'Fabricante', valor: b.fabricante },
-    { rotulo: 'Modelo', valor: b.modelo },
-    { rotulo: 'Nº de série', valor: { text: ou(b.numeroSerie) } },
-    { rotulo: 'Identificação / TAG (*)', valor: b.identificacao },
+  const identificacao: Campo[][] = [
+    [
+      {
+        rotulo: 'Instrumento',
+        valor: { text: `Balança ${(TIPOS_BALANCA[b.tipo] ?? 'de pesagem').toLowerCase()}`, bold: true },
+        span: 2,
+      },
+      { rotulo: 'Fabricante', valor: b.fabricante },
+      { rotulo: 'Modelo', valor: b.modelo },
+    ],
+    [
+      { rotulo: 'Nº de série', valor: { text: ou(b.numeroSerie) } },
+      { rotulo: 'Identificação / TAG (*)', valor: b.identificacao },
+      { rotulo: 'Ano de fabricação', valor: b.anoFabricacao },
+      { rotulo: 'Unidade', valor: u },
+    ],
+    ...(separada
+      ? [
+          [
+            {
+              rotulo: separada.rotulo,
+              valor: [separada.nome, separada.serie && `nº de série ${separada.serie}`].filter(Boolean).join(' · '),
+              span: 4,
+            },
+          ],
+        ]
+      : []),
   ]
-  // Características metrológicas, conforme a marcação do instrumento (multi-intervalo: "6 / 15 / 33 kg");
-  // a ordem põe os rótulos longos nas colunas largas da grade
+  // Características metrológicas, conforme a marcação do instrumento (multi-intervalo: "6 / 15 / 33 kg")
   const max: Campo = {
     rotulo: multi ? `Capacidade (Max) · ${tipoFaixas}` : 'Capacidade (Max)',
     valor: { text: faixas.length ? `${maxes} ${u}` : '—', bold: true },
@@ -701,34 +826,39 @@ function secaoInstrumento(ctx: Contexto, n: number): No[] {
     ),
   }
   const classe: Campo = { rotulo: 'Classe de exatidão', valor: ROTULO_CLASSE[b.classe] }
-  const metrologia: Campo[] = multi ? [max, d, e, min, classe] : [max, min, d, e, classe, { rotulo: 'Unidade', valor: u }]
-  const outros: Campo[] = [
-    ...(separada
-      ? [
-          {
-            rotulo: separada.rotulo,
-            valor: [separada.nome, separada.serie && `nº de série ${separada.serie}`].filter(Boolean).join(' · '),
-            span: 2,
-          },
-        ]
-      : []),
-    { rotulo: 'Receptor de carga', valor: receptor, span: 2 },
-    { rotulo: 'Portaria de aprovação de modelo', valor: b.portariaAprovacao, span: 2 },
-    { rotulo: 'Local de instalação (*)', valor: b.localInstalacao, span: 2 },
-    { rotulo: 'Finalidade de uso (*)', valor: b.finalidade ? FINALIDADES[b.finalidade] : '', span: 2 },
-    { rotulo: 'Ano de fabricação', valor: b.anoFabricacao },
-    ...(multi ? [{ rotulo: 'Unidade', valor: u }] : []),
+  const f = faixas[0]
+  const nMax: Campo = { rotulo: 'n = Max/e', valor: f && f.e > 0 ? numeroBr(Math.round(f.max / f.e)) : '—' }
+  const metrologia = multi
+    ? grade(ctx.r, [[max, d, e, min, classe]], LARGURAS_METROLOGIA_MULTI)
+    : grade(ctx.r, [[max, min, d, e, nMax, classe]], LARGURAS_METROLOGIA)
+  const outros: Campo[][] = [
+    [
+      { rotulo: 'Portaria de aprovação de modelo', valor: b.portariaAprovacao, span: 2 },
+      { rotulo: 'Receptor de carga', valor: receptor, span: 2 },
+    ],
+    [
+      { rotulo: 'Local de instalação (*)', valor: b.localInstalacao, span: 2 },
+      { rotulo: 'Finalidade de uso (*)', valor: b.finalidade ? FINALIDADES[b.finalidade] : '', span: 2 },
+    ],
   ]
   return [
     inteiro([
-      ...secao(n, 'Instrumento calibrado'),
-      grade([identificacao, metrologia, ...fluir(outros, 6)], LARGURAS_INSTRUMENTO),
-      ...condicaoDoItem(ctx),
+      ...secao(ctx.r, n, 'Instrumento calibrado'),
+      grade(ctx.r, identificacao),
+      {
+        text: 'CARACTERÍSTICAS METROLÓGICAS, CONFORME A MARCAÇÃO DO INSTRUMENTO',
+        style: 'rotulo',
+        color: COR.marcaTexto,
+        margin: [0, 4, 0, 2.5],
+      },
+      metrologia,
+      grade(ctx.r, outros),
     ]),
+    ...condicaoDoItem(ctx),
   ]
 }
 
-// ---- 3. Padrões utilizados -------------------------------------------------------------------------
+// ---- 4. Padrões utilizados -------------------------------------------------------------------------
 
 function secaoPadroes(ctx: Contexto, n: number): No[] {
   const padroes = [...ctx.e.padroes].sort((a, b) => Number(b.tipo === 'PESOS') - Number(a.tipo === 'PESOS'))
@@ -772,20 +902,22 @@ function secaoPadroes(ctx: Contexto, n: number): No[] {
     notas.push(
       `Pesos padrão ${nominais.join(', ')} usados pelo valor nominal: o erro máximo admissível da classe (OIML R 111) entra como contribuição para a incerteza.`,
     )
-  // A rastreabilidade vem logo abaixo do título (fica com ele); a tabela pode se dividir entre as páginas (por
-  // linha, com o cabeçalho de novo): inteira, ela deixaria um vão no pé da página 1 quando a identificação do
-  // instrumento é longa (ajuste e reparo)
+  // A rastreabilidade ("por meio dos padrões abaixo") vem logo abaixo do título e fica com ele; a tabela pode se
+  // dividir entre as páginas (por linha, com o cabeçalho de novo): inteira, ela deixaria um vão no pé da página
+  // quando a identificação do instrumento é longa (ajuste e reparo)
+  const nota = notas.join(' ')
+  const corpo = Number(ctx.r.estilos.paragrafo.fontSize ?? 8)
+  const entrelinha = corpo * Number(ctx.r.estilos.paragrafo.lineHeight ?? 1.2)
+  const linhasNota = nota ? Math.ceil((nota.length * corpo * 0.52) / LARGURA) : 0
   return [
     {
-      ...inteiro([
-        ...secao(n, 'Padrões utilizados'),
-        ...(notas.length ? [{ text: notas.join(' '), style: 'nota', margin: [0, 0, 0, 1.5] }] : []),
-      ]),
+      ...inteiro([...secao(ctx.r, n, 'Padrões utilizados'), ...(nota ? [paragrafo(ctx.r, nota, [0, 0, 0, 2.5])] : [])]),
       // O título e a rastreabilidade só ficam no pé da página com o cabeçalho e a 1ª linha da tabela embaixo
-      // (título ≈ 25 pt, nota estimada por linhas de 7 pt e cabeçalho com a 1ª linha ≈ 80 pt)
-      headlineLevel: 105 + Math.ceil((notas.join(' ').length * 7 * 0.52) / LARGURA) * 9,
+      // (título ≈ 30 pt, nota estimada pelas linhas e cabeçalho com a 1ª linha ≈ 80 pt)
+      headlineLevel: 115 + Math.ceil(linhasNota * entrelinha + (nota ? 2.5 : 0)),
     },
     tabela(
+      ctx.r,
       [
         { titulo: 'Identificação', largura: 58 },
         { titulo: 'Descrição', largura: '*' },
@@ -802,13 +934,18 @@ function secaoPadroes(ctx: Contexto, n: number): No[] {
   ]
 }
 
-// ---- 4. Resultados ---------------------------------------------------------------------------------
+// ---- 5. Resultados ---------------------------------------------------------------------------------
 
 function repetibilidade(ctx: Contexto, abertura: No[]): No[] {
   const { u } = ctx
   const resultados = ctx.d.resultado.repetibilidade.filter((r) => r.n > 0)
-  const titulo = subsecao(`${N_RESULTADOS}.1`, 'Repetibilidade', 'mesma carga, repetidas vezes, no centro do receptor')
-  if (!resultados.length) return [inteiro([...abertura, titulo, paragrafo('Ensaio não realizado.')])]
+  const titulo = subsecao(
+    ctx.r,
+    `${N_RESULTADOS}.1`,
+    'Repetibilidade',
+    'Mesma carga, aplicada repetidas vezes no centro do receptor.',
+  )
+  if (!resultados.length) return [inteiro([...abertura, ...titulo, paragrafo(ctx.r, 'Ensaio não realizado.')])]
   const linhas = resultados.map((r): No[] => {
     const ensaio = ctx.k.repetibilidade.find((x) => x.id === r.id)
     const leituras = (ensaio?.leituras ?? []).filter((l): l is number => typeof l === 'number' && Number.isFinite(l))
@@ -826,8 +963,9 @@ function repetibilidade(ctx: Contexto, abertura: No[]): No[] {
     bloco(
       [
         ...abertura,
-        titulo,
+        ...titulo,
         tabela(
+          ctx.r,
           [
             { titulo: th('Carga', u), largura: 58, numerica: true },
             { titulo: th('Indicações', u), largura: '*' },
@@ -843,93 +981,116 @@ function repetibilidade(ctx: Contexto, abertura: No[]): No[] {
   ]
 }
 
-/** Posições por tabela da excentricidade (mais que isso, outra tabela embaixo). */
-const POSICOES_POR_TABELA = 8
+/** Largura máxima do desenho das posições ao lado da tabela (pt); mais largo, ele é reduzido. */
+const LARGURA_DESENHO = 214
+/** Até onde o desenho largo encolhe para o rótulo da posição caber numa linha da tabela ao lado (pt). */
+const LARGURA_DESENHO_MIN = 160
+/** Entre a tabela das posições e o desenho (pt). */
+const ESPACO_DESENHO = 18
 
-/** Excentricidade com as posições nas colunas: indicação e desvio ΔI em linhas. */
+/**
+ * Excentricidade: a tabela das posições (uma por linha) e, ao lado, o desenho delas vistas de cima, com a de
+ * maior desvio destacada. Embaixo da tabela, o maior desvio.
+ */
 function excentricidade(ctx: Contexto): No[] {
-  const { u, k } = ctx
+  const { u, k, b } = ctx
   const ensaio = k.excentricidade
   const res = ctx.d.resultado.excentricidade
   const numero = `${N_RESULTADOS}.2`
   if (!ensaio.aplicavel)
     return [
       inteiro([
-        subsecao(numero, 'Excentricidade'),
-        paragrafo(`Ensaio não aplicável${vazio(ensaio.motivo) ? '.' : `: ${comPonto(ensaio.motivo)}`}`),
+        ...subsecao(ctx.r, numero, 'Excentricidade'),
+        paragrafo(ctx.r, `Ensaio não aplicável${vazio(ensaio.motivo) ? '.' : `: ${comPonto(ensaio.motivo)}`}`),
       ]),
     ]
   const carga = ensaio.carga
   const casas = casasDecimais(ctx.divisao(carga))
   const comReferencia = ensaio.metodo === 3 || ensaio.metodo === 4
-  const maiorDesvio = num(res.maiorDesvio, Math.max(casas, casasDecimais(res.maiorDesvio)))
   const temMaior = res.posicaoMaior > 0 && res.maiorDesvio > 0
-  const complemento: No = [
-    `carga ${leitura(ctx, carga, carga)} ${u} · ${METODOS_EXCENTRICIDADE[ensaio.metodo].toLowerCase()} · maior desvio `,
-    { text: `|ΔI|máx = ${maiorDesvio} ${u}`, bold: true, color: COR.texto },
-    temMaior ? ` (posição ${res.posicaoMaior + 1})` : '',
+  const colunas: Coluna[] = [
+    { titulo: th('Nº'), largura: 16, alinhamento: 'center' },
+    { titulo: th('Posição'), largura: '*' },
+    ...(comReferencia
+      ? [{ titulo: th(ensaio.metodo === 3 ? 'Zero lido' : 'Posição 1 antes', u), largura: 60, numerica: true }]
+      : []),
+    { titulo: th('Indicação', u), largura: 60, numerica: true },
+    { titulo: th('Desvio ΔI', u), largura: 56, numerica: true },
   ]
-  const tabelas: No[] = []
-  for (let de = 0; de < ensaio.posicoes.length; de += POSICOES_POR_TABELA) {
-    const indices = ensaio.posicoes.slice(de, de + POSICOES_POR_TABELA).map((_, j) => de + j)
-    const celula = (i: number, valor: No): NoObjeto => ({
-      ...(typeof valor === 'object' && !Array.isArray(valor) ? valor : { text: valor }),
-      bold: i === res.posicaoMaior && res.maiorDesvio > 0 ? true : undefined,
-    })
-    const rotuloLinha = (t: string, unidade = true): NoObjeto => ({
-      text: [{ text: t }, ...(unidade ? [{ text: ` (${u})`, color: COR.rotulo }] : [])],
-      style: 'th',
-      alignment: 'left',
-      fontFeatures: undefined,
-    })
-    const linhas: No[][] = []
-    if (comReferencia)
-      linhas.push([
-        rotuloLinha(ensaio.metodo === 3 ? 'Zero lido' : 'Posição 1 antes'),
-        ...indices.map((i) => {
-          const r = ensaio.posicoes[i].referencia
-          return r === null ? '—' : leitura(ctx, r, carga)
-        }),
-      ])
-    linhas.push([
-      rotuloLinha('Indicação'),
-      ...indices.map((i) => {
-        const l = ensaio.posicoes[i].leitura
-        return l === null ? '—' : leitura(ctx, l, carga)
-      }),
-    ])
-    linhas.push([
-      rotuloLinha('Desvio ΔI'),
-      ...indices.map((i): No => {
-        if (i === 0) return { text: 'referência', color: COR.rotulo, fontSize: 7 }
-        const d = res.desvios[i]
-        return celula(i, d === null || d === undefined ? '—' : comSinal(num(d, Math.max(casas, casasDecimais(d)))))
-      }),
-    ])
-    tabelas.push(
-      tabela(
-        [
-          { titulo: 'Posição', largura: 64 },
-          ...indices.map((i): Coluna => ({
-            titulo: [{ text: `${i + 1} `, color: COR.marcaTexto }, { text: ou(ensaio.posicoes[i].rotulo, `Posição ${i + 1}`) }],
-            largura: '*',
-            alinhamento: 'right',
-            numerica: true,
-          })),
+  const linhas = ensaio.posicoes.map((p, i): No[] => {
+    const desvio = res.desvios[i]
+    const maior = i === res.posicaoMaior && res.maiorDesvio > 0
+    return [
+      { text: String(i + 1), color: COR.textoSecundario, ...NUM },
+      { text: ou(p.rotulo, `Posição ${i + 1}`), bold: maior },
+      ...(comReferencia ? [p.referencia === null ? '—' : leitura(ctx, p.referencia, carga)] : []),
+      p.leitura === null ? '—' : leitura(ctx, p.leitura, carga),
+      i === 0
+        ? { text: 'referência', color: COR.rotulo, fontSize: 7 }
+        : {
+            text: desvio === null || desvio === undefined ? '—' : comSinal(num(desvio, Math.max(casas, casasDecimais(desvio)))),
+            bold: maior,
+          },
+    ]
+  })
+  const maior = num(res.maiorDesvio, Math.max(casas, casasDecimais(res.maiorDesvio)))
+  const resumo = paragrafo(
+    ctx.r,
+    [
+      { text: 'Maior desvio: ', bold: true },
+      { text: `|ΔI|máx = ${maior} ${u}`, bold: true },
+      temMaior ? { text: `, na posição ${res.posicaoMaior + 1}`, color: COR.textoSecundario } : '',
+    ],
+    [0, 3, 0, 0],
+  )
+  const tab = tabela(ctx.r, colunas, linhas, { margem: [0, 0, 0, 0] })
+  const diagrama = diagramaPosicoes(
+    b.receptor,
+    ensaio.posicoes.map((p) => p.rotulo),
+    res.maiorDesvio > 0 ? res.posicaoMaior : -1,
+    b.apoios,
+  )
+  // O rótulo da posição numa linha: com a coluna da referência (métodos 3 e 4) ou rótulos longos, o desenho largo
+  // (rodoviária) encolhe um pouco, até LARGURA_DESENHO_MIN (folgas das células: 6 nas pontas, 4 + 4 entre colunas)
+  const fixas =
+    colunas.reduce((soma, c) => soma + (typeof c.largura === 'number' ? c.largura : 0), 0) + 12 + 8 * (colunas.length - 1)
+  const rotuloMaisLargo = Math.max(
+    ...ensaio.posicoes.map((p, i) => larguraTexto(ou(p.rotulo, `Posição ${i + 1}`), { tamanho: 8, negrito: true })),
+  )
+  const cabe = LARGURA - ESPACO_DESENHO - fixas - rotuloMaisLargo - 1
+  const largura = diagrama
+    ? Math.max(Math.min(diagrama.largura, LARGURA_DESENHO_MIN), Math.min(diagrama.largura, LARGURA_DESENHO, cabe))
+    : 0
+  const corpo: No = diagrama
+    ? {
+        columns: [
+          { width: '*', stack: [tab, resumo] },
+          {
+            width: largura,
+            stack: [
+              {
+                svg: diagrama.svg,
+                width: largura,
+                height: (diagrama.altura * largura) / diagrama.largura,
+                font: 'Inter',
+              },
+              { text: 'Posições vistas de cima', style: 'nota', alignment: 'center', margin: [0, 1, 0, 0] },
+            ],
+          },
         ],
-        linhas,
-        { pequena: true },
-      ),
-    )
-  }
-  return [inteiro([subsecao(numero, 'Excentricidade', complemento), ...tabelas])]
+        columnGap: ESPACO_DESENHO,
+      }
+    : { stack: [tab, resumo] }
+  const descricao = `Carga de ensaio: ${leitura(ctx, carga, carga)} ${u} · método: ${METODOS_EXCENTRICIDADE[ensaio.metodo].toLowerCase()}.`
+  return [bloco([...subsecao(ctx.r, numero, 'Excentricidade', descricao), corpo], ensaio.posicoes.length <= 14)]
 }
 
 const DESCRICAO_METODO: Record<MetodoCarregamento, string> = {
-  CRESCENTE_DECRESCENTE: 'cargas crescentes até a maior carga e depois decrescentes, sem descarregar',
-  DESCONTINUO: 'cargas crescentes, com descarga entre os pontos',
-  CONTINUO: 'cargas crescentes, sem descarregar entre os pontos',
-  DECRESCENTE: 'cargas decrescentes, a partir da maior carga',
+  CRESCENTE_DECRESCENTE:
+    'Carregamento: cargas crescentes até a maior carga e depois decrescentes, sem descarregar entre os pontos.',
+  DESCONTINUO: 'Carregamento: cargas crescentes, com descarga entre os pontos.',
+  CONTINUO: 'Carregamento: cargas crescentes, sem descarregar entre os pontos.',
+  DECRESCENTE: 'Carregamento: cargas decrescentes, a partir da maior carga.',
 }
 
 interface OpcoesTabelaErros {
@@ -947,6 +1108,12 @@ const ambosSentidos = (ensaio: EnsaioIndicacao) =>
 /** O ensaio tem cargas de substituição em algum ponto? */
 const comSubstituicao = (ensaio: EnsaioIndicacao) =>
   ensaio.substituicao.ativa && ensaio.pontos.some((p) => p.nivelSubstituicao > 0)
+
+/**
+ * Linhas de uma tabela de erros que vai inteira para a página seguinte quando não cabe; mais que isso, ela se
+ * divide entre as páginas (com o cabeçalho repetido) e não deixa um vão no pé da página.
+ */
+const LINHAS_INTEIRAS = 8
 
 /** Tabela do erro de indicação (como deixado ou como encontrado). */
 function tabelaErros(ctx: Contexto, r: ResultadoCalculo, ensaio: EnsaioIndicacao, o: OpcoesTabelaErros): NoObjeto {
@@ -1017,7 +1184,7 @@ function tabelaErros(ctx: Contexto, r: ResultadoCalculo, ensaio: EnsaioIndicacao
       ...(o.conformidade ? [p.texto.ema ? `±${p.texto.ema}` : '—', { ...situacao, fontSize: 7.6 }] : []),
     ]
   })
-  return tabela(colunas, linhas, { pequena: linhas.length <= 12 })
+  return tabela(ctx.r, colunas, linhas, { pequena: linhas.length <= LINHAS_INTEIRAS })
 }
 
 /** Há resultado "como encontrado" (então 5.3 é o "como deixado"). */
@@ -1035,18 +1202,25 @@ function cargaPecas(ctx: Contexto, pecas: Calibracao['indicacao']['substituicao'
   return Number((gramas / UNIDADE_EM_GRAMAS[ctx.u]).toPrecision(12))
 }
 
-/** Frases curtas embaixo de uma tabela de erros: cargas de substituição e retorno ao zero. */
-function depoisDaTabela(ctx: Contexto, r: ResultadoCalculo, ensaio: EnsaioIndicacao): No[] {
+/** As cargas de substituição de um ensaio, numa frase (vazia sem elas). */
+function fraseSubstituicao(ctx: Contexto, ensaio: EnsaioIndicacao): string {
+  if (!comSubstituicao(ensaio)) return ''
+  const pesos = cargaPecas(ctx, ensaio.substituicao.pecas)
+  const etapas = ensaio.substituicao.etapas.filter((e) => e.leituraPadroes !== null && e.leituraSubstituicao !== null).length
+  return ` (EURAMET cg-18, 4.3.3): ${etapas} etapa${etapas === 1 ? '' : 's'}, cada uma com ${pesos > 0 ? `${leitura(ctx, pesos, pesos)} ${ctx.u} de ` : ''}pesos padrão trocados por carga de mesma indicação; incerteza das etapas incluída em U. `
+}
+
+/**
+ * Frases curtas embaixo de uma tabela de erros: cargas de substituição e retorno ao zero. `anterior`: o ensaio
+ * da tabela de cima (no "como encontrado", o "como deixado"); as mesmas cargas de substituição não se repetem.
+ */
+function depoisDaTabela(ctx: Contexto, r: ResultadoCalculo, ensaio: EnsaioIndicacao, anterior?: EnsaioIndicacao): No[] {
   const { u } = ctx
   const partes: No[] = []
-  if (comSubstituicao(ensaio)) {
-    const pesos = cargaPecas(ctx, ensaio.substituicao.pecas)
-    const etapas = ensaio.substituicao.etapas.filter((e) => e.leituraPadroes !== null && e.leituraSubstituicao !== null).length
-    partes.push(
-      { text: 'Cargas de substituição', bold: true },
-      ` (EURAMET cg-18, 4.3.3): ${etapas} etapa${etapas === 1 ? '' : 's'}, cada uma com ${pesos > 0 ? `${leitura(ctx, pesos, pesos)} ${u} de ` : ''}pesos padrão trocados por carga de mesma indicação; incerteza das etapas incluída em U. `,
-    )
-  }
+  const substituicao = fraseSubstituicao(ctx, ensaio)
+  if (substituicao && (!anterior || substituicao !== fraseSubstituicao(ctx, anterior)))
+    partes.push({ text: 'Cargas de substituição', bold: true }, substituicao)
+  else if (substituicao) partes.push({ text: 'Cargas de substituição', bold: true }, ` como em ${N_RESULTADOS}.3. `)
   if (r.erroRetornoZero !== null)
     partes.push(
       { text: 'Retorno ao zero: ', bold: true },
@@ -1054,36 +1228,144 @@ function depoisDaTabela(ctx: Contexto, r: ResultadoCalculo, ensaio: EnsaioIndica
       { text: `${leitura(ctx, r.erroRetornoZero, 0)} ${u}`, bold: true },
       '.',
     )
-  return partes.length ? [paragrafo(partes, [0, 0, 0, 1])] : []
+  return partes.length ? [paragrafo(ctx.r, partes, [0, 0, 0, 1])] : []
 }
 
-function erroIndicacao(ctx: Contexto): No[] {
+/** `fim`: o que vai junto, embaixo da tabela (a legenda, quando é a última tabela dos resultados). */
+function erroIndicacao(ctx: Contexto, fim: No[] = []): No[] {
   const { k } = ctx
   const r = ctx.d.resultado
   const ensaio = k.indicacao
   const titulo = subsecao(
+    ctx.r,
     `${N_RESULTADOS}.3`,
     temComoEncontrado(ctx.d) ? 'Erro de indicação — como deixado (após o ajuste)' : 'Erro de indicação',
     DESCRICAO_METODO[ensaio.metodo],
   )
-  if (!pontosLidos(r).length) return [inteiro([titulo, paragrafo('Ensaio não realizado.')])]
+  if (!pontosLidos(r).length) return [inteiro([...titulo, paragrafo(ctx.r, 'Ensaio não realizado.'), ...fim])]
   const tab = tabelaErros(ctx, r, ensaio, { conformidade: k.conformidade.solicitada, substituicao: comSubstituicao(ensaio) })
-  return [bloco([titulo, tab, ...depoisDaTabela(ctx, r, ensaio)], pontosLidos(r).length <= 12)]
+  return [bloco([...titulo, tab, ...depoisDaTabela(ctx, r, ensaio), ...fim], pontosLidos(r).length <= LINHAS_INTEIRAS)]
 }
 
-function comoEncontrado(ctx: Contexto): No[] {
+function comoEncontrado(ctx: Contexto, fim: No[] = []): No[] {
   const r = ctx.d.comoEncontrado
   const ensaio = ctx.k.comoEncontrado
   if (!r || !ensaio || !temComoEncontrado(ctx.d)) return []
   return [
     bloco(
       [
-        subsecao(`${N_RESULTADOS}.4`, 'Erro de indicação — como encontrado (antes do ajuste)', DESCRICAO_METODO[ensaio.metodo]),
+        ...subsecao(
+          ctx.r,
+          `${N_RESULTADOS}.4`,
+          'Erro de indicação — como encontrado (antes do ajuste)',
+          DESCRICAO_METODO[ensaio.metodo],
+        ),
         tabelaErros(ctx, r, ensaio, { conformidade: ctx.k.conformidade.solicitada, substituicao: comSubstituicao(ensaio) }),
-        ...depoisDaTabela(ctx, r, ensaio),
+        ...depoisDaTabela(ctx, r, ensaio, ctx.k.indicacao),
+        ...fim,
       ],
-      pontosLidos(r).length <= 12,
+      pontosLidos(r).length <= LINHAS_INTEIRAS,
     ),
+  ]
+}
+
+// ---- Gráfico do erro de indicação ---------------------------------------------------------------------
+
+/** Uma diagramação do certificado: os respiros do layout e a altura do gráfico (pt; 0 = sem ele). */
+export interface Diagramacao {
+  ritmo: NomeRitmo
+  grafico: number
+}
+
+/**
+ * As diagramações, da preferida à última: a montagem usa a primeira com que o certificado cabe em `MAX_PAGINAS`.
+ * Primeiro o gráfico encolhe; depois os respiros apertam (o layout compacto); por último, o gráfico sai. O
+ * desenho das posições fica sempre.
+ */
+export const DIAGRAMACOES: readonly Diagramacao[] = [
+  { ritmo: 'normal', grafico: 150 },
+  { ritmo: 'normal', grafico: 132 },
+  { ritmo: 'normal', grafico: 116 },
+  { ritmo: 'normal', grafico: 100 },
+  { ritmo: 'compacto', grafico: 100 },
+  { ritmo: 'compacto', grafico: 84 },
+  { ritmo: 'compacto', grafico: 0 },
+]
+
+/** Texto do motor ("1 234,5", "−0,05") → número; NaN se vazio. */
+function lerNumero(s: string): number {
+  if (!s) return NaN
+  return Number(
+    s
+      .replace(/[\s\u00A0\u202F]/g, '')
+      .replace(MENOS, '-')
+      .replace(',', '.'),
+  )
+}
+
+/** Pontos do gráfico com os valores como impressos na tabela (E na casa de U, U com 2 algarismos). */
+function pontosGrafico(r: ResultadoCalculo, media: boolean): PontoGrafico[] {
+  const valor = (erro: string, U: string): ValorGrafico | null => {
+    const e = lerNumero(erro)
+    const incerteza = lerNumero(U)
+    return Number.isFinite(e) && Number.isFinite(incerteza) ? { erro: e, U: incerteza } : null
+  }
+  return pontosLidos(r).map((p) => ({
+    carga: Number.isFinite(p.referencia) ? p.referencia : p.carga,
+    crescente: media ? null : valor(p.texto.erroCrescente, p.texto.U),
+    decrescente: media ? null : valor(p.texto.erroDecrescente, p.texto.U),
+    media: media ? valor(p.texto.erroMedio, p.texto.U) : null,
+  }))
+}
+
+/** Limites ±EMA em degraus, exatos nas mudanças de trecho (500e/2000e na classe III) e nas faixas. */
+function limitesEma(ctx: Contexto, ate: number): TrechoEma[] {
+  const c = ctx.k.conformidade
+  const b = ctx.b
+  if (!c.solicitada || !(ate > 0)) return []
+  if (c.criterio === 'CLIENTE') return c.toleranciaCliente > 0 ? [{ de: 0, ate, ema: c.toleranciaCliente }] : []
+  if (!b.classe || !b.faixas.length) return []
+  const [l1, l2] = LIMIARES_EMA[b.classe]
+  const quebras = new Set<number>([0, ate])
+  for (const f of b.faixas) for (const q of [l1 * f.e, l2 * f.e, f.max]) if (q > 0 && q < ate) quebras.add(q)
+  const pontos = [...quebras].sort((a, z) => a - z)
+  const trechos: TrechoEma[] = []
+  for (let i = 0; i < pontos.length - 1; i++) {
+    const meio = (pontos[i] + pontos[i + 1]) / 2
+    const ema = emaInstrumento(meio, b, c.criterio, c.toleranciaCliente)
+    if (ema === null) continue
+    const ultimo = trechos.at(-1)
+    if (ultimo && Math.abs(ultimo.ema - ema) < 1e-12 && Math.abs(ultimo.ate - pontos[i]) < 1e-12) ultimo.ate = pontos[i + 1]
+    else trechos.push({ de: pontos[i], ate: pontos[i + 1], ema })
+  }
+  return trechos
+}
+
+/** O gráfico do erro de indicação "como deixado" (5.3) × carga, com a legenda embaixo; `altura` 0 (ou só o zero lido): sem ele. */
+function graficoIndicacao(ctx: Contexto, altura: number): No[] {
+  if (!(altura > 0)) return []
+  // Média só com os dois sentidos, como na tabela e na legenda; num sentido só (contínuo, descontínuo ou
+  // decrescente), a série dele: o erro e o U são os mesmos da média (a indicação de um sentido, sem histerese)
+  const media = ctx.k.opcoes.histerese === 'MEDIA' && ambosSentidos(ctx.k.indicacao)
+  const pontos = pontosGrafico(ctx.d.resultado, media)
+  // Sem nenhum ponto com carga (só o zero lido, numa prévia), não há o que desenhar
+  if (!pontos.some((p) => p.carga > 0 && (p.crescente || p.decrescente || p.media))) return []
+  const ema = limitesEma(ctx, Math.max(...pontos.map((p) => p.carga)))
+  const qual = temComoEncontrado(ctx.d) ? ' — como deixado' : ''
+  return [
+    inteiro([
+      {
+        svg: graficoErros(pontos, { largura: LARGURA, altura, unidade: ctx.u, ema }),
+        width: LARGURA,
+        height: altura,
+        font: 'Inter',
+        margin: [0, ctx.r.grafico, 0, 2],
+      },
+      {
+        text: `Erro de indicação em função da carga${qual}${media ? ' (média das indicações ↑ e ↓)' : ''}. Barras: incerteza expandida U${ema.length ? '; tracejado: limites ±EMA' : ''}.`,
+        style: 'nota',
+      },
+    ]),
   ]
 }
 
@@ -1144,21 +1426,24 @@ function legendaResultados(ctx: Contexto): NoObjeto {
 }
 
 /**
- * Resultados em grupos (cada subseção é um ponto onde a página pode ser quebrada, ver `montarCertificado`); a
- * legenda vai no fim do último, junto com a tabela de cima.
+ * Resultados em grupos (cada subseção é um ponto onde a página pode ser quebrada, ver `montarCertificado`): a
+ * repetibilidade, a excentricidade, o erro de indicação ("como deixado"), o gráfico dele e o "como encontrado". A
+ * legenda vai junto com a última tabela.
  */
-function secaoResultados(ctx: Contexto, n: number): Grupo[] {
+function secaoResultados(ctx: Contexto, n: number, alturaGrafico: number): Grupo[] {
+  const legenda = [legendaResultados(ctx)]
+  const antes = temComoEncontrado(ctx.d)
   const grupos: Grupo[] = [
-    { id: 'repetibilidade', nos: repetibilidade(ctx, secao(n, 'Resultados')) },
+    { id: 'repetibilidade', nos: repetibilidade(ctx, secao(ctx.r, n, 'Resultados')) },
     { id: 'excentricidade', nos: excentricidade(ctx) },
-    { id: 'indicacao', nos: erroIndicacao(ctx) },
-    { id: 'como-encontrado', nos: comoEncontrado(ctx) },
-  ].filter((g) => g.nos.length)
-  grupos.at(-1)!.nos.push(legendaResultados(ctx))
-  return grupos
+    { id: 'indicacao', nos: erroIndicacao(ctx, antes ? [] : legenda) },
+    { id: 'grafico', nos: graficoIndicacao(ctx, alturaGrafico) },
+    { id: 'como-encontrado', nos: comoEncontrado(ctx, legenda) },
+  ]
+  return grupos.filter((g) => g.nos.length)
 }
 
-// ---- 5. Declaração de conformidade ----------------------------------------------------------------
+// ---- 6. Declaração de conformidade ----------------------------------------------------------------
 
 function secaoConformidade(ctx: Contexto, n: number): No[] {
   const { k, b, u } = ctx
@@ -1192,10 +1477,10 @@ function secaoConformidade(ctx: Contexto, n: number): No[] {
   const situacao = r.conformidade
   const resultadoTexto =
     situacao === 'CONFORME'
-      ? 'em todos os pontos calibrados'
+      ? 'conforme em todos os pontos calibrados'
       : situacao === 'NAO_CONFORME'
-        ? `no(s) ponto(s) de ${naoConformes.map((p) => `${p.texto.referencia || p.texto.carga} ${u}`).join('; ')}`
-        : 'não há erro máximo admissível para comparar'
+        ? `não conforme no(s) ponto(s) de ${naoConformes.map((p) => `${p.texto.referencia || p.texto.carga} ${u}`).join('; ')}`
+        : 'não foi possível avaliar: não há erro máximo admissível para comparar'
   const selo = situacao === 'CONFORME' ? 'CONFORME' : situacao === 'NAO_CONFORME' ? 'NÃO CONFORME' : 'NÃO AVALIADA'
   const corSelo = situacao === 'NAO_CONFORME' ? COR.alerta : COR.marcaTexto
   const comparados = temComoEncontrado(ctx.d)
@@ -1203,30 +1488,53 @@ function secaoConformidade(ctx: Contexto, n: number): No[] {
     : `os erros de indicação (${N_RESULTADOS}.3)`
   return [
     inteiro([
-      ...secao(n, 'Declaração de conformidade'),
+      ...secao(ctx.r, n, 'Declaração de conformidade'),
       paragrafo(
+        ctx.r,
         `Solicitada pelo cliente: ${comparados} foram comparados, em cada ponto e sentido de carregamento, com o erro máximo admissível (EMA) do critério, segundo a regra de decisão. Esta declaração não constitui verificação metrológica legal.`,
-        [0, 0, 0, 2],
+        [0, 0, 0, 3],
       ),
-      grade(
+      grade(ctx.r, [
         [
-          [
-            { rotulo: 'Critério', valor: especificacao },
-            {
-              rotulo: 'Regra de decisão',
-              valor: [{ text: regra.label, bold: true }, pequeno(ilac)],
-            },
-            {
-              rotulo: 'Resultado',
-              valor: [
-                { text: selo, font: 'InterMedio', bold: true, characterSpacing: 0.4, color: corSelo },
-                pequeno(`${selo.charAt(0)}${selo.slice(1).toLowerCase()} ${resultadoTexto}.`),
-              ],
-            },
-          ],
+          { rotulo: 'Critério', valor: especificacao, span: 2 },
+          { rotulo: 'Regra de decisão', valor: [{ text: regra.label, bold: true }, pequeno(ilac)], span: 2 },
         ],
-        ['*', '*', 130],
-      ),
+      ]),
+      // O resultado numa caixa com o selo, na cor da situação
+      {
+        table: {
+          widths: ['auto', '*'],
+          body: [
+            [
+              {
+                text: selo,
+                font: 'InterMedio',
+                bold: true,
+                fontSize: 9.6,
+                characterSpacing: 0.5,
+                color: corSelo,
+                margin: [3, 0.5, 10, 0],
+              },
+              {
+                text: [{ text: 'Resultado: ', bold: true }, `${resultadoTexto}.`],
+                style: 'paragrafo',
+                margin: [0, 1.2, 0, 0],
+              },
+            ],
+          ],
+        },
+        layout: {
+          hLineWidth: () => 0.8,
+          vLineWidth: (i: number) => (i === 1 ? 0 : 0.8),
+          hLineColor: () => corSelo,
+          vLineColor: () => corSelo,
+          paddingLeft: () => 6,
+          paddingRight: () => 8,
+          paddingTop: () => 4,
+          paddingBottom: () => 4,
+        },
+        margin: [0, 3, 0, 1],
+      },
     ]),
   ]
 }
@@ -1271,7 +1579,10 @@ function secaoObservacoes(ctx: Contexto, n: number): No[] {
   else if (!vazio(e.textos.intervalo)) itens.push(textoComEmpresa(e.textos.intervalo.trim(), e.empresa))
 
   if (!itens.length) return []
-  return [inteiro([...secao(n, 'Observações'), lista(itens.slice(0, 1))]), ...(itens.length > 1 ? [lista(itens.slice(1))] : [])]
+  return [
+    inteiro([...secao(ctx.r, n, 'Observações'), lista(ctx.r, itens.slice(0, 1))]),
+    ...(itens.length > 1 ? [lista(ctx.r, itens.slice(1))] : []),
+  ]
 }
 
 /** Ressalva das opiniões e interpretações (ISO/IEC 17025, 7.8.7): curta, cabe na linha do título da seção. */
@@ -1285,8 +1596,8 @@ function secaoOpinioes(ctx: Contexto, n: number): No[] {
   return [
     bloco(
       [
-        ...secao(n, 'Opiniões e interpretações', ESPACO_TITULO, RESSALVA_OPINIOES),
-        destaque({ text: texto, style: 'paragrafo' }, COR.grafite, COR.fundoCabecalho, [0, 0, 0, 1]),
+        ...secao(ctx.r, n, 'Opiniões e interpretações', ESPACO_TITULO, RESSALVA_OPINIOES),
+        destaque(ctx.r, { text: texto, style: 'paragrafo' }, COR.grafite, COR.fundoCabecalho, [0, 0, 0, 1]),
       ],
       texto.length < 1500,
     ),
@@ -1308,12 +1619,12 @@ function secaoDeclaracoes(ctx: Contexto, n: number, fim: No[]): No[] {
   if (!textos.length) return [inteiro(fim)]
   const itens = textos.map((x, i) => ({
     columns: [
-      { text: `${i + 1}.`, width: 11, style: 'declaracao', color: COR.marcaTexto, bold: true },
+      { text: `${i + 1}.`, width: 12, style: 'declaracao', color: COR.marcaTexto, bold: true },
       { text: x, width: '*', style: 'declaracao' },
     ],
-    margin: [0, 0, 0, 1.2],
+    margin: [0, 0, 0, ctx.r.item],
   }))
-  return [inteiro([...secao(n, 'Declarações'), ...itens, ...fim])]
+  return [inteiro([...secao(ctx.r, n, 'Declarações'), ...itens, ...fim])]
 }
 
 // ---- Assinaturas e fim ----------------------------------------------------------------
@@ -1382,7 +1693,7 @@ function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
   }
   if (mesmo)
     return [
-      fio(COR.fio, 0.5, [0, 4, 0, 3]),
+      fio(COR.fio, 0.5, [0, ctx.r.assinaturas, 0, 5]),
       {
         columns: [
           { width: 210, ...assinatura('Executado e autorizado por', e.signatario, comImagem) },
@@ -1399,7 +1710,7 @@ function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
       },
     ]
   return [
-    fio(COR.fio, 0.5, [0, 4, 0, 3]),
+    fio(COR.fio, 0.5, [0, ctx.r.assinaturas, 0, 5]),
     {
       columns: [assinatura('Executado por', e.tecnico, comImagem), assinatura('Autorizado por', e.signatario, comImagem)],
       columnGap: 24,
@@ -1602,13 +1913,14 @@ interface Grupo {
 const ID_FINAL = 'declaracoes'
 
 /** As seções na ordem, numeradas na sequência (as que não se aplicam não ocupam número). */
-function grupos(ctx: Contexto, comImagem: boolean): Grupo[] {
+function grupos(ctx: Contexto, comImagem: boolean, alturaGrafico: number): Grupo[] {
   let n = 0
   const lista: Grupo[] = [
     { id: 'dados', nos: secaoDadosCalibracao(ctx, ++n) },
+    { id: 'cliente', nos: secaoCliente(ctx, ++n) },
     { id: 'instrumento', nos: secaoInstrumento(ctx, ++n) },
     { id: 'padroes', nos: secaoPadroes(ctx, ++n) },
-    ...secaoResultados(ctx, ++n),
+    ...secaoResultados(ctx, ++n, alturaGrafico),
   ]
   if (ctx.k.conformidade.solicitada) lista.push({ id: 'conformidade', nos: secaoConformidade(ctx, ++n) })
   // Observações e opiniões só ocupam número quando existem
@@ -1639,14 +1951,16 @@ function comQuebra(nos: No[]): No[] {
 
 /**
  * Definição do documento do pdfmake (exportada para testes e para a prévia). `quebras`: grupos que começam
- * uma página nova (o equilíbrio das páginas, medido em `montarCertificado`); `medir`: com a marca do fim.
+ * uma página nova (o equilíbrio das páginas, medido em `montarCertificado`); `medir`: com a marca do fim;
+ * `diagramacao`: os respiros e a altura do gráfico (padrão, a preferida).
  */
 export function definicaoCertificado(
   d: DadosCertificadoPdf,
-  opcoes: { assinaturas?: boolean; quebras?: string[]; medir?: boolean } = {},
+  opcoes: { assinaturas?: boolean; quebras?: string[]; medir?: boolean; diagramacao?: Diagramacao } = {},
 ): NoObjeto {
-  const ctx = contexto(d)
-  const conteudo: No[] = grupos(ctx, comImagens(d, opcoes)).flatMap((g) => [
+  const { ritmo, grafico } = opcoes.diagramacao ?? DIAGRAMACOES[0]
+  const ctx = contexto(d, ritmo)
+  const conteudo: No[] = grupos(ctx, comImagens(d, opcoes), grafico).flatMap((g) => [
     ...(opcoes.quebras?.includes(g.id) && g.id !== ID_FINAL ? comQuebra(g.nos) : g.nos),
     ...(g.id !== ID_FINAL || opcoes.medir ? [marcaFim(g.id)] : []),
   ])
@@ -1685,7 +1999,7 @@ export function definicaoCertificado(
     ...(marcaDagua(d.marcaDagua) ? { watermark: marcaDagua(d.marcaDagua) } : {}),
     content: conteudo,
     defaultStyle: { font: 'Inter', fontSize: 8, lineHeight: 1.16, color: COR.texto },
-    styles: ESTILOS,
+    styles: ctx.r.estilos,
     pageBreakBefore: quebraAntes,
   }
 }
@@ -1706,6 +2020,8 @@ export async function gerarCertificadoPdf(d: DadosCertificadoPdf): Promise<Buffe
 
 // ---- Equilíbrio das páginas ----------------------------------------------------------------------------------
 
+/** Páginas no máximo: com mais, o gráfico encolhe e, em último caso, sai (`montarCertificado`). */
+export const MAX_PAGINAS = 3
 /**
  * Última página com menos que isto ocupado (fração da altura útil) num certificado de 3 páginas ou mais: a
  * montagem tenta levar uma seção inteira da penúltima para ela (nunca fica só com as declarações e as
@@ -1721,13 +2037,14 @@ const OCUPACAO_MAXIMA_PREVISTA = 0.97
 
 /**
  * O certificado montado: o PDF, o nº de páginas, a fração ocupada de cada página (pela marca do fim do último
- * grupo nela) e os grupos que começam uma página nova.
+ * grupo nela), os grupos que começam uma página nova e a diagramação (respiros e altura do gráfico).
  */
 export interface CertificadoMontado {
   pdf: Buffer
   paginas: number
   ocupacao: number[]
   quebras: string[]
+  diagramacao: Diagramacao
 }
 
 interface Medicao extends CertificadoMontado {
@@ -1739,7 +2056,10 @@ interface Medicao extends CertificadoMontado {
   marcaSozinha: boolean
 }
 
-async function medirCertificado(d: DadosCertificadoPdf, opcoes: { assinaturas?: boolean; quebras: string[] }) {
+async function medirCertificado(
+  d: DadosCertificadoPdf,
+  opcoes: { assinaturas?: boolean; quebras: string[]; diagramacao: Diagramacao },
+): Promise<Medicao> {
   const definicao = definicaoCertificado(d, { ...opcoes, medir: true })
   const margemBase = (definicao.pageMargins as number[])[3]
   const util = A4.altura - margemBase - MARGEM_TOPO
@@ -1762,7 +2082,16 @@ async function medirCertificado(d: DadosCertificadoPdf, opcoes: { assinaturas?: 
     // Página sem o fim de nenhum grupo: um grupo que a atravessa inteira
     return topos.length ? Math.min(1, Math.max(0, (Math.max(...topos) - MARGEM_TOPO) / util)) : 1
   })
-  return { pdf, paginas, ocupacao, quebras: opcoes.quebras, fins, alturaUtil: util, marcaSozinha } satisfies Medicao
+  return {
+    pdf,
+    paginas,
+    ocupacao,
+    quebras: opcoes.quebras,
+    diagramacao: opcoes.diagramacao,
+    fins,
+    alturaUtil: util,
+    marcaSozinha,
+  }
 }
 
 /** A menor ocupação entre as duas últimas páginas (o que o equilíbrio aumenta). */
@@ -1781,7 +2110,8 @@ function quebrasPrevistas(natural: Medicao, ordem: string[]): Array<{ id: string
   return ordem
     .flatMap((id, i) => {
       const anterior = natural.fins.get(ordem[i - 1] ?? '')
-      if (i === 0 || id === ID_FINAL || anterior?.pagina !== n - 1) return []
+      // O gráfico fica com a tabela dele (não começa a última página com a de cima meio vazia)
+      if (i === 0 || id === ID_FINAL || id === 'grafico' || anterior?.pagina !== n - 1) return []
       const fica = util(anterior.topo)
       const vai = ultima + (penultima - fica)
       return vai <= OCUPACAO_MAXIMA_PREVISTA ? [{ id, menor: Math.min(fica, vai) }] : []
@@ -1790,23 +2120,42 @@ function quebrasPrevistas(natural: Medicao, ordem: string[]): Array<{ id: string
 }
 
 /**
- * Monta o certificado. Com 3 páginas ou mais e a última quase vazia (só as declarações e as assinaturas, por
- * exemplo), leva para ela uma seção inteira da penúltima (a que deixa as duas mais parecidas), sem mudar o nº
- * de páginas: nada de uma página final só com o fim do certificado. A quebra é prevista pela medição natural e
- * conferida montando de novo (no máximo `MAX_TENTATIVAS`). Determinístico (mede e decide sempre igual).
+ * A primeira diagramação (`DIAGRAMACOES`) com que o certificado cabe em `MAX_PAGINAS`. Se nenhuma couber, a de
+ * menos páginas (a primeira no empate): apertar ou tirar o gráfico sem poupar página não ajuda ninguém.
+ */
+async function diagramacaoQueCabe(d: DadosCertificadoPdf, opcoes: { assinaturas?: boolean }): Promise<Medicao> {
+  // Sem gráfico nos dados (nenhum ponto lido), a altura dele não muda nada: só os respiros
+  const temGrafico = grupos(contexto(d), comImagens(d, opcoes), DIAGRAMACOES[0].grafico).some((g) => g.id === 'grafico')
+  const medidas: Medicao[] = []
+  for (const diagramacao of DIAGRAMACOES) {
+    if (!temGrafico && medidas.some((x) => x.diagramacao.ritmo === diagramacao.ritmo)) continue
+    const m = await medirCertificado(d, { ...opcoes, quebras: [], diagramacao })
+    if (m.paginas <= MAX_PAGINAS) return m
+    medidas.push(m)
+  }
+  return medidas.reduce((a, b) => (b.paginas < a.paginas ? b : a))
+}
+
+/**
+ * Monta o certificado. Primeiro a diagramação (`diagramacaoQueCabe`: no máximo 3 páginas). Depois, com 3
+ * páginas ou mais e a última quase vazia (só as declarações e as assinaturas, por exemplo), leva para ela uma
+ * seção inteira da penúltima (a que deixa as duas mais parecidas), sem mudar o nº de páginas: nada de uma página
+ * final só com o fim do certificado. A quebra é prevista pela medição natural e conferida montando de novo (no
+ * máximo `MAX_TENTATIVAS`). Determinístico (mede e decide sempre igual).
  */
 export async function montarCertificado(
   d: DadosCertificadoPdf,
   opcoes: { assinaturas?: boolean } = {},
 ): Promise<CertificadoMontado> {
-  const natural = await medirCertificado(d, { ...opcoes, quebras: [] })
+  const natural = await diagramacaoQueCabe(d, opcoes)
+  const { diagramacao } = natural
   let melhor = natural
   const n = natural.paginas
   if (n >= 3 && natural.ocupacao[n - 1] < OCUPACAO_MINIMA_ULTIMA) {
-    const ordem = grupos(contexto(d), comImagens(d, opcoes)).map((g) => g.id)
+    const ordem = grupos(contexto(d, diagramacao.ritmo), comImagens(d, opcoes), diagramacao.grafico).map((g) => g.id)
     const previstas = quebrasPrevistas(natural, ordem).filter((x) => x.menor >= menorDasUltimas(natural) + GANHO_MINIMO)
     for (const { id } of previstas.slice(0, MAX_TENTATIVAS)) {
-      const m = await medirCertificado(d, { ...opcoes, quebras: [id] })
+      const m = await medirCertificado(d, { ...opcoes, quebras: [id], diagramacao })
       // Conferida: o mesmo nº de páginas e as duas últimas mais equilibradas que na paginação natural
       if (m.paginas === n && menorDasUltimas(m) >= menorDasUltimas(natural) + GANHO_MINIMO) {
         melhor = m
@@ -1817,10 +2166,10 @@ export async function montarCertificado(
   // A marca do fim sozinha numa página (o fim encostou no pé da anterior): monta de novo sem ela
   if (melhor.marcaSozinha) {
     const pdf = await pdfmake()
-      .createPdf(definicaoCertificado(d, { ...opcoes, quebras: melhor.quebras }))
+      .createPdf(definicaoCertificado(d, { ...opcoes, quebras: melhor.quebras, diagramacao }))
       .getBuffer()
-    return { pdf, paginas: melhor.paginas, ocupacao: melhor.ocupacao, quebras: melhor.quebras }
+    return { pdf, paginas: melhor.paginas, ocupacao: melhor.ocupacao, quebras: melhor.quebras, diagramacao }
   }
   const { pdf, paginas, ocupacao, quebras } = melhor
-  return { pdf, paginas, ocupacao, quebras }
+  return { pdf, paginas, ocupacao, quebras, diagramacao }
 }

@@ -1,6 +1,7 @@
-// Desenho vetorial das posições do ensaio de excentricidade, em SVG desenhado pelo pdfmake (svg-to-pdfkit)
-// com a fonte Inter: sai na folha de campo (o certificado traz só a tabela das posições, sem desenho).
-// Legível em preto e branco.
+// Gráficos vetoriais do certificado, em SVG desenhado pelo pdfmake (svg-to-pdfkit) com a fonte Inter:
+// o gráfico de erro × carga (barras de ±U e, com declaração de conformidade, os limites ±EMA) e o
+// diagrama das posições do ensaio de excentricidade (também na folha de campo). Legíveis em preto e
+// branco: a diferença entre as séries está na forma do marcador e no traço, não só na cor.
 
 import { COR } from './marca.ts'
 
@@ -18,6 +19,212 @@ function texto(
   return (
     `<text x="${r2(x)}" y="${r2(y)}" font-family="${FONTE}" font-size="${o.tamanho ?? 6.5}"` +
     `${o.negrito ? ' font-weight="bold"' : ''} fill="${o.cor ?? COR.rotulo}" text-anchor="${o.ancora ?? 'start'}">${esc(conteudo)}</text>`
+  )
+}
+
+/** Passo "redondo" (1, 2, 2,5 ou 5 × 10ⁿ) para cerca de `alvo` divisões no intervalo. */
+export function passoRedondo(intervalo: number, alvo = 5): number {
+  if (!(intervalo > 0) || !Number.isFinite(intervalo)) return 1
+  const bruto = intervalo / alvo
+  const ordem = 10 ** Math.floor(Math.log10(bruto))
+  const n = bruto / ordem
+  const m = n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10
+  return m * ordem
+}
+
+/** Casas decimais necessárias para escrever os múltiplos de um passo. */
+function casasDoPasso(passo: number): number {
+  for (let c = 0; c <= 8; c++) if (Math.abs(Math.round(passo * 10 ** c) - passo * 10 ** c) < 1e-6) return c
+  return 8
+}
+
+/** Número de eixo: vírgula decimal, espaço fino de milhar e sinal de menos tipográfico. */
+function numeroEixo(v: number, casas: number): string {
+  const valor = Math.abs(v) < 1e-12 ? 0 : v
+  const [int, dec] = Math.abs(valor).toFixed(casas).split('.')
+  const inteiro = int.length >= 5 ? int.replace(/\B(?=(\d{3})+(?!\d))/g, '\u00A0') : int
+  return `${valor < 0 ? '\u2212' : ''}${inteiro}${dec ? ',' + dec : ''}`
+}
+
+// ---- Gráfico erro × carga ----------------------------------------------------------------------
+
+export interface ValorGrafico {
+  erro: number
+  U: number
+}
+
+export interface PontoGrafico {
+  carga: number
+  crescente: ValorGrafico | null
+  decrescente: ValorGrafico | null
+  media: ValorGrafico | null
+}
+
+/** Trecho do limite de EMA: vale ±ema de `de` até `ate` (unidade da balança). */
+export interface TrechoEma {
+  de: number
+  ate: number
+  ema: number
+}
+
+export interface OpcoesGrafico {
+  largura: number
+  altura: number
+  unidade: string
+  /** Limites ±EMA (declaração de conformidade); vazio = não desenha. */
+  ema: TrechoEma[]
+}
+
+/** Gráfico do erro de indicação × carga, com barras de ±U e, quando houver, os limites ±EMA. */
+export function graficoErros(pontos: PontoGrafico[], o: OpcoesGrafico): string {
+  const W = o.largura
+  const H = o.altura
+  const esq = 46
+  const dir = 10
+  // Legenda e rótulo do eixo na faixa de cima; marcas e "Carga" na de baixo
+  const topo = 21
+  const base = 22
+  const x0 = esq
+  const x1 = W - dir
+  const y0 = topo
+  const y1 = H - base
+
+  const usarMedia = pontos.some((p) => p.media)
+  const series: Array<{ chave: 'crescente' | 'decrescente' | 'media'; rotulo: string }> = usarMedia
+    ? [{ chave: 'media', rotulo: 'Média (↑↓)' }]
+    : ([
+        { chave: 'crescente', rotulo: 'Carga crescente' },
+        { chave: 'decrescente', rotulo: 'Carga decrescente' },
+      ].filter((s) => pontos.some((p) => p[s.chave as 'crescente' | 'decrescente'])) as typeof series)
+  const duas = series.length === 2
+
+  // Escalas
+  // A carga de referência carrega a correção dos pesos (300,002 kg) e, com substituição, a diferença das
+  // etapas (40 020 kg): um resíduo pequeno além de uma marca não abre mais uma divisão no eixo.
+  const maxCarga = Math.max(...pontos.map((p) => p.carga), ...o.ema.map((t) => t.ate), 0)
+  const passoX = passoRedondo(maxCarga * 0.98 || 1, 6)
+  const marcas = Math.floor(maxCarga / passoX + 1e-9)
+  const xMax = Math.max(passoX, (maxCarga - marcas * passoX <= 0.03 * passoX ? marcas : marcas + 1) * passoX)
+  let maior = 0
+  for (const p of pontos)
+    for (const s of series) {
+      const v = p[s.chave]
+      if (v) maior = Math.max(maior, Math.abs(v.erro) + v.U)
+    }
+  for (const t of o.ema) if (t.de <= xMax) maior = Math.max(maior, t.ema)
+  if (!(maior > 0)) maior = 1
+  // Marcas do eixo Y a cada 16 pt ou mais (de 2 a 6 divisões): o gráfico baixo não amontoa os rótulos
+  const passoY = passoRedondo(2 * maior * 1.08, Math.max(2, Math.min(6, Math.floor((y1 - y0) / 16))))
+  const yMax = Math.ceil((maior * 1.08) / passoY) * passoY
+  // Respiro nas pontas para o ponto zero e o último ponto não encostarem nos rótulos
+  const respiro = 9
+  const X = (c: number) => x0 + respiro + (c / xMax) * (x1 - x0 - 2 * respiro)
+  const Y = (e: number) => y0 + ((yMax - e) / (2 * yMax)) * (y1 - y0)
+
+  const partes: string[] = []
+  // Grade horizontal e rótulos do eixo Y
+  const casasY = casasDoPasso(passoY)
+  for (let v = -yMax; v <= yMax + passoY / 2; v += passoY) {
+    const y = Y(v)
+    const zero = Math.abs(v) < passoY / 1000
+    partes.push(
+      `<line x1="${r2(x0)}" y1="${r2(y)}" x2="${r2(x1)}" y2="${r2(y)}" stroke="${zero ? '#8E9590' : COR.fioClaro}" stroke-width="${zero ? 0.8 : 0.5}"/>`,
+    )
+    partes.push(texto(x0 - 6, y + 2.2, numeroEixo(v, casasY), { ancora: 'end', cor: zero ? COR.textoSecundario : COR.rotulo }))
+  }
+  // Eixo X (embaixo), marcas e rótulos
+  const casasX = casasDoPasso(passoX)
+  partes.push(`<line x1="${r2(x0)}" y1="${r2(y1)}" x2="${r2(x1)}" y2="${r2(y1)}" stroke="${COR.fio}" stroke-width="0.6"/>`)
+  for (let c = 0; c <= xMax + passoX / 2; c += passoX) {
+    const x = X(c)
+    partes.push(`<line x1="${r2(x)}" y1="${r2(y1)}" x2="${r2(x)}" y2="${r2(y1 + 3)}" stroke="${COR.fio}" stroke-width="0.6"/>`)
+    partes.push(texto(x, y1 + 11, numeroEixo(c, casasX), { ancora: 'middle' }))
+  }
+  partes.push(texto(x0 - 40, 9.5, `Erro (${o.unidade})`, { tamanho: 6.8, cor: COR.textoSecundario, negrito: true }))
+  partes.push(
+    texto(x1, H - 1.5, `Carga (${o.unidade})`, { tamanho: 6.8, cor: COR.textoSecundario, ancora: 'end', negrito: true }),
+  )
+
+  // Limites ±EMA em degraus (tracejado)
+  if (o.ema.length) {
+    for (const sinal of [1, -1]) {
+      let d = ''
+      let anterior: number | null = null
+      for (const t of o.ema) {
+        const de = Math.max(0, t.de)
+        const ate = Math.min(xMax, t.ate)
+        if (ate <= de) continue
+        const y = Y(sinal * t.ema)
+        d += anterior === null ? `M ${r2(X(de))} ${r2(y)} ` : `L ${r2(X(de))} ${r2(y)} `
+        d += `L ${r2(X(ate))} ${r2(y)} `
+        anterior = y
+      }
+      if (d) partes.push(`<path d="${d}" fill="none" stroke="${COR.grafite}" stroke-width="0.9" stroke-dasharray="3.2 2.2"/>`)
+    }
+  }
+
+  // Barras de ±U e marcadores
+  const deslocamento = duas ? 3.2 : 0
+  series.forEach((s, i) => {
+    const dx = duas ? (i === 0 ? -deslocamento : deslocamento) : 0
+    for (const p of pontos) {
+      const v = p[s.chave]
+      if (!v) continue
+      const x = X(p.carga) + dx
+      const ya = Y(v.erro + v.U)
+      const yb = Y(v.erro - v.U)
+      partes.push(
+        `<line x1="${r2(x)}" y1="${r2(ya)}" x2="${r2(x)}" y2="${r2(yb)}" stroke="${COR.grafite}" stroke-width="0.7"/>` +
+          `<line x1="${r2(x - 2.4)}" y1="${r2(ya)}" x2="${r2(x + 2.4)}" y2="${r2(ya)}" stroke="${COR.grafite}" stroke-width="0.7"/>` +
+          `<line x1="${r2(x - 2.4)}" y1="${r2(yb)}" x2="${r2(x + 2.4)}" y2="${r2(yb)}" stroke="${COR.grafite}" stroke-width="0.7"/>`,
+      )
+    }
+  })
+  series.forEach((s, i) => {
+    const dx = duas ? (i === 0 ? -deslocamento : deslocamento) : 0
+    for (const p of pontos) {
+      const v = p[s.chave]
+      if (v) partes.push(marcador(X(p.carga) + dx, Y(v.erro), s.chave === 'decrescente'))
+    }
+  })
+
+  // Legenda (canto superior direito)
+  const itens: Array<{ desenho: (x: number, y: number) => string; rotulo: string }> = series.map((s) => ({
+    desenho: (x, y) => marcador(x + 3, y, s.chave === 'decrescente'),
+    rotulo: s.rotulo,
+  }))
+  itens.push({
+    desenho: (x, y) =>
+      `<line x1="${r2(x + 3)}" y1="${r2(y - 4)}" x2="${r2(x + 3)}" y2="${r2(y + 4)}" stroke="${COR.grafite}" stroke-width="0.7"/>` +
+      `<line x1="${r2(x + 1)}" y1="${r2(y - 4)}" x2="${r2(x + 5)}" y2="${r2(y - 4)}" stroke="${COR.grafite}" stroke-width="0.7"/>` +
+      `<line x1="${r2(x + 1)}" y1="${r2(y + 4)}" x2="${r2(x + 5)}" y2="${r2(y + 4)}" stroke="${COR.grafite}" stroke-width="0.7"/>`,
+    rotulo: 'Incerteza ±U',
+  })
+  if (o.ema.length)
+    itens.push({
+      desenho: (x, y) =>
+        `<line x1="${r2(x - 3)}" y1="${r2(y)}" x2="${r2(x + 9)}" y2="${r2(y)}" stroke="${COR.grafite}" stroke-width="0.9" stroke-dasharray="3.2 2.2"/>`,
+      rotulo: 'Limite ±EMA',
+    })
+  const larguraItem = (rot: string) => 14 + rot.length * 3.45 + 12
+  let x = x1 - itens.reduce((s, it) => s + larguraItem(it.rotulo), 0) + 12
+  for (const it of itens) {
+    partes.push(it.desenho(x, 7.5))
+    partes.push(texto(x + 11, 9.8, it.rotulo, { cor: COR.textoSecundario }))
+    x += larguraItem(it.rotulo)
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${partes.join('')}</svg>`
+}
+
+/** Círculo cheio (crescente/média) ou losango vazado (decrescente). */
+function marcador(x: number, y: number, vazado: boolean): string {
+  if (!vazado)
+    return `<circle cx="${r2(x)}" cy="${r2(y)}" r="2.6" fill="${COR.marca}" stroke="${COR.marcaTexto}" stroke-width="0.6"/>`
+  const r = 3.1
+  return (
+    `<path d="M ${r2(x)} ${r2(y - r)} L ${r2(x + r)} ${r2(y)} L ${r2(x)} ${r2(y + r)} L ${r2(x - r)} ${r2(y)} Z" ` +
+    `fill="#FFFFFF" stroke="${COR.texto}" stroke-width="0.8"/>`
   )
 }
 
@@ -64,11 +271,16 @@ function lugarCircular(rotulo: string): Lugar | null {
   return null
 }
 
-/** Lugares de cada posição pelos rótulos; se algum não for reconhecido, a ordem padrão da cg-18 (com 5 posições). */
-function lugares(rotulos: string[], reconhecer: (r: string) => Lugar | null, padrao: Lugar[]): Lugar[] | null {
+/**
+ * Lugares de cada posição pelos rótulos; se algum não for reconhecido, a ordem padrão da cg-18 (com 5 posições).
+ * `estrito`: a ordem padrão só quando nenhum rótulo reconhecido diz outro lugar ("Frente" na 1ª linha não vai
+ * para o centro); senão, null.
+ */
+function lugares(rotulos: string[], reconhecer: (r: string) => Lugar | null, padrao: Lugar[], estrito: boolean): Lugar[] | null {
   const lidos = rotulos.map(reconhecer)
   if (lidos.every((l) => l !== null) && new Set(lidos).size === lidos.length) return lidos as Lugar[]
-  return rotulos.length === padrao.length ? padrao : null
+  if (rotulos.length !== padrao.length) return null
+  return estrito && lidos.some((l, i) => l !== null && l !== padrao[i]) ? null : padrao
 }
 
 function rotuloFrente(cx: number, y: number, rotulo = 'FRENTE') {
@@ -78,20 +290,21 @@ function rotuloFrente(cx: number, y: number, rotulo = 'FRENTE') {
 /**
  * Diagrama das posições do ensaio de excentricidade (vista de cima, frente embaixo), com as posições
  * numeradas na ordem da tabela e a de maior desvio destacada. `null` quando o receptor não tem diagrama.
- * `frente`: legenda do lado de baixo (padrão "FRENTE"; a folha de campo diz qual lado é a frente).
+ * `frente`: legenda do lado de baixo (padrão "FRENTE"; a folha de campo diz qual lado é a frente). `estrito`:
+ * null também quando os rótulos contradizem a ordem padrão (`lugares`).
  */
 export function diagramaExcentricidade(
   receptor: string,
   rotulos: string[],
   posicaoMaior: number,
   apoios: number,
-  { frente = 'FRENTE' }: { frente?: string } = {},
+  { frente = 'FRENTE', estrito = false }: { frente?: string; estrito?: boolean } = {},
 ): Diagrama | null {
   if (!rotulos.length) return null
   const fundo = `fill="${COR.fundoCabecalho}" stroke="#9AA09C" stroke-width="0.8"`
 
   if (receptor === 'RETANGULAR') {
-    const ls = lugares(rotulos, lugarRetangular, ['C', 'FE', 'TE', 'TD', 'FD'])
+    const ls = lugares(rotulos, lugarRetangular, ['C', 'FE', 'TE', 'TD', 'FD'], estrito)
     if (!ls) return null
     const W = 128
     const H = 98
@@ -115,7 +328,7 @@ export function diagramaExcentricidade(
   }
 
   if (receptor === 'CIRCULAR') {
-    const ls = lugares(rotulos, lugarCircular, ['C', 'F', 'D', 'T', 'E'])
+    const ls = lugares(rotulos, lugarCircular, ['C', 'F', 'D', 'T', 'E'], estrito)
     if (!ls) return null
     const W = 128
     const H = 98
@@ -213,6 +426,63 @@ export function diagramaExcentricidade(
   }
 
   return null
+}
+
+/**
+ * Diagrama das posições para o certificado: o do receptor (`diagramaExcentricidade`) e, quando os rótulos não
+ * são os do sistema (posições digitadas à mão, "Apoio 1…" numa rodoviária) ou contradizem a ordem padrão, um
+ * genérico com as posições numeradas na ordem da tabela: o desenho nunca põe uma posição num lugar diferente do
+ * que a tabela diz. Só é null sem posição nenhuma.
+ */
+export function diagramaPosicoes(receptor: string, rotulos: string[], posicaoMaior: number, apoios: number): Diagrama | null {
+  return (
+    diagramaExcentricidade(receptor, rotulos, posicaoMaior, apoios, { estrito: true }) ??
+    diagramaGenerico(receptor, rotulos, posicaoMaior)
+  )
+}
+
+/**
+ * O receptor (prato redondo ou plataforma) com as posições na ordem da tabela: a do centro (se houver) no meio
+ * e as outras em volta — no prato, em círculo a partir de cima; na plataforma, da esquerda para a direita na
+ * lateral de cima e de volta na de baixo. Sem o lado da frente (os rótulos não dizem qual é).
+ */
+function diagramaGenerico(receptor: string, rotulos: string[], posicaoMaior: number): Diagrama | null {
+  if (!rotulos.length) return null
+  const fundo = `fill="${COR.fundoCabecalho}" stroke="#9AA09C" stroke-width="0.8"`
+  const centro = rotulos.findIndex((r) => semAcento(r).includes('centro'))
+  const volta = rotulos.map((_, i) => i).filter((i) => i !== centro)
+  const coords = new Map<number, [number, number]>()
+  const partes: string[] = []
+  let W: number
+  const H = 84
+  if (receptor === 'CIRCULAR' || receptor === 'GANCHO') {
+    W = 128
+    const cx = W / 2
+    const cy = H / 2
+    partes.push(`<circle cx="${cx}" cy="${cy}" r="38" ${fundo}/>`)
+    if (centro >= 0) coords.set(centro, [cx, cy])
+    volta.forEach((i, j) => {
+      const a = -Math.PI / 2 + (2 * Math.PI * j) / volta.length
+      coords.set(i, [cx + 25 * Math.cos(a), cy + 25 * Math.sin(a)])
+    })
+  } else {
+    const emCima = Math.ceil(volta.length / 2)
+    const passo = 17
+    W = Math.max(receptor === 'RODOVIARIA' ? 214 : 150, 20 + 32 + (emCima - 1) * passo)
+    const px = 10
+    const py = 6
+    const pw = W - 20
+    const ph = 72
+    partes.push(`<rect x="${px}" y="${py}" width="${pw}" height="${ph}" rx="4" ${fundo}/>`)
+    const xs = (q: number) => Array.from({ length: q }, (_, i) => px + 16 + (q === 1 ? (pw - 32) / 2 : (i * (pw - 32)) / (q - 1)))
+    xs(emCima).forEach((x, j) => coords.set(volta[j], [x, py + 15]))
+    xs(volta.length - emCima)
+      .reverse()
+      .forEach((x, j) => coords.set(volta[emCima + j], [x, py + ph - 15]))
+    if (centro >= 0) coords.set(centro, [px + pw / 2, py + ph / 2])
+  }
+  for (const [i, [x, y]] of coords) partes.push(posicaoNumerada(x, y, i + 1, i === posicaoMaior))
+  return { svg: svg(W, H, partes), largura: W, altura: H }
 }
 
 function seta(xa: number, xb: number, y: number, paraDireita: boolean): string {

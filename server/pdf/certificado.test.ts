@@ -1,4 +1,4 @@
-// Testes do certificado em PDF: gera os quatro exemplos realistas (server/pdf/exemplosCertificado.ts),
+// Testes do certificado em PDF: gera os exemplos realistas (server/pdf/exemplosCertificado.ts),
 // grava as amostras em server/pdf/exemplos/ e confere o conteúdo pelo texto extraído com o pdftotext
 // (testes opcionais: só rodam se o poppler-utils estiver instalado). Com o pdftoppm, também renderiza
 // as páginas em PNG (80 dpi) para a revisão visual.
@@ -10,18 +10,22 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
 import { REPRODUCAO_ANTIGA, TEXTOS_ANTIGOS, TEXTOS_PADRAO } from '#shared/dominio.ts'
-import { densidadeAr } from '#shared/metrologia/index.ts'
+import { densidadeAr, posicoesExcentricidade } from '#shared/metrologia/index.ts'
 import { pdfmake } from './base.ts'
 import {
+  DIAGRAMACOES,
   definicaoCertificado,
   gerarCertificadoPdf,
   linhasDoTexto,
+  MAX_PAGINAS,
   montarCertificado,
   notaEmpuxoConveccao,
   OCUPACAO_MINIMA_ULTIMA,
   RESSALVA_OPINIOES,
+  RITMOS,
 } from './certificado.ts'
 import {
+  exemploBalanca32kg,
   exemploBancada,
   exemploClasseI,
   exemploPiorCaso,
@@ -29,6 +33,7 @@ import {
   exemploRodoviaria,
   POP_EXEMPLO,
 } from './exemplosCertificado.ts'
+import { diagramaExcentricidade, diagramaPosicoes } from './graficos.ts'
 import { COR } from './marca.ts'
 import type { DadosCertificadoPdf } from './tipos.ts'
 
@@ -55,14 +60,26 @@ const paginas = (t: string) => {
   return { total: m.length ? Number(m[0][2]) : 0, numeros: [...new Set(m.map((x) => Number(x[1])))] }
 }
 
-/** Páginas de cada exemplo: o normal em 2; com ajuste e "como encontrado" (o pior caso), no máximo 3. */
-const EXEMPLOS: Array<{ arquivo: string; dados: () => DadosCertificadoPdf; paginas: number }> = [
-  { arquivo: 'certificado-plataforma-300kg', dados: exemploPlataforma, paginas: 3 },
-  { arquivo: 'certificado-bancada-30kg', dados: exemploBancada, paginas: 2 },
-  { arquivo: 'certificado-rodoviaria-80t', dados: exemploRodoviaria, paginas: 2 },
-  { arquivo: 'certificado-pior-caso', dados: exemploPiorCaso, paginas: 3 },
-  // Classe I com ajuste interno e "como encontrado": cabe em 2
-  { arquivo: 'certificado-classe-i-220g', dados: exemploClasseI, paginas: 2 },
+/**
+ * Os exemplos, todos em no máximo 3 páginas, com o desenho das posições e o gráfico: `grafico`, a altura dele
+ * na montagem (o pior caso também aperta os respiros, `compacto`).
+ */
+const EXEMPLOS: Array<{
+  arquivo: string
+  dados: () => DadosCertificadoPdf
+  paginas: number
+  grafico: number
+  compacto?: boolean
+}> = [
+  // Ajuste com "como encontrado", reparo e conformidade: o gráfico encolhe um pouco para caber em 3
+  { arquivo: 'certificado-plataforma-300kg', dados: exemploPlataforma, paginas: 3, grafico: 116 },
+  { arquivo: 'certificado-bancada-30kg', dados: exemploBancada, paginas: 3, grafico: 150 },
+  { arquivo: 'certificado-rodoviaria-80t', dados: exemploRodoviaria, paginas: 3, grafico: 150 },
+  // Tudo junto: o gráfico menor e os respiros do layout compacto
+  { arquivo: 'certificado-pior-caso', dados: exemploPiorCaso, paginas: 3, grafico: 100, compacto: true },
+  { arquivo: 'certificado-classe-i-220g', dados: exemploClasseI, paginas: 3, grafico: 150 },
+  // O caso mais comum: balcão 32 kg × 5 g, com os pontos que o sistema sugere
+  { arquivo: 'certificado-balanca-32kg', dados: exemploBalanca32kg, paginas: 3, grafico: 150 },
 ]
 
 /** Resultados calculados de novo depois de mudar a calibração de um exemplo. */
@@ -73,12 +90,12 @@ function recalculado(d: DadosCertificadoPdf): DadosCertificadoPdf {
 
 /**
  * Variantes comuns que ficavam no limite da página (e davam uma página só com as assinaturas) e o pior caso
- * possível; `paginas` = o esperado, quando é o caso de fixar.
+ * possível; `paginas` = o esperado, quando é o caso de fixar (as comuns, com o desenho e o gráfico, em 3).
  */
 const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas?: number }> = [
   {
     nome: 'bancada com declaração de conformidade (balança comercial)',
-    paginas: 2,
+    paginas: 3,
     dados: () => {
       const d = exemploBancada()
       d.calibracao.conformidade = { solicitada: true, criterio: 'PORTARIA_SERVICO', toleranciaCliente: 0, regra: 'SIMPLES' }
@@ -87,7 +104,7 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
   },
   {
     nome: 'plataforma com reparo e ajuste, sem "como encontrado"',
-    paginas: 2,
+    paginas: 3,
     dados: () => {
       const d = exemploPlataforma()
       d.calibracao.comoEncontrado = null
@@ -96,7 +113,7 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
   },
   {
     nome: 'bancada com conformidade, reparo e ajuste',
-    paginas: 2,
+    paginas: 3,
     dados: () => {
       const d = exemploBancada()
       d.calibracao.conformidade = { solicitada: true, criterio: 'PORTARIA_SERVICO', toleranciaCliente: 0, regra: 'SIMPLES' }
@@ -114,7 +131,7 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
   },
   {
     nome: 'rodoviária com uma opinião de 1 linha',
-    paginas: 2,
+    paginas: 3,
     dados: () => {
       const d = exemploRodoviaria()
       d.calibracao.opinioes = 'Recomenda-se limpar as laterais da plataforma.'
@@ -124,7 +141,7 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
   // O caso comum: sem revisão, sem ajuste e sem "como encontrado"; uma opinião curta não abre a 3ª página
   {
     nome: 'rodoviária sem revisão + opinião de 1 linha',
-    paginas: 2,
+    paginas: 3,
     dados: () => {
       const d = rodoviariaSemRevisao()
       d.calibracao.opinioes = 'Recomenda-se limpar as laterais da plataforma.'
@@ -133,7 +150,7 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
   },
   {
     nome: 'rodoviária sem revisão + opinião e observação de 1 linha',
-    paginas: 2,
+    paginas: 3,
     dados: () => {
       const d = rodoviariaSemRevisao()
       d.calibracao.opinioes = 'Recomenda-se limpar as laterais da plataforma.'
@@ -143,7 +160,7 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
   },
   {
     nome: 'bancada + opinião',
-    paginas: 2,
+    paginas: 3,
     dados: () => {
       const d = exemploBancada()
       d.calibracao.opinioes = 'A balança está em boas condições de uso; mantenha o prato limpo e o nível centralizado.'
@@ -154,7 +171,7 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
   {
     // Configuração com os textos de fábrica antigos (longos), de antes da migração para os curtos
     nome: 'rodoviária sem revisão + opinião de 1 linha, com os textos antigos',
-    paginas: 2,
+    paginas: 3,
     dados: () => {
       const d = rodoviariaSemRevisao()
       d.calibracao.opinioes = 'Recomenda-se limpar as laterais da plataforma.'
@@ -164,7 +181,7 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
   },
   {
     nome: 'rodoviária sem revisão + opinião de 2 linhas e observação',
-    paginas: 2,
+    paginas: 3,
     dados: () => {
       const d = rodoviariaSemRevisao()
       d.calibracao.opinioes =
@@ -175,7 +192,7 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
   },
   {
     nome: 'plataforma sem reparo, com "como encontrado"',
-    paginas: 2,
+    paginas: 3,
     dados: () => {
       const d = exemploPlataforma()
       d.calibracao.reparo = { houve: false, descricao: '', marcaReparo: '', selosRetirados: '', selosColocados: '' }
@@ -213,6 +230,15 @@ function rodoviariaSemRevisao(): DadosCertificadoPdf {
   d.emissao = { ...d.emissao, substituiNumero: '', substituiEmissao: '' }
   d.marcaDagua = ''
   return d
+}
+
+/** Os nós com `svg` do conteúdo (o desenho das posições e o gráfico), com a largura. */
+function nosSvg(no: unknown): Array<{ svg: string; width: number }> {
+  if (Array.isArray(no)) return no.flatMap(nosSvg)
+  if (!no || typeof no !== 'object') return []
+  const o = no as Record<string, unknown>
+  if (typeof o.svg === 'string') return [o as { svg: string; width: number }]
+  return Object.values(o).flatMap(nosSvg)
 }
 
 /** Folhas do texto extraído (as vazias fora). */
@@ -278,9 +304,10 @@ function conferirComum(texto: string, d: DadosCertificadoPdf) {
   // O método é o procedimento (POP) da emissão, com a descrição curta
   expect(t).toContain('MÉTODO — PROCEDIMENTO (POP)')
   expect(t).toContain(`${d.emissao.textos.procedimento} — Calibração por comparação direta`)
-  // Enxuto: sem o gráfico de erros, sem o desenho das posições e sem a verificação preliminar inteira
-  expect(t).not.toContain('Erro de indicação em função da carga')
-  expect(t).not.toContain('Posições vistas de cima')
+  // Como a 1ª versão: o desenho das posições e o gráfico do erro de indicação; a verificação preliminar só
+  // com algum item "não", numa linha
+  expect(t).toContain('Posições vistas de cima')
+  expect(t).toContain('Erro de indicação em função da carga')
   expect(t).not.toMatch(/identificável: sim/)
   // Cabeçalho em toda página (ISO/IEC 17025, 7.8.2.1): marca, título, número e "Página i de N".
   // A palavra-marca só sai no cabeçalho: se ele fosse descartado por falta de espaço, o teste pegaria.
@@ -652,7 +679,7 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     expect(t).toContain('OS-2026-0456')
     // P-9a (ajuste), com antes e depois, numa frase só
     expect(t).toContain('antes da calibração foi realizado ajuste externo')
-    expect(t).toContain('Resultados antes do ajuste em 4.4 (“como encontrado”) e depois dele em 4.3 (“como deixado”).')
+    expect(t).toContain('Resultados antes do ajuste em 5.4 (“como encontrado”) e depois dele em 5.3 (“como deixado”).')
     expect(t).toContain('O ajuste não faz parte da calibração')
     expect(t).toContain('como encontrado (antes do ajuste)')
     expect(t).toContain('como deixado (após o ajuste)')
@@ -673,6 +700,12 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     expect(t).toContain('Portaria Inmetro 157/2022 — em serviço')
     expect(t).toContain('Banda de guarda')
     expect(t).toContain('Esta declaração não constitui verificação metrológica legal')
+    // O resultado numa caixa, com o selo
+    expect(t).toMatch(/CONFORME Resultado: conforme em todos os pontos calibrados\./)
+    // O gráfico do "como deixado", com os limites ±EMA da conformidade
+    expect(t).toContain(
+      'Erro de indicação em função da carga — como deixado. Barras: incerteza expandida U; tracejado: limites ±EMA.',
+    )
     // P-10b: próxima calibração só porque o cliente pediu
     expect(t).toContain('Data da próxima calibração informada a pedido do cliente: 13/10/2027')
     expect(t).not.toContain('não contém recomendação de intervalo de calibração')
@@ -711,14 +744,33 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     expect(t).toContain('não fazem parte dos resultados de medição')
     // Mesma pessoa executou e autorizou
     expect(t).toContain('EXECUTADO E AUTORIZADO POR')
-    // Numeração das seções sem buracos (sem conformidade): 5 Observações, 6 Opiniões, 7 Declarações
+    // As seções da 1ª versão, numeradas sem buracos (sem conformidade): 6 Observações, 7 Opiniões, 8 Declarações
     expect(t).toMatch(/1 DADOS DA CALIBRAÇÃO/)
-    expect(t).toMatch(/4 RESULTADOS/)
-    expect(t).toMatch(/5 OBSERVAÇÕES/)
-    expect(t).toMatch(/6 OPINIÕES E INTERPRETAÇÕES/)
-    expect(t).toMatch(/7 DECLARAÇÕES/)
+    expect(t).toMatch(/2 CLIENTE/)
+    expect(t).toMatch(/3 INSTRUMENTO CALIBRADO/)
+    expect(t).toContain('CARACTERÍSTICAS METROLÓGICAS, CONFORME A MARCAÇÃO DO INSTRUMENTO')
+    expect(t).toMatch(/4 PADRÕES UTILIZADOS/)
+    expect(t).toMatch(/5 RESULTADOS/)
+    expect(t).toMatch(/6 OBSERVAÇÕES/)
+    expect(t).toMatch(/7 OPINIÕES E INTERPRETAÇÕES/)
+    expect(t).toMatch(/8 DECLARAÇÕES/)
+    // Histerese pela média: o gráfico com a média das indicações, sem os limites (sem conformidade)
+    expect(t).toContain('Erro de indicação em função da carga (média das indicações ↑ e ↓). Barras: incerteza expandida U.')
     // Sem item "não" na verificação preliminar, nada dela no certificado
     expect(t).not.toContain('Verificação preliminar')
+  })
+
+  it('a rastreabilidade ("padrões abaixo") sai logo abaixo do título dos padrões, antes da tabela', async () => {
+    for (const e of EXEMPLOS) {
+      const t = corrido(textoDoPdf(await pdfDe(e.arquivo)))
+      const titulo = t.indexOf('4 PADRÕES UTILIZADOS')
+      const frase = t.indexOf('por meio dos padrões abaixo')
+      const tabela = t.indexOf('Identificação Descrição', titulo)
+      expect(titulo, e.arquivo).toBeGreaterThan(0)
+      expect(frase, e.arquivo).toBeGreaterThan(titulo)
+      expect(tabela, e.arquivo).toBeGreaterThan(frase)
+      expect(t.indexOf('5 RESULTADOS'), e.arquivo).toBeGreaterThan(tabela)
+    }
   })
 
   it('observações digitadas uma por linha: um marcador para cada (sem as linhas vazias), como os outros itens', async () => {
@@ -750,7 +802,7 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     // No PDF, cada uma começa a sua linha; e continua em 2 páginas
     const texto = textoDoPdf(await gerarCertificadoPdf(dados))
     for (const l of linhas) expect(texto).toMatch(new RegExp(`^\\s*${l.slice(0, 30)}`, 'm'))
-    expect(paginas(texto).total).toBe(2)
+    expect(paginas(texto).total).toBeLessThanOrEqual(3)
   })
 
   it('analítica classe I 220 g: empuxo pela densidade do ar medida e convecção, numa frase no método', async () => {
@@ -766,12 +818,12 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     expect(t).toMatch(/PRESSÃO ATMOSFÉRICA .*942 hPa/)
     for (const x of ['JE2-01', 'E2', 'M-0412/2026', 'TD-01', 'Termômetro digital de duas entradas']) expect(t).toContain(x)
     // Ajuste interno logo depois do "como encontrado"
-    expect(t).toContain('antes da calibração foi realizado ajuste interno (automático). Resultados antes do ajuste em 4.4')
+    expect(t).toContain('antes da calibração foi realizado ajuste interno (automático). Resultados antes do ajuste em 5.4')
     expect(t).toContain('como encontrado (antes do ajuste)')
     // A densidade do ar é a do cálculo (A1.1-1, com as médias do início e do fim e a pressão)
     const rho = d.resultado.ar!.densidade
     expect(rho).toBeCloseTo(densidadeAr((22.4 + 22.9) / 2, (54 + 55) / 2, 942), 9)
-    const metodo = t.slice(t.indexOf('MÉTODO — PROCEDIMENTO (POP)'), t.indexOf('2 INSTRUMENTO CALIBRADO'))
+    const metodo = t.slice(t.indexOf('MÉTODO — PROCEDIMENTO (POP)'), t.indexOf('2 CLIENTE'))
     expect(metodo).toContain(
       `Empuxo do ar corrigido com a densidade do ar de ${rho.toFixed(3).replace('.', ',')} kg/m³, calculada pela temperatura, umidade e pressão medidas, e a densidade dos pesos de 7950 kg/m³ (EURAMET cg-18, 7.1.2-4 e A1.1-1).`,
     )
@@ -786,13 +838,14 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     expect(t).toMatch(/TEMPERATURA \(INÍCIO → FIM\) .*22,4 °C → 22,9 °C/)
     // 10 leituras na repetibilidade; excentricidade pelo método 3 (zero antes de cada posição)
     expect(t).toMatch(/200,0000 .* 10 200,000300 0,000067/)
-    expect(t).toContain('Zero lido (g)')
+    expect(t).toContain('Zero lido')
+    expect(t).toMatch(/2 Frente \(0°\) 0,0000 100,0003 \+0,0002/)
     // A legenda do ΔI é a do método 3: o desvio desconta o zero lido antes de cada posição (posição 3: zero 0,0001,
     // indicação 100,0002 → 100,0001 − 100,0001 = 0,0000, como impresso)
     expect(t).toContain('ΔI: (indicação − zero lido) na posição − o mesmo na posição 1.')
     expect(t).not.toContain('ΔI: indicação na posição − indicação na posição 1.')
     expect(d.resultado.excentricidade.desvios[2]).toBe(0)
-    expect(paginas(texto).total).toBe(2)
+    expect(paginas(texto).total).toBe(3)
   })
 
   it('rodoviária 80 t: revisão, prévia, cargas de substituição e faixa parcial', async () => {
@@ -801,9 +854,11 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     conferirComum(texto, d)
     const t = corrido(texto)
     // P-14a (revisão)
+    // (as letras da marca d'água podem cair no meio da frase, no texto extraído)
     expect(t).toContain(
-      'Revisão: este certificado substitui integralmente o Certificado nº CC-2026-00098, emitido em 30/09/2026, que fica cancelado. Motivo: correção do número de série do indicador',
+      'Revisão: este certificado substitui integralmente o Certificado nº CC-2026-00098, emitido em 30/09/2026, que fica cancelado.',
     )
+    expect(t).toContain('Motivo: correção do número de série do indicador')
     // A marca d'água diagonal sai letra a letra no pdftotext; a presença dela é conferida na definição
     expect(t).toContain('Balança rodoviária')
     expect(t).toContain('80 000 kg')
@@ -820,11 +875,21 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
   })
 })
 
-describe.runIf(temPdftotext)('certificado enxuto (2 páginas; 3 no pior caso)', { timeout: 60_000 }, () => {
-  it.each(EXEMPLOS)('$arquivo: $paginas páginas', async ({ arquivo, paginas: esperado }) => {
-    const texto = textoDoPdf(await pdfDe(arquivo))
-    expect(paginas(texto).total).toBe(esperado)
-  })
+describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', { timeout: 60_000 }, () => {
+  it.each(EXEMPLOS)(
+    '$arquivo: $paginas páginas, com o desenho das posições e o gráfico ($grafico pt)',
+    async ({ arquivo, dados, paginas: esperado, grafico, compacto }) => {
+      const texto = textoDoPdf(await pdfDe(arquivo))
+      expect(paginas(texto).total).toBe(esperado)
+      expect(esperado).toBeLessThanOrEqual(MAX_PAGINAS)
+      const m = await montarCertificado(dados())
+      expect(m.paginas).toBe(esperado)
+      expect(m.diagramacao).toEqual({ ritmo: compacto ? 'compacto' : 'normal', grafico })
+      const t = corrido(texto)
+      expect(t).toContain('Posições vistas de cima')
+      expect(t).toContain('Erro de indicação em função da carga')
+    },
+  )
 
   it('pior caso: multi-intervalo, substituição, ajuste com "como encontrado", reparo, revisão e conformidade em 3 páginas', async () => {
     const d = exemploPiorCaso()
@@ -836,7 +901,11 @@ describe.runIf(temPdftotext)('certificado enxuto (2 páginas; 3 no pior caso)', 
     expect(t).toContain('10 / 20 / 50 kg')
     expect(t).toContain('como encontrado (antes do ajuste)')
     expect(t).toContain('como deixado (após o ajuste)')
-    expect(t.match(/Cargas de substituição \(EURAMET cg-18, 4\.3\.3\): 7 etapas/g)).toHaveLength(2)
+    // As mesmas cargas de substituição nos dois ensaios: a frase inteira uma vez só
+    expect(t.match(/Cargas de substituição \(EURAMET cg-18, 4\.3\.3\): 7 etapas/g)).toHaveLength(1)
+    expect(t).toContain(
+      'Cargas de substituição como em 5.3. Retorno ao zero: após a retirada da carga, o instrumento indicou 20 kg.',
+    )
     expect(t).toContain('Revisão: este certificado substitui integralmente o Certificado nº CC-2026-00131')
     expect(t).toContain('Reparo: o instrumento passou por reparo/manutenção')
     // Verificação preliminar: uma linha só, com o item "não"
@@ -860,15 +929,66 @@ describe.runIf(temPdftotext)('certificado enxuto (2 páginas; 3 no pior caso)', 
       expect(t).toContain(x)
   })
 
-  it('excentricidade em tabela compacta: as posições nas colunas; mais de 8 posições, em outra tabela embaixo', async () => {
-    const d = exemploPlataforma()
+  it('a diagramação é a 1ª que cabe em 3 páginas: o gráfico encolhe, depois os respiros apertam e, por último, ele sai', async () => {
+    /** O pior caso com mais observações (uma por linha). */
+    const comObservacoes = (n: number) => {
+      const d = exemploPiorCaso()
+      d.calibracao.observacoes += Array.from({ length: n }, (_, i) => `\nObservação adicional nº ${i + 1}.`).join('')
+      return d
+    }
+    // Plataforma: o gráfico menor; pior caso: os respiros do layout compacto; com 6 observações a mais, nada cabe
+    // em 3 páginas e o gráfico fica (tirá-lo não pouparia a página)
+    for (const d of [exemploPlataforma(), exemploPiorCaso(), comObservacoes(6)]) {
+      const semMarca = { ...d, marcaDagua: '' }
+      const todas: number[] = []
+      for (const diagramacao of DIAGRAMACOES) {
+        const pdf = await pdfmake()
+          .createPdf(definicaoCertificado(semMarca, { diagramacao }) as never)
+          .getBuffer()
+        todas.push(folhas(textoDoPdf(pdf)).length)
+      }
+      const m = await montarCertificado(semMarca)
+      const primeira = todas.findIndex((p) => p <= MAX_PAGINAS)
+      const esperada = primeira >= 0 ? primeira : todas.indexOf(Math.min(...todas))
+      expect(m.diagramacao, d.calibracao.numero).toEqual(DIAGRAMACOES[esperada])
+      expect(m.paginas).toBe(todas[esperada])
+      // Sem o gráfico só quando nenhuma diagramação com ele cabe em 3 páginas
+      if (m.diagramacao.grafico === 0)
+        expect(todas.filter((_, i) => DIAGRAMACOES[i].grafico > 0).every((p) => p > MAX_PAGINAS)).toBe(true)
+    }
+    // A ordem: o gráfico encolhe no layout normal, depois o compacto, e o último sem o gráfico
+    expect(DIAGRAMACOES[0]).toEqual({ ritmo: 'normal', grafico: 150 })
+    expect(DIAGRAMACOES.at(-1)).toEqual({ ritmo: 'compacto', grafico: 0 })
+    expect(DIAGRAMACOES.filter((x) => x.grafico === 0)).toHaveLength(1)
+    const normais = DIAGRAMACOES.filter((x) => x.ritmo === 'normal').map((x) => x.grafico)
+    expect(normais).toEqual([...normais].sort((a, b) => b - a))
+    expect(DIAGRAMACOES.findIndex((x) => x.ritmo === 'compacto')).toBe(normais.length)
+  })
+
+  it('excentricidade: uma posição por linha e, ao lado, o desenho delas vistas de cima (a de maior desvio destacada)', async () => {
     const t = corrido(textoDoPdf(await pdfDe('certificado-plataforma-300kg')))
-    expect(t).toMatch(
-      /Posição 1 Centro 2 Frente esquerda 3 Trás esquerda 4 Trás direita 5 Frente direita Indicação \(kg\) 100,00 100,05 100,00 99,95 100,05 Desvio ΔI \(kg\) referência \+0,05 0,00 −0,05 \+0,05/,
-    )
-    // Plataforma com 10 apoios: duas tabelas (8 + 2 posições), cada uma com o seu cabeçalho
-    const apoios = exemploPlataforma()
-    apoios.calibracao = {
+    expect(t).toContain('Carga de ensaio: 100,00 kg · método: zera e desloca a carga pelas posições.')
+    // Uma posição por linha (o pdftotext mistura os números do desenho ao lado no meio delas)
+    for (const linha of [
+      '1 Centro 100,00 referência',
+      '2 Frente esquerda 100,05 +0,05',
+      '3 Trás esquerda 100,00 0,00',
+      '4 Trás direita 99,95 −0,05',
+      '5 Frente direita 100,05 +0,05',
+    ])
+      expect(t).toContain(linha)
+    expect(t).toContain('Maior desvio: |ΔI|máx = 0,05 kg, na posição 2')
+    expect(t).toMatch(/FRENTE .*Posições vistas de cima/)
+    // O desenho: a posição 2 (a de maior desvio) cheia de verde
+    const json = JSON.stringify((definicaoCertificado(exemploPlataforma()) as { content: unknown }).content)
+    expect(json.match(/<circle [^>]*r=\\"7\\"/g)).toHaveLength(5)
+    expect(json).toMatch(/<circle [^>]*fill=\\"#067A3B\\"/)
+  })
+
+  it('rótulos digitados à mão ("Apoio 1"… numa rodoviária): o desenho genérico, com as posições na ordem da tabela', async () => {
+    const d = exemploPlataforma()
+    d.emissao.balanca = { ...d.emissao.balanca, receptor: 'RODOVIARIA' }
+    d.calibracao = {
       ...d.calibracao,
       excentricidade: {
         ...d.calibracao.excentricidade,
@@ -879,19 +999,82 @@ describe.runIf(temPdftotext)('certificado enxuto (2 páginas; 3 no pior caso)', 
         })),
       },
     }
-    const doc = definicaoCertificado(apoios) as { content: unknown }
-    const json = JSON.stringify(doc.content)
-    expect(json.match(/"text":"Posição"/g)).toHaveLength(2)
-    expect(json).toContain('"text":"Apoio 9"')
-    const ta = corrido(textoDoPdf(await gerarCertificadoPdf(apoios)))
-    expect(ta).toMatch(/9 Apoio 9 10 Apoio 10/)
+    const dados = recalculado(d)
+    const json = JSON.stringify((definicaoCertificado(dados) as { content: unknown }).content)
+    // Um desenho, com as 10 posições numeradas, e uma tabela só (uma linha por posição)
+    expect(json.match(/Posições vistas de cima/g)).toHaveLength(1)
+    expect(json.match(/<circle [^>]*r=\\"7\\"/g)).toHaveLength(10)
+    expect(json.match(/"text":\["Posição"/g)).toHaveLength(1)
+    const t = corrido(textoDoPdf(await gerarCertificadoPdf(dados)))
+    expect(t).toMatch(/9 Apoio 9 100,00 0,00 10 Apoio 10 100,05 \+0,05/)
+    expect(t).toContain('Posições vistas de cima')
   })
 
-  it('sem gráfico nem desenho: o único SVG do conteúdo é nenhum (o logo fica no cabeçalho)', () => {
-    for (const e of EXEMPLOS) {
-      const doc = definicaoCertificado(e.dados()) as { content: unknown }
-      expect(JSON.stringify(doc.content)).not.toContain('<svg')
+  it('rótulos que contradizem a ordem padrão: o desenho genérico, nunca uma posição no lugar errado', () => {
+    /** Centro de cada posição numerada (1, 2, …) no desenho. */
+    const centros = (svg: string) =>
+      [...svg.matchAll(/<circle cx="([\d.]+)" cy="([\d.]+)" r="7"/g)].map((m) => [Number(m[1]), Number(m[2])])
+    // Os rótulos do sistema: o desenho do receptor, com a frente embaixo
+    const padrao = diagramaPosicoes('RETANGULAR', posicoesExcentricidade('RETANGULAR'), -1, 0)!
+    expect(padrao.svg).toContain('FRENTE')
+    expect(centros(padrao.svg)[0]).toEqual([64, 42])
+    // "Frente" na 1ª linha e "Centro" na última: na ordem padrão, a 1ª iria para o centro; o genérico põe a
+    // do centro no meio e não diz qual lado é a frente
+    const trocados = diagramaPosicoes('RETANGULAR', ['Frente', 'Trás', 'Esquerda', 'Direita', 'Centro'], -1, 0)!
+    expect(trocados.svg).not.toContain('FRENTE')
+    const [x, y] = centros(trocados.svg)[4]
+    expect([x, y]).toEqual([trocados.largura / 2, 42])
+    // Prato redondo com os rótulos de canto da plataforma: idem
+    const cantos = ['Centro', 'Frente esquerda', 'Trás esquerda', 'Trás direita', 'Frente direita']
+    expect(diagramaPosicoes('CIRCULAR', cantos, -1, 0)!.svg).not.toContain('FRENTE')
+    // Rótulos sem lugar nenhum ("A"…"E"): a ordem padrão da cg-18, como sempre
+    expect(diagramaPosicoes('RETANGULAR', ['A', 'B', 'C', 'D', 'E'], -1, 0)!.svg).toContain('FRENTE')
+    // A folha de campo (sem `estrito`) continua com a ordem padrão
+    expect(diagramaExcentricidade('CIRCULAR', cantos, -1, 0)!.svg).toContain('FRENTE')
+  })
+
+  it('métodos 3 e 4 numa rodoviária (a coluna da referência): o desenho encolhe e cada posição fica numa linha', async () => {
+    const d = rodoviariaSemRevisao()
+    d.calibracao.excentricidade = {
+      ...d.calibracao.excentricidade,
+      metodo: 4,
+      posicoes: d.calibracao.excentricidade.posicoes.map((p) => ({ ...p, referencia: 10_000 })),
     }
+    const dados = recalculado(d)
+    // O desenho da rodoviária (214 pt) um pouco menor, até 160 pt
+    const desenho = nosSvg(definicaoCertificado(dados).content).find((n) => n.svg.includes('apoios'))!
+    expect(desenho.width).toBeLessThan(214)
+    expect(desenho.width).toBeGreaterThanOrEqual(160)
+    // Sem a coluna da referência, do tamanho dele
+    expect(nosSvg(definicaoCertificado(rodoviariaSemRevisao()).content).find((n) => n.svg.includes('apoios'))!.width).toBe(214)
+    const linhas = textoDoPdf(await gerarCertificadoPdf(dados)).split('\n')
+    for (const rotulo of ['Início (ida)', 'Início (volta)', 'Meio (volta)', 'Fim (volta)'])
+      expect(
+        linhas.some((l) => l.includes(rotulo)),
+        rotulo,
+      ).toBe(true)
+  })
+
+  it('o desenho das posições sempre (e o gráfico, com a altura da diagramação; 0 = sem ele)', () => {
+    const svgs = (d: DadosCertificadoPdf, grafico?: number) => {
+      const doc = definicaoCertificado(d, grafico === undefined ? {} : { diagramacao: { ritmo: 'normal', grafico } }) as {
+        content: unknown
+      }
+      return JSON.stringify(doc.content).match(/<svg/g)?.length ?? 0
+    }
+    for (const e of EXEMPLOS) {
+      // O desenho e o gráfico; sem o gráfico, o desenho fica
+      expect(svgs(e.dados()), e.arquivo).toBe(2)
+      expect(svgs(e.dados(), 0), e.arquivo).toBe(1)
+    }
+    // Só o zero lido (prévia de um rascunho): nada para pôr no gráfico; o desenho das posições fica
+    const soZero = exemploBancada()
+    soZero.calibracao.indicacao.pontos = soZero.calibracao.indicacao.pontos.slice(0, 1)
+    expect(soZero.calibracao.indicacao.pontos[0].carga).toBe(0)
+    expect(svgs(recalculado(soZero))).toBe(1)
+    // A altura pedida é a do gráfico
+    const doc = JSON.stringify(definicaoCertificado(exemploBancada(), { diagramacao: { ritmo: 'normal', grafico: 116 } }))
+    expect(doc).toMatch(/viewBox=\\"0 0 505(\.\d+)? 116\\"/)
   })
 
   it('letra legível: dados com 8 pt ou mais, notas e declarações com 7 pt ou mais', () => {
@@ -900,9 +1083,14 @@ describe.runIf(temPdftotext)('certificado enxuto (2 páginas; 3 no pior caso)', 
       styles: Record<string, { fontSize: number }>
       defaultStyle: { fontSize: number }
     }
-    for (const estilo of ['td', 'valor']) expect(doc.styles[estilo].fontSize, estilo).toBeGreaterThanOrEqual(8)
-    for (const estilo of ['nota', 'declaracao', 'paragrafo', 'th'])
-      expect(doc.styles[estilo].fontSize, estilo).toBeGreaterThanOrEqual(7)
+    // Também no layout compacto (o do pior caso)
+    for (const estilos of [doc.styles, RITMOS.normal.estilos, RITMOS.compacto.estilos] as Array<
+      Record<string, { fontSize: number }>
+    >) {
+      for (const estilo of ['td', 'valor']) expect(estilos[estilo].fontSize, estilo).toBeGreaterThanOrEqual(8)
+      for (const estilo of ['nota', 'declaracao', 'paragrafo', 'th'])
+        expect(estilos[estilo].fontSize, estilo).toBeGreaterThanOrEqual(7)
+    }
     expect(doc.defaultStyle.fontSize).toBeGreaterThanOrEqual(8)
     // Nenhum tamanho avulso abaixo de 7 pt no conteúdo
     const tamanhos: number[] = []
@@ -935,7 +1123,7 @@ describe.runIf(temPdftotext)('certificado enxuto (2 páginas; 3 no pior caso)', 
     for (const x of miudos) expect(x).toMatchObject({ text: ' ', id: expect.stringMatching(/^fim:/) })
   })
 
-  it('o título dos padrões nunca fica sozinho no pé da página: vai com o cabeçalho e a 1ª linha da tabela', async () => {
+  it('o título dos padrões e a rastreabilidade nunca ficam sozinhos no pé da página: vão com o cabeçalho e a 1ª linha da tabela', async () => {
     for (let espaco = 170; espaco <= 270; espaco += 10) {
       const doc = definicaoCertificado(exemploBancada()) as { content: Array<{ headlineLevel?: number }> }
       const i = doc.content.findIndex((n) => typeof n.headlineLevel === 'number' && n.headlineLevel > 100)
@@ -946,8 +1134,10 @@ describe.runIf(temPdftotext)('certificado enxuto (2 páginas; 3 no pior caso)', 
         .getBuffer()
       const folhas = textoDoPdf(pdf).split('\f')
       const titulo = folhas.findIndex((f) => f.includes('PADRÕES UTILIZADOS'))
+      const rastreabilidade = folhas.findIndex((f) => corrido(f).includes('por meio dos padrões abaixo'))
       const linha = folhas.findIndex((f) => f.includes('JP-05'))
       expect(titulo, `espaço de ${espaco} pt`).toBe(linha)
+      expect(rastreabilidade, `espaço de ${espaco} pt`).toBe(linha)
     }
   })
 
@@ -970,6 +1160,53 @@ describe.runIf(temPdftotext)('certificado enxuto (2 páginas; 3 no pior caso)', 
     conferirCabecalhos(texto, d.calibracao.numero, 'BALANÇAS.COM', 'BALANÇAS-POP-123 rev. 2')
     expect(corrido(texto)).toContain('MÉTODO — PROCEDIMENTO (POP) BALANÇAS-POP-123 rev. 2 —')
     expect((definicaoCertificado(d) as { info: { keywords: string } }).info.keywords).toContain('BALANÇAS-POP-123 rev. 2')
+  })
+})
+
+describe('histerese pela média com o carregamento num sentido só', () => {
+  /** A definição do certificado em texto (o SVG do gráfico vai dentro). */
+  const definicao = (d: DadosCertificadoPdf) => JSON.stringify((definicaoCertificado(d) as { content: unknown }).content)
+  const emMedia = (d: DadosCertificadoPdf, metodo?: 'CONTINUO' | 'DECRESCENTE'): DadosCertificadoPdf => {
+    d.calibracao.opcoes = { ...d.calibracao.opcoes, histerese: 'MEDIA' }
+    if (metodo) {
+      d.calibracao.indicacao.metodo = metodo
+      for (const p of d.calibracao.indicacao.pontos) {
+        if (metodo === 'CONTINUO') p.decrescente = null
+        else p.crescente = null
+      }
+    }
+    return recalculado(d)
+  }
+
+  it.each([
+    { nome: 'bancada contínua', dados: () => emMedia(exemploBancada(), 'CONTINUO'), serie: 'Carga crescente' },
+    { nome: 'bancada decrescente', dados: () => emMedia(exemploBancada(), 'DECRESCENTE'), serie: 'Carga decrescente' },
+    { nome: 'rodoviária (contínua)', dados: () => emMedia(exemploRodoviaria()), serie: 'Carga crescente' },
+    { nome: 'classe I (descontínua)', dados: () => emMedia(exemploClasseI()), serie: 'Carga crescente' },
+  ])('$nome: o gráfico com a série do sentido, sem "média", como a tabela e a legenda', ({ dados, serie }) => {
+    const json = definicao(dados())
+    // A tabela e a legenda: erro de um sentido
+    expect(json).toContain('Erro = indicação − carga.')
+    expect(json).not.toContain('Erro (média)')
+    // O gráfico e a nota dele, iguais
+    expect(json).toContain(`>${serie}<`)
+    expect(json).not.toContain('Média (↑↓)')
+    expect(json).not.toContain('média das indicações')
+    expect(json).toMatch(/Erro de indicação em função da carga(?: — como deixado)?\. Barras: incerteza expandida U/)
+  })
+
+  it('com os dois sentidos, a média nos três lugares (tabela, legenda e gráfico)', () => {
+    const json = definicao(exemploBancada())
+    expect(json).toContain('Erro (média)')
+    expect(json).toContain('Erro = média das indicações ↑ e ↓ − carga')
+    expect(json).toContain('>Média (↑↓)<')
+    expect(json).toContain('Erro de indicação em função da carga (média das indicações ↑ e ↓).')
+  })
+
+  it('num sentido só, os pontos do gráfico são os da tabela (o erro da média é o do sentido)', () => {
+    const d = emMedia(exemploBancada(), 'CONTINUO')
+    for (const p of d.resultado.pontos.filter((x) => x.texto.crescente !== ''))
+      expect(p.texto.erroCrescente).toBe(p.texto.erroMedio)
   })
 })
 
@@ -1028,22 +1265,23 @@ describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
   }
 
   it.runIf(temPdftotext)(
-    'plataforma (ajuste com "como encontrado", reparo e conformidade): a 3ª página leva seções inteiras, não só o fim',
+    'bancada (opiniões): a 3ª página leva seções inteiras, não só o fim; o gráfico fica com a tabela dele',
     async () => {
-      const d = exemploPlataforma()
+      const d = exemploBancada()
       // Sem o equilíbrio, a 3ª página ficaria só com as declarações e as assinaturas
       const antes = await natural(d)
       expect(antes).toHaveLength(3)
       const p3 = corrido(antes[2])
-      expect(p3.slice(p3.indexOf('Página 3 de 3') + 'Página 3 de 3'.length).trim()).toMatch(/^7 DECLARAÇÕES/)
+      expect(p3.slice(p3.indexOf('Página 3 de 3') + 'Página 3 de 3'.length).trim()).toMatch(/^8 DECLARAÇÕES/)
       const m = await montarCertificado(d)
       expect(m.paginas).toBe(3)
-      expect(m.quebras).toEqual(['conformidade'])
-      // As duas últimas páginas com pelo menos ≈ metade cada (antes: ≈ 3/4 e ≈ 1/4)
-      expect(m.ocupacao[2]).toBeGreaterThanOrEqual(0.45)
-      expect(m.ocupacao[1]).toBeGreaterThanOrEqual(0.45)
-      const ultima = corrido(folhas(textoDoPdf(m.pdf))[2])
-      expect(ultima).toMatch(/5 DECLARAÇÃO DE CONFORMIDADE .* 6 OBSERVAÇÕES .* 7 DECLARAÇÕES .* Fim do Certificado/)
+      // A quebra antes das observações (não antes do gráfico, que fica embaixo da tabela 5.3)
+      expect(m.quebras).toEqual(['observacoes'])
+      expect(m.ocupacao[2]).toBeGreaterThanOrEqual(0.4)
+      expect(m.ocupacao[1]).toBeGreaterThanOrEqual(0.6)
+      const [, p2, ultima] = folhas(textoDoPdf(m.pdf)).map(corrido)
+      expect(p2).toContain('Erro de indicação em função da carga')
+      expect(ultima).toMatch(/6 OBSERVAÇÕES .* 7 OPINIÕES E INTERPRETAÇÕES .* 8 DECLARAÇÕES .* Fim do Certificado/)
       // O PDF gerado é o da montagem, byte a byte (sem as imagens das assinaturas: o pdfkit decodifica os PNG
       // com transparência em paralelo e a ordem dos objetos no arquivo varia; o conteúdo é o mesmo)
       const semImagens: DadosCertificadoPdf = {
@@ -1055,7 +1293,7 @@ describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
         },
       }
       const montado = await montarCertificado(semImagens)
-      expect(montado.quebras).toEqual(['conformidade'])
+      expect(montado.quebras).toEqual(['observacoes'])
       expect((await gerarCertificadoPdf(semImagens)).equals(montado.pdf)).toBe(true)
     },
   )
@@ -1080,14 +1318,16 @@ describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
   )
 
   it('a montagem só mexe na paginação de 3 páginas ou mais com a última quase vazia', async () => {
-    // Pior caso: a 3ª página já tinha observações e opiniões; o equilíbrio leva a conformidade também
+    // Pior caso: a 3ª página já sai com a conformidade, as observações e as opiniões; nada a equilibrar
     const pior = await montarCertificado(exemploPiorCaso())
     expect(pior.paginas).toBe(3)
+    expect(pior.quebras).toEqual([])
     expect(pior.ocupacao[2]).toBeGreaterThanOrEqual(OCUPACAO_MINIMA_ULTIMA)
-    // 2 páginas: como sai
-    for (const d of [exemploBancada(), exemploRodoviaria()]) {
+    // A última página já com mais da metade: como sai
+    for (const d of [exemploRodoviaria(), exemploClasseI()]) {
       const m = await montarCertificado(d)
-      expect(m.paginas).toBe(2)
+      expect(m.paginas).toBe(3)
+      expect(m.ocupacao[2]).toBeGreaterThanOrEqual(OCUPACAO_MINIMA_ULTIMA)
       expect(m.quebras).toEqual([])
     }
     // Uma quebra pedida na definição começa a seção numa página nova (o grupo final nunca recebe quebra)
@@ -1096,7 +1336,7 @@ describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
     }
     expect(doc.content.filter((x) => x.pageBreak === 'before')).toHaveLength(1)
     const i = doc.content.findIndex((x) => x.pageBreak === 'before')
-    expect(doc.content[i - 1].id).toBe('fim:indicacao')
+    expect(doc.content[i - 1].id).toBe('fim:grafico')
     // A marca do fim do certificado só na medição
     expect(JSON.stringify(doc.content)).not.toContain('fim:declaracoes')
     expect(JSON.stringify((definicaoCertificado(exemploBancada(), { medir: true }) as { content: unknown }).content)).toContain(
@@ -1105,12 +1345,13 @@ describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
   })
 
   it.runIf(temPdftotext)(
-    'normal (sem ajuste) com opinião e observação de 1 linha: 2 páginas, com folga no pé da 2ª',
+    'normal (sem ajuste) com opinião e observação de 1 linha: 3 páginas com o gráfico grande e folga no pé da última',
     async () => {
       for (const nome of ['rodoviária sem revisão + opinião de 1 linha', 'bancada + opinião']) {
         const m = await montarCertificado(VARIANTES.find((v) => v.nome === nome)!.dados())
-        expect(m.paginas, nome).toBe(2)
-        expect(m.ocupacao[1], nome).toBeLessThanOrEqual(0.9)
+        expect(m.paginas, nome).toBe(3)
+        expect(m.diagramacao, nome).toEqual(DIAGRAMACOES[0])
+        expect(m.ocupacao[2], nome).toBeLessThanOrEqual(0.9)
       }
     },
   )
@@ -1119,7 +1360,7 @@ describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
     const texto = textoDoPdf(await pdfDe('certificado-bancada-30kg'))
     const linha = texto.split('\n').find((l) => l.includes('OPINIÕES E INTERPRETAÇÕES'))!
     expect(linha).toMatch(
-      /6 +OPINIÕES E INTERPRETAÇÕES +Baseadas nos resultados; não fazem parte dos resultados de medição\. Emitidas por pessoal autorizado\.$/,
+      /7 +OPINIÕES E INTERPRETAÇÕES +Baseadas nos resultados; não fazem parte dos resultados de medição\. Emitidas por pessoal autorizado\.$/,
     )
     expect(corrido(texto).split(RESSALVA_OPINIOES)).toHaveLength(2)
     expect(RESSALVA_OPINIOES).toContain('não fazem parte dos resultados de medição')
@@ -1182,7 +1423,7 @@ describe('cláusula de reprodução no rodapé', { timeout: 60_000 }, () => {
     }
     const t = corrido(texto)
     expect(t).not.toMatch(/\b5\. /)
-    expect(t).toMatch(/7 DECLARAÇÕES 1\. A incerteza expandida .* 4\. Esta calibração não isenta/)
+    expect(t).toMatch(/8 DECLARAÇÕES 1\. A incerteza expandida .* 4\. Esta calibração não isenta/)
     expect(t.match(/Este certificado somente pode ser reproduzido na íntegra/g)).toHaveLength(folhas(texto).length)
   })
 

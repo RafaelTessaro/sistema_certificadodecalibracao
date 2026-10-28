@@ -1,4 +1,4 @@
-// Três certificados de exemplo, realistas, para os testes do PDF e para as amostras em server/pdf/exemplos/:
+// Certificados de exemplo, realistas, para os testes do PDF e para as amostras em server/pdf/exemplos/:
 //   1. plataforma Toledo 300 kg × 50 g, classe III, com reparo, ajuste ("como encontrado" + "como deixado")
 //      e declaração de conformidade pela Portaria 157/2022 em serviço;
 //   2. bancada 30 kg × 5 g, sem ajuste, histerese pela MÉDIA (exemplo numérico da pesquisa 02, §9),
@@ -11,6 +11,8 @@
 //   5. classe I: analítica 220 g × 0,1 mg com pesos E2 pelo certificado (com a densidade), no local de uso,
 //      ajuste interno logo depois do "como encontrado", empuxo pela densidade do ar medida e convecção calculada
 //      pela diferença de temperatura pesos − ar (a frase no método do certificado).
+//   6. balcão 32 kg × 5 g, classe III: o caso mais comum, com os pontos que o sistema sugere, sem ajuste e
+//      sem declaração de conformidade.
 // Os resultados saem do motor de cálculo de verdade (shared/calibracao.ts).
 
 import { calcularCalibracao, montarCarga, montarPonto } from '#shared/calibracao.ts'
@@ -1087,6 +1089,144 @@ export function exemploClasseI(): DadosCertificadoPdf {
     emitidoEm: '2026-10-27T13:20:00.000Z',
     emitidoPor: RESPONSAVEL.id,
     codigo: 'K7AN-2LTC',
+    hashPdf: '',
+    arquivo: '',
+    empresa: EMPRESA_PADRAO,
+    cliente: c,
+    balanca: b,
+    padroes,
+    tecnico: TECNICO,
+    signatario: RESPONSAVEL,
+    textos: TEXTOS_EXEMPLO,
+    substituiNumero: '',
+    substituiEmissao: '',
+  }
+  return montar(k, e)
+}
+
+// ---- 6. Balcão 32 kg × 5 g: o caso mais comum (classe III, sem ajuste, sem conformidade) ------------------
+
+/** Jogo de pesos 100 g a 10 kg, classe M1, aço inoxidável (balanças de balcão até 32 kg). */
+const JP02 = padrao({
+  id: 'pad-jp02',
+  tipo: 'PESOS',
+  identificacao: 'JP-02',
+  descricao: 'Jogo de pesos padrão 100 g a 10 kg',
+  fabricante: 'Toledo do Brasil',
+  classe: 'M1',
+  material: 'Aço inoxidável',
+  densidade: 7950,
+  pesos: [
+    peso('10a', '10 kg nº 1', 10_000, 60, 160),
+    peso('10b', '10 kg nº 2', 10_000, -40, 160),
+    peso('10c', '10 kg nº 3', 10_000, 90, 160),
+    peso('5a', '5 kg nº 1', 5_000, 35, 80),
+    peso('5b', '5 kg nº 2', 5_000, -20, 80),
+    peso('2a', '2 kg nº 1', 2_000, -12, 30),
+    peso('2b', '2 kg nº 2', 2_000, 18, 30),
+    peso('1a', '1 kg', 1_000, 8, 16),
+    peso('500', '500 g', 500, 4, 8),
+    peso('200a', '200 g nº 1', 200, 1.2, 3),
+    peso('200b', '200 g nº 2', 200, -1, 3),
+    peso('100', '100 g', 100, 0.8, 1.6),
+  ],
+  certificado: 'CAL-12347/2026',
+  laboratorio: 'Laboratório Metrológico Paulista Ltda.',
+  acreditacao: 'CAL 0383',
+  dataCalibracao: '2026-03-10',
+  validade: '2028-03-10',
+})
+
+/**
+ * Balança de balcão 32 kg × 5 g, classe III, no local de uso: os pontos, a repetibilidade e a excentricidade
+ * que o sistema sugere para ela (0, Min, 2,5, 8, 10, 16, 24 e 32 kg; 5 leituras com 16 kg; 15 kg nas 5
+ * posições), cargas crescentes e decrescentes, sem ajuste e sem declaração de conformidade.
+ */
+export function exemploBalanca32kg(): DadosCertificadoPdf {
+  const padroes = [JP02, TH01]
+  const pesos = [JP02]
+  const b = balanca({
+    id: 'bal-32',
+    clienteId: 'cli-emporio',
+    tipo: 'BALCAO',
+    fabricante: 'Ramuza',
+    modelo: 'DP-32',
+    numeroSerie: 'R32-60218',
+    identificacao: 'Balcão 2',
+    faixas: [{ max: 32, e: 0.005, d: 0.005 }],
+    min: 0.1,
+    classe: 'III',
+    portariaAprovacao: 'Portaria Inmetro/Dimel nº 0109/2014',
+    receptor: 'RETANGULAR',
+    dimensoes: 'prato 35 × 30 cm',
+    finalidade: 'COMERCIAL',
+    localInstalacao: 'Balcão do açougue',
+    anoFabricacao: '2022',
+  })
+  const c = cliente({
+    id: 'cli-emporio',
+    nome: 'Empório Boa Morte Ltda.',
+    razaoSocial: 'EMPÓRIO BOA MORTE LTDA',
+    documento: '11.222.333/0001-81',
+    contato: 'Ana Paula (gerência)',
+    telefone: '(19) 3524-0000',
+    email: 'gerencia@emporioexemplo.com.br',
+    cep: '13500-000',
+    logradouro: 'Avenida 2',
+    numero: '1500',
+    bairro: 'Centro',
+    cidade: 'Rio Claro',
+    uf: 'SP',
+  })
+  const kg = (id: string, carga: number, sobe: number, desce: number) => ponto(id, carga, sobe, desce, pesos, 'kg')
+  const k: Calibracao = {
+    ...calibracaoBase('cal-32'),
+    numero: 'CC-2026-00140',
+    sequencia: 140,
+    clienteId: c.id,
+    balancaId: b.id,
+    ordemServico: 'OS-2026-0602',
+    dataCalibracao: '2026-10-27',
+    dataEmissao: '2026-10-28',
+    local: 'CLIENTE',
+    localEndereco: 'Avenida 2, 1500 – Centro – Rio Claro/SP',
+    tecnicoId: TECNICO.id,
+    signatarioId: RESPONSAVEL.id,
+    padroesIds: padroes.map((p) => p.id),
+    ambiente: { temperaturaInicial: 23.4, temperaturaFinal: 24.1, umidadeInicial: 58, umidadeFinal: 56, pressao: null },
+    repetibilidade: [{ id: 'rep1', carga: 16, leituras: [16, 16.005, 16, 16, 16.005] }],
+    excentricidade: {
+      aplicavel: true,
+      motivo: '',
+      carga: 15,
+      metodo: 1,
+      posicoes: [
+        { rotulo: 'Centro', leitura: 15, referencia: null },
+        { rotulo: 'Frente esquerda', leitura: 15.005, referencia: null },
+        { rotulo: 'Trás esquerda', leitura: 15, referencia: null },
+        { rotulo: 'Trás direita', leitura: 14.995, referencia: null },
+        { rotulo: 'Frente direita', leitura: 15, referencia: null },
+      ],
+    },
+    indicacao: ensaio(
+      'CRESCENTE_DECRESCENTE',
+      [
+        kg('p0', 0, 0, 0),
+        kg('p1', 0.1, 0.1, 0.1),
+        kg('p2', 2.5, 2.5, 2.5),
+        kg('p3', 8, 8, 8),
+        kg('p4', 10, 10.005, 10.005),
+        kg('p5', 16, 16.005, 16.01),
+        kg('p6', 24, 24.005, 24.01),
+        kg('p7', 32, 32.005, 32.005),
+      ],
+      0,
+    ),
+  }
+  const e: EmissaoCertificado = {
+    emitidoEm: '2026-10-28T13:10:00.000Z',
+    emitidoPor: RESPONSAVEL.id,
+    codigo: 'X32K-0001',
     hashPdf: '',
     arquivo: '',
     empresa: EMPRESA_PADRAO,
