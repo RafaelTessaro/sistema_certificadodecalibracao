@@ -409,12 +409,27 @@ function escreverComCaixa(titulo: string, opcao: string, o: { span?: number } = 
 function marcar(
   titulo: string,
   lista: Opcao[],
-  o: { span?: number; complemento?: No; tamanho?: number; altura?: number; vertical?: boolean; espaco?: number } = {},
+  o: {
+    span?: number
+    complemento?: No
+    tamanho?: number
+    altura?: number
+    vertical?: boolean
+    espaco?: number
+    /** Dica curta ao lado do rótulo, em letra miúda. */
+    aoLado?: string
+  } = {},
 ): Celula {
   return {
     no: {
       stack: [
-        rotulo(titulo, { margin: [0, 0, 0, 3] }),
+        o.aoLado
+          ? {
+              text: [rotulo(titulo), { text: `  ${o.aoLado}`, fontSize: 5.9, color: T.suave }],
+              lineHeight: 1.05,
+              margin: [0, 0, 0, 3],
+            }
+          : rotulo(titulo, { margin: [0, 0, 0, 3] }),
         opcoes(lista, { tamanho: o.tamanho ?? 7.8, espaco: o.espaco ?? 9, vertical: o.vertical }),
         ...(o.complemento ? [{ text: o.complemento, fontSize: 7, color: T.suave, margin: [0, 3, 0, 0] }] : []),
       ],
@@ -1579,7 +1594,11 @@ function gradeAmbiente(ctx: Contexto, momento: 'Início' | 'Fim', margem: number
         escrever('Umidade relativa (%)'),
         // Obrigatória na classe II, com o barômetro (POP 6.2); em branco, a classe ainda não é conhecida
         escrever(
-          !ctx.b ? 'Pressão (hPa) · classe II' : pressaoObrigatoria(ctx.b.classe) ? `Pressão${OBRIG} (hPa)` : 'Pressão, opcional (hPa)',
+          !ctx.b
+            ? `Pressão (hPa) · classe${NBSP}II`
+            : pressaoObrigatoria(ctx.b.classe)
+              ? `Pressão${OBRIG} (hPa)`
+              : 'Pressão, opcional (hPa)',
         ),
         escrever('Instrumento usado', previstos ? { aoLado: `previsto: ${previstos}` } : {}),
       ],
@@ -1737,8 +1756,9 @@ function pesosDaCarga(ctx: Contexto, c: { pesos: string; falta: number; excesso?
   const excesso = c.excesso ?? 0
   return {
     text: [
-      { text: semQuebra(c.pesos) || '—' },
-      ...(c.falta > 0 ? [{ text: `\nfaltam ${qtd(c.falta)}`, bold: true, fontSize: 7 }] : []),
+      // Sem nenhuma peça e faltando a carga inteira: só o que falta (uma linha)
+      ...(c.pesos || !(c.falta > 0) ? [{ text: semQuebra(c.pesos) || '—' }] : []),
+      ...(c.falta > 0 ? [{ text: `${c.pesos ? '\n' : ''}faltam ${qtd(c.falta)}`, bold: true, fontSize: 7 }] : []),
       ...(excesso > 0 ? [{ text: `\npassa ${qtd(excesso)} da carga`, bold: true, fontSize: 7 }] : []),
     ],
     fontSize: c.pesos.length > 22 ? Math.min(tamanho, 7.2) : tamanho,
@@ -1907,8 +1927,14 @@ function notaFaixa(ctx: Contexto): No[] {
 /** Linhas de pontos a partir das quais a tabela não cabe numa página com o título (precisa se dividir). */
 const LINHAS_TABELA_INTEIRA = 22
 
-/** Linhas de reserva (ponto a mais, carga diferente): duas, ou uma quando a tabela já é longa. */
-const reservaDosPontos = (ctx: Contexto) => ((ctx.plano?.pontos.length ?? 0) >= 7 ? 1 : 2)
+/**
+ * Linhas de reserva (ponto a mais, carga diferente): duas; uma quando a tabela já é longa (7 pontos); nenhuma
+ * com 8 ou mais (com Min, a tabela ganha uma linha: o ponto a mais vai no verso, como todo dado a mais).
+ */
+const reservaDosPontos = (ctx: Contexto) => {
+  const n = ctx.plano?.pontos.length ?? 0
+  return n >= 8 ? 0 : n >= 7 ? 1 : 2
+}
 
 /** A tabela de pontos não cabe numa página com o título: precisa se dividir. */
 const pontosLongos = (ctx: Contexto) =>
@@ -2148,7 +2174,8 @@ function passoAjuste(ctx: Contexto, n: number, indicacao: number): No[] {
             { rotulo: AJUSTES.INTERNO, prevista: realizado === 'INTERNO' },
             { rotulo: AJUSTES.EXTERNO, prevista: realizado === 'EXTERNO' },
           ],
-          { span: 3, espaco: 16 },
+          // Só com a autorização do cliente (POP: na OS ou, no local, no verso, com o nº do passo)
+          { span: 3, espaco: 16, aoLado: AUTORIZACAO_AJUSTE },
         ),
         escrever('Hora do ajuste', { formato: '____:____' }),
       ],
@@ -2173,7 +2200,7 @@ function passoAjuste(ctx: Contexto, n: number, indicacao: number): No[] {
   const comFaixa = !!ctx.plano?.pontos.some((p) => p.ema !== null)
   const toleranciaPendente =
     k?.conformidade.solicitada && k.conformidade.criterio === 'CLIENTE' && !(k.conformidade.toleranciaCliente > 0)
-  // Quando propor o ajuste; ajustar, só com a autorização do cliente (na OS ou, no local, no verso)
+  // Quando propor o ajuste (ajustar, só com a autorização do cliente: a dica ao lado de "Ajuste")
   const quando: No[] = comFaixa
     ? [{ text: `Fora da ${FAIXA_AJUSTE.toLowerCase()}`, bold: true }, ` (passo ${indicacao}) ou a pedido do cliente: proponha o ajuste. `]
     : ctx.plano
@@ -2194,16 +2221,13 @@ function passoAjuste(ctx: Contexto, n: number, indicacao: number): No[] {
     n,
     'Ajuste e reparo',
     E.balanca,
-    [
-      ...quando,
-      { text: 'Ajuste só com a autorização do cliente', bold: true },
-      ' (na OS ou no verso: nome, função e hora); depois, ',
-      { text: `refaça o passo ${indicacao} nas colunas “depois do ajuste”`, bold: true },
-      '.',
-    ],
+    [...quando, 'Ajustou? ', { text: `Refaça o passo ${indicacao} em “depois do ajuste”`, bold: true }, '.'],
     [grid],
   )
 }
+
+/** Ajuste só com a autorização do cliente: registrada antes, na OS, ou no local, no verso (POP 7.8). */
+export const AUTORIZACAO_AJUSTE = 'só com a autorização do cliente: na OS ou no verso (nome, função e hora)'
 
 /**
  * Folha em branco, embaixo da tabela dos pontos: o EMA em serviço por classe (o critério que o sistema usa
@@ -2368,10 +2392,10 @@ function tabelaRepetibilidades(ctx: Contexto, lista: PlanoFolha['repetibilidade'
       { ...pre({ text: cargaNaDivisao(ctx, r.carga), bold: true }, 'right'), linhas: 2 },
       { ...pre(pesosDaCarga(ctx, r, 7.4)), linhas: 2 },
       { ...dica('____:____', undefined), alinhamento: 'center', linhas: 2 },
-      dica('com a carga'),
+      dica('Com a carga'),
       ...Array.from({ length: colunasLeitura }, livre),
     ],
-    [coberta(), coberta(), coberta(), coberta(), dica('zero após retirar'), ...Array.from({ length: colunasLeitura }, livre)],
+    [coberta(), coberta(), coberta(), coberta(), dica('Zero após retirar'), ...Array.from({ length: colunasLeitura }, livre)],
   ])
   const minimo = Math.min(...lista.map((r) => r.minimo))
   const n = lista[0].leituras
@@ -2494,7 +2518,8 @@ function passoExcentricidade(ctx: Contexto, n: number): No[] {
           ') em cada posição, ',
         ]),
     { text: 'na ordem do desenho', bold: true },
-    ' (nº do desenho = nº da linha). Frente = lado do indicador (indicador remoto: lado de acesso; anote no verso).',
+    // Com indicador remoto, a frente é o lado de acesso (rampa): anotado no verso, como todo dado diferente
+    ' (nº do desenho = linha). Frente: indicador (se remoto, o de acesso).',
   ]
   const metodo = ecc ? ecc.metodo : null
   const desenho: No = diagrama

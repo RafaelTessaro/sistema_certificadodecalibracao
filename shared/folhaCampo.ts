@@ -327,14 +327,20 @@ export function planoDaFolha(
   const metodoComoEncontrado = metodoDe(comoEncontrado?.metodo ?? metodoRascunho, comoEncontrado)
   if (subSugerida && maiorNivel > 0)
     avisos.push(
-      `Os pesos previstos não chegam às cargas acima de ${numeroBr(cargaEtapa)} ${u}: a folha sugere ${maiorNivel === 1 ? 'uma etapa' : `até ${maiorNivel} etapas`} de substituição de ${numeroBr(cargaEtapa)} ${u} (${descreverPecas(subSugerida.pecas, pesos)}); combine o material (caminhão, lastro) com o cliente.`,
+      `Os pesos previstos não chegam às cargas acima de ${numeroBr(cargaEtapa)} ${u}: a folha sugere ${maiorNivel === 1 ? 'uma etapa' : `até ${maiorNivel} etapas`} de substituição de ${numeroBr(cargaEtapa)} ${u}; combine o material (caminhão, lastro) com o cliente.`,
     )
-  if (semFechar.length && pesos.length)
+  if (semFechar.length && pesos.length) {
+    // Abaixo da menor peça prevista (Min de uma rodoviária, com blocos de 500 kg): faltam pesos menores
+    const menorPeca = Math.min(
+      ...pesos.flatMap((x) => x.pesos.map((w) => cargaDasPecas([{ padraoId: x.id, pesoId: w.id, quantidade: 1 }], pesos, u))),
+    )
+    const pequenas = semFechar.every((p) => p.carga < menorPeca * (1 - TOL))
     avisos.push(
       `Os pesos previstos não fecham ${semFechar.length === 1 ? 'a carga' : 'as cargas'} de ${semFechar
         .map((p) => `${numeroBr(p.carga)} ${u}`)
-        .join(', ')}: leve mais pesos ou use cargas de substituição.`,
+        .join(', ')}: ${pequenas ? 'leve pesos menores.' : 'leve mais pesos ou use cargas de substituição.'}`,
     )
+  }
   // Etapas por baixo que, com os pesos por cima, passam da carga do ponto: o cálculo usaria a soma
   for (const p of pontos.filter((x) => x.excesso > 0))
     avisos.push(

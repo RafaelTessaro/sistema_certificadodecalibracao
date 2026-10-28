@@ -123,11 +123,12 @@ describe('planoDaFolha', () => {
     ])
     // nível × etapa + pesos = a carga de cada ponto (o que o cálculo usaria): nada falta nem passa (menos Min)
     expect(p.pontos.filter((x) => x.carga !== 400).every((x) => x.falta === 0 && x.excesso === 0)).toBe(true)
-    expect(p.avisos).toContain('Os pesos previstos não fecham a carga de 400 kg: leve mais pesos ou use cargas de substituição.')
+    // Abaixo da menor peça (os blocos de 500 kg): pesos menores
+    expect(p.avisos).toContain('Os pesos previstos não fecham a carga de 400 kg: leve pesos menores.')
     // 10 t de pesos por etapa: o mínimo da Tabela 7 para Max de 60 t (sem aviso)
     expect(p.avisos.join(' ')).not.toContain('Tabela 7')
     expect(p.avisos[0]).toMatch(
-      /^Os pesos previstos não chegam às cargas acima de 10\s000 kg: a folha sugere até 5 etapas de substituição de 10\s000 kg \(20 × 500 kg\); combine o material/,
+      /^Os pesos previstos não chegam às cargas acima de 10\s000 kg: a folha sugere até 5 etapas de substituição de 10\s000 kg; combine o material/,
     )
     // Sem conformidade pedida: a faixa para decidir o ajuste é a do EMA em serviço da classe III
     expect(p.faixaAceitavel).toEqual({
