@@ -32,7 +32,7 @@ describe('nº de certificado na tela', () => {
   it('editor: "Certificado nº … (reservado)", com a folha em que foi reservado', () => {
     const h = html(createElement(SeloNumeroReservado, { n: numero({}) }))
     expect(texto(h)).toBe('Certificado nº CC-2026-00042 (reservado)')
-    expect(h).toContain('Reservado na folha de campo FC-2026-00010, em 20/10/2026 às 13:05 por Ana')
+    expect(h).toContain('Na folha de campo FC-2026-00010. Reservado em 20/10/2026 às 13:05 por Ana.')
   })
 
   it('lista: o emitido; em andamento, o reservado com "(reservado)"; sem nº, "Em andamento"', () => {
@@ -52,7 +52,8 @@ describe('nº de certificado na tela', () => {
         id: 2,
         numero: 'CC-2026-00043',
         situacao: 'nao_utilizado',
-        motivo: 'A folha FC-2026-00012 foi ligada à revisão do certificado CC-2026-00001, que sai com o nº do certificado revisado.',
+        motivo:
+          'A folha FC-2026-00012 foi ligada à revisão do certificado CC-2026-00001, que sai com o nº do certificado revisado.',
         situacaoEm: '2026-10-21T08:30:00',
         situacaoPor: 'Bruno',
       }),
@@ -65,10 +66,24 @@ describe('nº de certificado na tela', () => {
       'CC-2026-00043A folha FC-2026-00012 foi ligada à revisão do certificado CC-2026-00001, que sai com o nº do certificado revisado.21/10/2026 às 08:30 · Bruno',
     )
     expect(h).toContain('Reservados em folhas ainda não ligadas')
-    expect(h).toContain('CC-2026-00044Folha FC-2026-00011: o nº passa para a calibração a que ela for ligada.')
+    expect(h).toContain(
+      'CC-2026-00044Folha FC-2026-00011: o nº passa para a calibração a que ela for ligada.Reservado em 20/10/2026 às 13:05 · Ana',
+    )
     // O botão de descartar só para quem pode
     expect(h).not.toContain('Não vai ser usada')
-    const admin = texto(html(createElement(ListaNumeros, { numeros: lista, podeDescartar: true, aoDescartar: () => {} })))
-    expect(admin).toContain('Não vai ser usada')
+    const admin = html(createElement(ListaNumeros, { numeros: lista, podeDescartar: true, aoDescartar: () => {} }))
+    expect(texto(admin)).toContain('Não vai ser usada')
+    // No celular, a linha da folha não ligada empilha o nº, o texto e o botão (a grade só a partir de sm): o texto
+    // nunca fica espremido entre eles; o nº da folha não quebra no hífen
+    const linhas = [...admin.matchAll(/<li class="([^"]*)"/g)].map((m) => m[1])
+    expect(linhas).toHaveLength(2)
+    for (const c of linhas) {
+      expect(c.split(' ')).toContain('grid')
+      expect(c).toMatch(/(^| )sm:grid-cols-\[/)
+      expect(c).not.toMatch(/(^| )(flex|flex-wrap|grid-cols-\[)/)
+    }
+    expect(linhas[1]).toContain('sm:grid-cols-[minmax(132px,auto)_minmax(0,1fr)_auto]')
+    expect(admin).not.toContain('flex-1')
+    expect(admin).toContain('<span class="tnum whitespace-nowrap">FC-2026-00011</span>')
   })
 })

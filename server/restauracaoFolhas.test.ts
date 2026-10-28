@@ -184,9 +184,7 @@ describe('voltar uma cópia do banco: as folhas de campo impressas depois dela',
       // da calibração) é o mesmo da FC-1, que a cópia já tinha
       `o nº de certificado impresso nas folhas que voltaram da pasta (${cc(2)}) continua reservado, no papel: os nºs não se repetem`,
     ])
-    expect(
-      app().ctx.db.prepare('SELECT numero, numero_certificado FROM folhas_campo ORDER BY sequencia').all(),
-    ).toEqual([
+    expect(app().ctx.db.prepare('SELECT numero, numero_certificado FROM folhas_campo ORDER BY sequencia').all()).toEqual([
       { numero: fc(1), numero_certificado: cc(1) },
       { numero: fc(2), numero_certificado: cc(1) },
       { numero: fc(3), numero_certificado: cc(2) },

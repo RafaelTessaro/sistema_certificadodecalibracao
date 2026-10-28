@@ -268,6 +268,35 @@ describe('planoDaFolha', () => {
     expect(plano(folhaPlataforma()).avisos).toEqual([])
   })
 
+  it('cargas copiadas do último certificado: excentricidade abaixo da Tabela 5 do POP e um ensaio de repetibilidade só no multi-intervalo', () => {
+    // 300 kg: no mínimo Max/3 = 100 kg (o certificado antigo arredondava para o mais próximo: 90 kg)
+    const d = folhaPlataforma()
+    d.calibracao = { ...d.calibracao!, excentricidade: { ...d.calibracao!.excentricidade, carga: 90 } }
+    expect(plano(d).avisos).toEqual([
+      'Excentricidade: 90 kg está abaixo do mínimo da Tabela 5 do POP (Max/3); use ≥ 100 kg no sistema.',
+    ])
+    d.calibracao.excentricidade.carga = 100
+    expect(plano(d).avisos).toEqual([])
+    // Balcão 6/15/33 kg: o ensaio único (no de cima) não cobre os intervalos de baixo
+    const m = folhaMultiIntervalo()
+    m.calibracao = { ...m.calibracao!, repetibilidade: [{ id: 'r1', carga: 16.5, leituras: [] }] }
+    expect(plano(m).avisos).toEqual([
+      'Repetibilidade: falta ensaio nos intervalos até 6 kg e até 15 kg (o POP pede um em cada intervalo de d diferente); acrescente no sistema.',
+    ])
+    m.calibracao.repetibilidade.push({ id: 'r2', carga: 4.8, leituras: [] })
+    expect(plano(m).avisos).toEqual([
+      'Repetibilidade: falta ensaio no intervalo até 15 kg (o POP pede um em cada intervalo de d diferente); acrescente no sistema.',
+    ])
+    m.calibracao.repetibilidade.push({ id: 'r3', carga: 12, leituras: [] })
+    expect(plano(m).avisos).toEqual([])
+    // Múltiplas faixas: "faixa"
+    m.balanca = { ...m.balanca!, tipoFaixas: 'MULTIPLAS_FAIXAS' }
+    m.calibracao.repetibilidade = [{ id: 'r1', carga: 16.5, leituras: [] }]
+    expect(plano(m).avisos.join(' ')).toMatch(
+      /^Repetibilidade: falta ensaio nas faixas até 6 kg e até 15 kg \(o POP pede um em cada faixa/,
+    )
+  })
+
   it('balança de gancho: excentricidade não aplicável, com o motivo', () => {
     const d = folhaPlataforma()
     d.balanca = { ...d.balanca!, receptor: 'GANCHO' }

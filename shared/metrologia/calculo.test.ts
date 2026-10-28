@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { OpcoesCalculo } from '../tipos.ts'
 import { calcular } from './calculo.ts'
+import { pesosMinimosSubstituicao } from './sugestoes.ts'
 import type { EntradaCalculo, Orcamento, PecaCalculo, PontoCalculo } from './tipos.ts'
 
 const OPCOES: OpcoesCalculo = {
@@ -438,6 +439,29 @@ describe('cg-18 H3, situação A (cargas de substituição)', () => {
     expect(r.erroRetornoZero).toBe(4)
   })
 
+  it('pesos padrão por etapa abaixo da Tabela 7 do POP (massa mínima com substituição): aviso', () => {
+    // Os milhares com espaço fino, como no certificado: comparados com espaço comum
+    const tabela7 = (r: ReturnType<typeof calcular>) =>
+      r.avisos
+        .filter((a) => a.mensagem.includes('Tabela 7'))
+        .map((a) => ({ ...a, mensagem: a.mensagem.replace(/[\u00A0\u2009\u202F]/g, ' ') }))
+    // 10 000 kg por etapa com Max de 30 t: acima dos 5000 kg exigidos
+    expect(tabela7(calcular(entrada()))).toEqual([])
+    const poucos = entrada()
+    poucos.indicacao.substituicao.pecas = [m1(4)]
+    expect(tabela7(calcular(poucos))).toEqual([
+      {
+        nivel: 'atencao',
+        mensagem:
+          'Cargas de substituição com 4000 kg de pesos padrão em cada etapa: para Max de 30 000 kg, o mínimo é 5000 kg (Tabela 7 do POP).',
+      },
+    ])
+    expect(pesosMinimosSubstituicao(999)).toBe(0)
+    expect([1000, 5000, 5001, 30_000, 60_000, 80_000, 80_001].map(pesosMinimosSubstituicao)).toEqual([
+      1000, 1000, 5000, 5000, 10_000, 15_000, 20_000,
+    ])
+  })
+
   it('com substituição, o retorno ao zero entra na incerteza (I·|E0|/(Max·√3)); sem ele anotado, o termo some', () => {
     const maiorU = (retornoZero: number | null) => {
       const e = entrada()
@@ -632,12 +656,92 @@ describe('regras do cálculo', () => {
     const e = exemplo30kg()
     e.excentricidade.carga = 2000
     const r = calcular(e)
-    expect(r.avisos.some((a) => a.mensagem.includes('muito diferente da sugerida (10\u00a0000 g'))).toBe(true)
+    expect(r.avisos).toContainEqual({
+      nivel: 'atencao',
+      mensagem:
+        'Carga de excentricidade (2000 g) abaixo do mínimo da Tabela 5 do POP (Max/3, com Max de 30\u00a0000 g): use ≥ 10\u00a0000 g.',
+    })
+    e.excentricidade.carga = 30000
+    expect(calcular(e).avisos.map((a) => a.mensagem)).not.toContainEqual(expect.stringMatching(/^Carga de excentricidade/))
+    // Bem acima da sugerida (mais de 3 vezes): só informação
+    const grande = exemplo30kg()
+    // 3000 kg: Max/5 = 600 kg sugeridos; 2000 kg é mais de 3 vezes isso
+    grande.instrumento = { ...grande.instrumento, faixas: [{ max: 3_000_000, e: 500, d: 500 }] }
+    grande.excentricidade.carga = 2_000_000
+    expect(calcular(grande).avisos.find((a) => a.mensagem.includes('muito diferente da sugerida'))?.nivel).toBe('info')
 
     const pesada = exemplo30kg()
     pesada.instrumento = { unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 3000, e: 1, d: 1 }] }
     pesada.repetibilidade = [{ id: 'r', carga: 1500, leituras: [1500, 1501, 1500] }]
     expect(calcular(pesada).avisos.some((a) => a.mensagem.startsWith('Repetibilidade a 1500 kg'))).toBe(false)
+  })
+
+  it('carga de excentricidade abaixo do mínimo da Tabela 5 do POP (copiada de um certificado antigo): atenção', () => {
+    // Max, carga copiada (o arredondamento antigo ia para o mais próximo, também para baixo) e a sugerida
+    const casos: Array<[number, number, number, string, string]> = [
+      [600, 0.2, 100, 'Max/5', '150,0 kg'],
+      [200, 1, 65, 'Max/3', '70 kg'],
+      [32, 1, 10, 'Max/3', '15 kg'],
+      [20, 0.5, 6.5, 'Max/3', '7,0 kg'],
+      [80_000, 20, 7500, 'Max/10', '8000 kg'],
+    ]
+    const aviso = (max: number, d: number, carga: number) => {
+      const e = exemplo30kg()
+      e.instrumento = { unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max, e: d, d }] }
+      e.excentricidade.carga = carga
+      return calcular(e)
+        .avisos.filter((a) => a.mensagem.startsWith('Carga de excentricidade'))
+        .map((a) => ({ ...a, mensagem: a.mensagem.replace(/[\u00A0\u2009\u202F]/g, ' ') }))
+    }
+    for (const [max, d, carga, fracao, sugerida] of casos) {
+      const [a, ...outros] = aviso(max, d, carga)
+      expect(outros, `${max} kg`).toEqual([])
+      expect(a, `${max} kg`).toMatchObject({ nivel: 'atencao' })
+      expect(a.mensagem).toMatch(
+        new RegExp(`abaixo do mínimo da Tabela 5 do POP \\(${fracao}, com Max de .+\\): use ≥ ${sugerida}\\.$`),
+      )
+    }
+    // No mínimo ou acima: nada (Max/5 de 600 kg = 120 kg; Max/3 de 200 kg = 66,67 kg)
+    expect(aviso(600, 0.2, 120)).toEqual([])
+    expect(aviso(200, 1, 200 / 3)).toEqual([])
+    expect(aviso(200, 1, 70)).toEqual([])
+    expect(aviso(80_000, 20, 8000)).toEqual([])
+  })
+
+  it('multi-intervalo e múltiplas faixas: menos ensaios de repetibilidade que intervalos de d diferente, atenção', () => {
+    const doisIntervalos = (tipoFaixas: 'MULTI_INTERVALO' | 'MULTIPLAS_FAIXAS', cargas: number[]) => {
+      const e = exemplo30kg()
+      e.instrumento = {
+        unidade: 'g',
+        classe: 'III',
+        tipoFaixas,
+        faixas: [
+          { max: 15000, e: 5, d: 5 },
+          { max: 30000, e: 10, d: 10 },
+        ],
+      }
+      e.repetibilidade = cargas.map((carga, i) => ({ id: `r${i}`, carga, leituras: [carga, carga, carga, carga, carga] }))
+      return calcular(e)
+        .avisos.filter((a) => a.mensagem.startsWith('Repetibilidade:'))
+        .map((a) => ({ ...a, mensagem: a.mensagem.replace(/[\u00A0\u2009\u202F]/g, ' ') }))
+    }
+    // O ensaio único copiado do último certificado (no intervalo de cima): falta o de baixo
+    expect(doisIntervalos('MULTI_INTERVALO', [15500])).toEqual([
+      {
+        nivel: 'atencao',
+        mensagem:
+          'Repetibilidade: 1 ensaio para 2 intervalos; falta no intervalo até 15 000 g (d = 5 g). O POP (7.9) pede um ensaio em cada intervalo de d diferente.',
+      },
+    ])
+    expect(doisIntervalos('MULTIPLAS_FAIXAS', [12000])[0].mensagem).toBe(
+      'Repetibilidade: 1 ensaio para 2 faixas; falta na faixa até 30 000 g (d = 10 g). O POP (7.9) pede um ensaio em cada faixa de d diferente.',
+    )
+    // Um em cada: nada; dois no mesmo intervalo: ainda falta o outro
+    expect(doisIntervalos('MULTI_INTERVALO', [12000, 25000])).toEqual([])
+    expect(doisIntervalos('MULTI_INTERVALO', [20000, 25000])).toHaveLength(1)
+    // Sem ensaio nenhum: a pendência já diz (sem este aviso); faixa única: nunca
+    expect(doisIntervalos('MULTI_INTERVALO', [])).toEqual([])
+    expect(calcular(exemplo30kg()).avisos.some((a) => a.mensagem.startsWith('Repetibilidade:'))).toBe(false)
   })
 
   it('k = 2 fixo com menos de 10 leituras gera atenção', () => {

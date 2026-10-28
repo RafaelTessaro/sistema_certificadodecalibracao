@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { BALANCA_VAZIA, CLIENTE_VAZIO, PADRAO_VAZIO } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
+import { ASSINATURA_EXEMPLO_1 } from './pdf/assinaturasExemplo.ts'
 
 let t: AppComLogin
 let cliente: Cliente
@@ -274,6 +275,20 @@ describe('emissão do certificado', () => {
     expect(r.rawPayload.subarray(0, 5).toString()).toBe('%PDF-')
     const depois = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().calibracao
     expect(depois).toMatchObject({ status: 'RASCUNHO', numero: '', versao: k.versao })
+  })
+
+  it('prévia sem as imagens das assinaturas (ninguém autorizou ainda); o emitido, com elas', async () => {
+    // Técnico e signatário com a assinatura digitalizada
+    t.ctx.db.prepare('UPDATE usuarios SET assinatura = ?').run(ASSINATURA_EXEMPLO_1)
+    const k = await calibracaoPronta()
+    const imagens = (pdf: Buffer) => pdf.toString('latin1').match(/\/Subtype \/Image/g)?.length ?? 0
+    const previa = await t.chamar('POST', `/api/calibracoes/${k.id}/previa`, { cookie: t.cookieAdmin, payload: k })
+    expect(previa.statusCode).toBe(200)
+    expect(imagens(previa.rawPayload)).toBe(0)
+    const emitida = await emitir(k)
+    expect(emitida.statusCode, emitida.body).toBe(200)
+    const pdf = await t.chamar('GET', `/api/calibracoes/${k.id}/pdf`, { cookie: t.cookieAdmin })
+    expect(imagens(pdf.rawPayload)).toBeGreaterThan(0)
   })
 })
 

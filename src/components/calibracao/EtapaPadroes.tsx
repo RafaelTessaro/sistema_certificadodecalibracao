@@ -192,7 +192,6 @@ export function EtapaPadroes({ f, alterar, padroes, config, balanca }: ContextoE
 /** Uma casa decimal, com vírgula (ex.: 0,7). */
 const numeroCurto = (v: number) => String(Math.round(v * 10) / 10).replace('.', ',')
 
-
 /**
  * Grupo das condições ambientais: título com ícone e os campos lado a lado (início e fim). Na pressão, um
  * campo só: com um ou dois grupos por linha ele fica com a largura dos outros (metade do grupo); com os três

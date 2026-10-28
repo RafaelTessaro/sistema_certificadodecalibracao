@@ -28,7 +28,7 @@ const ctx: ContextoEtapa = {
   vincularFolha: async () => true,
   novaFolha: () => {},
 }
-const texto = (numeroReservado?: { numero: string; folha: string } | null) =>
+const html = (numeroReservado?: { numero: string; folha: string } | null) =>
   renderToStaticMarkup(
     createElement(EtapaRevisao, {
       ctx,
@@ -40,13 +40,18 @@ const texto = (numeroReservado?: { numero: string; folha: string } | null) =>
       aoVoltarRascunho: () => {},
       aoEmitir: () => {},
     }),
-  ).replace(/<[^>]+>/g, '')
+  )
+const texto = (numeroReservado?: { numero: string; folha: string } | null) => html(numeroReservado).replace(/<[^>]+>/g, '')
 
 describe('etapa Revisão e emissão', () => {
   it('com nº reservado: o nº e a folha em que foi reservado (nada de "gerado na emissão")', () => {
     const t = texto({ numero: 'CC-2026-00018', folha: 'FC-2026-00016' })
     expect(t).toContain('NúmeroCC-2026-00018 (reservado na folha FC-2026-00016)')
     expect(t).not.toContain('Gerado na emissão')
+    // O nº da folha não quebra no hífen ("FC-" numa linha e "2026-00016" na outra)
+    expect(html({ numero: 'CC-2026-00018', folha: 'FC-2026-00016' })).toContain(
+      '<span class="tnum whitespace-nowrap">FC-2026-00016</span>',
+    )
   })
 
   it('sem nº reservado: gerado na emissão, com o exemplo do formato', () => {
@@ -68,7 +73,11 @@ describe('dicas das etapas pela balança', () => {
   it('repetibilidade: faixa única (rodoviária pode menos) e um ensaio por intervalo no multi-intervalo', () => {
     expect(dicaRepetibilidade(balanca)).toBe('Use de 50 % a 100 % da capacidade (não precisa ser peso padrão).')
     expect(dicaRepetibilidade({ ...balanca, receptor: 'RODOVIARIA' })).toContain('(na rodoviária, pode ser menos)')
-    const multi = { ...balanca, tipoFaixas: 'MULTI_INTERVALO' as const, faixas: [...balanca.faixas, { max: 60, e: 0.02, d: 0.02 }] }
+    const multi = {
+      ...balanca,
+      tipoFaixas: 'MULTI_INTERVALO' as const,
+      faixas: [...balanca.faixas, { max: 60, e: 0.02, d: 0.02 }],
+    }
     expect(dicaRepetibilidade(multi)).toMatch(/^Faça um ensaio por intervalo: nos de baixo, com carga logo abaixo do Max dele/)
     expect(dicaRepetibilidade({ ...multi, tipoFaixas: 'MULTIPLAS_FAIXAS' })).toMatch(/^Faça um ensaio por faixa/)
   })

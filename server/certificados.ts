@@ -198,12 +198,7 @@ export async function anexosDoCertificado(
  * Gera o PDF de uma calibração com os dados indicados. `previa`: o rascunho, ainda não autorizado (sem as
  * imagens das assinaturas e sem "emitido em").
  */
-export async function gerarPdf(
-  k: Calibracao,
-  emissao: EmissaoCertificado,
-  marcaDagua: string,
-  previa = false,
-): Promise<Buffer> {
+export async function gerarPdf(k: Calibracao, emissao: EmissaoCertificado, marcaDagua: string, previa = false): Promise<Buffer> {
   const { resultado, comoEncontrado } = calcularCalibracao(k, emissao.balanca, emissao.padroes)
   return gerarCertificadoPdf({ calibracao: k, emissao, resultado, comoEncontrado, marcaDagua, previa })
 }

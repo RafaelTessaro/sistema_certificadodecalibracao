@@ -9,7 +9,14 @@ import { arredondarResultado, casasDecimais, formatarNumero, limparRuido } from 
 import { emaInstrumento, faixaDoValor, faixasOrdenadas } from './ema.ts'
 import { desvioPadrao, fatorAbrangencia, media } from './estatistica.ts'
 import { converterMassa } from './pesos.ts'
-import { cargaExcentricidade, pesosMinimosSubstituicao } from './sugestoes.ts'
+import {
+  cargaExcentricidade,
+  excentricidadeAbaixoDoMinimo,
+  faixasSemRepetibilidade,
+  minimoExcentricidade,
+  ondeFaltaRepetibilidade,
+  pesosMinimosSubstituicao,
+} from './sugestoes.ts'
 import type {
   Aviso,
   EntradaCalculo,
@@ -532,6 +539,20 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
         mensagem: `Repetibilidade a ${rotulo(r.carga)}: ${r.n} leitura(s); o mínimo é ${minimo}${minimo === 3 ? ' (carga ≥ 100 kg)' : ' (3 só com carga ≥ 100 kg)'}.`,
       })
   }
+  // Multi-intervalo e múltiplas faixas: um ensaio em cada intervalo (ou faixa) de d diferente (o rascunho novo
+  // e o "recalibrar" copiam os ensaios do último certificado, que podia ter um só)
+  const cargasRep = entrada.repetibilidade.map((r) => r.carga).filter((c) => c > 0)
+  const semEnsaio = cargasRep.length ? faixasSemRepetibilidade(instrumento, cargasRep) : []
+  if (semEnsaio.length) {
+    const { onde, nome } = ondeFaltaRepetibilidade(
+      instrumento.tipoFaixas,
+      semEnsaio.map((f) => `até ${rotulo(f.max)} (d = ${rotulo(f.d)})`),
+    )
+    avisos.push({
+      nivel: 'atencao',
+      mensagem: `Repetibilidade: ${cargasRep.length} ${cargasRep.length === 1 ? 'ensaio' : 'ensaios'} para ${faixas.length} ${nome}s; falta ${onde}. O POP (7.9) pede um ensaio em cada ${nome} de d diferente.`,
+    })
+  }
   if (ctx.repeticoes.some((r) => r.n < 10))
     avisos.push(
       opcoes.metodoK === 'K2'
@@ -560,9 +581,15 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     const sugerida = cargaExcentricidade(max, unidade)
     if (lEcc > max * (1 + TOL))
       avisos.push({ nivel: 'atencao', mensagem: `Carga de excentricidade (${rotulo(lEcc)}) maior que Max.` })
-    else if (lEcc > 0 && sugerida > 0 && (lEcc < 0.5 * sugerida || lEcc > 3 * sugerida))
+    // Abaixo do mínimo da Tabela 5 (a carga copiada de um certificado antigo, que arredondava para o mais próximo)
+    else if (excentricidadeAbaixoDoMinimo(lEcc, max, unidade))
       avisos.push({
-        nivel: lEcc < 0.5 * sugerida ? 'atencao' : 'info',
+        nivel: 'atencao',
+        mensagem: `Carga de excentricidade (${rotulo(lEcc)}) abaixo do mínimo da Tabela 5 do POP (${minimoExcentricidade(max, unidade).fracao}, com Max de ${rotulo(max)}): use ≥ ${rotulo(sugerida)}.`,
+      })
+    else if (lEcc > 0 && sugerida > 0 && lEcc > 3 * sugerida)
+      avisos.push({
+        nivel: 'info',
         mensagem: `Carga de excentricidade (${rotulo(lEcc)}) muito diferente da sugerida (${rotulo(sugerida)}, DOQ-CGCRE-097 10.4.1).`,
       })
     const faltando = exc.resultado.desvios.filter((d) => d === null).length

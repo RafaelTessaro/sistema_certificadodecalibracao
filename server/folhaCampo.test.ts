@@ -12,7 +12,7 @@ import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#sha
 import { criarApp } from './app.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
 import { abrirBanco, type Banco } from './db.ts'
-import { dataDaImpressaoNoPdf, Repositorio } from './repositorio.ts'
+import { dataDaImpressaoNoPdf, numeroCertificadoNoPdf, Repositorio } from './repositorio.ts'
 import { PARAMETROS_LEVES } from './senha.ts'
 import { transplantarFolhasCampo } from './usuarios.ts'
 import { nomeArquivoDaFolha, numeroDaFolha } from './rotas/folhaCampo.ts'
@@ -1218,6 +1218,27 @@ describe('banco restaurado de uma cópia antiga: as folhas impressas depois dela
     expect(dataDaImpressaoNoPdf(pdf('%PDF-1.4'))).toBeNull()
     expect(dataDaImpressaoNoPdf(pdf('<< /CreationDate (D:20261341110200Z) >>'))).toBeNull()
     expect(dataDaImpressaoNoPdf(pdf('<< /CreationDate 30 0 R >>'))).toBeNull()
+  })
+
+  it('numeroCertificadoNoPdf: o nº nas palavras-chave (direto, num objeto à parte, com escapes ou em UTF-16); sem ele, vazio', async () => {
+    const pdf = (texto: string) => Buffer.from(texto, 'latin1')
+    expect(numeroCertificadoNoPdf(pdf('<< /Keywords (folha de campo; FC-2026-00001; certificado CC-2026-00042) >>'))).toBe(
+      'CC-2026-00042',
+    )
+    expect(
+      numeroCertificadoNoPdf(
+        pdf('<< /Keywords 31 0 R >>\n31 0 obj\n(folha de campo; certificado 0042\\/2026; FOR-CAL-01)\nendobj'),
+      ),
+    ).toBe('0042/2026')
+    expect(numeroCertificadoNoPdf(pdf('<< /Keywords (folha de campo; FC-2026-00001; FOR-CAL-01) >>'))).toBe('')
+    expect(numeroCertificadoNoPdf(pdf('%PDF-1.4'))).toBe('')
+    // A folha de verdade: com o POP de nome acentuado, o pdfkit grava as palavras-chave em UTF-16
+    const { gerarFolhaCampoPdf } = await import('./pdf/folhaCampo.ts')
+    const { folhaEmBranco } = await import('./pdf/exemplosFolhaCampo.ts')
+    const real = await gerarFolhaCampoPdf({ ...folhaEmBranco(), procedimento: 'BALANÇAS-POP-123 rev. 00' })
+    expect(real.toString('latin1')).not.toContain('certificado CC-2026-00129')
+    expect(numeroCertificadoNoPdf(real)).toBe('CC-2026-00129')
+    expect(numeroCertificadoNoPdf(await gerarFolhaCampoPdf({ ...folhaEmBranco(), numeroCertificado: undefined }))).toBe('')
   })
 
   it('folha no banco sem o PDF (a cópia saiu entre a reserva do nº e a gravação): fica com o arquivo da pasta', async () => {

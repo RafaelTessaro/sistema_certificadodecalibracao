@@ -1106,11 +1106,19 @@ function secaoConformidade(ctx: Contexto, n: number): No[] {
 
 // ---- Observações, opiniões e declarações (numeradas na sequência) -------------------------------------------------
 
+/** As linhas de um texto digitado, sem as vazias e sem os espaços das pontas (uma observação por linha). */
+export const linhasDoTexto = (texto: string): string[] =>
+  texto
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+
 function secaoObservacoes(ctx: Contexto, n: number): No[] {
   const { k, e, b, u } = ctx
   const itens: No[] = []
   if (!vazio(e.textos.observacoesPadrao)) itens.push(textoComEmpresa(e.textos.observacoesPadrao.trim(), e.empresa))
-  if (!vazio(k.observacoes)) itens.push(k.observacoes.trim())
+  // Uma observação por linha digitada: cada uma com o seu marcador, como os outros itens
+  if (!vazio(k.observacoes)) itens.push(...linhasDoTexto(k.observacoes))
 
   const parcial = ctx.d.resultado.avisos.some((a) => /faixa parcial/i.test(a.mensagem))
   if (parcial) {

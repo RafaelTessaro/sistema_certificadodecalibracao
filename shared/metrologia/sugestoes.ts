@@ -1,7 +1,7 @@
 // Sugestões para o técnico montar os ensaios: pontos de carga, carga e posições da excentricidade,
 // carga e número de leituras da repetibilidade (EURAMET cg-18 §5; DOQ-CGCRE-097 10.4.1; OIML R76 A.4).
 
-import type { Receptor, Unidade } from '../tipos.ts'
+import type { Faixa, Receptor, Unidade } from '../tipos.ts'
 import {
   algarismosSignificativos,
   arredondarMeioPar,
@@ -74,15 +74,64 @@ export function sugerirPontos(
 }
 
 /**
- * Carga do ensaio de excentricidade (DOQ-CGCRE-097 10.4.1; POP 7.10, Tabela 5): no mínimo Max/3 até 500 kg,
- * Max/5 acima de 500 kg até 3 000 kg e Max/10 acima de 3 000 kg, num valor redondo igual ou acima desse
- * mínimo (nunca abaixo dele). Na unidade da balança.
+ * Carga mínima do ensaio de excentricidade (DOQ-CGCRE-097 10.4.1; POP 7.10, Tabela 5), pelo maior Max (na
+ * unidade da balança): Max/3 até 500 kg, Max/5 acima de 500 kg até 3 000 kg e Max/10 acima de 3 000 kg.
+ * `fracao`: "Max/3", "Max/5" ou "Max/10" ('' sem Max).
  */
-export function cargaExcentricidade(max: number, unidade: Unidade): number {
-  if (!(max > 0)) return 0
+export function minimoExcentricidade(max: number, unidade: Unidade): { minimo: number; fracao: string } {
+  if (!(max > 0)) return { minimo: 0, fracao: '' }
   const maxKg = converterMassa(max, unidade, 'kg')
   const divisor = maxKg <= 500 * (1 + TOL) ? 3 : maxKg <= 3000 * (1 + TOL) ? 5 : 10
-  return Math.min(max, meioRedondoAcima(max / divisor))
+  return { minimo: max / divisor, fracao: `Max/${divisor}` }
+}
+
+/**
+ * Carga do ensaio de excentricidade: o mínimo da Tabela 5 do POP (`minimoExcentricidade`) num valor redondo
+ * igual ou acima dele (nunca abaixo). Na unidade da balança.
+ */
+export function cargaExcentricidade(max: number, unidade: Unidade): number {
+  const { minimo } = minimoExcentricidade(max, unidade)
+  return minimo > 0 ? Math.min(max, meioRedondoAcima(minimo)) : 0
+}
+
+/**
+ * A carga de excentricidade está abaixo do mínimo da Tabela 5 do POP (a copiada de um certificado antigo, que
+ * arredondava para o valor mais próximo, ou a digitada)? Sem carga ou sem Max, não.
+ */
+export function excentricidadeAbaixoDoMinimo(carga: number, max: number, unidade: Unidade): boolean {
+  const { minimo } = minimoExcentricidade(max, unidade)
+  return carga > 0 && minimo > 0 && carga < minimo * (1 - 1e-6)
+}
+
+/**
+ * Onde falta o ensaio de repetibilidade, para os avisos: "no intervalo até 6 kg", "nas faixas até 6 kg e até
+ * 15 kg". `nome`: "intervalo" (multi-intervalo) ou "faixa" (múltiplas faixas).
+ */
+export function ondeFaltaRepetibilidade(
+  tipoFaixas: InstrumentoCalculo['tipoFaixas'],
+  faixas: string[],
+): { onde: string; nome: 'intervalo' | 'faixa' } {
+  const nome = tipoFaixas === 'MULTI_INTERVALO' ? 'intervalo' : 'faixa'
+  const artigo =
+    nome === 'intervalo' ? (faixas.length > 1 ? 'nos intervalos' : 'no intervalo') : faixas.length > 1 ? 'nas faixas' : 'na faixa'
+  const lista = faixas.length > 1 ? `${faixas.slice(0, -1).join(', ')} e ${faixas.at(-1)}` : (faixas[0] ?? '')
+  return { onde: `${artigo} ${lista}`, nome }
+}
+
+/**
+ * Multi-intervalo e múltiplas faixas: os intervalos (ou faixas) de d diferente sem ensaio de repetibilidade
+ * entre as `cargas` (POP 7.9: um ensaio em cada). A carga é do intervalo que a comporta (o menor); um d
+ * repetido em mais de um conta uma vez (fica o de maior Max). Faixa única: nenhum.
+ */
+export function faixasSemRepetibilidade(
+  instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'>,
+  cargas: number[],
+): Faixa[] {
+  const faixas = faixasOrdenadas(instrumento.faixas)
+  if (instrumento.tipoFaixas === 'UNICA' || faixas.length < 2) return []
+  const iguais = (a: number, b: number) => Math.abs(a - b) <= TOL * Math.max(Math.abs(a), Math.abs(b))
+  const cobertos = cargas.filter((c) => c > 0).map((c) => faixaDoValor(c, instrumento).d)
+  return faixas.filter((f, i) => !faixas.slice(i + 1).some((g) => iguais(g.d, f.d)) && !cobertos.some((d) => iguais(d, f.d)))
 }
 
 /**

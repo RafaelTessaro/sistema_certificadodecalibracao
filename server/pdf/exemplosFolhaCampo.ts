@@ -9,14 +9,17 @@
 //   4. folha em branco, para uma balança ainda não cadastrada (também com os 8 padrões de uma empresa maior);
 //   5. rodoviária 60 t sem calibração anterior: o plano sai das sugestões, sem a substituição no rascunho (a
 //      folha sugere as etapas, com os 20 × 500 kg em cada uma, e o nº de substituições de cada ponto) e sem
-//      declaração de conformidade pedida.
+//      declaração de conformidade pedida;
+//   6. rodoviária multi-intervalo 30/60/80 t (a balança do certificado "pior caso"): rascunho do último
+//      certificado, com 11 pontos, 7 etapas de substituição e 4 padrões (a folha mais longa das amostras: até
+//      4 páginas); o ensaio de repetibilidade único que veio do certificado gera o aviso antes de sair.
 // Os cadastros (empresa, clientes, padrões) e o POP do rodapé são os dos certificados de exemplo. Todas levam o
 // nº do certificado reservado na impressão, como no sistema: as com balança, o da calibração; as em branco
 // (folha avulsa), um nº da folha, que passa para a calibração a que ela for ligada.
 
 import { calibracaoVazia, EMPRESA_PADRAO } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
-import { exemploBancada, exemploPlataforma, exemploRodoviaria, POP_EXEMPLO } from './exemplosCertificado.ts'
+import { exemploBancada, exemploPiorCaso, exemploPlataforma, exemploRodoviaria, POP_EXEMPLO } from './exemplosCertificado.ts'
 import type { DadosFolhaCampo } from './folhaCampo.ts'
 
 /** Os dados de entrada de uma calibração (sem os campos que o servidor controla). */
@@ -289,6 +292,35 @@ export function folhaRodoviariaSemHistorico(): DadosFolhaCampo {
     padroes: d.emissao.padroes,
     tecnico: 'Carlos Eduardo Lima',
     impressoEm: '2026-10-23T19:40:00.000Z',
+    impressoPor: IMPRESSO_POR,
+    procedimento: POP_EXEMPLO,
+  }
+}
+
+/**
+ * Rodoviária multi-intervalo 30/60/80 t × 10/20/50 kg (a BR-03 do certificado "pior caso"): rascunho a partir
+ * do último certificado, com 11 pontos, 7 etapas de substituição de 10 t e 4 padrões, e o ensaio de
+ * repetibilidade único que veio dele (a folha avisa: o POP pede um por intervalo). `repetibilidade`: outros
+ * ensaios no rascunho.
+ */
+export function folhaRodoviariaMultiIntervalo(repetibilidade?: CalibracaoInput['repetibilidade']): DadosFolhaCampo {
+  const d = exemploPiorCaso()
+  const calibracao = rascunhoDe(d.calibracao, {
+    ordemServico: 'OS-2026-0541',
+    dataCalibracao: '2026-10-30',
+    proximaCalibracao: '2027-10-30',
+  })
+  if (repetibilidade) calibracao.repetibilidade = repetibilidade
+  return {
+    numero: 'FC-2026-00047',
+    numeroCertificado: 'CC-2026-00130',
+    empresa: EMPRESA_PADRAO,
+    cliente: d.emissao.cliente,
+    balanca: d.emissao.balanca,
+    calibracao,
+    padroes: d.emissao.padroes,
+    tecnico: 'Carlos Eduardo Lima',
+    impressoEm: '2026-10-24T13:10:00.000Z',
     impressoPor: IMPRESSO_POR,
     procedimento: POP_EXEMPLO,
   }

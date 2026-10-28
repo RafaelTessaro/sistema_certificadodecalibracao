@@ -9,7 +9,7 @@ export function SeloNumeroReservado({ n }: { n: Pick<NumeroReservado, 'numero' |
   return (
     <span
       className="inline-flex h-[28px] items-center gap-1.5 rounded-full border border-line bg-surface px-3 text-[13px] font-medium tracking-normal text-ink-2"
-      title={`Reservado na folha de campo ${n.folha}, em ${dataHora(n.reservadoEm)}${n.reservadoPor ? ` por ${n.reservadoPor}` : ''}. O certificado é emitido com este nº (o da etiqueta).`}
+      title={`Na folha de campo ${n.folha}. Reservado em ${dataHora(n.reservadoEm)}${n.reservadoPor ? ` por ${n.reservadoPor}` : ''}. O certificado é emitido com este nº (o da etiqueta).`}
     >
       <Hash className="h-3.5 w-3.5 text-muted" aria-hidden />
       <span>

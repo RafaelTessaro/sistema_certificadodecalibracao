@@ -136,7 +136,7 @@ export function EtapaRevisao({
                 <p className="mt-0.5 font-medium text-ink">
                   <span className="tnum">{numeroReservado.numero}</span>{' '}
                   <span className="font-normal text-muted">
-                    (reservado na folha <span className="tnum">{numeroReservado.folha}</span>)
+                    (reservado na folha <span className="tnum whitespace-nowrap">{numeroReservado.folha}</span>)
                   </span>
                 </p>
               ) : (

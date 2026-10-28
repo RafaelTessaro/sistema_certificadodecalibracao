@@ -17,8 +17,12 @@ import {
 import {
   cargaExcentricidade,
   emaInstrumento,
+  excentricidadeAbaixoDoMinimo,
   faixaDoValor,
   faixasOrdenadas,
+  faixasSemRepetibilidade,
+  minimoExcentricidade,
+  ondeFaltaRepetibilidade,
   pesosMinimosSubstituicao,
   posicoesExcentricidade,
   repetibilidadesSugeridas,
@@ -397,6 +401,25 @@ export function planoDaFolha(
     metodo: ecc?.metodo ?? 1,
     posicoes: aplicavel ? (ecc?.posicoes.length ? ecc.posicoes.map((p) => p.rotulo) : posicoesSugeridas) : [],
     ...cargaPlanejada(aplicavel ? ecc?.carga || cargaExcentricidade(max, u) : 0, u, pesos),
+  }
+
+  // Cargas copiadas do último certificado (o rascunho novo e o "recalibrar"): a da excentricidade abaixo do
+  // mínimo da Tabela 5 do POP (o arredondamento antigo ia para o mais próximo) e um ensaio de repetibilidade só
+  // numa balança de vários intervalos (POP 7.2 e 7.9: acertar no sistema antes de imprimir)
+  if (excentricidade.aplicavel && excentricidadeAbaixoDoMinimo(excentricidade.carga, max, u))
+    avisos.push(
+      `Excentricidade: ${numeroBr(excentricidade.carga)} ${u} está abaixo do mínimo da Tabela 5 do POP (${minimoExcentricidade(max, u).fracao}); use ≥ ${numeroBr(cargaExcentricidade(max, u))} ${u} no sistema.`,
+    )
+  const semEnsaio = faixasSemRepetibilidade(
+    balanca,
+    repetibilidade.map((r) => r.carga),
+  )
+  if (repetibilidade.some((r) => r.carga > 0) && semEnsaio.length) {
+    const { onde, nome } = ondeFaltaRepetibilidade(
+      balanca.tipoFaixas,
+      semEnsaio.map((f) => `até ${numeroBr(f.max)} ${u}`),
+    )
+    avisos.push(`Repetibilidade: falta ensaio ${onde} (o POP pede um em cada ${nome} de d diferente); acrescente no sistema.`)
   }
 
   // Repetibilidade e excentricidade com pesos que não fecham a carga: o técnico conferiria a carga

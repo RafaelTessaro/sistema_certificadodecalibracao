@@ -895,8 +895,7 @@ export class ServicoUsuarios {
 export function transplantarUsuarios(origem: Banco, destino: Banco): { usuarios: number; auditoria: number } {
   // Todas as colunas que os dois bancos têm: também quem é signatário, o cargo, o registro e a assinatura (sem
   // elas, ninguém mais emitiria depois de voltar a cópia)
-  const colunas = (db: Banco) =>
-    (db.prepare('PRAGMA table_info(usuarios)').all() as Array<{ name: string }>).map((c) => c.name)
+  const colunas = (db: Banco) => (db.prepare('PRAGMA table_info(usuarios)').all() as Array<{ name: string }>).map((c) => c.name)
   const comuns = colunas(origem).filter((c) => colunas(destino).includes(c))
   const usuarios = origem.prepare(`SELECT ${comuns.join(', ')} FROM usuarios`).all() as unknown as Array<
     Record<keyof LinhaUsuario, string | number | null>

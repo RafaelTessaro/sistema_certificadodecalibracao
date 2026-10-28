@@ -28,7 +28,10 @@ vi.mock('./pdf/folhaCampo.ts', async (original) => {
       // Um pouco de espera, como o gerador de verdade: os pedidos ao mesmo tempo se intercalam
       await new Promise((r) => setTimeout(r, 15))
       const certificado = d.numeroCertificado ? `; certificado ${d.numeroCertificado}` : ''
-      return Buffer.from(`%PDF-1.7\n1 0 obj\n<< /Keywords (folha de campo; ${d.numero}${certificado}) >>\nendobj\n%%EOF\n`, 'latin1')
+      return Buffer.from(
+        `%PDF-1.7\n1 0 obj\n<< /Keywords (folha de campo; ${d.numero}${certificado}) >>\nendobj\n%%EOF\n`,
+        'latin1',
+      )
     },
   }
 })
@@ -123,9 +126,12 @@ describe('reserva na primeira impressão da folha de campo', { timeout: 30_000 }
     expect((await folhaDe(k.id)).headers['x-folha-campo']).toBe(fc)
     const nova = await folhaNova(k.id)
     expect(nova.statusCode, nova.body).toBe(200)
-    expect(nova.headers['x-folha-campo']).not.toBe(fc)
+    const fcNova = numeroDe(nova)
+    expect(fcNova).not.toBe(fc)
     expect(recebidos.map((x) => x.numeroCertificado)).toEqual([cc(1), cc(1)])
     expect(tabela()).toHaveLength(1)
+    // O nº passa para a folha nova (a que vai a campo): a tela e os registros falam dela, não da substituída
+    expect(await reservadoDe(k.id)).toMatchObject({ numero: cc(1), folha: fcNova, reservadoPor: 'Comum Teste' })
 
     // Outra calibração impressa depois: o próximo
     const outra = await c.calibracaoPronta()
@@ -139,7 +145,7 @@ describe('reserva na primeira impressão da folha de campo', { timeout: 30_000 }
     expect(await reservadoDe(emitida.id)).toBeNull()
     expect(registros('CERTIFICADO_EMITIDO').at(-1)).toEqual([
       k.id,
-      `POST /api/calibracoes/:id/emitir | ${cc(1)}, reservado na folha de campo ${fc}`,
+      `POST /api/calibracoes/:id/emitir | ${cc(1)}, reservado na folha de campo ${fcNova}`,
     ])
     // Sem reserva: o próximo depois dos reservados (nunca um nº já dado)
     const semFolha = await c.calibracaoPronta()
@@ -297,6 +303,76 @@ describe('calibração excluída antes da emissão: o nº segue o papel', { time
     expect((await emitir(refeita.id)).numero).toBe(cc(1))
   })
 
+  it('com folhas novas: o nº fica na última (a que foi a campo), na tela, na exclusão, na lista e no descarte', async () => {
+    await iniciar()
+    const k = await c.calibracaoPronta()
+    const fc1 = numeroDe(await folhaDe(k.id))
+    const fc2 = numeroDe(await folhaNova(k.id))
+    const fc3 = numeroDe(await folhaNova(k.id))
+    expect(new Set([fc1, fc2, fc3]).size).toBe(3)
+    expect([numeroNaFolha(fc1), numeroNaFolha(fc2), numeroNaFolha(fc3)]).toEqual([cc(1), cc(1), cc(1)])
+    // O cabeçalho (folha de campo) e o nº reservado falam da mesma folha
+    const d = await detalhe(k.id)
+    expect(d.folhaCampo.numero).toBe(fc3)
+    expect(d.numeroReservado).toMatchObject({ numero: cc(1), folha: fc3 })
+    // Excluída: o nº volta para a folha que foi a campo, e a lista e o registro dizem a mesma
+    expect((await t.chamar('DELETE', `/api/calibracoes/${k.id}`, { cookie: t.cookieComum })).statusCode).toBe(204)
+    expect(tabela()).toEqual([expect.objectContaining({ numero: cc(1), calibracao_id: '', folha: fc3, situacao: 'reservado' })])
+    expect(registros('NUMERO_RESERVADO').at(-1)?.[1]).toMatch(new RegExp(`^${cc(1)} · voltou para a folha ${fc3} `))
+    const lista = (await t.chamar('GET', '/api/numeros-reservados', { cookie: t.cookieComum })).json()
+      .numeros as NumeroReservado[]
+    expect(lista).toEqual([expect.objectContaining({ numero: cc(1), calibracaoId: '', folha: fc3 })])
+    // A folha que foi a campo, ligada à calibração refeita: o nº vai junto, sem aviso
+    const refeita = await c.calibracaoPronta()
+    expect((await ligar(refeita.id, fc3)).json()).toMatchObject({
+      numeroReservado: { numero: cc(1), calibracaoId: refeita.id, folha: fc3 },
+      numeroDaFolha: { numero: cc(1), usado: true },
+    })
+    // Engano: o papel que foi a campo era a fc2 (substituída na excluída, também livre): o nº vai para ela
+    expect((await ligar(refeita.id, fc2)).json()).toMatchObject({
+      numeroReservado: { numero: cc(1), calibracaoId: refeita.id, folha: fc2 },
+      numeroDaFolha: { numero: cc(1), usado: true },
+    })
+    expect((await emitir(refeita.id)).numero).toBe(cc(1))
+    expect(registros('CERTIFICADO_EMITIDO').at(-1)?.[1]).toBe(
+      `POST /api/calibracoes/:id/emitir | ${cc(1)}, reservado na folha de campo ${fc2}`,
+    )
+  })
+
+  it('a folha substituída ligada de novo (engano na troca: foi ela a campo): o nº passa para ela', async () => {
+    await iniciar()
+    const k = await c.calibracaoPronta()
+    const fc1 = numeroDe(await folhaDe(k.id))
+    const fc2 = numeroDe(await folhaNova(k.id))
+    expect((await reservadoDe(k.id))?.folha).toBe(fc2)
+    const r = await ligar(k.id, fc1)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json()).toMatchObject({
+      folhaCampo: { numero: fc1 },
+      numeroReservado: { numero: cc(1), folha: fc1 },
+      numeroDaFolha: { numero: cc(1), usado: true },
+    })
+    expect(tabela()).toEqual([expect.objectContaining({ numero: cc(1), calibracao_id: k.id, folha: fc1, situacao: 'reservado' })])
+  })
+
+  it('folha nova e excluída: o descarte do nº fala da folha que foi a campo', async () => {
+    await iniciar()
+    const k = await c.calibracaoPronta()
+    await folhaDe(k.id)
+    const fc2 = numeroDe(await folhaNova(k.id))
+    expect((await t.chamar('DELETE', `/api/calibracoes/${k.id}`, { cookie: t.cookieComum })).statusCode).toBe(204)
+    const [n] = (await t.chamar('GET', '/api/numeros-reservados', { cookie: t.cookieComum })).json().numeros as NumeroReservado[]
+    expect(n).toMatchObject({ numero: cc(1), folha: fc2 })
+    const r = await t.chamar('POST', `/api/numeros-reservados/${n.id}/nao-utilizado`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Folha perdida na volta' },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(registros('NUMERO_NAO_UTILIZADO')).toEqual([
+      ['', `POST /api/numeros-reservados/:reserva/nao-utilizado | ${cc(1)} · folha ${fc2}`],
+    ])
+  })
+
   it('a avulsa ligada ao rascunho excluído: o nº volta para ela e passa para a calibração refeita', async () => {
     await iniciar()
     const fc = await avulsa()
@@ -398,7 +474,8 @@ describe('folha avulsa', { timeout: 30_000 }, () => {
     expect(registros('NUMERO_NAO_UTILIZADO')).toEqual([[k.id, `${cc(1)} · ${motivo}`]])
     expect(registros('NUMERO_RESERVADO').at(-1)).toEqual([k.id, `${cc(2)} · da folha avulsa ${fc}, ligada a esta calibração`])
     // Na lista, com o motivo (explica o salto)
-    const lista = (await t.chamar('GET', '/api/numeros-reservados', { cookie: t.cookieComum })).json().numeros as NumeroReservado[]
+    const lista = (await t.chamar('GET', '/api/numeros-reservados', { cookie: t.cookieComum })).json()
+      .numeros as NumeroReservado[]
     expect(lista.find((n) => n.numero === cc(1))).toMatchObject({ situacao: 'nao_utilizado', motivo })
     // O certificado sai com o nº da folha que foi a campo (o da etiqueta)
     expect((await emitir(k.id)).numero).toBe(cc(2))
@@ -723,9 +800,7 @@ describe('restauração de uma cópia do banco', { timeout: 30_000 }, () => {
     const destino = abrirBanco(copia)
     try {
       transplantarFolhasCampo(t.ctx.db, destino)
-      expect(
-        destino.prepare('SELECT numero, calibracao_id, situacao FROM numeros_reservados ORDER BY sequencia').all(),
-      ).toEqual([
+      expect(destino.prepare('SELECT numero, calibracao_id, situacao FROM numeros_reservados ORDER BY sequencia').all()).toEqual([
         { numero: cc(1), calibracao_id: d.id, situacao: 'nao_utilizado' },
         { numero: cc(2), calibracao_id: d.id, situacao: 'reservado' },
       ])
@@ -761,15 +836,36 @@ describe('restauração de uma cópia do banco', { timeout: 30_000 }, () => {
         detalhe: `o nº de certificado impresso nas folhas que voltaram da pasta (${cc(1)}) continua reservado, no papel: os nºs não se repetem`,
       })
       // A próxima folha não repete o nº; a folha ligada (confirmando) leva o dela para a calibração
-      expect(repo.reservarFolhaCampo({ chave: `calibracao:${outra.id}`, calibracaoId: outra.id, por: 'Ana' }).numeroCertificado).toBe(
-        cc(2),
-      )
+      expect(
+        repo.reservarFolhaCampo({ chave: `calibracao:${outra.id}`, calibracaoId: outra.id, por: 'Ana' }).numeroCertificado,
+      ).toBe(cc(2))
       const ligada = repo.vincularFolhaCampo(fc, repo.obterCalibracao(k.id)!, { confirmar: true, por: 'Ana' })
       expect(ligada.numeroDaFolha).toEqual({ numero: cc(1), usado: true })
       expect(repo.numeroReservadoDa(k.id)?.numero).toBe(cc(1))
       // De novo: nada volta duas vezes
       expect(repo.recuperarFolhasDaPasta()).toEqual([])
       expect(destino.prepare('SELECT COUNT(*) AS n FROM numeros_reservados').get()).toEqual({ n: 2 })
+    } finally {
+      destino.close()
+    }
+  })
+
+  it('cópia posta à mão: a folha e a folha nova (o mesmo nº) voltam pela pasta, e o nº fica na mais nova', async () => {
+    await iniciar()
+    const k = await c.calibracaoPronta()
+    const copia = await t.ctx.backups.copiar('manual')
+    const fc1 = numeroDe(await folhaDe(k.id))
+    const fc2 = numeroDe(await folhaNova(k.id))
+    const destino = abrirBanco(copia)
+    try {
+      const repo = new Repositorio(destino, () => {}, { pastaFolhas: join(t.pasta, 'folhas-campo') })
+      expect(repo.recuperarFolhasDaPasta()).toEqual([fc1, fc2])
+      expect(destino.prepare('SELECT numero, calibracao_id, folha, situacao FROM numeros_reservados').all()).toEqual([
+        { numero: cc(1), calibracao_id: '', folha: fc2, situacao: 'reservado' },
+      ])
+      // De novo: nada muda
+      expect(repo.recuperarFolhasDaPasta()).toEqual([])
+      expect(destino.prepare('SELECT folha FROM numeros_reservados').all()).toEqual([{ folha: fc2 }])
     } finally {
       destino.close()
     }

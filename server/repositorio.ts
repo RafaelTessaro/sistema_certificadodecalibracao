@@ -180,9 +180,7 @@ export function numeroCertificadoNoPdf(pdf: Buffer): string {
   // Direto no dicionário (/Keywords (…)) ou num objeto à parte (/Keywords 31 0 R), como o pdfkit grava
   const literal = String.raw`\(((?:\\[\s\S]|[^\\)])*)\)`
   const ref = new RegExp(String.raw`\/Keywords\s*(?:${literal}|(\d+)\s+(\d+)\s+R)`).exec(texto)
-  const bruto =
-    ref &&
-    (ref[1] ?? new RegExp(String.raw`(?:^|\s)${ref[2]}\s+${ref[3]}\s+obj\s*${literal}`).exec(texto)?.[1])
+  const bruto = ref && (ref[1] ?? new RegExp(String.raw`(?:^|\s)${ref[2]}\s+${ref[3]}\s+obj\s*${literal}`).exec(texto)?.[1])
   if (bruto === null || bruto === undefined) return ''
   const m = /(?:^|;\s*)certificado\s+([^;]+?)\s*(?:;|$)/.exec(textoDaStringPdf(bruto))
   return m ? m[1] : ''
@@ -1045,8 +1043,9 @@ export class Repositorio {
 
   /**
    * Exclui a calibração em andamento. O nº de certificado reservado para ela volta para o papel em que foi
-   * impresso (a folha de campo, que fica livre): continua reservado e passa para a calibração refeita a que a
-   * folha for ligada, como o da folha avulsa. `eventos` diz qual, para o registro de atividades.
+   * impresso (a folha de campo que foi a campo, a mais nova com ele, que fica livre): continua reservado e passa
+   * para a calibração refeita a que a folha for ligada, como o da folha avulsa. A lista dos nºs mostra essa folha
+   * (não a substituída). `eventos` diz qual, para o registro de atividades.
    */
   excluirRascunho(id: string): { eventos: EventoNumero[] } {
     return transacao(this.db, () => {
@@ -1067,7 +1066,7 @@ export class Repositorio {
               )
               .get(id, reservado.numero) as { numero: string } | undefined
           )?.numero ?? reservado.folha
-        this.db.prepare("UPDATE numeros_reservados SET calibracao_id = '' WHERE id = ?").run(reservado.id)
+        this.db.prepare("UPDATE numeros_reservados SET calibracao_id = '', folha = ? WHERE id = ?").run(papel, reservado.id)
         // Sem link no registro: a calibração não existe mais
         eventos.push({
           acao: 'NUMERO_RESERVADO',
@@ -1452,6 +1451,14 @@ export class Repositorio {
       .run(motivo.slice(0, 500), this.agora().toISOString(), por.slice(0, 120), dono ?? null, id)
   }
 
+  /**
+   * A folha atual do nº (`numeros_reservados.folha`): a última impressa com ele para a calibração (a folha nova
+   * leva o mesmo nº), a ligada a ela ou, livre, o papel que ficou com ele. É a que a tela e o registro mostram.
+   */
+  private numeroNaFolha(id: number, folha: string) {
+    this.db.prepare('UPDATE numeros_reservados SET folha = ? WHERE id = ? AND folha <> ?').run(folha, id, folha)
+  }
+
   /** O nº do certificado impresso na folha ('' = nenhum). */
   private numeroImpressoNaFolha(numeroFolha: string): string {
     const l = this.db.prepare('SELECT numero_certificado FROM folhas_campo WHERE numero = ?').get(numeroFolha) as
@@ -1486,7 +1493,7 @@ export class Repositorio {
           calibracaoId: e.calibracaoId,
           detalhe: `${n.numero} · folha ${numeroFolha}`,
         })
-      }
+      } else this.numeroNaFolha(n.id, numeroFolha) // Folha nova: o mesmo nº, agora no papel que vai a campo
     } else {
       n = this.reservarNumero({ calibracaoId: '', folha: numeroFolha, por: e.por })
       eventos.push({
@@ -1516,8 +1523,7 @@ export class Repositorio {
 
   /** "folha avulsa FC-2026-00042" ou "folha FC-2026-00042", para os registros e os motivos. */
   private rotuloFolha(numeroFolha: string): string {
-    const l = this.db.prepare('SELECT chave FROM folhas_campo WHERE numero = ?').get(numeroFolha) as
-      { chave: string } | undefined
+    const l = this.db.prepare('SELECT chave FROM folhas_campo WHERE numero = ?').get(numeroFolha) as { chave: string } | undefined
     return `folha ${l?.chave.startsWith('avulsa:') ? 'avulsa ' : ''}${numeroFolha}`
   }
 
@@ -1559,8 +1565,11 @@ export class Repositorio {
     const eventos: EventoNumero[] = []
     if (!papel || !k) return { eventos, numeroDaFolha: null }
     const doPapel = this.linhaDoNumero(papel, numeroFolha)
-    if (doPapel?.situacao === 'reservado' && doPapel.calibracaoId === calibracaoId)
+    if (doPapel?.situacao === 'reservado' && doPapel.calibracaoId === calibracaoId) {
+      // Já era dela (a folha substituída que voltou: engano na troca): o nº passa para esta folha
+      this.numeroNaFolha(doPapel.id, numeroFolha)
       return { eventos, numeroDaFolha: { numero: papel, usado: true } }
+    }
     const proprio = this.numeroReservadoDa(calibracaoId)
     const naoUsa = (motivo: string) => ({ eventos, numeroDaFolha: { numero: papel, usado: false, motivo } })
     if (k.substituiId) {
@@ -1569,6 +1578,7 @@ export class Repositorio {
         const motivo = `A folha ${numeroFolha} foi ligada à revisão do certificado ${revisado}, que sai com o nº do certificado revisado.`
         // Fica com a revisão: se a folha sair dela (engano no nº), o nº volta para o papel
         this.naoUtilizado(doPapel.id, motivo, por, calibracaoId)
+        this.numeroNaFolha(doPapel.id, numeroFolha)
         eventos.push({ acao: 'NUMERO_NAO_UTILIZADO', numero: papel, calibracaoId, detalhe: `${papel} · ${motivo}` })
       }
       return naoUsa(`Uma revisão sai com o nº do certificado revisado (${revisado}).`)
@@ -1587,14 +1597,19 @@ export class Repositorio {
     if (proprio) {
       const motivo = `A calibração (${this.descreverCalibracao(k)}) passou a usar o nº ${papel}, da folha ${numeroFolha}, ligada no lugar da folha com este nº, que não foi a campo.`
       this.naoUtilizado(proprio.id, motivo, por)
-      eventos.push({ acao: 'NUMERO_NAO_UTILIZADO', numero: proprio.numero, calibracaoId, detalhe: `${proprio.numero} · ${motivo}` })
+      eventos.push({
+        acao: 'NUMERO_NAO_UTILIZADO',
+        numero: proprio.numero,
+        calibracaoId,
+        detalhe: `${proprio.numero} · ${motivo}`,
+      })
     }
     this.db
       .prepare(
-        `UPDATE numeros_reservados SET calibracao_id = ?, situacao = 'reservado', motivo = '', situacao_em = '', situacao_por = ''
-          WHERE id = ?`,
+        `UPDATE numeros_reservados SET calibracao_id = ?, folha = ?, situacao = 'reservado', motivo = '', situacao_em = '',
+           situacao_por = '' WHERE id = ?`,
       )
-      .run(calibracaoId, doPapel.id)
+      .run(calibracaoId, numeroFolha, doPapel.id)
     eventos.push({
       acao: 'NUMERO_RESERVADO',
       numero: papel,
@@ -1689,10 +1704,10 @@ export class Repositorio {
       if (!n) continue
       this.db
         .prepare(
-          `UPDATE numeros_reservados SET calibracao_id = '', situacao = 'reservado', motivo = '', situacao_em = '', situacao_por = ''
-            WHERE id = ?`,
+          `UPDATE numeros_reservados SET calibracao_id = '', folha = ?, situacao = 'reservado', motivo = '', situacao_em = '',
+             situacao_por = '' WHERE id = ?`,
         )
-        .run(n.id)
+        .run(folha, n.id)
       eventos.push({
         acao: 'NUMERO_RESERVADO',
         numero: n.numero,
@@ -1847,13 +1862,25 @@ export class Repositorio {
   /**
    * O nº de certificado `numero`, impresso na folha `folha` (que voltou da pasta), volta ao registro dos nºs
    * reservados, sem dono, como o de uma folha avulsa: a sequência da emissão continua depois dele. Já
-   * registrado, nada muda; já num certificado (o banco voltou e o nº foi dado de novo), fica não utilizado.
+   * registrado, nada muda (só a folha, se for de outra mais nova: a folha nova com o mesmo nº, a que foi a campo,
+   * vem depois na pasta); já num certificado (o banco voltou e o nº foi dado de novo), fica não utilizado.
    * Fora do formato da numeração, só fica na folha (`numero_certificado`). Devolve se registrou.
    */
   private reservarDoPapel(numero: string, folha: string, anoFolha: number, em: string): boolean {
-    if (this.db.prepare('SELECT 1 FROM numeros_reservados WHERE numero = ?').get(numero)) return false
+    const registrado = this.db
+      .prepare('SELECT id, calibracao_id, situacao, folha FROM numeros_reservados WHERE numero = ? ORDER BY id DESC LIMIT 1')
+      .get(numero) as { id: number; calibracao_id: string; situacao: string; folha: string } | undefined
+    if (registrado) {
+      // Livre no papel: fica na folha mais nova (FC-AAAA-NNNNN em ordem)
+      if (registrado.situacao === 'reservado' && !registrado.calibracao_id && folha > registrado.folha)
+        this.numeroNaFolha(registrado.id, folha)
+      return false
+    }
     const lido = lerNumeroCertificado(this.obterConfig().numeracao, numero, anoFolha)
-    if (!lido || this.db.prepare('SELECT 1 FROM numeros_reservados WHERE ano = ? AND sequencia = ?').get(lido.ano, lido.sequencia))
+    if (
+      !lido ||
+      this.db.prepare('SELECT 1 FROM numeros_reservados WHERE ano = ? AND sequencia = ?').get(lido.ano, lido.sequencia)
+    )
       return false
     const emitido = this.db
       .prepare('SELECT numero FROM calibracoes WHERE ano = ? AND sequencia = ? AND revisao = 0')

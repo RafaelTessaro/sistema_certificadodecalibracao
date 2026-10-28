@@ -21,7 +21,6 @@ import { Segmented } from '../ui/Misc'
 import type { ContextoEtapa } from './contexto'
 import { Info } from './EtapaIdentificacao'
 
-
 export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: ContextoEtapa) {
   const prel = f.preliminar
   const setPrel = (k: keyof CalibracaoInput['preliminar'], v: string) =>

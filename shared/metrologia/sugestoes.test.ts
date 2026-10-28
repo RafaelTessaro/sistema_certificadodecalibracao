@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   cargaExcentricidade,
+  excentricidadeAbaixoDoMinimo,
+  faixasSemRepetibilidade,
+  minimoExcentricidade,
+  ondeFaltaRepetibilidade,
   posicoesExcentricidade,
   repetibilidadeSugerida,
   repetibilidadesSugeridas,
@@ -78,6 +82,26 @@ describe('cargaExcentricidade (DOQ-CGCRE-097 10.4.1; POP 7.10)', () => {
     expect(cargaExcentricidade(60000, 'kg')).toBe(6000)
     expect(cargaExcentricidade(1500, 'kg')).toBe(300)
     expect(cargaExcentricidade(220, 'g')).toBe(75)
+  })
+
+  it('mínimo da Tabela 5 do POP e a carga copiada abaixo dele (o arredondamento antigo, para o mais próximo)', () => {
+    expect(minimoExcentricidade(600, 'kg')).toEqual({ minimo: 120, fracao: 'Max/5' })
+    expect(minimoExcentricidade(80_000, 'kg')).toEqual({ minimo: 8000, fracao: 'Max/10' })
+    expect(minimoExcentricidade(500_000, 'g')).toEqual({ minimo: 500_000 / 3, fracao: 'Max/3' })
+    expect(minimoExcentricidade(0, 'kg')).toEqual({ minimo: 0, fracao: '' })
+    const casos: Array<[number, number, boolean]> = [
+      [600, 100, true],
+      [600, 120, false],
+      [200, 65, true],
+      [200, 200 / 3, false],
+      [32, 10, true],
+      [20, 6.5, true],
+      [20, 7, false],
+      [80_000, 7500, true],
+      [80_000, 0, false],
+    ]
+    for (const [max, carga, abaixo] of casos)
+      expect(excentricidadeAbaixoDoMinimo(carga, max, 'kg'), `${carga} de ${max} kg`).toBe(abaixo)
   })
 
   it('o valor redondo nunca fica abaixo do mínimo da Tabela 5 (arredonda para cima)', () => {
@@ -174,5 +198,34 @@ describe('repetibilidadeSugerida', () => {
     expect(repetibilidadeSugerida(30000, 'g')).toEqual({ carga: 15000, leituras: 5 })
     expect(repetibilidadeSugerida(60000, 'kg')).toEqual({ carga: 30000, leituras: 3 })
     expect(repetibilidadeSugerida(200, 'kg')).toEqual({ carga: 100, leituras: 3 })
+  })
+})
+
+describe('faixasSemRepetibilidade (POP 7.9: um ensaio em cada intervalo ou faixa de d diferente)', () => {
+  const multi = {
+    tipoFaixas: 'MULTI_INTERVALO' as const,
+    faixas: [
+      { max: 15, e: 0.01, d: 0.01 },
+      { max: 6, e: 0.002, d: 0.002 },
+      { max: 33, e: 0.01, d: 0.01 },
+    ],
+  }
+  it('o ensaio cobre o intervalo que comporta a carga; um d repetido conta uma vez (o de maior Max)', () => {
+    // 6 kg (d = 2 g) e 15/33 kg (d = 10 g): o de 16,5 kg cobre o d de 10 g
+    expect(faixasSemRepetibilidade(multi, [16.5])).toEqual([{ max: 6, e: 0.002, d: 0.002 }])
+    expect(faixasSemRepetibilidade(multi, [16.5, 4.8])).toEqual([])
+    expect(faixasSemRepetibilidade(multi, [4.8])).toEqual([{ max: 33, e: 0.01, d: 0.01 }])
+    expect(faixasSemRepetibilidade(multi, [0])).toHaveLength(2)
+    // Faixa única: nunca
+    expect(faixasSemRepetibilidade({ tipoFaixas: 'UNICA', faixas: multi.faixas }, [1])).toEqual([])
+  })
+
+  it('o texto do aviso: intervalo ou faixa, no singular ou no plural', () => {
+    expect(ondeFaltaRepetibilidade('MULTI_INTERVALO', ['até 6 kg'])).toEqual({ onde: 'no intervalo até 6 kg', nome: 'intervalo' })
+    expect(ondeFaltaRepetibilidade('MULTI_INTERVALO', ['até 6 kg', 'até 15 kg', 'até 33 kg']).onde).toBe(
+      'nos intervalos até 6 kg, até 15 kg e até 33 kg',
+    )
+    expect(ondeFaltaRepetibilidade('MULTIPLAS_FAIXAS', ['até 6 kg'])).toEqual({ onde: 'na faixa até 6 kg', nome: 'faixa' })
+    expect(ondeFaltaRepetibilidade('MULTIPLAS_FAIXAS', ['até 6 kg', 'até 15 kg']).onde).toBe('nas faixas até 6 kg e até 15 kg')
   })
 })

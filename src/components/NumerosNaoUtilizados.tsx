@@ -83,16 +83,27 @@ export function ListaNumeros({
             </p>
             <ul className="divide-y divide-line">
               {avulsos.map((n) => (
-                <li key={n.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 text-[13px]">
-                  <span className="tnum min-w-[132px] font-semibold text-ink">{n.numero}</span>
-                  <span className="min-w-0 flex-1">
+                // A mesma grade dos não utilizados: no celular, o nº, o texto e o botão um embaixo do outro
+                <li
+                  key={n.id}
+                  className="grid items-center gap-x-4 gap-y-1 px-4 py-2.5 text-[13px] sm:grid-cols-[minmax(132px,auto)_minmax(0,1fr)_auto]"
+                >
+                  <span className="tnum font-semibold text-ink">{n.numero}</span>
+                  <span className="min-w-0">
                     <span className="text-ink-2">
-                      Folha <span className="tnum">{n.folha}</span>: o nº passa para a calibração a que ela for ligada.
+                      Folha <span className="tnum whitespace-nowrap">{n.folha}</span>: o nº passa para a calibração a que ela for
+                      ligada.
                     </span>
-                    <span className="tnum block text-xs text-muted">Impressa em {quandoDoNumero(n)}</span>
+                    <span className="tnum block text-xs text-muted">Reservado em {quandoDoNumero(n)}</span>
                   </span>
                   {podeDescartar && aoDescartar && (
-                    <Button tamanho="sm" variante="ghost" icone={<Ban className="h-3.5 w-3.5" />} onClick={() => aoDescartar(n)}>
+                    <Button
+                      tamanho="sm"
+                      variante="ghost"
+                      className="-ml-3 justify-self-start sm:ml-0"
+                      icone={<Ban className="h-3.5 w-3.5" />}
+                      onClick={() => aoDescartar(n)}
+                    >
                       Não vai ser usada
                     </Button>
                   )}

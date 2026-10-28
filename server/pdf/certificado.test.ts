@@ -14,6 +14,7 @@ import { pdfmake } from './base.ts'
 import {
   definicaoCertificado,
   gerarCertificadoPdf,
+  linhasDoTexto,
   montarCertificado,
   OCUPACAO_MINIMA_ULTIMA,
   RESSALVA_OPINIOES,
@@ -488,6 +489,38 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     expect(t).toMatch(/7 DECLARAÇÕES/)
     // Sem item "não" na verificação preliminar, nada dela no certificado
     expect(t).not.toContain('Verificação preliminar')
+  })
+
+  it('observações digitadas uma por linha: um marcador para cada (sem as linhas vazias), como os outros itens', async () => {
+    expect(linhasDoTexto('  Uma.\r\n\n Duas. \nTrês.\n')).toEqual(['Uma.', 'Duas.', 'Três.'])
+    expect(linhasDoTexto(' \n ')).toEqual([])
+    const d = rodoviariaSemRevisao()
+    const linhas = [
+      'Plataforma lavada pelo cliente antes da calibração.',
+      'Balança ao ar livre, com vento fraco durante os ensaios.',
+      'Indicador substituído pelo cliente em 2025.',
+    ]
+    d.calibracao.observacoes = `${d.calibracao.observacoes.trim()}\n\n${linhas.join('\n')}\n`
+    const dados = recalculado(d)
+    // Os itens das listas (ul) do certificado: cada linha num item, nenhum item com quebra de linha
+    const itens: string[] = []
+    const visitar = (no: unknown): void => {
+      if (Array.isArray(no)) return no.forEach(visitar)
+      if (!no || typeof no !== 'object') return
+      const o = no as Record<string, unknown>
+      if (Array.isArray(o.ul))
+        for (const i of o.ul) itens.push(typeof (i as { text?: unknown }).text === 'string' ? (i as { text: string }).text : '')
+      Object.values(o).forEach(visitar)
+    }
+    visitar((definicaoCertificado(dados) as { content: unknown }).content)
+    const digitadas = linhasDoTexto(d.calibracao.observacoes)
+    expect(digitadas).toHaveLength(4)
+    for (const l of digitadas) expect(itens).toContain(l)
+    expect(itens.filter((t) => t.includes('\n'))).toEqual([])
+    // No PDF, cada uma começa a sua linha; e continua em 2 páginas
+    const texto = textoDoPdf(await gerarCertificadoPdf(dados))
+    for (const l of linhas) expect(texto).toMatch(new RegExp(`^\\s*${l.slice(0, 30)}`, 'm'))
+    expect(paginas(texto).total).toBe(2)
   })
 
   it('rodoviária 80 t: revisão, prévia, cargas de substituição e faixa parcial', async () => {

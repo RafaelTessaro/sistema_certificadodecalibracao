@@ -13,8 +13,8 @@
 // Convenção visual: fundo cinza = veio do sistema (impresso, compacto); caixa branca = escrever no local
 // (só o que é medido ou decidido lá); caixas de marcar sempre brancas (marca-se com X o que foi feito), com
 // a opção prevista no sistema em negrito e a etiqueta PREVISTO. Dado impresso diferente do real não tem
-// caixa de correção: o técnico anota o certo no verso da folha, com o nº do passo (uma linha no alto da
-// página 1 diz isso). Com balança (e, de preferência, rascunho), a folha sai pré-preenchida pelo plano
+// caixa de correção: o técnico anota o certo no verso da folha, com o nº do passo, rubrica e data (uma linha no
+// alto da página 1 diz isso, como o POP, item 10). Com balança (e, de preferência, rascunho), a folha sai pré-preenchida pelo plano
 // (shared/folhaCampo.ts); sem balança, sai "em branco", para uma balança ainda não cadastrada.
 // Toda página leva o nº da folha (com QR), o nº do certificado reservado (quando há), a OS, o cliente e a
 // balança, e a rubrica e a data: uma folha solta ou digitalizada sozinha continua identificável. O nº do
@@ -180,7 +180,7 @@ const ALTURA_PREVISTO = 15
 const LADO_CAIXA = 11
 
 /** O que fazer com um dado impresso diferente do real (no alto da página 1). */
-export const AVISO_VERSO = 'Algum dado impresso está diferente? Anote o certo no verso da folha, com o nº do passo.'
+export const AVISO_VERSO = 'Algum dado impresso está diferente? Anote o certo no verso, com o nº do passo, rubrica e data.'
 
 const MENOS = '−'
 const num = (v: number, casas: number) => formatarNumero(v, casas).replace(/^-/, MENOS)
@@ -685,33 +685,37 @@ function tabelaLeituras(
 
 /**
  * Linhas-guia para texto livre (observações). `final`: um campo de uma linha no pé da mesma caixa, com o
- * rótulo dele (as opiniões, embaixo das observações).
+ * rótulo no começo da própria linha (as opiniões, embaixo das observações: escreve-se ao lado do rótulo).
  */
-function linhasGuia(quantas: number, titulo: string, dica = '', final?: { titulo: string; dica: string }): NoObjeto {
-  const cabeca = (t: string, d: string): No => ({
-    text: [rotulo(t), ...(d ? [{ text: `   ${d}`, fontSize: 6.3, color: T.suave }] : [])],
+function linhasGuia(quantas: number, titulo: No, dica: No = '', final?: { titulo: string; dica: string }): NoObjeto {
+  // A dica em texto corrido, ao lado do rótulo (pedaços em negrito podem vir como objetos)
+  const pedacos = (d: No): NoObjeto[] =>
+    (Array.isArray(d) ? d : [d]).map((x) => ({ fontSize: 6.3, color: T.suave, ...(typeof x === 'object' ? x : { text: x }) }))
+  const cabeca = (t: No, d: No): No => ({
+    text: [typeof t === 'string' ? rotulo(t) : t, ...(d ? pedacos(['   ', ...(Array.isArray(d) ? d : [d])]) : [])],
   })
   const body: No[][] = [
     [cabeca(titulo, dica)],
     ...Array.from({ length: quantas }, () => [{ text: '' }]),
-    ...(final ? [[cabeca(final.titulo, final.dica)], [{ text: '' }]] : []),
+    ...(final ? [[cabeca(final.titulo, final.dica)]] : []),
   ]
-  // Linhas de rótulo (sem altura fixa) e o fio que separa o campo do pé
-  const rotulos = new Set([0, ...(final ? [quantas + 1] : [])])
+  // A linha do pé (com o rótulo no alto) e o fio inteiro que a separa das linhas de cima
+  const pe = final ? quantas + 1 : -1
   return {
-    table: { widths: ['*'], body, heights: (i: number) => (rotulos.has(i) ? 'auto' : ALTURA_ESCRITA) },
+    // A do pé com a mesma altura das outras, contando o respiro do rótulo
+    table: { widths: ['*'], body, heights: (i: number) => (i === 0 ? 'auto' : i === pe ? ALTURA_ESCRITA - 2.8 : ALTURA_ESCRITA) },
     layout: {
       hLineWidth: (i: number, no: { table: { body: unknown[] } }) =>
-        i === 0 || i === no.table.body.length ? 0.8 : rotulos.has(i - 1) ? 0 : 0.5,
+        i === 0 || i === no.table.body.length ? 0.8 : i === 1 ? 0 : 0.5,
       vLineWidth: () => 0.8,
       hLineColor: (i: number, no: { table: { body: unknown[] } }) =>
-        i === 0 || i === no.table.body.length ? T.borda : rotulos.has(i) ? T.linha : T.linhaClara,
+        i === 0 || i === no.table.body.length ? T.borda : i === pe ? T.linha : T.linhaClara,
       vLineColor: () => T.borda,
       hLineStyle: (i: number, no: { table: { body: unknown[] } }) =>
-        i > 1 && i < no.table.body.length && !rotulos.has(i) ? { dash: { length: 1.2, space: 1.8 } } : null,
+        i > 1 && i < no.table.body.length && i !== pe ? { dash: { length: 1.2, space: 1.8 } } : null,
       paddingLeft: () => 4.5,
       paddingRight: () => 4.5,
-      paddingTop: (i: number) => (rotulos.has(i) ? 2.8 : 0),
+      paddingTop: (i: number) => (i === 0 || i === pe ? 2.8 : 0),
       paddingBottom: () => 0,
     },
   }
@@ -910,6 +914,11 @@ export interface Extras {
    */
   avisoPontos?: boolean
   /**
+   * Os pontos e as etapas de substituição, juntos, não couberam na página do título do passo 5 (iriam inteiros
+   * para a seguinte, deixando esta quase vazia): os pontos ficam nela e as etapas vão como outra parte do passo.
+   */
+  etapasAParte?: boolean
+  /**
    * Montagem de segurança, quando algum bloco inteiro não coube numa página (e sumiria): só o título e a
    * instrução de cada passo ficam juntos; as tabelas se dividem onde a página acaba, com o cabeçalho de novo.
    */
@@ -1019,7 +1028,7 @@ function introducao(): No[] {
       titulo('COMO ANOTAR E CORRIGIR'),
       'Caneta azul ou preta, na hora da leitura (nada de lápis ou corretivo); a indicação como no mostrador, com todos os dígitos e o sinal. Errou: ',
       { text: 'um risco só sobre o valor errado', bold: true },
-      ' (continua legível), o certo ao lado e rubrica. Grampeie as folhas.',
+      ' (continua legível), o certo ao lado, rubrica e data. Grampeie as folhas.',
     ],
     fontSize: 6.8,
     lineHeight: 1.18,
@@ -1771,6 +1780,9 @@ const LINHAS_PONTOS_EM_BRANCO = 10
 /** Nome da última coluna dos pontos: a faixa (carga ± EMA) só serve para decidir o ajuste no local. */
 const FAIXA_AJUSTE = 'Faixa para decidir o ajuste'
 
+/** Marca da faixa dos pontos com substituição por baixo: os dois limites levam a soma ΔI das etapas (POP 7.12). */
+const MAIS_DELTA_I = '+ ΣΔI'
+
 /** Marca das linhas da tabela de pontos (a montagem acha a página de cada uma para dividir a tabela). */
 const ID_LINHA_PONTOS = 'linha-pontos'
 
@@ -1852,6 +1864,10 @@ function tabelaPontos(ctx: Contexto, reserva: number): TabelaPontos {
                 text: [
                   { text: `${cargaTexto(p.carga - p.ema, p.d)} a ${cargaTexto(p.carga + p.ema, p.d)}`, fontSize: 7.1 },
                   { text: `\nEMA ±${cargaTexto(p.ema, p.d)}`, fontSize: 6.1, color: T.suave },
+                  // Com substituição por baixo, os limites ainda levam a soma ΔI das etapas (ver `notaFaixa`)
+                  ...(subPrevista && p.nivelSubstituicao > 0
+                    ? [{ text: ` ${MAIS_DELTA_I}`, fontSize: 6.1, bold: true, color: T.texto }]
+                    : []),
                 ],
               },
           'right',
@@ -1895,7 +1911,9 @@ function tabelaPontos(ctx: Contexto, reserva: number): TabelaPontos {
 
 /**
  * Nota embaixo dos pontos: pesos diferentes dos impressos vão no verso e o que a última coluna quer dizer (o
- * critério e que ela é só para decidir o ajuste no local). Onde cada coluna é digitada vai no roteiro do
+ * critério e que ela é só para decidir o ajuste no local). Com substituição, os pontos com etapas por baixo
+ * (marcados com "+ ΣΔI" na faixa): antes de comparar, os dois limites levam a soma ΔI das etapas abaixo deles
+ * (POP 7.8 e 7.12). Onde cada coluna é digitada vai no roteiro do
  * escritório (passo das assinaturas).
  */
 function notaFaixa(ctx: Contexto): No[] {
@@ -1908,6 +1926,15 @@ function notaFaixa(ctx: Contexto): No[] {
     : []
   if (!f || !ctx.plano?.pontos.some((p) => p.ema !== null)) return pesos.length ? [nota(pesos, [0, 3, 0, 0])] : []
   const criterio = `${CRITERIOS_EMA[f.criterio].label}${f.criterio === 'CLIENTE' ? `, ±${numeroBr(f.toleranciaCliente)} ${ctx.u}` : ''}`
+  // Pontos com substituição por baixo (POP 7.8 e 7.12): a faixa impressa ainda não tem a soma ΔI das etapas
+  const sub = ctx.plano.substituicao
+  const comDelta = (sub.ativa || sub.sugerida) && ctx.plano.pontos.some((p) => p.nivelSubstituicao > 0 && p.ema !== null)
+  const delta: No[] = comDelta
+    ? [
+        { text: ` Pontos com substituição (${MAIS_DELTA_I}): `, bold: true, color: T.texto },
+        'antes de comparar, some aos dois limites a soma ΔI (indicação com a substituição − com os pesos) das etapas abaixo do ponto, no mesmo ensaio.',
+      ]
+    : []
   return [
     nota(
       [
@@ -1918,6 +1945,7 @@ function notaFaixa(ctx: Contexto): No[] {
           : f.toleranciaPendente
             ? `carga ± EMA (${criterio}, classe ${ctx.b?.classe}); fora dela, proponha o ajuste. A tolerância do cliente ainda não foi informada: pergunte e anote no passo ${N.encerramento}.`
             : `carga ± EMA (${criterio}, classe ${ctx.b?.classe}); fora dela, proponha o ajuste. Não é declaração de conformidade (o cliente não pediu).`,
+        ...delta,
       ],
       [0, 3, 0, 0],
     ),
@@ -1959,11 +1987,13 @@ function linhasDasEtapas(ctx: Contexto): number {
 
 /**
  * Pontos e etapas de substituição do plano, preenchidos intercalados (ponto 3, etapa 1, ponto 4…), vão
- * juntos, na mesma página (o passo começa numa página nova, se preciso), quando cabem nela. Muitos pontos
- * ou muitas etapas: as etapas vão depois, como outra parte do passo (inteiras, elas sumiriam do PDF).
+ * juntos, na mesma página, quando cabem nela. Muitos pontos ou muitas etapas: as etapas vão depois, como outra
+ * parte do passo (inteiras, elas sumiriam do PDF). Juntos, mas sem caber depois do título do passo (passariam
+ * inteiros para a página seguinte, deixando esta quase vazia): a montagem tenta as etapas à parte
+ * (`Extras.etapasAParte`), com os pontos na página do título.
  */
 function pontosComEtapas(ctx: Contexto): boolean {
-  if (!ctx.plano || !comSubstituicao(ctx) || ctx.extras.semBlocos) return false
+  if (!ctx.plano || !comSubstituicao(ctx) || ctx.extras.semBlocos || ctx.extras.etapasAParte) return false
   const pontos = ctx.plano.pontos.length + reservaDosPontos(ctx) + 1
   return pontos + linhasDasEtapas(ctx) <= LINHAS_PONTOS_E_ETAPAS
 }
@@ -1987,10 +2017,18 @@ const ALTURA_AVISO_PONTOS = 16
  * Como fazer as etapas de substituição: fica no alto do passo, com o que se lê antes das tabelas, quando os
  * pontos e as etapas vão juntos (eles podem ir juntos para a página seguinte).
  */
-function notaEtapas(margem: number[] = [0, 0, 0, 4], titulo = false): NoObjeto {
+function notaEtapas(margem: number[] = [0, 0, 0, 4], titulo = false, depois = false): NoObjeto {
   return nota(
     [
-      ...(titulo ? [{ text: 'Cargas de substituição: ', bold: true, color: T.texto }] : []),
+      ...(titulo
+        ? [
+            {
+              text: `Cargas de substituição${depois ? ' (tabela das etapas depois da dos pontos)' : ''}: `,
+              bold: true,
+              color: T.texto,
+            },
+          ]
+        : []),
       `${titulo ? 'em' : 'Em'} cada etapa, anote a indicação com os pesos padrão na plataforma; troque-os pela carga de substituição (caminhão, lastro) até a mesma indicação e anote de novo. `,
       { text: 'Só crescente', bold: true },
       ': para descer, seria preciso tirar o material. ',
@@ -2027,6 +2065,8 @@ function passoIndicacao(ctx: Contexto, n: number): No[] {
   // Pontos e etapas de substituição do plano na mesma página, quando cabem: são preenchidos intercalados.
   // Na folha em branco (só em rodoviária), as etapas podem ir para a página seguinte; muitas, se dividem.
   const junto = pontosComEtapas(ctx)
+  // As etapas à parte (não couberam junto com os pontos): como fazê-las continua no alto, dizendo onde estão
+  const aParte = !!ctx.extras.etapasAParte && comSub && !!plano
   const fim: No[] = [...notaFaixa(ctx), ...(junto ? [tabelaSubstituicao(ctx, { semNota: true })] : [])]
   const etapasLongas = linhasDasEtapas(ctx) > LINHAS_ETAPAS_INTEIRA
   const depois: Parte[] = [
@@ -2035,7 +2075,11 @@ function passoIndicacao(ctx: Contexto, n: number): No[] {
     // seguinte, e a tabela dos pontos não perde a página
     ...(plano ? [] : [{ parte: tabelaEmaPorClasse(), id: idParte(n, 8) }]),
     ...(comSub && !junto
-      ? [etapasLongas ? { parte: tabelaSubstituicao(ctx), id: idParte(n, 9), partivel: true } : tabelaSubstituicao(ctx)]
+      ? [
+          etapasLongas
+            ? { parte: tabelaSubstituicao(ctx, { semNota: aParte }), id: idParte(n, 9), partivel: true }
+            : tabelaSubstituicao(ctx, { semNota: aParte }),
+        ]
       : []),
   ]
   // O que se preenche (ou se lê) antes das tabelas fica com o título: o método e a hora de cada grupo de
@@ -2054,7 +2098,7 @@ function passoIndicacao(ctx: Contexto, n: number): No[] {
         ),
       ]
     : []
-  const cabeca: No[] = [opcoesMetodo(plano), ...(junto ? [notaEtapas([0, 0, 0, 4], true)] : []), ...avisoPontos]
+  const cabeca: No[] = [opcoesMetodo(plano), ...(junto || aParte ? [notaEtapas([0, 0, 0, 4], true, aParte)] : []), ...avisoPontos]
   const titulo = 'Erro de indicação'
   if (ctx.extras.semBlocos)
     // Montagem de segurança: a tabela se divide onde a página acaba (o cabeçalho se repete)
@@ -2202,7 +2246,10 @@ function passoAjuste(ctx: Contexto, n: number, indicacao: number): No[] {
     k?.conformidade.solicitada && k.conformidade.criterio === 'CLIENTE' && !(k.conformidade.toleranciaCliente > 0)
   // Quando propor o ajuste (ajustar, só com a autorização do cliente: a dica ao lado de "Ajuste")
   const quando: No[] = comFaixa
-    ? [{ text: `Fora da ${FAIXA_AJUSTE.toLowerCase()}`, bold: true }, ` (passo ${indicacao}) ou a pedido do cliente: proponha o ajuste. `]
+    ? [
+        { text: `Fora da ${FAIXA_AJUSTE.toLowerCase()}`, bold: true },
+        ` (passo ${indicacao}) ou a pedido do cliente: proponha o ajuste. `,
+      ]
     : ctx.plano
       ? toleranciaPendente
         ? [
@@ -2263,7 +2310,7 @@ function tabelaEmaPorClasse(): NoObjeto {
                 bold: true,
                 color: T.texto,
               },
-              '   erro = indicação − carga; e = divisão de verificação; na verificação do Inmetro/IPEM o EMA é a metade',
+              '   erro = indicação − carga; e = divisão de verificação; na verificação do Inmetro/IPEM o EMA é a metade; com substituição (rodoviária), os dois limites levam a soma ΔI das etapas abaixo do ponto',
             ],
             fontSize: 6.6,
             color: T.suave,
@@ -2512,11 +2559,7 @@ function passoExcentricidade(ctx: Contexto, n: number): No[] {
   const texto: No = [
     ...(comCarga
       ? [`Zere vazia e coloque ${numeroBr(ecc!.carga)} ${u} em cada posição, `]
-      : [
-          'Zere vazia e coloque a carga (',
-          { text: REGRA_CARGA_EXCENTRICIDADE, bold: true },
-          ') em cada posição, ',
-        ]),
+      : ['Zere vazia e coloque a carga (', { text: REGRA_CARGA_EXCENTRICIDADE, bold: true }, ') em cada posição, ']),
     { text: 'na ordem do desenho', bold: true },
     // Com indicador remoto, a frente é o lado de acesso (rampa): anotado no verso, como todo dado diferente
     ' (nº do desenho = linha). Frente: indicador (se remoto, o de acesso).',
@@ -2595,11 +2638,12 @@ function desenhosDeReferencia(largura: number): No {
 // ---- 9. Encerramento: ambiente no fim e conclusão com o cliente ----------------------------------------------
 
 /**
- * Linhas de observação sempre impressas; com espaço sobrando no fim da página delas, ganham até mais 4 (a
- * caixa não estica até o pé da página: anotação longa vai no verso).
+ * Linhas de observação sempre impressas (pelo menos 2, também nas rodoviárias, onde mais aparecem: ao ar livre,
+ * vento, material da substituição); com espaço sobrando no fim da página delas, ganham até mais 3 (a caixa não
+ * estica até o pé da página: anotação longa continua no verso, com o nº do passo).
  */
-const LINHAS_OBSERVACOES = 1
-const MAX_LINHAS_EXTRAS = 4
+const LINHAS_OBSERVACOES = 2
+const MAX_LINHAS_EXTRAS = 3
 const ID_OBSERVACOES = 'parte-observacoes'
 const ID_FIM = 'fim-da-folha'
 const TITULO_OBSERVACOES = 'Observações (saem no certificado)'
@@ -2711,12 +2755,16 @@ function passoEncerramento(ctx: Contexto, n: number): No[] {
       },
     ],
   ]
-  // As opiniões (campo próprio no sistema) no pé da caixa das observações; anotações internas vão no verso
+  // As opiniões (campo próprio no sistema) na linha do pé da caixa das observações, ao lado do rótulo; o que
+  // não couber continua no verso, com o nº do passo
   const observacoes = linhasGuia(
     LINHAS_OBSERVACOES + ctx.extras.linhas,
     TITULO_OBSERVACOES,
-    `itens “Não” da verificação, balança ao ar livre (sol, vento, chuva), ΔT acima de ${ctx.b ? `${deltaTMaximo(ctx.b.classe)} °C` : '5 °C (classe II: 3 °C)'}, ensaio não feito e o motivo`,
-    { titulo: 'Opiniões e interpretações (opcional)', dica: 'recomendações ao cliente; saem separadas dos resultados' },
+    [
+      `itens “Não”, ar livre (sol, vento, chuva), ΔT acima de ${ctx.b ? `${deltaTMaximo(ctx.b.classe)} °C` : '5 °C (classe II: 3 °C)'}, ensaio não feito e o motivo · `,
+      { text: `continua no verso, com o nº do passo (${n})`, bold: true, color: T.instrucao },
+    ],
+    { titulo: 'Opiniões e interpretações (opcional)', dica: 'recomendações; saem à parte dos resultados' },
   )
   return passo(
     ctx,
@@ -3334,6 +3382,20 @@ async function comContinuacoes(d: DadosFolhaCampo, m: Medida): Promise<Medida> {
 }
 
 /**
+ * Os pontos e as etapas de substituição (juntos) passaram inteiros para a página seguinte, deixando a do
+ * título do passo 5 quase vazia (rodoviária com muitos pontos e etapas, depois de um passo 4 longo): monta de
+ * novo com as etapas à parte (`Extras.etapasAParte`), os pontos na página do título e as etapas depois, com o
+ * título de continuação se abrirem a página. Fica assim se os pontos couberam lá e a folha não ganhou página.
+ */
+async function comEtapasAParte(d: DadosFolhaCampo, m: Medida): Promise<Medida> {
+  if (m.extras.etapasAParte || !m.extras.continuacoes.includes(ID_TABELA_PONTOS) || !pontosComEtapas(contexto(d, m.extras)))
+    return m
+  const r = await comContinuacoes(d, await medir(d, { ...m.extras, etapasAParte: true, continuacoes: [] }))
+  const pontosNaPagina = !r.extras.continuacoes.includes(ID_TABELA_PONTOS)
+  return pontosNaPagina && r.paginas <= m.paginas && continuacoesExatas(r) && r.faltando.length <= m.faltando.length ? r : m
+}
+
+/**
  * A tabela dos pontos passou inteira para a página seguinte e o título do passo ficou no pé desta: com
  * espaço embaixo dele, o aviso "tabela na próxima página" (conferido montando de novo).
  */
@@ -3350,11 +3412,12 @@ async function comAvisoDosPontos(d: DadosFolhaCampo, m: Medida): Promise<Medida>
 /**
  * Monta a folha medindo onde cada bloco ficou: (1) a parte de um passo que abre uma página ganha o título
  * do passo com "(continuação)" — remontando até nenhuma parte ficar solta; (2) a tabela de pontos longa
- * (maior que uma página) se divide entre as páginas (conferido montando de novo) e, quando a tabela inteira
- * passou para a página seguinte, o pé da página do título avisa onde ela está; (3) as observações (num
- * bloco só com as assinaturas e o escritório, que assim nunca ficam sozinhos numa página) ganham até 4
- * linhas no espaço que sobra na página delas, conferido montando de novo: o nº de páginas não muda e
- * nenhuma parte fica sem título.
+ * (maior que uma página) se divide entre as páginas (conferido montando de novo); os pontos e as etapas de
+ * substituição que passaram juntos para a página seguinte se separam (os pontos ficam na página do título,
+ * `comEtapasAParte`) e, quando a tabela inteira ainda passou para a página seguinte, o pé da página do título
+ * avisa onde ela está; (3) as observações (num bloco só com as assinaturas e o escritório, que assim nunca
+ * ficam sozinhos numa página; pelo menos 2 linhas) ganham até mais 3 linhas no espaço que sobra na página
+ * delas, conferido montando de novo: o nº de páginas não muda e nenhuma parte fica sem título.
  * Nada pode sumir: se um bloco inteiro foi descartado (mais alto que a página), a folha é montada de novo
  * sem os blocos inteiros (`Extras.semBlocos`: só o título e a instrução de cada passo ficam juntos, e nada
  * mais alto que uma página fica inteiro); se ainda assim faltar algo, erro, antes de guardar o PDF.
@@ -3380,7 +3443,7 @@ async function montarCom(d: DadosFolhaCampo, base: Extras): Promise<Medida> {
     if (cortesConferem(r, cortes) && continuacoesExatas(r) && r.paginas <= m.paginas && r.faltando.length <= m.faltando.length)
       m = r
   }
-  m = await comAvisoDosPontos(d, m)
+  m = await comAvisoDosPontos(d, await comEtapasAParte(d, m))
   // As observações crescem no espaço que sobra; se a folha mudar de página com isso, uma linha a menos
   const linhas = linhasDeObservacao(m)
   for (const t of [...new Set([linhas, linhas - 1])].filter((x) => x > 0)) {

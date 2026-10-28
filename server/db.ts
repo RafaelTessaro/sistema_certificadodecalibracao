@@ -253,7 +253,7 @@ function numerosReservados(db: Banco) {
       ano           INTEGER NOT NULL,             -- ano e nº da sequência dos certificados (a mesma da emissão)
       sequencia     INTEGER NOT NULL,
       calibracao_id TEXT NOT NULL DEFAULT '',     -- '' = de uma folha avulsa ainda não ligada a uma calibração
-      folha         TEXT NOT NULL DEFAULT '',     -- folha de campo em que foi impresso a primeira vez (FC-2026-00042)
+      folha         TEXT NOT NULL DEFAULT '',     -- folha de campo atual do nº (FC-2026-00042): a última impressa com ele, ou a ligada
       reservado_em  TEXT NOT NULL,                -- ISO
       reservado_por TEXT NOT NULL DEFAULT '',
       situacao      TEXT NOT NULL DEFAULT 'reservado' CHECK (situacao IN ('reservado','emitido','nao_utilizado')),

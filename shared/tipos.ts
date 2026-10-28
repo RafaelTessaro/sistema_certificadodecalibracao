@@ -590,7 +590,10 @@ export interface NumeroReservado {
   sequencia: number
   /** A calibração dona do nº; '' = de uma folha avulsa ainda não ligada a uma calibração. */
   calibracaoId: ID
-  /** Nº da folha de campo em que foi impresso pela primeira vez (FC-2026-00042). */
+  /**
+   * A folha de campo atual do nº (FC-2026-00042): a última impressa com ele para a calibração (a folha nova
+   * leva o mesmo nº), a ligada a ela ou, sem dono, o papel que ficou com ele (o que foi a campo).
+   */
   folha: string
   reservadoEm: string
   reservadoPor: string
