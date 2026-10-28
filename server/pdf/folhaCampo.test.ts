@@ -356,7 +356,7 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     expect(m.marcas.get('fim:passo-7')?.pagina).toBe(2)
     expect(m.marcas.get('fim:parte-7-1')?.pagina).toBe(3)
     expect(m.extras.continuacoes).toContain('parte-7-1')
-    // Na amostra, as cargas do passo 5 sem peças menores que 10 g (60 g e 170 g) cabem cada uma numa linha: o passo
+    // Na amostra, as cargas do passo 5 sem peças menores que 10 g (60 g e 160 g) cabem cada uma numa linha: o passo
     // 7 inteiro (a carga e as 12 linhas) fica na página 2, sem "(continuação)". Nas outras classes (6 linhas), o passo
     // continua num bloco só
     const amostra = await montar(folhaClasseI())
@@ -684,6 +684,12 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     // Os pontos param em 40 t de 80 t: o técnico confirma com o cliente antes de sair
     expect(t).toContain('Resolva antes de sair')
     expect(t).toContain('Os pontos vão só até 40 000 kg (50 % de Max)')
+    // Pesos padrão de menos por etapa: a regra é da empresa (o POP não cobre as rodoviárias; a Tabela 7 dele é a
+    // da etiqueta), e a folha é o registro original: nada de remeter ao POP
+    expect(t).toContain(
+      'Cargas de substituição com 10 000 kg de pesos padrão em cada etapa: para Max de 80 000 kg, o mínimo é 15 000 kg (regra da empresa). Leve mais pesos.',
+    )
+    expect(t).not.toMatch(/Tabela 7|POP 7\.12/)
   })
 
   it('pesos que não fecham a carga da repetibilidade e da excentricidade: "faltam" na folha e aviso antes de sair', async () => {
@@ -1717,7 +1723,7 @@ describe.runIf(temPdftotext)(
 )
 
 describe.runIf(temPdftotext)(
-  'faixa para decidir o ajuste nos pontos com substituição (POP 7.8 e 7.12)',
+  'faixa para decidir o ajuste nos pontos com substituição (POP 7.8; cg-18 4.3.3-5)',
   { timeout: 120_000 },
   () => {
     it.each([

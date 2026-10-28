@@ -961,10 +961,10 @@ export function exemploPiorCaso(): DadosCertificadoPdf {
  * Analítica classe I no local de uso, com pesos E2 pelo certificado: "como encontrado", ajuste interno logo em
  * seguida (POP 7.11) e os ensaios depois do ajuste. Empuxo pela densidade do ar medida (temperatura, umidade e
  * pressão) e convecção pela diferença de temperatura pesos − ar medida antes do 1º ensaio: as opções da classe I.
- * Os pontos são os sugeridos pelo sistema (0, Min, ~25 %… em múltiplos de 10 g, sem peças menores que 10 g, e as
- * cargas onde muda o EMA: 50 g e 200 g); a
- * repetibilidade com 10 leituras de uma peça só, e a excentricidade com uma peça de 1/3 de Max ou mais, pelo
- * método 3 (zera antes de cada posição).
+ * Os pontos são os sugeridos pelo sistema (0, Min, ~25 %… em múltiplos de 10 g, sem peças menores que 10 g e
+ * dentro de 1/3 do EMA com os pesos E2 — 160 g = 100 g + 50 g + 10 g, e não 170 g = 100 g + 50 g + 20 g —, e as
+ * cargas onde muda o EMA: 50 g e 200 g); a repetibilidade com 10 leituras de uma peça só, e a excentricidade com
+ * uma peça de 1/3 de Max ou mais, pelo método 3 (zera antes de cada posição).
  */
 export function exemploClasseI(): DadosCertificadoPdf {
   const padroes = [JE2, TH01, BR01, TD01]
@@ -1041,7 +1041,7 @@ export function exemploClasseI(): DadosCertificadoPdf {
       g('ce0', 0, 0),
       g('ce1', 50, 50.0003),
       g('ce2', 110, 110.0006),
-      g('ce3', 170, 170.0009),
+      g('ce3', 160, 160.0009),
       g('ce4', 220, 220.0012),
     ]),
     repetibilidade: [
@@ -1073,7 +1073,7 @@ export function exemploClasseI(): DadosCertificadoPdf {
         g('p1', 50, 50.0001),
         g('p2', 60, 60.0001),
         g('p3', 110, 110.0002),
-        g('p4', 170, 170.0002),
+        g('p4', 160, 160.0002),
         g('p5', 200, 200.0003),
         g('p6', 220, 220.0003),
       ],

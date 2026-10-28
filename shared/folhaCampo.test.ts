@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Padrao } from './tipos.ts'
+import { exemploClasseI } from '../server/pdf/exemplosCertificado.ts'
+import { calcularCalibracao, montarCarga, pontosSugeridos } from './calibracao.ts'
 import {
   folhaClasseI,
   folhaEmBranco,
@@ -98,13 +100,16 @@ describe('planoDaFolha', () => {
     // Tolerância do cliente: a mesma EMA em toda a faixa
     expect(new Set(p.pontos.map((x) => x.ema))).toEqual(new Set([60]))
     // Os pontos param na metade de Max: o certificado só cobre até 40 t, e a folha avisa antes de sair; Min (400 kg)
-    // fora das cargas do último certificado; 10 t de pesos padrão por etapa, abaixo dos 15 t da Tabela 7 (Max 80 t)
+    // fora das cargas do último certificado; 10 t de pesos padrão por etapa, abaixo dos 15 t da regra da empresa
+    // (Max 80 t)
     expect(p.avisos).toHaveLength(3)
     expect(p.avisos[0]).toMatch(/^Os pontos vão só até 40\s000 kg \(50 % de Max\)/)
     expect(p.avisos[1]).toBe('Min (400 kg) não está entre as cargas do erro de indicação: inclua-a no sistema.')
     expect(p.avisos[2]).toMatch(
-      /^Cargas de substituição com 10\s000 kg de pesos padrão em cada etapa: para Max de 80\s000 kg, o mínimo é 15\s000 kg \(Tabela 7 do POP\)\. Leve mais pesos\.$/,
+      /^Cargas de substituição com 10\s000 kg de pesos padrão em cada etapa: para Max de 80\s000 kg, o mínimo é 15\s000 kg \(regra da empresa\)\. Leve mais pesos\.$/,
     )
+    // O POP-CAL-01 não cobre as rodoviárias: nada de remeter a ele na substituição (a Tabela 7 é a da etiqueta)
+    expect(p.avisos.join(' ')).not.toMatch(/Tabela 7|POP 7\.12|do POP\)\. Leve/)
   })
 
   it('rodoviária sem substituição no plano: sugere as etapas (os pesos previstos) e o nível de cada ponto, como o cálculo soma', () => {
@@ -128,8 +133,8 @@ describe('planoDaFolha', () => {
     expect(p.pontos.filter((x) => x.carga !== 400).every((x) => x.falta === 0 && x.excesso === 0)).toBe(true)
     // Abaixo da menor peça (os blocos de 500 kg): pesos menores
     expect(p.avisos).toContain('Os pesos previstos não fecham a carga de 400 kg: leve pesos menores.')
-    // 10 t de pesos por etapa: o mínimo da Tabela 7 para Max de 60 t (sem aviso)
-    expect(p.avisos.join(' ')).not.toContain('Tabela 7')
+    // 10 t de pesos por etapa: o mínimo da regra da empresa para Max de 60 t (sem aviso)
+    expect(p.avisos.join(' ')).not.toContain('Cargas de substituição com')
     expect(p.avisos[0]).toMatch(
       /^Os pesos previstos não chegam às cargas acima de 10\s000 kg: a folha sugere até 5 etapas de substituição de 10\s000 kg; combine o material/,
     )
@@ -469,8 +474,9 @@ describe('planoDaFolha: balança classe I', () => {
     expect(LEITURAS_CLASSE_I).toBe(10)
     expect(p.repetibilidade).toEqual([expect.objectContaining({ leituras: 10, minimo: 10 })])
     // Pontos das sugestões, com Min (10 mg) e as cargas em que o EMA muda (50 000 e e 200 000 e); os ~25 e 75 % em
-    // múltiplos de 10 g, montados sem peça menor que 10 g (POP 6.1; só a Min pede peça pequena)
-    expect(p.pontos.map((x) => x.carga)).toEqual([0, 0.01, 50, 60, 110, 170, 200, 220])
+    // múltiplos de 10 g, montados sem peça menor que 10 g e dentro de 1/3 do EMA (POP 6.1; só a Min pede peça
+    // pequena): 160 g, e não 170 g = 100 g + 50 g + 20 g
+    expect(p.pontos.map((x) => x.carga)).toEqual([0, 0.01, 50, 60, 110, 160, 200, 220])
     expect(p.pontos.every((x) => x.falta === 0)).toBe(true)
     expect(p.pontos.map((x) => x.pesos)).toEqual([
       '',
@@ -478,7 +484,7 @@ describe('planoDaFolha: balança classe I', () => {
       '50 g',
       '50 g + 10 g',
       '100 g + 10 g',
-      '100 g + 50 g + 20 g',
+      '100 g + 50 g + 10 g',
       '200 g',
       '200 g + 20 g',
     ])
@@ -493,6 +499,81 @@ describe('planoDaFolha: balança classe I', () => {
     expect([p.metodoComoEncontrado, p.metodo]).toEqual(['DESCONTINUO', 'DESCONTINUO'])
     expect(p.repetibilidade[0]).toMatchObject({ carga: 200, pesos: '200 g', falta: 0 })
     expect(p.excentricidade).toMatchObject({ aplicavel: true, metodo: 3, carga: 100, pesos: '100 g', falta: 0 })
+  })
+
+  it('o plano da balança de 220 g com o jogo E2 da amostra: o cálculo não dá "Classe dos pesos insuficiente" (POP 6.1)', () => {
+    const d = folhaClasseI()
+    const p = plano(d)
+    // O técnico mede as cargas da folha, com as peças impressas (aqui, leituras sem erro), no "como encontrado" e
+    // no ensaio final
+    const pontos = p.pontos.map((x, i) => ({
+      id: `p${i}`,
+      carga: x.carga,
+      pecas: x.pecas,
+      pecasManuais: false,
+      crescente: x.carga,
+      decrescente: null,
+      nivelSubstituicao: 0,
+    }))
+    const ensaio = { metodo: p.metodo, pontos, retornoZero: 0, substituicao: { ativa: false, pecas: [], etapas: [] } }
+    const exemplo = exemploClasseI()
+    const k = { ...exemplo.calibracao, padroesIds: d.calibracao!.padroesIds, indicacao: ensaio, comoEncontrado: ensaio }
+    const r = calcularCalibracao(k, d.balanca!, d.padroes)
+    const avisos = [...r.resultado.avisos, ...(r.comoEncontrado?.avisos ?? [])].map((a) => a.mensagem)
+    expect(r.comoEncontrado).not.toBeNull()
+    expect(avisos.join('\n')).not.toMatch(/Classe dos pesos insuficiente/)
+    expect(p.avisos).toEqual([])
+    // O ponto de sempre (170 g = 100 g + 50 g + 20 g) daria o aviso: Σ EMA E2 de 0,34 mg > 1/3 de 1 mg
+    const com170 = pontos.map((x) =>
+      x.carga === 160 ? { ...x, carga: 170, crescente: 170, pecas: montarCarga(170, 'g', d.padroes).pecas } : x,
+    )
+    const r170 = calcularCalibracao(
+      { ...k, indicacao: { ...ensaio, pontos: com170 }, comoEncontrado: null },
+      d.balanca!,
+      d.padroes,
+    )
+    expect(r170.resultado.avisos.map((a) => a.mensagem).join('\n')).toMatch(/Classe dos pesos insuficiente em 170,0000 g/)
+    // A tela ("Sugerir pontos") sugere as mesmas cargas
+    expect(
+      pontosSugeridos(
+        d.balanca!,
+        d.padroes.filter((x) => x.tipo === 'PESOS'),
+      ),
+    ).toEqual(p.pontos.map((x) => x.carga))
+  })
+
+  it('classe I: cargas pelo jogo previsto (E1: 170 g atende) e aviso nas que passam de 1/3 do EMA (rascunho, Max)', () => {
+    const d = folhaClasseI()
+    const comClasse = (classe: Padrao['classe']) => ({
+      ...d,
+      padroes: d.padroes.map((x) => (x.tipo === 'PESOS' ? { ...x, classe } : x)),
+    })
+    // Com E1, o mais próximo de 165 g (170 g = 100 g + 50 g + 20 g: 0,105 mg) já atende
+    const e1 = plano(comClasse('E1'))
+    expect(e1.pontos.map((x) => x.carga)).toEqual([0, 0.01, 50, 60, 110, 170, 200, 220])
+    expect(e1.avisos).toEqual([])
+    // Rascunho com 170 g (de um certificado antigo, ou digitado) e o jogo E2: a folha avisa antes de sair
+    const rascunho = folhaClasseI()
+    rascunho.calibracao!.indicacao.pontos = [0, 50, 110, 170, 220].map((carga, i) => ({
+      id: `r${i}`,
+      carga,
+      pecas: [],
+      pecasManuais: false,
+      crescente: null,
+      decrescente: null,
+      nivelSubstituicao: 0,
+    }))
+    const aviso =
+      'Os pesos previstos não atendem a 6.1 do POP na carga de 170 g: a soma dos EMA das peças passa de 1/3 do EMA da balança. Leve pesos de classe melhor (E1) ou mude a carga no sistema.'
+    expect(plano(rascunho).avisos).toContain(aviso)
+    // Max de 320 g (e = 1 mg): 320 g = 200 g + 100 g + 20 g dá 0,54 mg > 0,5 mg; as outras cargas atendem
+    const b320 = { ...d, balanca: { ...d.balanca!, faixas: [{ max: 320, e: 0.001, d: 0.0001 }] } }
+    const p320 = plano(b320)
+    expect(p320.pontos.map((x) => x.carga)).toEqual([0, 0.01, 50, 80, 160, 200, 240, 320])
+    expect(p320.avisos).toEqual([aviso.replace('170 g', '320 g')])
+    // Jogo sem classe: não dá para conferir (o cálculo também não confere); nas outras classes, sem esse aviso
+    expect(plano({ ...rascunho, padroes: comClasse('').padroes }).avisos.join('\n')).not.toMatch(/6\.1 do POP/)
+    expect(plano({ ...rascunho, balanca: { ...d.balanca!, classe: 'II' } }).avisos.join('\n')).not.toMatch(/6\.1 do POP/)
   })
 
   it('sem rascunho (folha da balança antes do POST): os mesmos métodos e cargas da classe I', () => {

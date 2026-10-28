@@ -2,7 +2,7 @@
 //   1. plataforma 300 kg: rascunho criado a partir do último certificado (pontos, pesos e posições de
 //      lá; conformidade pedida, com a EMA impressa), com a OS e o técnico;
 //   2. balcão multi-intervalo 6/15/33 kg × 2/5/10 g, sem calibração anterior: os ensaios vêm das
-//      sugestões do assistente (sugerirPontos, repetibilidadeSugerida, cargaExcentricidade) e o rascunho
+//      sugestões do assistente (pontosSugeridos, repetibilidadeSugerida, cargaExcentricidade) e o rascunho
 //      prevê todos os padrões ativos da empresa (como o POST /api/calibracoes faz sem histórico): a folha
 //      lista inteiros só os que vão a campo;
 //   3. rodoviária 80 t com cargas de substituição (do último certificado);

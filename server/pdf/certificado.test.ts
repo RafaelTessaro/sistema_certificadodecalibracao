@@ -442,6 +442,16 @@ describe('empuxo e convecção no método (classe I)', () => {
     }
   })
 
+  it('a amostra da classe I segue o plano do sistema (160 g = 100 g + 50 g + 10 g): sem "Classe dos pesos insuficiente"', () => {
+    const d = exemploClasseI()
+    expect(d.calibracao.indicacao.pontos.map((p) => p.carga)).toEqual([0, 0.01, 50, 60, 110, 160, 200, 220])
+    expect(d.calibracao.comoEncontrado!.pontos.map((p) => p.carga)).toEqual([0, 50, 110, 160, 220])
+    const r = calcularCalibracao(d.calibracao, d.emissao.balanca, d.emissao.padroes)
+    expect(r.comoEncontrado).not.toBeNull()
+    const avisos = [...r.resultado.avisos, ...r.comoEncontrado!.avisos].map((a) => a.mensagem)
+    expect(avisos.join('\n')).not.toMatch(/Classe dos pesos insuficiente/)
+  })
+
   it('classe I: o ar e os pesos, a variação do local no "como encontrado" e a diferença pesos − ar', () => {
     const t = nota(exemploClasseI())!
     expect(t).toMatch(

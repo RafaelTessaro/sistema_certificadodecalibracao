@@ -10,6 +10,7 @@ import {
   repetibilidadesSugeridas,
   sugerirPontos,
 } from './sugestoes.ts'
+import { serieDaClasseAtende } from './pesos.ts'
 
 describe('sugerirPontos', () => {
   it('30 kg / 5 g, classe III: 0/25/50/75/100 % mais 500e e 2000e', () => {
@@ -76,12 +77,15 @@ describe('sugerirPontos', () => {
   it('classe I: 25, 50 e 75 % de Max em múltiplos de 10 g, montáveis só com peças de 10 g ou mais (POP 6.1)', () => {
     const classeI = (max: number, e: number, unidade?: 'g' | 'mg' | 'kg', min?: number) =>
       sugerirPontos({ classe: 'I', tipoFaixas: 'UNICA', faixas: [{ max, e, d: e / 10 }], unidade, min })
-    // 220 g × 0,1 mg (e = 1 mg): 55 g e 165 g pediriam uma peça de 5 g → 60 g (50 + 10) e 170 g (100 + 50 + 20)
-    expect(classeI(220, 0.001, 'g', 0.01)).toEqual([0, 0.01, 50, 60, 110, 170, 200, 220])
-    expect(classeI(620, 0.001, 'g')).toEqual([0, 50, 160, 200, 310, 470, 620])
+    // 220 g × 0,1 mg (e = 1 mg): 55 g e 165 g pediriam uma peça de 5 g → 60 g (50 + 10) e 160 g (100 + 50 + 10;
+    // 170 g = 100 + 50 + 20 passaria de 1/3 do EMA com os pesos E2, ver o teste seguinte)
+    expect(classeI(220, 0.001, 'g', 0.01)).toEqual([0, 0.01, 50, 60, 110, 160, 200, 220])
+    // 620 g: 310 g = 200 + 100 + 10 (0,52 mg > 0,5 mg) → 300 g; 470 g nem os vizinhos atendem com E2: fica o mais
+    // próximo (a folha avisa, com o jogo previsto)
+    expect(classeI(620, 0.001, 'g')).toEqual([0, 50, 160, 200, 300, 470, 620])
     // A mesma balança em mg e em kg: as mesmas cargas
-    expect(classeI(220_000, 1, 'mg')).toEqual([0, 50_000, 60_000, 110_000, 170_000, 200_000, 220_000])
-    expect(classeI(0.22, 0.000001, 'kg')).toEqual([0, 0.05, 0.06, 0.11, 0.17, 0.2, 0.22])
+    expect(classeI(220_000, 1, 'mg')).toEqual([0, 50_000, 60_000, 110_000, 160_000, 200_000, 220_000])
+    expect(classeI(0.22, 0.000001, 'kg')).toEqual([0, 0.05, 0.06, 0.11, 0.16, 0.2, 0.22])
     // Toda carga sugerida (fora a Min, Max e as mudanças de EMA) é múltiplo de 10 g
     for (const p of classeI(220, 0.001, 'g').filter((x) => x > 0 && x < 220 && x !== 50 && x !== 200))
       expect(p % 10, `${p} g`).toBe(0)
@@ -92,6 +96,37 @@ describe('sugerirPontos', () => {
     expect(sugerirPontos({ classe: 'II', tipoFaixas: 'UNICA', faixas: [{ max: 220, e: 0.01, d: 0.001 }], unidade: 'g' })).toEqual(
       [0, 50, 55, 110, 165, 200, 220],
     )
+  })
+
+  it('classe I: entre os múltiplos de 10 g mais próximos, o que atende a 6.1 do POP (Σ EMA ≤ 1/3 do EMA; R76 3.7.1)', () => {
+    const b220 = {
+      classe: 'I' as const,
+      tipoFaixas: 'UNICA' as const,
+      faixas: [{ max: 220, e: 0.001, d: 0.0001 }],
+      unidade: 'g' as const,
+    }
+    // E2 (R 111-1): 100 g 0,16 mg; 50 g 0,10 mg; 20 g 0,080 mg; 10 g 0,060 mg. EMA OIML inicial em 160 000 e e
+    // 170 000 e: 1 mg, 1/3 = 0,333 mg. 170 g = 100 + 50 + 20 dá 0,34 mg; 160 g = 100 + 50 + 10, 0,32 mg
+    expect(serieDaClasseAtende(170, b220, 'E2')).toBe(false)
+    expect(serieDaClasseAtende(160, b220, 'E2')).toBe(true)
+    expect(serieDaClasseAtende(170, b220, 'E1')).toBe(true)
+    // No empate (165 g fica a 5 g de 160 g e de 170 g), o mais próximo de sempre (170 g) só fica se atender
+    const conferidas: number[] = []
+    const comE1 = sugerirPontos(b220, (c) => (conferidas.push(c), serieDaClasseAtende(c, b220, 'E1')))
+    expect(comE1).toEqual([0, 50, 60, 110, 170, 200, 220])
+    expect(conferidas).toEqual([60, 110, 170])
+    // Quem confere diz que não: o seguinte mais próximo que atende (no empate, o menor), até 10 % de Max
+    expect(sugerirPontos(b220, (c) => c !== 170)).toEqual([0, 50, 60, 110, 160, 200, 220])
+    expect(sugerirPontos(b220, (c) => c !== 170 && c !== 160)).toEqual([0, 50, 60, 110, 150, 200, 220])
+    expect(sugerirPontos(b220, (c) => c === 180 || c < 150)).toEqual([0, 50, 60, 110, 180, 200, 220])
+    // Nenhum atende (até 10 % de Max): o mais próximo, como antes
+    expect(sugerirPontos(b220, (c) => c < 140)).toEqual([0, 50, 60, 110, 170, 200, 220])
+    // Quem confere não sabe (null: os pesos não fecham a carga, peça sem classe): a série E2
+    expect(sugerirPontos(b220, () => null)).toEqual([0, 50, 60, 110, 160, 200, 220])
+    // Nas outras classes, quem confere nem é chamado
+    const outras: number[] = []
+    sugerirPontos({ ...b220, classe: 'II', faixas: [{ max: 220, e: 0.01, d: 0.001 }] }, (c) => (outras.push(c), false))
+    expect(outras).toEqual([])
   })
 })
 

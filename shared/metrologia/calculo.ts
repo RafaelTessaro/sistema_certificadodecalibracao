@@ -835,13 +835,14 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       nivel: 'atencao',
       mensagem: `Convecção maior que 1/3 do EMA da peça em ${lista(conveccaoAcimaEma)}: a diferença de temperatura pesos − ar é grande para a classe dos pesos (cg-18, Tabela F2.2); se possível, aguarde a aclimatação.`,
     })
-  // Pesos padrão de menos em cada etapa de substituição (a referência fica quase toda no material sem calibração)
+  // Pesos padrão de menos em cada etapa de substituição (a referência fica quase toda no material sem calibração;
+  // regra da empresa, `pesosMinimosSubstituicao`: o POP não cobre as rodoviárias)
   if (cadeia?.massa.temPecas) {
     const minimo = pesosMinimosSubstituicao(converterMassa(max, unidade, 'kg'))
     if (minimo > 0 && converterMassa(cadeia.massa.nominal, unidade, 'kg') < minimo * (1 - TOL))
       avisos.push({
         nivel: 'atencao',
-        mensagem: `Cargas de substituição com ${rotulo(cadeia.massa.nominal)} de pesos padrão em cada etapa: para Max de ${rotulo(max)}, o mínimo é ${formatarNumero(converterMassa(minimo, 'kg', unidade), 0)} ${unidade} (Tabela 7 do POP).`,
+        mensagem: `Cargas de substituição com ${rotulo(cadeia.massa.nominal)} de pesos padrão em cada etapa: para Max de ${rotulo(max)}, o mínimo é ${formatarNumero(converterMassa(minimo, 'kg', unidade), 0)} ${unidade} (regra da empresa).`,
       })
   }
   if (uMenorQueD.length)

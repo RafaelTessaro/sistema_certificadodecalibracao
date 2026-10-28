@@ -1,9 +1,9 @@
 import { CircleCheck, CircleX, Hand, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
-import { cargaDasPecas, cargaDaEtapa, descreverPecas, diferencaDoPonto } from '#shared/calibracao.ts'
+import { cargaDasPecas, cargaDaEtapa, descreverPecas, diferencaDoPonto, pontosSugeridos } from '#shared/calibracao.ts'
 import { ehRodoviaria, massaLegivel, METODOS_CARREGAMENTO } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
-import { formatarNumero, sugerirPontos } from '#shared/metrologia/index.ts'
+import { formatarNumero } from '#shared/metrologia/index.ts'
 import type { ResultadoCalculo, ResultadoPonto } from '#shared/metrologia/tipos.ts'
 import type { EnsaioIndicacao, MetodoCarregamento, Padrao, PecaCarga, PontoIndicacao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
@@ -139,7 +139,8 @@ function TabelaPontos({
   const mudarCarga = (p: PontoIndicacao, carga: number | null) => mudarPonto(p.id, (x) => ({ ...x, carga: carga ?? 0 }))
   const cargaEtapa = cargaDaEtapa(ensaio, pesos, u)
   const sugerir = () => {
-    const cargas = sugerirPontos(balanca)
+    // As mesmas cargas da folha de campo sem rascunho (na classe I, as que os pesos escolhidos montam dentro de 6.1)
+    const cargas = pontosSugeridos(balanca, pesos)
     setEnsaio((e) => ({
       ...e,
       pontos: cargas.map((c) => ({

@@ -4,7 +4,16 @@
 // as mesmas sugestões do assistente ("Sugerir pontos", "Começar com a carga sugerida", "Preparar
 // posições"): as linhas do papel batem com as da tela na hora de digitar. Puro (navegador e servidor).
 
-import { cargaDaEtapa, cargaDasPecas, descreverPecas, diferencaDoPonto, montarCarga, montarPonto } from './calibracao.ts'
+import {
+  cargaDaEtapa,
+  cargaDasPecas,
+  descreverPecas,
+  diferencaDoPonto,
+  montarCarga,
+  montarPonto,
+  pesosAtendemNaCarga,
+  pontosSugeridos,
+} from './calibracao.ts'
 import {
   converterMassa,
   deltaTPesosMaximo,
@@ -30,7 +39,6 @@ import {
   pesosMinimosSubstituicao,
   posicoesExcentricidade,
   repetibilidadesSugeridas,
-  sugerirPontos,
 } from './metrologia/index.ts'
 import type {
   Balanca,
@@ -300,7 +308,7 @@ export function planoDaFolha(
   const substituicaoAtiva = !!sub?.ativa
   const pontosBase = doRascunho
     ? ensaio!.pontos.map((p) => ({ carga: p.carga, pecas: p.pecasManuais ? p.pecas : undefined, nivel: p.nivelSubstituicao }))
-    : sugerirPontos(balanca).map((carga) => ({ carga, pecas: undefined as PecaCarga[] | undefined, nivel: 0 }))
+    : pontosSugeridos(balanca, pesos).map((carga) => ({ carga, pecas: undefined as PecaCarga[] | undefined, nivel: 0 }))
   // Rodoviária sem a substituição no plano e com pesos que não chegam às cargas: a folha sugere as etapas
   const subSugerida =
     !substituicaoAtiva && ehRodoviaria(balanca)
@@ -365,6 +373,23 @@ export function planoDaFolha(
         .map((p) => `${numeroBr(p.carga)} ${u}`)
         .join(', ')}: ${pequenas ? 'leve pesos menores.' : 'leve mais pesos ou use cargas de substituição.'}`,
     )
+  }
+  // Classe I: cargas em que as peças previstas passam de 1/3 do EMA (POP 6.1; R76 3.7.1). As sugeridas já evitam
+  // (`pontosSugeridos`), mas Max, as do rascunho e um jogo pior podem cair fora; sem o aviso, o técnico mediria a
+  // carga e o escritório só veria "Classe dos pesos insuficiente" no cálculo
+  if (balanca.classe === 'I') {
+    const fora = pontos.filter(
+      (p) =>
+        p.carga > 0 &&
+        p.falta === 0 &&
+        p.nivelSubstituicao === 0 &&
+        pesosAtendemNaCarga(p.carga, p.pecas, balanca, pesos) === false,
+    )
+    const cargas = fora.map((p) => `${numeroBr(p.carga)} ${u}`).join(', ')
+    if (fora.length)
+      avisos.push(
+        `Os pesos previstos não atendem a 6.1 do POP ${fora.length === 1 ? 'na carga' : 'nas cargas'} de ${cargas}: a soma dos EMA das peças passa de 1/3 do EMA da balança. Leve pesos de classe melhor (E1) ou mude a carga no sistema.`,
+      )
   }
   // Etapas por baixo que, com os pesos por cima, passam da carga do ponto: o cálculo usaria a soma
   for (const p of pontos.filter((x) => x.excesso > 0))
@@ -465,11 +490,12 @@ export function planoDaFolha(
 
   // ---- Substituição (a do rascunho ou a sugerida)
   const comSugestao = !!subSugerida && maiorNivel > 0
-  // Pesos padrão de menos em cada etapa (Tabela 7 do POP): a referência fica quase toda no material sem calibração
+  // Pesos padrão de menos em cada etapa (regra da empresa, `pesosMinimosSubstituicao`; o POP não cobre as
+  // rodoviárias): a referência fica quase toda no material sem calibração
   const minimoPesos = pesosMinimosSubstituicao(converterMassa(max, u, 'kg'))
   if ((substituicaoAtiva || comSugestao) && cargaEtapa > 0 && converterMassa(cargaEtapa, u, 'kg') < minimoPesos * (1 - TOL))
     avisos.push(
-      `Cargas de substituição com ${numeroBr(cargaEtapa)} ${u} de pesos padrão em cada etapa: para Max de ${numeroBr(max)} ${u}, o mínimo é ${numeroBr(converterMassa(minimoPesos, 'kg', u))} ${u} (Tabela 7 do POP). Leve mais pesos.`,
+      `Cargas de substituição com ${numeroBr(cargaEtapa)} ${u} de pesos padrão em cada etapa: para Max de ${numeroBr(max)} ${u}, o mínimo é ${numeroBr(converterMassa(minimoPesos, 'kg', u))} ${u} (regra da empresa). Leve mais pesos.`,
     )
   const substituicao = {
     ativa: substituicaoAtiva,

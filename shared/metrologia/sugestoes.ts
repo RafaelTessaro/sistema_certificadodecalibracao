@@ -10,7 +10,7 @@ import {
   ordemDeGrandeza,
 } from './arredondamento.ts'
 import { faixaDoValor, faixasOrdenadas, LIMIARES_EMA } from './ema.ts'
-import { converterMassa } from './pesos.ts'
+import { converterMassa, serieDaClasseAtende } from './pesos.ts'
 import type { InstrumentoCalculo } from './tipos.ts'
 
 const TOL = 1e-9
@@ -25,6 +25,25 @@ function multiplo(valor: number, passo: number): number {
   if (!(passo > 0)) return valor
   const n = Math.max(1, Math.round(valor / passo))
   return arredondarMeioPar(n * passo, casasDecimais(passo))
+}
+
+/**
+ * Classe I: o múltiplo de `passo` (10 g) perto de `valor` em que os pesos atendem a 6.1 do POP (`atende`): o mais
+ * próximo (`multiplo`) ou, quando ele não atende, o seguinte mais próximo que atende, a até 10 % de Max de
+ * distância (no empate, o menor), entre `passo` e Max. Nenhum atende: o mais próximo.
+ */
+function multiploQueAtende(valor: number, passo: number, max: number, atende: (carga: number) => boolean): number {
+  const maisProximo = multiplo(valor, passo)
+  if (atende(maisProximo)) return maisProximo
+  const raio = Math.max(passo, 0.1 * max)
+  const distancia = (c: number) => Number(Math.abs(c - valor).toPrecision(9))
+  const candidatos: number[] = []
+  for (let n = Math.max(1, Math.ceil((valor - raio) / passo - TOL)); n * passo <= (valor + raio) * (1 + TOL); n++) {
+    const c = arredondarMeioPar(n * passo, casasDecimais(passo))
+    if (c !== maisProximo && c < max * (1 - TOL)) candidatos.push(c)
+  }
+  candidatos.sort((a, b) => distancia(a) - distancia(b) || a - b)
+  return candidatos.find(atende) ?? maisProximo
 }
 
 /**
@@ -45,11 +64,17 @@ function meioRedondoAcima(valor: number): number {
  * 2000e na classe III; 5 000e e 20 000e na II…) que caírem dentro da faixa. Em multi-intervalo, o e é o do
  * intervalo parcial do ponto. Sem duplicados, em ordem crescente, na unidade da balança.
  * Classe I (com a `unidade`): os ~25, 50 e 75 % de Max em múltiplos de 10 g, que se montam só com peças de 10 g
- * ou mais (POP 6.1: cada peça soma a sua incerteza e a sua convecção; 220 g → 60 g = 50 g + 10 g, 110 g e
- * 170 g = 100 g + 50 g + 20 g). Com Max abaixo de 40 g não dá (o ponto de 25 % já fica abaixo de 10 g).
+ * ou mais (POP 6.1: cada peça soma a sua incerteza e a sua convecção), e em que os pesos atendem a 6.1 do POP
+ * (Σ EMA das peças ≤ 1/3 do EMA OIML inicial; R76 3.7.1): o mais próximo que atende (`multiploQueAtende`). Quem
+ * confere é `atende` (os pesos escolhidos: `pontosSugeridos`, em shared/calibracao.ts); sem ela, ou quando ela
+ * não sabe (null), a série 1-2-5 dos pesos E2, os da classe I (POP, Tabela 2). Ex.: 220 g × 0,1 mg (e = 1 mg) →
+ * 60 g = 50 g + 10 g, 110 g = 100 g + 10 g e 160 g = 100 g + 50 g + 10 g (Σ EMA E2 de 0,32 mg ≤ 0,333 mg; o
+ * mais próximo de 165 g, 170 g = 100 g + 50 g + 20 g, dá 0,34 mg). Com Max abaixo de 40 g não dá (o ponto de
+ * 25 % já fica abaixo de 10 g).
  */
 export function sugerirPontos(
   instrumento: Pick<InstrumentoCalculo, 'classe' | 'tipoFaixas' | 'faixas'> & { min?: number; unidade?: Unidade },
+  atende?: (carga: number) => boolean | null,
 ): number[] {
   const faixas = faixasOrdenadas(instrumento.faixas)
   if (!faixas.length) return []
@@ -57,12 +82,15 @@ export function sugerirPontos(
   const pontos = [0, max]
   const min = instrumento.min ?? 0
   if (min > 0 && min < max * (1 - TOL)) pontos.push(min)
-  const dezGramas = instrumento.classe === 'I' && instrumento.unidade ? converterMassa(10, 'g', instrumento.unidade) : 0
+  const unidade = instrumento.unidade
+  const dezGramas = instrumento.classe === 'I' && unidade ? converterMassa(10, 'g', unidade) : 0
   const passoClasseI = dezGramas > 0 && 0.25 * max >= dezGramas * (1 - TOL) ? dezGramas : 0
+  const atendeClasseI = (carga: number) =>
+    atende?.(carga) ?? (!!unidade && serieDaClasseAtende(carga, { ...instrumento, unidade }, 'E2'))
   for (const fracao of [0.25, 0.5, 0.75]) {
     const v = redondo(fracao * max)
     const e = faixaDoValor(v, instrumento).e
-    pontos.push(multiplo(v, passoClasseI >= e ? passoClasseI : e))
+    pontos.push(passoClasseI > 0 && passoClasseI >= e ? multiploQueAtende(v, passoClasseI, max, atendeClasseI) : multiplo(v, e))
   }
   if (instrumento.classe) {
     const [l1, l2] = LIMIARES_EMA[instrumento.classe]
@@ -159,9 +187,10 @@ export function faixasSemRepetibilidade(
 }
 
 /**
- * Massa mínima de pesos padrão (kg) em cada etapa com cargas de substituição (POP 7.12, Tabela 7), pelo Max em
- * kg: 1 000 kg até 5 t; 5 000 kg até 30 t; 10 000 kg até 60 t; 15 000 kg até 80 t; 20 000 kg acima. Abaixo de
- * 1 000 kg não se usa substituição (0).
+ * Massa mínima de pesos padrão (kg) em cada etapa com cargas de substituição (regra da empresa; o POP-CAL-01 não
+ * cobre as rodoviárias e ferroviárias, então os avisos não remetem a ele), pelo Max em kg: 1 000 kg até 5 t;
+ * 5 000 kg até 30 t; 10 000 kg até 60 t; 15 000 kg até 80 t; 20 000 kg acima. Abaixo de 1 000 kg não se usa
+ * substituição (0).
  */
 export function pesosMinimosSubstituicao(maxKg: number): number {
   if (!(maxKg >= 1000 * (1 - TOL))) return 0

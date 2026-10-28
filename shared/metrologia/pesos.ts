@@ -138,6 +138,22 @@ function somaEmaSerie(gramas: number, classe: ClassePeso): number | null {
 }
 
 /**
+ * A carga montada com os nominais 1-2-5 da `classe` (pelo nominal, sem limite de peças) atende à regra
+ * Σ EMA_pesos ≤ EMA_OIML_inicial(L)/3 (R76 3.7.1; POP 6.1)? Não quando a balança não tem classe ou a série não
+ * fecha a carga. Ex.: classe I 220 g / e = 1 mg com E2: 160 g = 100 + 50 + 10 g (0,32 mg ≤ 0,333 mg) atende;
+ * 170 g = 100 + 50 + 20 g (0,34 mg) não.
+ */
+export function serieDaClasseAtende(
+  carga: number,
+  instrumento: Pick<InstrumentoCalculo, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>,
+  classe: ClassePeso,
+): boolean {
+  const ema = emaInstrumento(carga, instrumento, 'OIML_INICIAL')
+  const soma = somaEmaSerie(converterMassa(carga, instrumento.unidade, 'g'), classe)
+  return ema !== null && soma !== null && converterMassa(soma, 'mg', instrumento.unidade) <= (ema / 3) * (1 + TOL)
+}
+
+/**
  * Classe de pesos mais grosseira (M3, M2, M1, F2, F1, E2 ou E1) que atende à regra legal
  * Σ EMA_pesos ≤ EMA_OIML_inicial(L)/3 (R76 3.7.1; Portaria 157 2.7.1), com os pesos pelo nominal.
  * Confere as cargas críticas: as mudanças de EMA (L1·e, L2·e) e o Max de cada faixa.
@@ -155,11 +171,6 @@ export function classeMinimaPesos(
     if (instrumento.tipoFaixas !== 'UNICA') inferior = f.max
   }
   const candidatas: ClassePeso[] = ['M3', 'M2', 'M1', 'F2', 'F1', 'E2', 'E1']
-  const atende = (classe: ClassePeso) =>
-    cargas.every((c) => {
-      const ema = emaInstrumento(c, instrumento, 'OIML_INICIAL')
-      const soma = somaEmaSerie(converterMassa(c, instrumento.unidade, 'g'), classe)
-      return ema !== null && soma !== null && converterMassa(soma, 'mg', instrumento.unidade) <= (ema / 3) * (1 + TOL)
-    })
+  const atende = (classe: ClassePeso) => cargas.every((c) => serieDaClasseAtende(c, instrumento, classe))
   return candidatas.find(atende) ?? null
 }

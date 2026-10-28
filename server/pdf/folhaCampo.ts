@@ -1846,7 +1846,7 @@ function larguraFaixa(ctx: Contexto): number {
   return Math.max(66, ...faixas.map((t) => Math.ceil(larguraTexto(t, { tamanho: FONTE_FAIXA }) + 7 + 2)))
 }
 
-/** Marca da faixa dos pontos com substituição por baixo: os dois limites levam a soma ΔI das etapas (POP 7.12). */
+/** Marca da faixa dos pontos com substituição por baixo: os dois limites levam a soma ΔI das etapas (cg-18 4.3.3-5). */
 const MAIS_DELTA_I = '+ ΣΔI'
 
 /** Marca das linhas da tabela de pontos (a montagem acha a página de cada uma para dividir a tabela). */
@@ -1978,7 +1978,7 @@ function tabelaPontos(ctx: Contexto, reserva: number): TabelaPontos {
  * Nota embaixo dos pontos: pesos diferentes dos impressos vão no verso e o que a última coluna quer dizer (o
  * critério e que ela é só para decidir o ajuste no local). Com substituição, os pontos com etapas por baixo
  * (marcados com "+ ΣΔI" na faixa): antes de comparar, os dois limites levam a soma ΔI das etapas abaixo deles
- * (POP 7.8 e 7.12). Onde cada coluna é digitada vai no roteiro do
+ * (POP 7.8; cg-18 4.3.3-5). Onde cada coluna é digitada vai no roteiro do
  * escritório (passo das assinaturas).
  */
 function notaFaixa(ctx: Contexto): No[] {
@@ -1991,7 +1991,7 @@ function notaFaixa(ctx: Contexto): No[] {
     : []
   if (!f || !ctx.plano?.pontos.some((p) => p.ema !== null)) return pesos.length ? [nota(pesos, [0, 3, 0, 0])] : []
   const criterio = `${CRITERIOS_EMA[f.criterio].label}${f.criterio === 'CLIENTE' ? `, ±${numeroBr(f.toleranciaCliente)} ${ctx.u}` : ''}`
-  // Pontos com substituição por baixo (POP 7.8 e 7.12): a faixa impressa ainda não tem a soma ΔI das etapas
+  // Pontos com substituição por baixo (POP 7.8; cg-18 4.3.3-5): a faixa impressa ainda não tem a soma ΔI das etapas
   const sub = ctx.plano.substituicao
   const comDelta = (sub.ativa || sub.sugerida) && ctx.plano.pontos.some((p) => p.nivelSubstituicao > 0 && p.ema !== null)
   const delta: No[] = comDelta

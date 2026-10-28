@@ -3,7 +3,7 @@
 // Usado no navegador (cálculo ao vivo) e no servidor (emissão e PDF).
 
 import { calculoLegado, massaLegivel } from './dominio.ts'
-import { calcular, emaPeso } from './metrologia/index.ts'
+import { calcular, emaInstrumento, emaPeso, sugerirPontos } from './metrologia/index.ts'
 import type { ArCalculo, EntradaCalculo, PecaCalculo, ResultadoCalculo, TermicaCalculo } from './metrologia/tipos.ts'
 import type {
   Balanca,
@@ -89,6 +89,35 @@ export function montarCarga(
   }
   const falta = restante > tolerancia ? deGramas(restante, unidade) : 0
   return { pecas, falta, total: deGramas(alvoG - Math.max(restante, 0), unidade) }
+}
+
+/**
+ * As peças de uma carga atendem a 6.1 do POP (R76 3.7.1): a soma dos EMA delas (R111, pela classe de cada jogo) não
+ * passa de 1/3 do EMA OIML inicial da balança na carga? É a regra que o cálculo confere (o aviso "Classe dos pesos
+ * insuficiente"), sem a alternativa da incerteza dos pesos E1/E2 (na classe I, com a deriva pelo EMA, ela só
+ * atende quando a soma também atende). null quando não dá para conferir: balança sem classe, sem peças, peças que
+ * não somam a carga ou alguma sem a classe (sem EMA).
+ */
+export function pesosAtendemNaCarga(carga: number, pecas: PecaCarga[], balanca: Balanca, padroes: Padrao[]): boolean | null {
+  const ema = emaInstrumento(carga, balanca, 'OIML_INICIAL')
+  const calculo = pecasParaCalculo(pecas, padroes, balanca.unidade)
+  if (ema === null || !(carga > 0) || !calculo.length || calculo.some((p) => !(p.ema > 0))) return null
+  if (diferencaDoPonto(carga, 0, cargaDasPecas(pecas, padroes, balanca.unidade)) !== 0) return null
+  const soma = calculo.reduce((s, p) => s + p.ema * p.quantidade, 0)
+  return soma <= (ema / 3) * (1 + 1e-9)
+}
+
+/**
+ * Pontos sugeridos do erro de indicação (`sugerirPontos`) para os pesos escolhidos: na classe I, as cargas perto de
+ * 25, 50 e 75 % de Max ficam no múltiplo de 10 g mais próximo em que as peças montadas (`montarCarga`, como o
+ * editor e a folha montam) atendem a 6.1 do POP (`pesosAtendemNaCarga`; quando os pesos não fecham a carga ou não
+ * têm classe, a série E2). O botão "Sugerir pontos" e a folha de campo sem rascunho usam esta: as cargas batem.
+ */
+export function pontosSugeridos(balanca: Balanca, padroes: Padrao[]): number[] {
+  return sugerirPontos(balanca, (carga) => {
+    const m = montarCarga(carga, balanca.unidade, padroes)
+    return m.falta > 0 ? null : pesosAtendemNaCarga(carga, m.pecas, balanca, padroes)
+  })
 }
 
 /** Carga de pesos padrão de cada etapa de substituição (0 quando o ensaio não usa substituição). */

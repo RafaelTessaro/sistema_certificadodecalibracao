@@ -439,23 +439,26 @@ describe('cg-18 H3, situação A (cargas de substituição)', () => {
     expect(r.erroRetornoZero).toBe(4)
   })
 
-  it('pesos padrão por etapa abaixo da Tabela 7 do POP (massa mínima com substituição): aviso', () => {
+  it('pesos padrão por etapa abaixo da massa mínima com substituição (regra da empresa, fora do POP): aviso', () => {
     // Os milhares com espaço fino, como no certificado: comparados com espaço comum
-    const tabela7 = (r: ReturnType<typeof calcular>) =>
+    const minimoSub = (r: ReturnType<typeof calcular>) =>
       r.avisos
-        .filter((a) => a.mensagem.includes('Tabela 7'))
+        .filter((a) => a.mensagem.startsWith('Cargas de substituição com'))
         .map((a) => ({ ...a, mensagem: a.mensagem.replace(/[\u00A0\u2009\u202F]/g, ' ') }))
     // 10 000 kg por etapa com Max de 30 t: acima dos 5000 kg exigidos
-    expect(tabela7(calcular(entrada()))).toEqual([])
+    expect(minimoSub(calcular(entrada()))).toEqual([])
     const poucos = entrada()
     poucos.indicacao.substituicao.pecas = [m1(4)]
-    expect(tabela7(calcular(poucos))).toEqual([
+    const r = calcular(poucos)
+    expect(minimoSub(r)).toEqual([
       {
         nivel: 'atencao',
         mensagem:
-          'Cargas de substituição com 4000 kg de pesos padrão em cada etapa: para Max de 30 000 kg, o mínimo é 5000 kg (Tabela 7 do POP).',
+          'Cargas de substituição com 4000 kg de pesos padrão em cada etapa: para Max de 30 000 kg, o mínimo é 5000 kg (regra da empresa).',
       },
     ])
+    // O POP-CAL-01 não cobre as rodoviárias: o aviso não remete a ele (a Tabela 7 do POP é a da etiqueta)
+    expect(r.avisos.map((a) => a.mensagem).join(' ')).not.toMatch(/Tabela 7|POP 7\.12/)
     expect(pesosMinimosSubstituicao(999)).toBe(0)
     expect([1000, 5000, 5001, 30_000, 60_000, 80_000, 80_001].map(pesosMinimosSubstituicao)).toEqual([
       1000, 1000, 5000, 5000, 10_000, 15_000, 20_000,
