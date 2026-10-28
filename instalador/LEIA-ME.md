@@ -36,6 +36,12 @@ Numa instalação nova, antes da tela "Tipo de instalação", o setup procura um
 | Atalhos | Área de Trabalho e Menu Iniciar (todos os usuários): "BC Calibração" (`http://localhost:PORTA`), "Redefinir senha do BC Calibração" (pede permissão de administrador) e "Pasta dos certificados e backups" |
 | Página final | Como os outros computadores acessam (instalar a estação ou abrir `http://NOMEDOCOMPUTADOR:PORTA` e os IPs no navegador) e a opção de abrir o sistema. **No primeiro acesso, abra o sistema no próprio servidor**: ele pede para criar o administrador |
 
+**Depois de atualizar para a 1.0.2:**
+
+1. Em **Configurações → Certificado**, registre o POP (código e revisão; o arquivo pode ser anexado depois). Sem POP, o sistema não emite certificados.
+2. Em **Padrões**, anexe o certificado de calibração de cada padrão: ele vai junto no e-mail do certificado.
+3. Para balanças classe I, cadastre a densidade e a incerteza da densidade dos jogos de pesos E2/F1 e o termômetro de duas entradas.
+
 **Atualização por cima:** é só rodar o setup novo. Ele para o serviço e copia o banco para `dados\backups\antes-da-versao-X.db`. A cópia é feita pelo `node.exe` instalado com `node:sqlite`, por `VACUUM INTO`, e conferida em seguida; se isso falhar, os arquivos `.db`, `-wal` e `-shm` são copiados como estão. Depois o setup troca o programa sem tocar nos dados (o `.env` da pasta do programa também fica), reinstala o serviço e o inicia. A porta, as redes e a conta continuam as mesmas.
 
 **Desinstalação:** pelo "Aplicativos instalados" do Windows. Remove o serviço, a regra do Firewall e os atalhos e pergunta se os dados devem ser apagados. O padrão é **não**, e apagar pede uma segunda confirmação. Quando os dados ficam, a porta e as redes continuam no registro e são reaproveitadas numa reinstalação.
