@@ -27,7 +27,7 @@ import {
   ordemDeGrandeza,
 } from '#shared/metrologia/index.ts'
 import type { ResultadoCalculo, ResultadoPonto } from '#shared/metrologia/tipos.ts'
-import { opcoesComoEncontrado } from '#shared/calibracao.ts'
+import { leiturasDoMetodo, opcoesComoEncontrado } from '#shared/calibracao.ts'
 import {
   calculoLegado,
   CRITERIOS_EMA,
@@ -1102,8 +1102,10 @@ interface OpcoesTabelaErros {
 const pontosLidos = (r: ResultadoCalculo) => r.pontos.filter((p) => p.texto.crescente !== '' || p.texto.decrescente !== '')
 
 /** O ensaio usa as duas direções (↑ e ↓)? */
-const ambosSentidos = (ensaio: EnsaioIndicacao) =>
-  ensaio.pontos.some((p) => p.crescente !== null) && ensaio.pontos.some((p) => p.decrescente !== null)
+const ambosSentidos = (ensaio: EnsaioIndicacao) => {
+  const lidas = ensaio.pontos.map((p) => leiturasDoMetodo(p, ensaio.metodo))
+  return lidas.some((p) => p.crescente !== null) && lidas.some((p) => p.decrescente !== null)
+}
 
 /** O ensaio tem cargas de substituição em algum ponto? */
 const comSubstituicao = (ensaio: EnsaioIndicacao) =>

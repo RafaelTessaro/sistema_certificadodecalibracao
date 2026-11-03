@@ -14,6 +14,7 @@ import type {
   Padrao,
   PecaCarga,
   PesoPadrao,
+  PontoIndicacao,
   Unidade,
 } from './tipos.ts'
 
@@ -165,6 +166,21 @@ export function descreverPecas(pecas: PecaCarga[], padroes: Padrao[]): string {
     .join(' + ')
 }
 
+/**
+ * Leituras que o método de carregamento usa: só a subida (contínuo, com descarga), só a descida (decrescente)
+ * ou as duas. A coluna escondida pela troca de método guarda o que foi digitado antes, mas não entra no
+ * cálculo nem no certificado.
+ */
+export function leiturasDoMetodo(
+  p: Pick<PontoIndicacao, 'crescente' | 'decrescente'>,
+  metodo: EnsaioIndicacao['metodo'],
+): { crescente: number | null; decrescente: number | null } {
+  return {
+    crescente: metodo === 'DECRESCENTE' ? null : p.crescente,
+    decrescente: metodo === 'CRESCENTE_DECRESCENTE' || metodo === 'DECRESCENTE' ? p.decrescente : null,
+  }
+}
+
 function indicacaoParaCalculo(ensaio: EnsaioIndicacao, padroes: Padrao[], unidade: Unidade): EntradaCalculo['indicacao'] {
   const etapa = cargaDaEtapa(ensaio, padroes, unidade)
   return {
@@ -179,8 +195,7 @@ function indicacaoParaCalculo(ensaio: EnsaioIndicacao, padroes: Padrao[], unidad
         id: p.id,
         carga,
         pecas: pecasParaCalculo(p.pecas, padroes, unidade),
-        crescente: p.crescente,
-        decrescente: p.decrescente,
+        ...leiturasDoMetodo(p, ensaio.metodo),
         nivelSubstituicao: nivel,
       }
     }),

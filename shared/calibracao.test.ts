@@ -99,6 +99,78 @@ describe('cargas', () => {
 })
 
 describe('calcularCalibracao', () => {
+  it('a coluna escondida pela troca de método não entra no cálculo (descida digitada e depois "crescente contínuo")', () => {
+    const jogo: Padrao = {
+      ...PADRAO_VAZIO,
+      id: 'jp2',
+      versao: 1,
+      identificacao: 'JP-02',
+      descricao: 'Pesos de 1 kg a 20 kg',
+      classe: 'M1',
+      criadoEm: '',
+      atualizadoEm: '',
+      pesos: [1000, 2000, 5000, 10_000, 20_000].map((g) => ({
+        id: `p${g}`,
+        marca: `${g}`,
+        nominal: g,
+        correcao: 0,
+        incerteza: 10,
+        k: 2,
+      })),
+    }
+    const prix: Balanca = {
+      ...BALANCA_VAZIA,
+      id: 'prix',
+      versao: 1,
+      tipo: 'BALCAO',
+      classe: 'III',
+      faixas: [{ max: 30, e: 0.01, d: 0.01 }],
+      criadoEm: '',
+      atualizadoEm: '',
+    }
+    const lidas: [number, number][] = [
+      [1, 1],
+      [2, 2],
+      [5, 4.998],
+      [10, 9.995],
+      [20, 19.99],
+      [30, 29.99],
+    ]
+    const indicacao = (metodo: EnsaioIndicacao['metodo']): EnsaioIndicacao => ({
+      metodo,
+      retornoZero: null,
+      substituicao: { ativa: false, pecas: [], etapas: [] },
+      // A descida do ponto de 1 kg ficou com 0 (digitada antes de trocar o método)
+      pontos: lidas.map(([q, l], i) => ({
+        id: `q${i}`,
+        carga: q,
+        pecas: montarCarga(q, 'kg', [jogo]).pecas,
+        pecasManuais: false,
+        crescente: l,
+        decrescente: q === 1 ? 0 : l,
+        nivelSubstituicao: 0,
+      })),
+    })
+    const calcular = (metodo: EnsaioIndicacao['metodo']) =>
+      calcularCalibracao({ ...calibracaoVazia(), indicacao: indicacao(metodo) }, prix, [jogo]).resultado
+    const foraDaCarga = (r: ReturnType<typeof calcular>) => r.avisos.some((a) => /mais de 10 % fora da carga/.test(a.mensagem))
+
+    const continuo = calcular('CONTINUO')
+    expect(foraDaCarga(continuo)).toBe(false)
+    expect(continuo.pontos.every((p) => p.decrescente === null)).toBe(true)
+    expect(Math.max(...continuo.pontos.map((p) => Math.abs(p.crescente!.erro)))).toBeCloseTo(0.01, 9)
+    expect(
+      entradaDoCalculo({ ...calibracaoVazia(), indicacao: indicacao('DESCONTINUO') }, prix, [jogo]).indicacao.pontos[0]
+        .decrescente,
+    ).toBeNull()
+    // Só a descida: a subida fica de fora
+    expect(
+      entradaDoCalculo({ ...calibracaoVazia(), indicacao: indicacao('DECRESCENTE') }, prix, [jogo]).indicacao.pontos[0].crescente,
+    ).toBeNull()
+    // Com as duas colunas, o 0 da descida volta a valer (e é avisado)
+    expect(foraDaCarga(calcular('CRESCENTE_DECRESCENTE'))).toBe(true)
+  })
+
   it('"como encontrado": a incerteza usa o retorno ao zero desse ensaio (com substituição), não o do ensaio final', () => {
     const d = exemploRodoviaria()
     const { balanca: b, padroes } = d.emissao
