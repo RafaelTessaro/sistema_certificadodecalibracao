@@ -56,13 +56,20 @@ import type {
 
 /**
  * Código e revisão do formulário (documento controlado, ISO/IEC 17025 8.3): muda a cada alteração do layout.
- * Rev. 01: folha enxuta (dado impresso diferente vai no verso, sem caixas de correção). O procedimento de
- * referência é o POP configurado no sistema (sai no rodapé, ver `referenciaDoFormulario`); `referencia` é o
- * guia técnico (metadados do PDF).
+ * Rev. 01: folha enxuta (dado impresso diferente vai no verso, sem caixas de correção). Rev. 02: compacta, em 2
+ * páginas (frente e verso) nas balanças cadastradas: chegada e balança num bloco, ambiente do início e do fim numa
+ * tabela, repetibilidade na horizontal, escritório ao lado das observações. Rev. 03: só a medição: sem QR, sem
+ * rubrica no rodapé e só a OS na faixa do alto; sem a verificação antes de calibrar (o passo 4 é só o ambiente),
+ * sem ajuste e reparo, sem "como encontrado" e "depois do ajuste", sem a faixa do EMA e sem o encerramento (a
+ * conformidade e a próxima calibração ficam só no sistema; o diferente e as observações vão no espaço livre da
+ * frente, embaixo do passo 4, ou numa folha anexa: o verso são os ensaios); o ΔT pesos − ar só na balança classe I (a
+ * folha em branco é das classes II a IIII); a excentricidade com o método numa frase fixa; o lembrete do ambiente do
+ * fim antes das assinaturas; 8 passos. O procedimento de referência é o POP configurado no sistema (sai no rodapé,
+ * ver `referenciaDoFormulario`); `referencia` é o guia técnico (metadados do PDF).
  */
 export const FORMULARIO_FOLHA_CAMPO = {
   codigo: 'FOR-CAL-01',
-  revisao: '01',
+  revisao: '03',
   titulo: 'Folha de campo de calibração de balança',
   referencia: 'EURAMET cg-18 v4.0',
 } as const
@@ -453,9 +460,14 @@ export function planoDaFolha(
   // Cargas copiadas do último certificado (o rascunho novo e o "recalibrar"): a da excentricidade abaixo do
   // mínimo da Tabela 5 do POP (o arredondamento antigo ia para o mais próximo) e um ensaio de repetibilidade só
   // numa balança de vários intervalos (POP 7.2 e 7.9: acertar no sistema antes de imprimir)
-  // Classe I: o método 3 (POP 7.10); o rascunho copiado de um certificado antigo pode vir com outro
+  // Classe I: o método 3 (POP 7.10); o rascunho copiado de um certificado antigo pode vir com outro. Nas outras
+  // classes, a folha imprime o método 1 numa frase fixa (sem opções de marcar): o sistema tem de estar com ele
   if (excentricidade.aplicavel && balanca.classe === 'I' && excentricidade.metodo !== 3)
     avisos.push('Excentricidade: na classe I, o POP pede o método 3 (zera antes de cada posição); acerte no sistema.')
+  if (excentricidade.aplicavel && balanca.classe !== 'I' && excentricidade.metodo !== 1)
+    avisos.push(
+      `Excentricidade: a folha prevê o método 1 (zera vazia e desloca a carga pelas posições) e o sistema está com o método ${excentricidade.metodo}; acerte no sistema.`,
+    )
   if (excentricidade.aplicavel && excentricidadeAbaixoDoMinimo(excentricidade.carga, max, u))
     avisos.push(
       `Excentricidade: ${numeroBr(excentricidade.carga)} ${u} está abaixo do mínimo da Tabela 5 do POP (${minimoExcentricidade(max, u).fracao}); use ≥ ${numeroBr(cargaExcentricidade(max, u, balanca.classe))} ${u} no sistema.`,

@@ -600,8 +600,24 @@ describe('planoDaFolha: balança classe I', () => {
     expect(p.avisos).toContain(
       'Excentricidade: na classe I, o POP pede o método 3 (zera antes de cada posição); acerte no sistema.',
     )
-    // Nas outras classes, o método 1 é o padrão: sem aviso
-    expect(plano({ ...d, balanca: { ...d.balanca!, classe: 'II' } }).avisos.join('\n')).not.toMatch(/método 3/)
+    // Nas outras classes, o método 1 é o padrão (e o da folha): sem aviso
+    expect(plano({ ...d, balanca: { ...d.balanca!, classe: 'II' } }).avisos.join('\n')).not.toMatch(/Excentricidade/)
+  })
+
+  it('classes II a IIII: a folha prevê o método 1 numa frase fixa; com outro no sistema, aviso para acertar', () => {
+    for (const metodo of [2, 3, 4] as const) {
+      const d = folhaPlataforma()
+      d.calibracao!.excentricidade = { ...d.calibracao!.excentricidade, metodo }
+      expect(plano(d).avisos).toContain(
+        `Excentricidade: a folha prevê o método 1 (zera vazia e desloca a carga pelas posições) e o sistema está com o método ${metodo}; acerte no sistema.`,
+      )
+    }
+    // Com o método 1, sem aviso; não aplicável (gancho), sem aviso
+    expect(plano(folhaPlataforma()).avisos.join('\n')).not.toMatch(/Excentricidade/)
+    const gancho = folhaPlataforma()
+    gancho.balanca = { ...gancho.balanca!, receptor: 'GANCHO' }
+    gancho.calibracao!.excentricidade = { ...gancho.calibracao!.excentricidade, metodo: 2 }
+    expect(plano(gancho).avisos.join('\n')).not.toMatch(/folha prevê o método 1/)
   })
 
   it('rascunho com menos de 10 leituras: a folha prevê 10 (o mínimo da classe I)', () => {
@@ -645,8 +661,8 @@ describe('referência do formulário', () => {
     expect(referenciaDoFormulario('POPULAR-01 rev. 0')).toBe('POP POPULAR-01 rev. 0')
     for (const vazio of ['', '   ', null, undefined]) expect(referenciaDoFormulario(vazio)).toBe('')
     expect(JSON.stringify(FORMULARIO_FOLHA_CAMPO)).not.toContain('PT-CAL-01')
-    // Layout novo (folha enxuta): revisão nova do formulário controlado
-    expect(FORMULARIO_FOLHA_CAMPO.revisao).toBe('01')
+    // Layout novo (rev. 03, só a medição): revisão nova do formulário controlado
+    expect(FORMULARIO_FOLHA_CAMPO.revisao).toBe('03')
   })
 })
 

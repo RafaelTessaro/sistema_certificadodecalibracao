@@ -1,6 +1,6 @@
 // Folhas de campo de exemplo, realistas, para os testes e as amostras:
 //   1. plataforma 300 kg: rascunho criado a partir do último certificado (pontos, pesos e posições de
-//      lá; conformidade pedida, com a EMA impressa), com a OS e o técnico;
+//      lá; conformidade pedida, que fica só no sistema), com a OS e o técnico;
 //   2. balcão multi-intervalo 6/15/33 kg × 2/5/10 g, sem calibração anterior: os ensaios vêm das
 //      sugestões do assistente (pontosSugeridos, repetibilidadeSugerida, cargaExcentricidade) e o rascunho
 //      prevê todos os padrões ativos da empresa (como o POST /api/calibracoes faz sem histórico): a folha
@@ -11,12 +11,12 @@
 //      folha sugere as etapas, com os 20 × 500 kg em cada uma, e o nº de substituições de cada ponto) e sem
 //      declaração de conformidade pedida;
 //   6. rodoviária multi-intervalo 30/60/80 t (a balança do certificado "pior caso"): rascunho do último
-//      certificado, com 11 pontos, 7 etapas de substituição e 4 padrões (a folha mais longa das amostras: até
-//      4 páginas); o ensaio de repetibilidade único que veio do certificado gera o aviso antes de sair;
+//      certificado, com 11 pontos, 7 etapas de substituição e 4 padrões (a folha mais longa das amostras, também em
+//      2 páginas); o ensaio de repetibilidade único que veio do certificado gera o aviso antes de sair;
 //   7. analítica classe I 220 g × 0,1 mg (a do certificado de exemplo da classe I), primeira calibração: o plano sai
-//      das sugestões (10 leituras na repetibilidade) e a folha leva os campos da classe I (pesos × ar, capela,
-//      umidade e pressão obrigatórias, aquecimento de 2 h), com o jogo E2, o barômetro e o termômetro de duas
-//      entradas.
+//      das sugestões (10 leituras na repetibilidade) e a folha leva os campos da classe I (ΔT pesos − ar, umidade
+//      e pressão obrigatórias, o zero antes de cada posição na excentricidade), com o jogo E2, o barômetro e o
+//      termômetro de duas entradas.
 // Os cadastros (empresa, clientes, padrões) e o POP do rodapé são os dos certificados de exemplo. Todas levam o
 // nº do certificado reservado na impressão, como no sistema: as com balança, o da calibração; as em branco
 // (folha avulsa), um nº da folha, que passa para a calibração a que ela for ligada.

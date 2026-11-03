@@ -287,7 +287,7 @@ describe('folha de campo sem calibração', { timeout: 30_000 }, () => {
     expect((await t.chamar('GET', '/api/folha-campo?chave=curta', { cookie: t.cookieComum })).statusCode).toBe(400)
     if (temPdftotext) {
       const texto = textoDoPdf(a.rawPayload)
-      expect(texto).toContain('Folha em branco, para balança ainda não cadastrada')
+      expect(texto).toContain('Em branco: marque os padrões levados e, no cliente, os usados.')
       expect(texto).toContain('JP-01')
       expect(texto).not.toContain('MERCADO BOM PRECO')
     }
