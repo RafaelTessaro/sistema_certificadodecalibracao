@@ -106,18 +106,20 @@ Desinstalar.exe /S /REMOVERDADOS   (apaga os dados)
 - **Voltar uma cópia do banco** (o `antes-da-versao-X.db` de uma atualização ou uma cópia da pasta `backups\`), num prompt de comando como administrador:
   1. pare o serviço: `net stop BCCalibracao`;
   2. copie a cópia para `dados\restaurar.db` (a de `backups\` fica como está);
-  3. passe para ela as contas e as folhas de campo de hoje, **antes** de pôr a cópia no lugar. As folhas impressas depois da cópia já estão no papel, com os técnicos: continuam registradas (e ligadas às calibrações que a cópia tem), e os nºs delas nunca se repetem:
+  3. passe para ela as contas, os certificados e as folhas de campo de hoje, **antes** de pôr a cópia no lugar. Os certificados emitidos (ou cancelados e revisados) depois da cópia já estão com os clientes: continuam como estão, com o mesmo nº e o mesmo código, e o QR code do papel continua conferindo. As folhas impressas depois da cópia já estão no papel, com os técnicos: continuam registradas (e ligadas às calibrações que a cópia tem), e os nºs delas nunca se repetem:
      ```
      cd "C:\Program Files\BC Calibracao"
      node\node.exe server\ferramentas\redefinir-senha.mjs transplantar "C:\ProgramData\BC Calibracao\dados\bc-calibracao.db" "C:\ProgramData\BC Calibracao\dados\restaurar.db"
      ```
-     A resposta diz quantas folhas passaram (`folhasCampo`). Com `--contas-da-copia`, as contas voltam como estavam na cópia (trocar o servidor de computador). Se o banco atual não puder ser lido, a ferramenta avisa e segue sem as folhas (veja abaixo);
+     A resposta diz quantos certificados (`certificados`) e quantas folhas (`folhasCampo`) passaram. Com `--contas-da-copia`, as contas voltam como estavam na cópia (trocar o servidor de computador). Se o banco atual não puder ser lido, a ferramenta avisa e segue sem os certificados e as folhas (veja abaixo);
   4. renomeie `bc-calibracao.db` para `bc-calibracao.db.antes-de-restaurar`, apague `bc-calibracao.db-wal` e `bc-calibracao.db-shm` e renomeie `restaurar.db` para `bc-calibracao.db`;
   5. inicie o serviço (`net start BCCalibracao`) ou, se a cópia é de antes de uma atualização, reinstale a versão anterior.
 
   **As folhas de campo impressas depois da cópia voltam sozinhas.** O PDF de cada folha fica em `folhas-campo\`, e o serviço confere essa pasta sempre que sobe. Sem o passo 3 (ou com o banco atual estragado), as folhas que a cópia não conhece voltam ao registro como folhas livres, com a data da impressão. Ligue o papel à calibração pelo nº, na etapa 1: o sistema pede confirmação, porque não sabe para qual balança a folha foi impressa. Uma calibração nunca fica com duas folhas vigentes: fica a mais nova, e a outra pode ser ligada de novo pelo nº do papel. O registro de atividades mostra o que voltou.
 
-  Não apague nem troque a pasta `folhas-campo\` (nem a `certificados\`): voltar uma cópia mexe só no banco, e os nºs que têm PDF nessa pasta nunca são emitidos de novo.
+  **Os nºs dos certificados emitidos depois da cópia nunca saem de novo.** O PDF de cada certificado fica em `certificados\`, e o serviço também confere essa pasta sempre que sobe. Sem o passo 3 (ou com o banco atual estragado), a cópia não tem esses certificados: o nº de cada PDF que ela não conhece fica como não utilizado (aparece em "Números não utilizados", com o motivo), e a calibração que estava em andamento na cópia recebe outro nº na emissão. O PDF entregue fica na pasta, intacto, mas o código dele não confere mais na verificação: por isso, sempre que o banco atual puder ser lido, faça o passo 3. Nenhum PDF da pasta é sobrescrito.
+
+  Não apague nem troque as pastas `folhas-campo\` e `certificados\`: voltar uma cópia mexe só no banco, e os nºs que têm PDF nessas pastas nunca são emitidos de novo.
 - **Pasta dos certificados e backups:** o Windows diz que você não tem permissão e oferece "Continuar". Clicar dá à sua conta acesso permanente à pasta; a próxima atualização desfaz isso.
 
 ## Não testado

@@ -245,7 +245,9 @@ export function RegistrarPopModal({
     }
   }
 
-  const { valor, erros } = normalizarPop({ ...f, arquivo: '' })
+  // A data da revisão vai até hoje (o servidor confere de novo)
+  const hoje = hojeISO()
+  const { valor, erros } = normalizarPop({ ...f, arquivo: '' }, hoje)
   const erroDe = (re: RegExp) => (tentou ? erros.find((e) => re.test(e)) : undefined)
   const erroCodigo = erroDe(/código/)
   const erroRevisao = erroDe(/revisão do POP com/)
@@ -268,7 +270,7 @@ export function RegistrarPopModal({
       useTempoReal.getState().mudou('config')
       toast.sucesso(
         'Revisão do POP registrada',
-        `${textoPop(versao)} vale para os próximos certificados${versao.arquivo ? '' : '. Anexe o arquivo assim que ficar pronto'}.`,
+        `${textoPop(versao)} vale para as próximas calibrações${versao.arquivo ? '' : '. Anexe o arquivo assim que ficar pronto'}.`,
       )
       aoFechar()
     } catch (err) {
@@ -284,7 +286,7 @@ export function RegistrarPopModal({
       aoFechar={() => !salvando && aoFechar()}
       icone={<BookOpenText className="h-5 w-5" />}
       titulo={atual ? 'Registrar nova revisão do POP' : 'Registrar o POP'}
-      descricao="Vale para os próximos certificados. Os já emitidos continuam com a revisão de quando foram emitidos."
+      descricao="Vale para as folhas de campo impressas daqui em diante e para as calibrações sem folha a partir da data da revisão. Os certificados emitidos não mudam."
       largura="max-w-lg"
       rodape={
         <>
@@ -347,6 +349,7 @@ export function RegistrarPopModal({
           <Input
             id="pop-data"
             type="date"
+            max={hoje}
             value={f.data}
             onChange={(e) => setF((x) => ({ ...x, data: e.target.value }))}
             aria-invalid={erroData ? true : undefined}
@@ -378,8 +381,8 @@ export function RegistrarPopModal({
           <p className="flex items-center gap-2 text-xs text-muted">
             <FileText className="h-3.5 w-3.5 shrink-0" />
             <span>
-              Os próximos certificados saem com <b className="tnum font-semibold text-ink-2">{textoPop(valor)}</b> no lugar de{' '}
-              <span className="tnum">{textoPop(atual)}</span>.
+              As próximas calibrações saem com <b className="tnum font-semibold text-ink-2">{textoPop(valor)}</b> no lugar de{' '}
+              <span className="tnum">{textoPop(atual)}</span> (a que já tem folha de campo impressa continua com a da folha).
             </span>
           </p>
         )}

@@ -7,7 +7,7 @@
 // pela pasta das folhas). O PDF da folha é trocado por um falso (rápido), com o nº nas palavras-chave, como o
 // de verdade, e que guarda o que o gerador recebeu.
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -247,6 +247,89 @@ describe('reserva na primeira impressão da folha de campo', { timeout: 30_000 }
     t.ctx.repo.salvarConfig({ ...config, numeracao: { formato: '{seq}/{ano}', digitos: 4 } })
     expect((await emitir(k.id)).numero).toBe(cc(1))
     expect((await emitir((await c.calibracaoPronta()).id)).numero).toBe(`0002/${ano}`)
+  })
+
+  it('o formato mudou depois da reserva: a revisão sai com o nº impresso na folha e -R1 (o da etiqueta), não no formato novo', async () => {
+    await iniciar()
+    const k = await c.calibracaoPronta()
+    await folhaDe(k.id)
+    const config = t.ctx.repo.obterConfig()
+    t.ctx.repo.salvarConfig({ ...config, numeracao: { formato: '{seq}/{ano}', digitos: 4 } })
+    const original = await emitir(k.id)
+    expect(original.numero).toBe(cc(1))
+    const aberta = await t.chamar('POST', `/api/calibracoes/${original.id}/revisar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Correção do endereço do cliente' },
+    })
+    expect(aberta.statusCode, aberta.body).toBe(201)
+    const rev = await emitir(aberta.json().calibracao.id)
+    expect(rev.numero).toBe(`${cc(1)}-R1`)
+    expect(rev.emissao!.arquivo).toBe(`${ano}/Certificado-${cc(1)}-R1.pdf`)
+  })
+
+  it('o nº com PDF na pasta certificados (de um certificado que o banco não conhece) nunca é emitido de novo', async () => {
+    await iniciar()
+    const k = await c.calibracaoPronta()
+    await folhaDe(k.id)
+    // PDFs que o banco não conhece (o banco voltou de uma cópia): o do nº reservado e o do próximo da sequência
+    const pasta = join(t.pasta, 'certificados', String(ano))
+    mkdirSync(pasta, { recursive: true })
+    const entregue = (n: string) => Buffer.from(`%PDF-1.7\n% certificado entregue ${n}\n%%EOF\n`, 'latin1')
+    for (const n of [cc(1), cc(2)]) writeFileSync(join(pasta, `Certificado-${n}.pdf`), entregue(n))
+    const emitida = await emitir(k.id)
+    expect(emitida.numero).toBe(cc(3))
+    expect(tabela()).toEqual([
+      expect.objectContaining({
+        numero: cc(1),
+        calibracao_id: k.id,
+        situacao: 'nao_utilizado',
+        motivo: `O nº já tem PDF na pasta certificados (${ano}/Certificado-${cc(1)}.pdf), de um certificado que o banco não conhece; a calibração recebeu outro nº na emissão.`,
+      }),
+    ])
+    for (const n of [cc(1), cc(2)]) expect(readFileSync(join(pasta, `Certificado-${n}.pdf`)).equals(entregue(n))).toBe(true)
+    // A reserva na folha também pula os nºs com PDF
+    writeFileSync(join(pasta, `Certificado-${cc(4)}.pdf`), entregue(cc(4)))
+    expect(await avulsa()).toBeTruthy()
+    expect(tabela().at(-1)).toMatchObject({ numero: cc(5), situacao: 'reservado' })
+  })
+
+  it('ao subir: o PDF da pasta certificados que o banco não conhece deixa o nº não utilizado (lido do PDF ou do nome), com um aviso só', async () => {
+    await iniciar()
+    t.ctx.repo.salvarConfig({ ...t.ctx.repo.obterConfig(), numeracao: { formato: '{seq}/{ano}', digitos: 4 } })
+    const pasta = join(t.pasta, 'certificados', String(ano))
+    mkdirSync(pasta, { recursive: true })
+    // Emitido no formato de antes (o nº nas palavras-chave, como o gerador grava); outro sem palavras-chave (o nome)
+    const comPalavras = Buffer.from(
+      `%PDF-1.7\n1 0 obj\n<< /Keywords (certificado de calibração; ${cc(3)}; POP-01 rev. 00) >>\nendobj\n%%EOF\n`,
+      'latin1',
+    )
+    writeFileSync(join(pasta, `Certificado-${cc(3)}.pdf`), comPalavras)
+    writeFileSync(join(pasta, `Certificado-${cc(5)}.pdf`), Buffer.from('%PDF-1.7\n%%EOF\n', 'latin1'))
+    writeFileSync(join(pasta, `Certificado-${cc(5)}.pdf.parcial`), Buffer.from('pela metade', 'latin1'))
+    // Uma cópia salva à mão de um certificado que o banco tem não é aviso
+    const k = await emitir((await c.calibracaoPronta()).id)
+    expect(k.numero).toBe(`0001/${ano}`)
+    writeFileSync(
+      join(pasta, `Certificado-0001-${ano} (cópia).pdf`),
+      readFileSync(join(t.pasta, 'certificados', k.emissao!.arquivo)),
+    )
+    const repo = new Repositorio(t.ctx.db, () => {}, { pastaCertificados: join(t.pasta, 'certificados') })
+    expect(repo.conferirCertificadosDaPasta()).toEqual([cc(3), cc(5)])
+    expect(tabela()).toEqual([
+      expect.objectContaining({ numero: cc(3), sequencia: 3, situacao: 'nao_utilizado', calibracao_id: '' }),
+      expect.objectContaining({ numero: cc(5), sequencia: 5, situacao: 'nao_utilizado', calibracao_id: '' }),
+    ])
+    expect(registros('COPIA_RESTAURADA')).toEqual([
+      [
+        '',
+        `2 PDFs de certificado na pasta certificados que o banco não conhece (${cc(3)}, ${cc(5)}), emitidos depois da cópia do banco que voltou: os nºs não são dados de novo, e os PDFs ficam na pasta`,
+      ],
+    ])
+    // De novo: nada muda, e o aviso não se repete
+    expect(repo.conferirCertificadosDaPasta()).toEqual([])
+    expect(registros('COPIA_RESTAURADA')).toHaveLength(1)
+    // A numeração continua depois deles
+    expect((await emitir((await c.calibracaoPronta()).id)).numero).toBe(`0006/${ano}`)
   })
 
   it('o nº reservado já num certificado (banco mexido): não sai repetido; fica não utilizado e a emissão dá outro', async () => {
@@ -726,7 +809,7 @@ describe('restauração de uma cópia do banco', { timeout: 30_000 }, () => {
     const depois = await c.calibracaoPronta()
     const fcDepois = numeroDe(await folhaDe(depois.id))
     const fcAvulsa = await avulsa()
-    await emitir((await c.calibracaoPronta()).id)
+    const semFolha = await emitir((await c.calibracaoPronta()).id)
     const destino = abrirBanco(copia)
     try {
       transplantarFolhasCampo(t.ctx.db, destino)
@@ -740,50 +823,69 @@ describe('restauração de uma cópia do banco', { timeout: 30_000 }, () => {
         { numero: cc(3), calibracao_id: '', folha: fcAvulsa, situacao: 'reservado' },
       ])
       expect(
-        destino.prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' AND detalhe LIKE '%certificado%'").get(),
-      ).toEqual({
-        detalhe: `2 nºs de certificado reservados depois da cópia (${cc(2)} a ${cc(3)}) continuam registrados: os nºs não se repetem`,
-      })
-      // O contador da emissão não volta: o próximo é depois do emitido depois da cópia (cc 4)
+        (
+          destino
+            .prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' AND detalhe LIKE '%certificado%' ORDER BY id")
+            .all() as Array<{ detalhe: string }>
+        ).map((r) => r.detalhe),
+      ).toEqual([
+        `o certificado ${cc(4)}, emitido ou alterado depois da cópia, continua como no banco atual (o mesmo nº, a mesma situação e o mesmo código de autenticidade): o PDF entregue continua valendo`,
+        `2 nºs de certificado reservados depois da cópia (${cc(2)} a ${cc(3)}) continuam registrados: os nºs não se repetem`,
+      ])
+      // O emitido sem folha depois da cópia (uma calibração que a cópia não tinha) passa, como está
       const repo = new Repositorio(destino)
+      expect(repo.obterCalibracao(semFolha.id)).toEqual(t.ctx.repo.obterCalibracao(semFolha.id))
+      // O contador da emissão não volta: o próximo é depois do emitido depois da cópia (cc 4)
       const outra = repo.reservarFolhaCampo({ chave: 'avulsa:depois-da-volta', por: 'Ana' })
       expect(outra.numeroCertificado).toBe(cc(5))
       // De novo: nada passa duas vezes
+      const registros = destino.prepare('SELECT COUNT(*) AS n FROM auditoria').get()
       transplantarFolhasCampo(t.ctx.db, destino)
       expect(destino.prepare('SELECT COUNT(*) AS n FROM numeros_reservados').get()).toEqual({ n: 4 })
+      expect(destino.prepare('SELECT COUNT(*) AS n FROM auditoria').get()).toEqual(registros)
     } finally {
       destino.close()
     }
   })
 
-  it('emitido depois da cópia, com a calibração ainda em andamento nela: volta reservado, e a reemissão usa o mesmo nº', async () => {
+  it('emitido depois da cópia, com a calibração ainda em andamento nela: o certificado passa para ela (o mesmo nº e código)', async () => {
     await iniciar()
     const d = await c.calibracaoPronta()
     const copia = await t.ctx.backups.copiar('manual')
     const fc = numeroDe(await folhaDe(d.id))
-    expect((await emitir(d.id)).numero).toBe(cc(1))
+    const emitida = await emitir(d.id)
+    expect(emitida.numero).toBe(cc(1))
     const destino = abrirBanco(copia)
     try {
       transplantarFolhasCampo(t.ctx.db, destino)
-      expect(
-        destino.prepare('SELECT numero, calibracao_id, situacao, situacao_em, situacao_por FROM numeros_reservados').all(),
-      ).toEqual([{ numero: cc(1), calibracao_id: d.id, situacao: 'reservado', situacao_em: '', situacao_por: '' }])
+      // O certificado entregue continua o mesmo: nº, código de autenticidade, data e hash do PDF
+      const repo = new Repositorio(destino)
+      const k = repo.obterCalibracao(d.id)!
+      expect(k).toMatchObject({ status: 'EMITIDO', numero: cc(1), versao: emitida.versao })
+      expect(k.emissao).toEqual(emitida.emissao)
+      expect(repo.calibracaoPorCodigo(emitida.emissao!.codigo)?.id).toBe(d.id)
+      // O nº fica emitido, como no banco atual (nunca reservado de novo), e a folha continua ligada a ela
+      expect(destino.prepare('SELECT numero, calibracao_id, situacao, situacao_por FROM numeros_reservados').all()).toEqual([
+        { numero: cc(1), calibracao_id: d.id, situacao: 'emitido', situacao_por: 'Admin Teste' },
+      ])
       expect(destino.prepare('SELECT calibracao_id, numero_certificado FROM folhas_campo WHERE numero = ?').get(fc)).toEqual({
         calibracao_id: d.id,
         numero_certificado: cc(1),
       })
       expect(
-        destino.prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' AND detalhe LIKE '%certificado%'").get(),
-      ).toEqual({
-        detalhe: `o nº de certificado reservado depois da cópia (${cc(1)}) continua registrado: os nºs não se repetem; ${cc(1)}, emitido depois da cópia, volta como reservado para a calibração em andamento na cópia (a reemissão usa o mesmo nº)`,
-      })
-      // A reemissão (o rascunho da cópia) sai com o nº da folha, da etiqueta e do PDF já entregue
-      const repo = new Repositorio(destino)
-      const reemitida = repo.emitir(d.id, () => ({}) as EmissaoCertificado, {
-        numero: (seq, a) => cc(seq, a),
-        codigo: () => 'ABCD-2345',
-      })
-      expect(reemitida.numero).toBe(cc(1))
+        (
+          destino
+            .prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' AND detalhe LIKE '%certificado%' ORDER BY id")
+            .all() as Array<{ detalhe: string }>
+        ).map((r) => r.detalhe),
+      ).toEqual([
+        `o certificado ${cc(1)}, emitido ou alterado depois da cópia, continua como no banco atual (o mesmo nº, a mesma situação e o mesmo código de autenticidade): o PDF entregue continua valendo`,
+        `o nº de certificado reservado depois da cópia (${cc(1)}) continua registrado: os nºs não se repetem`,
+      ])
+      // Não há o que emitir de novo
+      expect(() =>
+        repo.emitir(d.id, () => ({}) as EmissaoCertificado, { numero: (seq, a) => cc(seq, a), codigo: () => 'ABCD-2345' }),
+      ).toThrow(/já foi emitido/)
     } finally {
       destino.close()
     }

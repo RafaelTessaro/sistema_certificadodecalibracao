@@ -4,6 +4,7 @@
 // certificado cancelado para a calibração refeita.
 // Migração 8: os nºs de certificado reservados na impressão da folha de campo (e o nº impresso em cada folha).
 // Migração 9: a revisão aberta antes do cálculo da classe I, de um certificado emitido antes dele, fica legada.
+// Migração 10: a revisão do POP impressa em cada folha de campo (a vigente na primeira impressão).
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
@@ -15,7 +16,7 @@ import { detalheTrocaIndicador, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 9
+const ULTIMA = 10
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -648,5 +649,50 @@ describe('migração 9: revisão aberta antes do cálculo da classe I', () => {
     migrar(db)
     expect(calibracao(db, 'k2')).toEqual(depois)
     expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(1)
+  })
+})
+
+describe('migração 10: a revisão do POP impressa em cada folha de campo', () => {
+  /** Banco na versão 9 com duas revisões do POP e três folhas: antes de todas, entre as duas e depois da segunda. */
+  function bancoV9() {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 9)
+    const pop = db.prepare('INSERT INTO pop_versoes (id, codigo, revisao, data, criado_em) VALUES (?, ?, ?, ?, ?)')
+    pop.run(1, 'BALANÇAS-POP-001', '02', '2026-05-01', '2026-05-01T12:00:00.000Z')
+    pop.run(2, 'BALANÇAS-POP-001', '03', '2026-10-28', '2026-10-30T09:00:00.000Z')
+    const folha = db.prepare(
+      `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, impressa_em, ultima_em)
+       VALUES (?, 2026, ?, ?, ?, ?, ?)`,
+    )
+    folha.run('FC-2026-00001', 1, 'a', 'k1', '2026-04-20T10:00:00.000Z', '2026-11-01T10:00:00.000Z')
+    folha.run('FC-2026-00002', 2, 'b', 'k2', '2026-10-30T08:59:59.000Z', '2026-11-01T10:00:00.000Z')
+    folha.run('FC-2026-00003', 3, 'c', 'k3', '2026-10-30T09:00:00.000Z', '2026-10-30T09:00:00.000Z')
+    return db
+  }
+  const popDasFolhas = (db: DatabaseSync) =>
+    db.prepare('SELECT numero, pop_id FROM folhas_campo ORDER BY numero').all() as Array<{
+      numero: string
+      pop_id: number | null
+    }>
+
+  it('cada folha fica com a revisão vigente na primeira impressão (a reimpressão não conta); antes de todas, nenhuma', () => {
+    const db = bancoV9()
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(popDasFolhas(db)).toEqual([
+      { numero: 'FC-2026-00001', pop_id: null },
+      { numero: 'FC-2026-00002', pop_id: 1 },
+      { numero: 'FC-2026-00003', pop_id: 2 },
+    ])
+  })
+
+  it('pode ser repetida sem mudar o que foi gravado', () => {
+    const db = bancoV9()
+    migrar(db)
+    db.prepare("UPDATE folhas_campo SET pop_id = 1 WHERE numero = 'FC-2026-00003'").run()
+    db.exec('PRAGMA user_version = 9')
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(popDasFolhas(db).map((f) => f.pop_id)).toEqual([null, 1, 1])
   })
 })

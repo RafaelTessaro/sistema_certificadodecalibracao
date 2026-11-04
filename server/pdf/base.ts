@@ -96,6 +96,20 @@ export function larguraTexto(
   return (unidades / f.unitsPerEm) * o.tamanho + (o.espacamento ?? 0) * Math.max(0, texto.length - 1)
 }
 
+/**
+ * Corpo (pt) com que um texto de uma linha só cabe em `largura`: o `tamanho` pedido ou menor, até `minimo`. Para o
+ * nº do documento no cabeçalho, que não pode quebrar (num formato de numeração longo, a letra diminui).
+ */
+export function corpoQueCabe(
+  texto: string,
+  largura: number,
+  o: Parameters<typeof larguraTexto>[1] & { minimo?: number },
+): number {
+  const medida = larguraTexto(texto, o)
+  if (medida <= largura) return o.tamanho
+  return Math.max(o.minimo ?? 6, Math.floor(((o.tamanho * largura) / medida) * 10) / 10)
+}
+
 /** O texto inteiro, se couber em `largura` (pt); senão, o começo dele com "…" (cortado antes de um espaço, se der). */
 export function caberNaLargura(texto: string, largura: number, o: Parameters<typeof larguraTexto>[1]): string {
   const t = texto.trim()
@@ -130,22 +144,44 @@ export const ALTURA_ASSINATURA = 4.5
 
 const vazio = (s: string | null | undefined) => !s || !s.trim()
 
+/** A palavra-marca (o nome fantasia, em caixa alta) e a razão social embaixo dela, quando é outra. */
+function textosDaMarca(empresa: DadosEmpresa): { marca: string; razao: string } {
+  const { nomeFantasia, razaoSocial } = empresa
+  return {
+    marca: (nomeFantasia || razaoSocial).toUpperCase(),
+    razao: !vazio(nomeFantasia) && !vazio(razaoSocial) && razaoSocial.trim() !== nomeFantasia.trim() ? razaoSocial.trim() : '',
+  }
+}
+
+/** Espaço (pt) entre o logo e a palavra-marca. */
+const RESPIRO_LOGO = 9
+
+/** Largura (pt) da marca no cabeçalho (`colunasMarca`): o logo, o respiro e a palavra-marca ou a razão social. */
+export function larguraMarca(empresa: DadosEmpresa): number {
+  const { marca, razao } = textosDaMarca(empresa)
+  return (
+    MODULO +
+    RESPIRO_LOGO +
+    Math.max(
+      larguraTexto(marca, { fonte: 'Poppins', negrito: true, tamanho: 11 }),
+      razao ? larguraTexto(razao, { fonte: 'InterMedio', tamanho: 5.9, espacamento: 0.38 }) : 0,
+    )
+  )
+}
+
 /**
  * Colunas da marca no cabeçalho: o logo e, centrado nele, a palavra-marca (Poppins, como no timbrado
  * oficial) com a razão social espacejada logo abaixo, quase da largura da palavra-marca.
  */
 export function colunasMarca(empresa: DadosEmpresa): NoObjeto[] {
-  const marca = (empresa.nomeFantasia || empresa.razaoSocial).toUpperCase()
-  const { nomeFantasia, razaoSocial } = empresa
-  const razao =
-    !vazio(nomeFantasia) && !vazio(razaoSocial) && razaoSocial.trim() !== nomeFantasia.trim() ? razaoSocial.trim() : ''
+  const { marca, razao } = textosDaMarca(empresa)
   return [
     { svg: LOGO_SVG, width: MODULO, height: MODULO },
     {
       width: '*',
       // Bloco centrado no logo; a razão social, espacejada, fica quase da largura da palavra-marca
       // (no timbrado oficial as linhas do bloco são justificadas na mesma medida)
-      margin: [9, razao ? 3.3 : 8, 0, 0],
+      margin: [RESPIRO_LOGO, razao ? 3.3 : 8, 0, 0],
       stack: [
         { text: marca, font: 'Poppins', bold: true, fontSize: 11, lineHeight: 0.9, color: TIMBRADO.grafite },
         ...(razao

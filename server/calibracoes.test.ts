@@ -2,6 +2,8 @@
 // pública → revisão (substitui) → cancelamento, com as travas de quem pode fazer o quê.
 
 import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
 import { BALANCA_VAZIA, CLIENTE_VAZIO, PADRAO_VAZIO } from '#shared/dominio.ts'
@@ -295,6 +297,146 @@ describe('emissão do certificado', () => {
   })
 })
 
+describe('PDF do certificado emitido: o arquivo guardado é o documento (o hash da emissão nunca muda)', () => {
+  const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex')
+  const caminhoDo = (k: Calibracao) => join(t.pasta, 'certificados', k.emissao!.arquivo)
+  const hashNoBanco = (k: Calibracao) => t.ctx.repo.obterCalibracao(k.id)!.emissao!.hashPdf
+  const verificar = async (k: Calibracao) =>
+    (await t.app.inject({ method: 'GET', url: `/api/verificar/${k.emissao!.codigo}` })).json().hashPdf as string
+  const baixar = (k: Calibracao) => t.chamar('GET', `/api/calibracoes/${k.id}/pdf`, { cookie: t.cookieAdmin })
+
+  /**
+   * Um certificado emitido por uma versão anterior do gerador (outro layout): o hash registrado é o do PDF
+   * daquela versão, que o gerador de hoje não refaz igual.
+   */
+  function emitidoPorOutraVersao(k: Calibracao, hashAntigo: string) {
+    const atual = t.ctx.repo.obterCalibracao(k.id)!
+    const dados = { ...atual, emissao: { ...atual.emissao!, hashPdf: hashAntigo } }
+    t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(dados), k.id)
+  }
+
+  it('arquivo sumido e o PDF refeito agora sai outro (versão anterior): 409, nada é regravado e o hash continua', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const antigo = 'a'.repeat(64)
+    emitidoPorOutraVersao(k, antigo)
+    unlinkSync(caminhoDo(k))
+    expect(await verificar(k)).toBe(antigo)
+
+    const r = await baixar(k)
+    expect(r.statusCode).toBe(409)
+    expect(r.json().erro).toBe(
+      `O PDF do certificado ${k.numero} não está na pasta de dados (certificados/${k.emissao!.arquivo}). Volte essa pasta da cópia de segurança externa: um PDF refeito agora não seria o mesmo documento.`,
+    )
+    // Nada foi gravado no lugar do original nem no registro da emissão; a página pública continua com o hash
+    expect(existsSync(caminhoDo(k))).toBe(false)
+    expect(hashNoBanco(k)).toBe(antigo)
+    expect(await verificar(k)).toBe(antigo)
+    // Nem o e-mail (que anexa o PDF) refaz o certificado
+    const anexos = await t.chamar('GET', `/api/calibracoes/${k.id}/anexos`, { cookie: t.cookieAdmin })
+    expect(anexos.statusCode).toBe(409)
+    const email = await t.chamar('POST', `/api/calibracoes/${k.id}/email`, {
+      cookie: t.cookieAdmin,
+      payload: { para: 'qualidade@mercado.com.br' },
+    })
+    expect(email.statusCode).toBe(409)
+    expect(existsSync(caminhoDo(k))).toBe(false)
+    expect(hashNoBanco(k)).toBe(antigo)
+  })
+
+  it('arquivo sumido e o PDF refeito sai idêntico (mesma versão): volta para a pasta e é servido', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const original = readFileSync(caminhoDo(k))
+    expect(sha(original)).toBe(k.emissao!.hashPdf)
+    unlinkSync(caminhoDo(k))
+    const r = await baixar(k)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(sha(r.rawPayload)).toBe(k.emissao!.hashPdf)
+    expect(readFileSync(caminhoDo(k)).equals(original)).toBe(true)
+    expect(hashNoBanco(k)).toBe(k.emissao!.hashPdf)
+  })
+
+  it('arquivo alterado depois da emissão: 409, e o arquivo e o hash ficam como estão', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const alterado = readFileSync(caminhoDo(k))
+    alterado[alterado.length - 20] ^= 0x01
+    writeFileSync(caminhoDo(k), alterado)
+    const r = await baixar(k)
+    expect(r.statusCode).toBe(409)
+    expect(r.json().erro).toBe(
+      `O PDF do certificado ${k.numero} (certificados/${k.emissao!.arquivo}) foi alterado depois da emissão. Volte o original da cópia de segurança externa.`,
+    )
+    expect(readFileSync(caminhoDo(k)).equals(alterado)).toBe(true)
+    expect(hashNoBanco(k)).toBe(k.emissao!.hashPdf)
+  })
+
+  /** A emissão gravada sem o PDF registrado (o servidor caiu entre a emissão e a gravação do arquivo). */
+  function semPdfRegistrado(k: Calibracao) {
+    const atual = t.ctx.repo.obterCalibracao(k.id)!
+    const dados = { ...atual, emissao: { ...atual.emissao!, hashPdf: '', arquivo: '' } }
+    t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(dados), k.id)
+  }
+
+  it('emissão sem o PDF registrado e sem arquivo: o PDF é gerado, gravado e registrado', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    unlinkSync(caminhoDo(k))
+    semPdfRegistrado(k)
+    const r = await baixar(k)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(readFileSync(caminhoDo(k)).equals(r.rawPayload)).toBe(true)
+    expect(t.ctx.repo.obterCalibracao(k.id)!.emissao).toMatchObject({ arquivo: k.emissao!.arquivo, hashPdf: sha(r.rawPayload) })
+  })
+
+  it('emissão sem o PDF registrado e outro PDF com o mesmo nome na pasta: nunca é sobrescrito; o novo ganha outro nome', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    // Outro documento com o mesmo nº na pasta (por exemplo, de um banco que voltou de uma cópia)
+    const outro = Buffer.from('%PDF-1.7\n% outro certificado com o mesmo nº\n%%EOF\n', 'latin1')
+    writeFileSync(caminhoDo(k), outro)
+    semPdfRegistrado(k)
+    const r = await baixar(k)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(readFileSync(caminhoDo(k)).equals(outro)).toBe(true)
+    const novo = `${k.ano}/Certificado-${k.numero}-${sha(r.rawPayload).slice(0, 12)}.pdf`
+    expect(t.ctx.repo.obterCalibracao(k.id)!.emissao).toMatchObject({ arquivo: novo, hashPdf: sha(r.rawPayload) })
+    expect(readFileSync(join(t.pasta, 'certificados', novo)).equals(r.rawPayload)).toBe(true)
+    // Nenhum arquivo pela metade fica na pasta, e o registro de atividades diz onde cada um ficou
+    expect(existsSync(`${join(t.pasta, 'certificados', novo)}.parcial`)).toBe(false)
+    const registro = t.ctx.db
+      .prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' ORDER BY id DESC LIMIT 1")
+      .get() as { detalhe: string }
+    expect(registro.detalhe).toBe(
+      `O PDF do certificado ${k.numero} foi gravado em certificados/${novo}: já havia outro arquivo com o mesmo nome (certificados/${k.emissao!.arquivo}), que ficou como estava.`,
+    )
+    // Daqui em diante, o registrado é o servido
+    const deNovo = await baixar(k)
+    expect(deNovo.rawPayload.equals(r.rawPayload)).toBe(true)
+  })
+
+  it('o registro do PDF não troca o hash de uma emissão já registrada', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    expect(() => t.ctx.repo.registrarPdf(k.id, k.emissao!.arquivo, 'b'.repeat(64))).toThrow(/não muda/)
+    expect(hashNoBanco(k)).toBe(k.emissao!.hashPdf)
+    // O mesmo hash (gravar de novo o mesmo arquivo) continua valendo
+    t.ctx.repo.registrarPdf(k.id, k.emissao!.arquivo, k.emissao!.hashPdf)
+    expect(hashNoBanco(k)).toBe(k.emissao!.hashPdf)
+  })
+
+  it('cancelado ou substituído: refeito com a marca d’água, sem mexer no arquivo nem no hash da emissão', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const original = readFileSync(caminhoDo(k))
+    const ok = await t.chamar('POST', `/api/calibracoes/${k.id}/cancelar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Emitido por engano', versao: k.versao },
+    })
+    expect(ok.statusCode).toBe(200)
+    unlinkSync(caminhoDo(k))
+    const r = await baixar(k)
+    expect(r.statusCode).toBe(200)
+    expect(sha(r.rawPayload)).not.toBe(sha(original))
+    expect(existsSync(caminhoDo(k))).toBe(false)
+    expect(hashNoBanco(k)).toBe(k.emissao!.hashPdf)
+  })
+})
+
 describe('revisão e cancelamento', () => {
   it('a revisão herda o número com "-R1", e ao ser emitida substitui o original', async () => {
     const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
@@ -341,6 +483,44 @@ describe('revisão e cancelamento', () => {
     // O substituído continua com o PDF (servido com a marca)
     const pdf = await t.chamar('GET', `/api/calibracoes/${original.id}/pdf`, { cookie: t.cookieAdmin })
     expect(pdf.statusCode).toBe(200)
+  })
+
+  it('o formato da numeração mudou depois do original: a revisão sai com o nº dele e -R1 (e a revisão da revisão, -R2)', async () => {
+    const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const ano = original.ano!
+    expect(original.numero).toBe(`CC-${ano}-00001`)
+    const revisar = async (k: Calibracao) =>
+      (
+        (await criar(`/api/calibracoes/${k.id}/revisar`, { motivo: 'Correção da identificação da balança' })) as {
+          calibracao: Calibracao
+        }
+      ).calibracao
+    const rev = await revisar(original)
+    // A troca do formato depois de aberta a revisão (vale para os certificados novos, não para os já emitidos)
+    t.ctx.repo.salvarConfig({ ...t.ctx.repo.obterConfig(), numeracao: { formato: 'BC {seq}/{aa}', digitos: 4 } })
+    // A tela mostra antes o nº com que a revisão sai
+    const andamento = (await t.chamar('GET', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).json()
+    expect(andamento.numeroRevisao).toBe(`${original.numero}-R1`)
+    expect((await t.chamar('GET', `/api/calibracoes/${original.id}`, { cookie: t.cookieAdmin })).json().numeroRevisao).toBeNull()
+    const r1 = await emitir(rev)
+    expect(r1.statusCode, r1.body).toBe(200)
+    const nova: Calibracao = r1.json().calibracao
+    expect(nova.numero).toBe(`${original.numero}-R1`)
+    expect(nova.emissao).toMatchObject({
+      substituiNumero: original.numero,
+      arquivo: `${ano}/Certificado-${original.numero}-R1.pdf`,
+    })
+    expect(existsSync(join(t.pasta, 'certificados', nova.emissao!.arquivo))).toBe(true)
+
+    // De novo, com outro formato ainda: a revisão da revisão continua a série do original
+    t.ctx.repo.salvarConfig({ ...t.ctx.repo.obterConfig(), numeracao: { formato: '{seq}/{ano}', digitos: 3 } })
+    const r2 = await emitir(await revisar(nova))
+    expect(r2.statusCode, r2.body).toBe(200)
+    expect(r2.json().calibracao.numero).toBe(`${original.numero}-R2`)
+    expect(r2.json().calibracao.emissao.substituiNumero).toBe(`${original.numero}-R1`)
+    // Os certificados novos seguem o formato atual
+    const outro = await emitir(await calibracaoPronta())
+    expect(outro.json().calibracao.numero).toBe(`002/${ano}`)
   })
 
   it('só o administrador cancela, com motivo; a verificação passa a mostrar "cancelado"', async () => {

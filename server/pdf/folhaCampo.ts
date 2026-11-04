@@ -82,9 +82,11 @@ import {
   BASE_RODAPE,
   caberNaLargura,
   colunasMarca,
+  corpoQueCabe,
   dataHoraBrasilia,
   fundoTimbrado,
   inteiro,
+  larguraMarca,
   larguraTexto,
   MODULO,
   type No,
@@ -3066,11 +3068,33 @@ function faixaIdentificacao(ctx: Contexto): NoObjeto {
 /** Dica embaixo do nº do certificado, em toda página: a nota inteira da etiqueta está no passo das assinaturas. */
 export const DICA_ETIQUETA = `Vai na etiqueta (passo ${N.assinaturas})`
 
+/** Título do bloco do nº da folha, no alto de toda página. */
+const TITULO_FOLHA = 'FOLHA DE CAMPO — CALIBRAÇÃO DE BALANÇA'
+/** O fio entre o nº do certificado e o da folha, com as margens dele (pt). */
+const LARGURA_FIO_NUMEROS = 0.6 + 2 * 11
+/** Espaço mínimo (pt) entre a marca e os números no cabeçalho. */
+const ESPACO_MARCA = 16
+
+/**
+ * Corpo dos dois nºs do alto da página (Poppins, 12,5 pt), numa linha só cada um: o pdfmake, na coluna 'auto',
+ * às vezes passava a última letra para a linha de baixo (o nº partido, e a faixa da OS sumia). Os dois, o fio
+ * entre eles e a marca cabem na largura: um nº longo (formato de numeração configurado) encolhe.
+ */
+function corposDosNumeros(ctx: Contexto): { certificado: number; folha: number } {
+  const poppins = { fonte: 'Poppins' as const, tamanho: 12.5 }
+  const titulo = larguraTexto(TITULO_FOLHA, { fonte: 'InterMedio', tamanho: 6.3, espacamento: 0.5 })
+  const livre = LARGURA - larguraMarca(ctx.d.empresa) - ESPACO_MARCA
+  if (!ctx.certificado) return { certificado: 12.5, folha: corpoQueCabe(ctx.d.numero.trim(), livre, poppins) }
+  const folha = corpoQueCabe(ctx.d.numero.trim(), (livre - LARGURA_FIO_NUMEROS) / 2, poppins)
+  const colunaFolha = Math.max(titulo, larguraTexto(ctx.d.numero.trim(), { ...poppins, tamanho: folha }))
+  return { certificado: corpoQueCabe(ctx.certificado, livre - LARGURA_FIO_NUMEROS - colunaFolha, poppins), folha }
+}
+
 /**
  * Nº do certificado reservado, no alto de toda página, à esquerda do nº da folha e do mesmo tamanho (é o que o
  * técnico copia na etiqueta de calibração), com a dica da etiqueta embaixo, separado dele por um fio.
  */
-function colunasCertificado(ctx: Contexto): NoObjeto[] {
+function colunasCertificado(ctx: Contexto, corpo: number): NoObjeto[] {
   if (!ctx.certificado) return []
   return [
     {
@@ -3082,8 +3106,9 @@ function colunasCertificado(ctx: Contexto): NoObjeto[] {
         { text: 'CERTIFICADO Nº', font: 'InterMedio', fontSize: 6.3, characterSpacing: 0.5, color: COR.marcaTexto },
         {
           text: ctx.certificado,
+          noWrap: true,
           font: 'Poppins',
-          fontSize: 12.5,
+          fontSize: corpo,
           lineHeight: 0.8,
           color: TIMBRADO.texto,
           margin: [0, -1.5, 0, 0],
@@ -3101,13 +3126,14 @@ function colunasCertificado(ctx: Contexto): NoObjeto[] {
 
 function cabecalho(ctx: Contexto) {
   const numero = ctx.d.numero.trim()
+  const corpos = corposDosNumeros(ctx)
   return (pagina: number, total: number): NoObjeto => ({
     margin: [MARGEM_X, TOPO_CABECALHO, MARGEM_X, 0],
     stack: [
       {
         columns: [
           ...colunasMarca(ctx.d.empresa),
-          ...colunasCertificado(ctx),
+          ...colunasCertificado(ctx, corpos.certificado),
           {
             width: 'auto',
             alignment: 'right',
@@ -3115,7 +3141,7 @@ function cabecalho(ctx: Contexto) {
             lineHeight: 1,
             stack: [
               {
-                text: 'FOLHA DE CAMPO — CALIBRAÇÃO DE BALANÇA',
+                text: TITULO_FOLHA,
                 font: 'InterMedio',
                 fontSize: 6.3,
                 characterSpacing: 0.5,
@@ -3124,8 +3150,9 @@ function cabecalho(ctx: Contexto) {
               numero
                 ? {
                     text: numero,
+                    noWrap: true,
                     font: 'Poppins',
-                    fontSize: 12.5,
+                    fontSize: corpos.folha,
                     lineHeight: 0.8,
                     color: TIMBRADO.texto,
                     margin: [0, -1.5, 0, 0],

@@ -136,13 +136,26 @@ export async function criarApp(opcoes: OpcoesApp) {
 
   const db = abrirBanco(opcoes.arquivoBanco ?? join(pastaDados, 'bc-calibracao.db'))
   const tempoReal = new TempoReal()
-  const repo = new Repositorio(db, (msg) => tempoReal.publicar(msg), { pastaFolhas: join(pastaDados, 'folhas-campo') })
+  const repo = new Repositorio(db, (msg) => tempoReal.publicar(msg), {
+    pastaFolhas: join(pastaDados, 'folhas-campo'),
+    pastaCertificados: join(pastaDados, 'certificados'),
+  })
   // Os PDFs das folhas de campo guardados no banco (versão em teste da folha) vão para a pasta delas
   try {
     const movidos = repo.moverPdfsDasFolhas()
     if (movidos) app.log.info(`[folhas de campo] ${movidos} PDF(s) passaram do banco para a pasta folhas-campo`)
   } catch (e) {
     app.log.warn(`[folhas de campo] não foi possível mover os PDFs do banco para a pasta: ${String(e)}`)
+  }
+  // Banco que voltou de uma cópia anterior a certificados emitidos: os nºs que têm PDF na pasta nunca saem de novo
+  try {
+    const fora = repo.conferirCertificadosDaPasta()
+    if (fora.length)
+      app.log.warn(
+        `[certificados] ${fora.length} PDF(s) da pasta certificados que o banco não conhece (os nºs não são dados de novo): ${fora.join(', ')}`,
+      )
+  } catch (e) {
+    app.log.warn(`[certificados] não foi possível conferir a pasta certificados: ${String(e)}`)
   }
   // Banco que voltou de uma cópia anterior a folhas impressas: as que têm PDF na pasta voltam ao registro
   try {

@@ -396,6 +396,33 @@ describe('padrão calibrado depois da data da calibração', () => {
     expect(padraoNaData(tres, '2026-12-01').certificado).toBe('LAB-B/2026')
   })
 
+  it('certificado trocado por um mais antigo ou do mesmo dia (correção de um digitado errado): o errado não volta', () => {
+    // O LAB-B/2026 (15/06/2026) foi trocado pelo LAB-A/2025 (10/06/2025), que é o que valia; depois, recalibrado
+    const corrigido = { ...antigo, versoesAnteriores: versoesAnterioresApos(jogo, 'LAB-A/2025') }
+    const recalibrado = {
+      ...jogo,
+      certificado: 'LAB-C/2027',
+      dataCalibracao: '2027-06-20',
+      validade: '2028-06-20',
+      versoesAnteriores: versoesAnterioresApos(corrigido, 'LAB-C/2027'),
+    }
+    expect(recalibrado.versoesAnteriores.map((v) => v.certificado)).toEqual(['LAB-A/2025', 'LAB-B/2026'])
+    // Em 01/12/2026 valia o LAB-A/2025, já vencido: não o LAB-B/2026, que nunca valeu
+    expect(padraoNaData(recalibrado, '2026-12-01')).toMatchObject({ certificado: 'LAB-A/2025', validade: '2026-06-10' })
+    expect(padraoNaData(recalibrado, '2026-12-01').pesos[0].correcao).toBe(40)
+    // O nº corrigido no mesmo dia (LAB-8/2026 → LAB-B/2026): vale o corrigido
+    const digitado = { ...jogo, certificado: 'LAB-8/2026', pesos: [{ ...jogo.pesos[0], correcao: 999 }] }
+    const numeroCorrigido = { ...jogo, versoesAnteriores: versoesAnterioresApos(digitado, 'LAB-B/2026') }
+    const depois = {
+      ...jogo,
+      certificado: 'LAB-C/2027',
+      dataCalibracao: '2027-06-20',
+      versoesAnteriores: versoesAnterioresApos(numeroCorrigido, 'LAB-C/2027'),
+    }
+    expect(depois.versoesAnteriores.map((v) => v.certificado)).toEqual(['LAB-B/2026', 'LAB-8/2026'])
+    expect(padraoNaData(depois, '2026-12-01')).toMatchObject({ certificado: 'LAB-B/2026', pesos: [{ correcao: 300 }] })
+  })
+
   it('revisão: os padrões congelados na emissão (mesmo desativados); o de hoje só se é o mesmo certificado', () => {
     const congelado = { ...antigo, id: 'JP-01' }
     const k = { padroesIds: ['JP-01'], dataCalibracao: '2026-03-02', padroesCongelados: [congelado] }

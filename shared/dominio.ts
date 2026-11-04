@@ -163,6 +163,15 @@ export function listaEmails(s: string): string[] {
   ]
 }
 
+/**
+ * O "Para" sugerido no envio do certificado: o e-mail para certificados do cliente, senão o principal, em lista
+ * ("a@x.com, b@y.com"); '' sem nenhum. `cliente`: os e-mails do cadastro atual (não a cópia congelada na emissão).
+ */
+export function paraSugerido(cliente: Pick<ClienteInput, 'email' | 'emailCertificados'> | null | undefined): string {
+  const certificados = listaEmails(cliente?.emailCertificados ?? '')
+  return (certificados.length ? certificados : listaEmails(cliente?.email ?? '')).join(', ')
+}
+
 /** Texto para busca: minúsculo, sem acentos e com os espaços normalizados. */
 export function textoBusca(...partes: Array<string | undefined | null>): string {
   return partes.filter(Boolean).join(' ').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim()
@@ -527,6 +536,17 @@ export function lerNumeroCertificado(
   const ano = valor('ano') ?? (aa !== null ? 2000 + aa : anoPadrao)
   const sequencia = valor('seq')
   return sequencia && sequencia > 0 && ano > 0 ? { ano, sequencia } : null
+}
+
+/**
+ * O nº da revisão `revisao` de um certificado: o nº do revisado (`numero`; `revisaoDele` > 0 quando ele já é uma
+ * revisão, com o sufixo "-R<revisaoDele>") sem o sufixo, mais "-R<revisao>". Segue o nº que saiu no original (o da
+ * etiqueta e do PDF entregue), não o formato atual da numeração, que pode ter mudado depois.
+ */
+export function numeroDaRevisao(numero: string, revisaoDele: number, revisao: number): string {
+  const sufixo = revisaoDele > 0 ? `-R${revisaoDele}` : ''
+  const base = sufixo && numero.endsWith(sufixo) ? numero.slice(0, -sufixo.length) : numero
+  return `${base}-R${revisao}`
 }
 
 /** Nome de arquivo seguro a partir do número do certificado. */
@@ -1264,14 +1284,20 @@ export function versoesAnterioresApos(antes: Padrao, certificadoNovo: string): V
  * O padrão como estava na data de uma calibração: o cadastro de hoje, se ele foi calibrado até essa data; senão, a
  * versão anterior mais nova calibrada até ela (`versoesAnteriores`: o certificado, as datas e os valores das peças),
  * com o resto do cadastro de hoje (identificação, descrição, situação). Sem nenhuma, o de hoje (calibrado depois da
- * calibração: a pendência de `pendenciasEmissao` bloqueia a emissão).
+ * calibração: a pendência de `pendenciasEmissao` bloqueia a emissão). A versão trocada depois por um certificado
+ * mais antigo ou do mesmo dia não conta: foi a correção de um certificado digitado errado, que nunca valeu.
  */
 export function padraoNaData(p: Padrao, data: string): Padrao {
   if (!dataIsoValida(data) || !dataIsoValida(p.dataCalibracao) || p.dataCalibracao <= data) return p
   let versao: VersaoPadrao | undefined
-  for (const v of p.versoesAnteriores ?? [])
-    if (dataIsoValida(v.dataCalibracao) && v.dataCalibracao <= data && (!versao || v.dataCalibracao > versao.dataCalibracao))
-      versao = v
+  // Da mais nova para a mais antiga: cada versão de verdade foi calibrada antes de todas as que vieram depois dela
+  let seguinte = p.dataCalibracao
+  for (const v of p.versoesAnteriores ?? []) {
+    if (!dataIsoValida(v.dataCalibracao)) continue
+    if (v.dataCalibracao >= seguinte) continue
+    seguinte = v.dataCalibracao
+    if (v.dataCalibracao <= data && (!versao || v.dataCalibracao > versao.dataCalibracao)) versao = v
+  }
   return versao
     ? { ...p, ...versao, incertezaDensidade: versao.incertezaDensidade, certificadoArquivo: versao.certificadoArquivo ?? null }
     : p

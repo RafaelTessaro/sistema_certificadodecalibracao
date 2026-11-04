@@ -14,7 +14,9 @@
 // sempre (`DIAGRAMACOES`, `montarCertificado`). Com 3 páginas, a última nunca fica só com as declarações e as
 // assinaturas: a montagem mede e leva para ela uma seção inteira da penúltima. Com as opções da classe I (empuxo
 // pela densidade do ar medida, convecção calculada), uma frase curta embaixo do método diz a densidade do ar e a
-// diferença de temperatura pesos − ar usadas (`notaEmpuxoConveccao`); sem elas, nada muda.
+// diferença de temperatura pesos − ar usadas (`notaEmpuxoConveccao`); sem elas, nada muda. Nada some: um bloco
+// inteiro mais alto que a página (o pdfmake o descarta sem erro) é visto na medição e a seção é montada de novo
+// dividida; se ainda assim não couber, erro, sem PDF (`medirCertificado`).
 
 import {
   casasDecimais,
@@ -64,9 +66,11 @@ import {
   A4,
   BASE_RODAPE,
   colunasMarca,
+  corpoQueCabe,
   dataHoraBrasilia,
   fundoTimbrado,
   inteiro,
+  larguraMarca,
   larguraTexto,
   MODULO,
   type No,
@@ -75,6 +79,7 @@ import {
   quebraAntes,
   TOPO_CABECALHO,
 } from './base.ts'
+import { ErroApi } from '../erros.ts'
 import { COR, TIMBRADO } from './marca.ts'
 import type { DadosCertificadoPdf } from './tipos.ts'
 
@@ -272,8 +277,24 @@ interface Campo {
   span?: number
 }
 
+/** Folga à direita de cada coluna da grade "RÓTULO / valor" (pt). */
+const FOLGA_GRADE = 8
+
+/**
+ * Larguras das colunas da grade em pt: `n` colunas iguais, ou as dadas com o '*' ficando com o resto. Com a
+ * largura fixa, uma palavra mais longa que a coluna (um e-mail, um nº de série) quebra dentro da célula; com
+ * '*', o pdfmake alargaria a tabela além da margem. No layout normal, as mesmas larguras de antes.
+ */
+function largurasDaGrade(larguras: number | Array<number | '*'>): number[] {
+  if (typeof larguras === 'number') return Array<number>(larguras).fill(LARGURA / larguras - FOLGA_GRADE)
+  const fixas = larguras.reduce<number>((soma, x) => soma + (typeof x === 'number' ? x : 0), 0)
+  const estrelas = larguras.filter((x) => x === '*').length
+  const resto = (LARGURA - fixas - FOLGA_GRADE * larguras.length) / Math.max(1, estrelas)
+  return larguras.map((x) => (typeof x === 'number' ? x : resto))
+}
+
 /** Grade de campos "RÓTULO / valor" (formulário técnico), em colunas iguais ou com as larguras dadas. */
-function grade(r: Ritmo, linhas: Campo[][], larguras: number | Array<number | string> = 4): NoObjeto {
+function grade(r: Ritmo, linhas: Campo[][], larguras: number | Array<number | '*'> = 4): NoObjeto {
   const colunas = typeof larguras === 'number' ? larguras : larguras.length
   const body: No[][] = []
   for (const linha of linhas) {
@@ -300,12 +321,12 @@ function grade(r: Ritmo, linhas: Campo[][], larguras: number | Array<number | st
     body.push(celulas)
   }
   return {
-    table: { widths: typeof larguras === 'number' ? Array(colunas).fill('*') : larguras, body, dontBreakRows: true },
+    table: { widths: largurasDaGrade(larguras), body, dontBreakRows: true },
     layout: {
       hLineWidth: () => 0,
       vLineWidth: () => 0,
       paddingLeft: () => 0,
-      paddingRight: () => 8,
+      paddingRight: () => FOLGA_GRADE,
       paddingTop: () => r.grade.topo,
       paddingBottom: () => r.grade.base,
     },
@@ -316,13 +337,18 @@ function paragrafo(r: Ritmo, texto: No, margem: number[] = r.paragrafo): NoObjet
   return { text: texto, style: 'paragrafo', margin: margem }
 }
 
-/** Caixa de destaque com filete à esquerda (revisão, ajuste, reparo, opiniões). */
+/**
+ * Caixa de destaque com filete à esquerda (revisão, ajuste, reparo, opiniões). `inteira`: não se divide entre
+ * páginas — só para texto curto (o pdfmake descarta, sem erro, um bloco inteiro mais alto que a página); a longa
+ * se divide onde a página acaba.
+ */
 function destaque(
   r: Ritmo,
   conteudo: No,
   cor: string = COR.marca,
   fundo: string = COR.marcaFundo,
   margem: number[] = r.destaque.margem,
+  inteira = true,
 ): NoObjeto {
   return {
     table: { widths: ['*'], body: [[conteudo]] },
@@ -337,7 +363,7 @@ function destaque(
       paddingBottom: () => r.destaque.folga,
     },
     margin: margem,
-    unbreakable: true,
+    ...(inteira ? { unbreakable: true } : {}),
   }
 }
 
@@ -439,9 +465,14 @@ interface Contexto {
   divisao: (carga: number) => number
   /** Respiros do layout (normal ou compacto). */
   r: Ritmo
+  /**
+   * Grupos (seções) montados sem os blocos inteiros, ou com blocos menores: um bloco inteiro deles ficou mais
+   * alto que a página e o pdfmake o descartou (`medirCertificado`).
+   */
+  divisiveis: ReadonlySet<string>
 }
 
-function contexto(d: DadosCertificadoPdf, ritmo: NomeRitmo = 'normal'): Contexto {
+function contexto(d: DadosCertificadoPdf, ritmo: NomeRitmo = 'normal', divisiveis: readonly string[] = []): Contexto {
   const k = d.calibracao
   const e = d.emissao
   const b = e.balanca
@@ -455,6 +486,7 @@ function contexto(d: DadosCertificadoPdf, ritmo: NomeRitmo = 'normal'): Contexto
     numero: ou(k.numero, 'PRÉVIA'),
     divisao: (carga) => (divisaoTeste > 0 ? divisaoTeste : b.faixas.length ? faixaDoValor(carga, b).d : 0),
     r: RITMOS[ritmo],
+    divisiveis: new Set(divisiveis),
   }
 }
 
@@ -680,8 +712,8 @@ function divisoesTexto(valores: number[], u: Unidade): string {
  * Colunas das características metrológicas (sem as folgas de 8 pt): cada rótulo numa linha ("divisão de
  * verificação" na 4ª). Multi-intervalo: a capacidade nas duas primeiras ("30 000 / 60 000 / 80 000 kg").
  */
-const LARGURAS_METROLOGIA = [76, 76, 62, 112, 56, '*']
-const LARGURAS_METROLOGIA_MULTI = [66, 66, 60, 98, 74, '*']
+const LARGURAS_METROLOGIA: Array<number | '*'> = [76, 76, 62, 112, 56, '*']
+const LARGURAS_METROLOGIA_MULTI: Array<number | '*'> = [66, 66, 60, 98, 74, '*']
 
 const PRELIMINAR: Array<[keyof Calibracao['preliminar'], string]> = [
   ['identificavel', 'identificável'],
@@ -1590,6 +1622,8 @@ function secaoObservacoes(ctx: Contexto, n: number): No[] {
   else if (!vazio(e.textos.intervalo)) itens.push(textoComEmpresa(e.textos.intervalo.trim(), e.empresa))
 
   if (!itens.length) return []
+  // Dividida: o título não vai inteiro com o 1º item (ele só não fica sozinho no pé da página)
+  if (ctx.divisiveis.has('observacoes')) return [...secao(ctx.r, n, 'Observações'), lista(ctx.r, itens)]
   return [
     inteiro([...secao(ctx.r, n, 'Observações'), lista(ctx.r, itens.slice(0, 1))]),
     ...(itens.length > 1 ? [lista(ctx.r, itens.slice(1))] : []),
@@ -1600,17 +1634,28 @@ function secaoObservacoes(ctx: Contexto, n: number): No[] {
 export const RESSALVA_OPINIOES =
   'Baseadas nos resultados; não fazem parte dos resultados de medição. Emitidas por pessoal autorizado.'
 
+/**
+ * Opinião que vai inteira (o título com a caixa, sem se dividir entre páginas): a curta, em caracteres e em
+ * linhas (muitas linhas curtas fazem uma caixa alta). A longa se divide onde a página acaba: o pdfmake descarta,
+ * sem erro, um bloco inteiro mais alto que a página.
+ */
+export const OPINIAO_INTEIRA = { caracteres: 1500, linhas: 25 }
+
+const opiniaoCurta = (texto: string) =>
+  texto.length < OPINIAO_INTEIRA.caracteres && texto.split(/\r?\n/).length <= OPINIAO_INTEIRA.linhas
+
 function secaoOpinioes(ctx: Contexto, n: number): No[] {
   const texto = ctx.k.opinioes.trim()
   if (!texto) return []
+  const inteira = !ctx.divisiveis.has('opinioes') && opiniaoCurta(texto)
   // A ressalva (ISO/IEC 17025, 7.8.7) na linha do título: a caixa fica só com a opinião
   return [
     bloco(
       [
         ...secao(ctx.r, n, 'Opiniões e interpretações', ESPACO_TITULO, RESSALVA_OPINIOES),
-        destaque(ctx.r, { text: texto, style: 'paragrafo' }, COR.grafite, COR.fundoCabecalho, [0, 0, 0, 1]),
+        destaque(ctx.r, { text: texto, style: 'paragrafo' }, COR.grafite, COR.fundoCabecalho, [0, 0, 0, 1], inteira),
       ],
-      texto.length < 1500,
+      inteira,
     ),
   ]
 }
@@ -1619,7 +1664,9 @@ function secaoOpinioes(ctx: Contexto, n: number): No[] {
  * Declarações e o fim do certificado (assinaturas), num bloco só: quando não cabem no resto da página, vão
  * juntas para a seguinte, que nunca fica só com as assinaturas e uma declaração solta. Mesmo número de
  * páginas que deixar as declarações se dividirem (o bloco é o último do certificado). A cláusula de
- * reprodução não entra aqui: ela sai no rodapé de toda página.
+ * reprodução não entra aqui: ela sai no rodapé de toda página. Declarações longas (nas Configurações, até
+ * 3 000 caracteres cada) que não cabem juntas numa página (`medirCertificado`): o título com a 1ª declaração
+ * num bloco, a última com o fim e as assinaturas noutro, e as do meio se dividem onde a página acaba.
  */
 function secaoDeclaracoes(ctx: Contexto, n: number, fim: No[]): No[] {
   const t = ctx.e.textos
@@ -1635,6 +1682,8 @@ function secaoDeclaracoes(ctx: Contexto, n: number, fim: No[]): No[] {
     ],
     margin: [0, 0, 0, ctx.r.item],
   }))
+  if (ctx.divisiveis.has(ID_FINAL) && itens.length > 1)
+    return [inteiro([...secao(ctx.r, n, 'Declarações'), itens[0]]), ...itens.slice(1, -1), inteiro([itens.at(-1)!, ...fim])]
   return [inteiro([...secao(ctx.r, n, 'Declarações'), ...itens, ...fim])]
 }
 
@@ -1741,6 +1790,9 @@ function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
 
 // ---- Cabeçalho, rodapé, marca d'água ------------------------------------------------------------
 
+/** Espaço mínimo (pt) entre a marca e o bloco do documento no cabeçalho. */
+const ESPACO_MARCA = 16
+
 /**
  * Cabeçalho corrido, igual em todas as páginas: à esquerda o logo e a palavra-marca (Poppins, como no
  * timbrado oficial); à direita, alinhados à margem, o título, o número, o procedimento (POP) e a página —
@@ -1748,6 +1800,12 @@ function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
  */
 function cabecalho(ctx: Contexto) {
   const pop = procedimento(ctx.e)
+  // O nº numa linha só (o pdfmake, na coluna 'auto', às vezes passava a última letra para a linha de baixo); um nº
+  // longo demais para o espaço ao lado da marca encolhe
+  const corpo = corpoQueCabe(ctx.numero, LARGURA - larguraMarca(ctx.e.empresa) - ESPACO_MARCA, {
+    fonte: 'Poppins',
+    tamanho: 12.5,
+  })
   return (pagina: number, total: number): NoObjeto => ({
     margin: [MARGEM_X, TOPO_CABECALHO, MARGEM_X, 0],
     columns: [
@@ -1766,7 +1824,15 @@ function cabecalho(ctx: Contexto) {
             characterSpacing: 0.5,
             color: COR.marcaTexto,
           },
-          { text: ctx.numero, font: 'Poppins', fontSize: 12.5, lineHeight: 0.8, color: TIMBRADO.texto, margin: [0, -1.5, 0, 0] },
+          {
+            text: ctx.numero,
+            noWrap: true,
+            font: 'Poppins',
+            fontSize: corpo,
+            lineHeight: 0.8,
+            color: TIMBRADO.texto,
+            margin: [0, -1.5, 0, 0],
+          },
           {
             text: [
               ...(pop
@@ -1942,7 +2008,22 @@ function grupos(ctx: Contexto, comImagem: boolean, alturaGrafico: number): Grupo
   if (opinioes.length) lista.push({ id: 'opinioes', nos: opinioes })
   n += opinioes.length ? 1 : 0
   lista.push({ id: ID_FINAL, nos: secaoDeclaracoes(ctx, ++n, blocoFinal(ctx, comImagem)) })
-  return lista
+  // As outras seções, divididas, vão sem nenhum bloco inteiro (caso extremo: nenhuma deveria passar de uma página)
+  return lista.map((g) => (ctx.divisiveis.has(g.id) && !COM_DIVISAO_PROPRIA.has(g.id) ? { ...g, nos: semInteiros(g.nos) } : g))
+}
+
+/** Seções com a própria maneira de se dividir (`secaoObservacoes`, `secaoOpinioes`, `secaoDeclaracoes`). */
+const COM_DIVISAO_PROPRIA = new Set(['observacoes', 'opinioes', ID_FINAL])
+
+/** Os nós sem os blocos inteiros: tudo se divide onde a página acaba. */
+function semInteiros(nos: No[]): No[] {
+  const copiar = (no: unknown): unknown => {
+    if (Array.isArray(no)) return no.map(copiar)
+    if (!no || typeof no !== 'object') return no
+    const { unbreakable: _inteiro, ...resto } = no as NoObjeto
+    return Object.fromEntries(Object.entries(resto).map(([k, v]) => [k, typeof v === 'function' ? v : copiar(v)]))
+  }
+  return copiar(nos) as No[]
 }
 
 /**
@@ -1951,6 +2032,82 @@ function grupos(ctx: Contexto, comImagem: boolean, alturaGrafico: number): Grupo
  * uma página sozinha.
  */
 const marcaFim = (id: string): NoObjeto => ({ text: ' ', id: `fim:${id}`, fontSize: 0.1, lineHeight: 1 })
+
+/**
+ * Sonda da medição: um espaço de altura zero (lineHeight 0), que cabe até no pé de uma página cheia. Uma antes e
+ * outra depois de cada bloco inteiro (`comSondas`) dizem se o pdfmake o descartou (`descartados`).
+ */
+const sonda = (id: string): NoObjeto => ({ text: ' ', id, fontSize: 0.1, lineHeight: 0 })
+const SONDA = 'sonda:'
+
+/**
+ * Na medição, cada bloco inteiro (o de fora, fora das colunas e tabelas) vai entre duas sondas, sem a margem de
+ * baixo (que passa para um invólucro: o layout é o mesmo). Assim, a sonda de depois fica logo embaixo do bloco,
+ * mesmo quando a margem dele não cabe no pé da página.
+ */
+export function comSondas(nos: No[], grupo: string, contador = { i: 0 }): No[] {
+  return nos.map((no): No => {
+    if (!no || typeof no !== 'object' || Array.isArray(no)) return no
+    if (no.unbreakable) {
+      const id = `${grupo}:${contador.i++}`
+      const { margin, pageBreak, ...bloco } = no
+      const [esquerda, cima, direita, baixo] = margemEm4(margin)
+      return {
+        stack: [sonda(`${SONDA}antes:${id}`), { ...bloco, margin: [esquerda, cima, direita, 0] }, sonda(`${SONDA}depois:${id}`)],
+        margin: [0, 0, 0, baixo],
+        ...(pageBreak ? { pageBreak } : {}),
+      }
+    }
+    return Array.isArray(no.stack) ? { ...no, stack: comSondas(no.stack, grupo, contador) } : no
+  })
+}
+
+/** Margem do pdfmake (um nº, [horizontal, vertical] ou [esquerda, cima, direita, baixo]) em 4 lados. */
+function margemEm4(m: unknown): number[] {
+  if (typeof m === 'number') return [m, m, m, m]
+  if (Array.isArray(m) && m.length === 2) return [m[0], m[1], m[0], m[1]]
+  if (Array.isArray(m) && m.length === 4) return m as number[]
+  return [0, 0, 0, 0]
+}
+
+/**
+ * Grupos com um bloco inteiro que o pdfmake descartou, sem erro, por ser mais alto que a página: ele tentou a
+ * página da sonda de antes, passou para a seguinte e lá também não coube. A sonda de depois fica, então, no
+ * alto de uma página depois da sonda de antes. Um bloco posto termina na página da sonda de antes ou, se passou
+ * para a seguinte, mais abaixo do alto dela (as sondas não têm altura: nunca são empurradas para a página seguinte).
+ */
+export function descartados(sondas: Map<string, { pagina: number; topo: number }>): string[] {
+  const grupos = new Set<string>()
+  for (const [id, depois] of sondas) {
+    if (!id.startsWith(`${SONDA}depois:`)) continue
+    const bloco = id.slice(`${SONDA}depois:`.length)
+    const antes = sondas.get(`${SONDA}antes:${bloco}`)
+    if (antes && depois.pagina > antes.pagina && depois.topo <= MARGEM_TOPO + 0.5)
+      grupos.add(bloco.slice(0, bloco.lastIndexOf(':')))
+  }
+  return [...grupos]
+}
+
+/** Nome da seção na mensagem de erro (os resultados, pelo nome geral). */
+const NOMES_GRUPOS: Record<string, string> = {
+  dados: 'dados da calibração',
+  cliente: 'cliente',
+  instrumento: 'instrumento calibrado',
+  padroes: 'padrões utilizados',
+  conformidade: 'declaração de conformidade',
+  observacoes: 'observações',
+  opinioes: 'opiniões e interpretações',
+  [ID_FINAL]: 'declarações e assinaturas',
+}
+
+/** O certificado não coube: um bloco mais alto que a página, mesmo dividido. Nada é gerado (nada sai faltando). */
+function naoCoube(grupos: string[]): ErroApi {
+  const nomes = [...new Set(grupos.map((g) => NOMES_GRUPOS[g] ?? 'resultados'))].map((x) => `“${x}”`).join(', ')
+  return new ErroApi(
+    500,
+    `O certificado não coube nas páginas: a parte ${nomes} ficou maior que uma página. Nada foi guardado: encurte o texto ou avise quem cuida do sistema.`,
+  )
+}
 
 /** O primeiro nó do grupo começando uma página nova. */
 function comQuebra(nos: No[]): No[] {
@@ -1962,19 +2119,26 @@ function comQuebra(nos: No[]): No[] {
 
 /**
  * Definição do documento do pdfmake (exportada para testes e para a prévia). `quebras`: grupos que começam
- * uma página nova (o equilíbrio das páginas, medido em `montarCertificado`); `medir`: com a marca do fim;
- * `diagramacao`: os respiros e a altura do gráfico (padrão, a preferida).
+ * uma página nova (o equilíbrio das páginas, medido em `montarCertificado`); `medir`: com a marca do fim e as
+ * sondas dos blocos inteiros; `diagramacao`: os respiros e a altura do gráfico (padrão, a preferida);
+ * `divisiveis`: grupos montados sem blocos mais altos que a página (`medirCertificado`).
  */
 export function definicaoCertificado(
   d: DadosCertificadoPdf,
-  opcoes: { assinaturas?: boolean; quebras?: string[]; medir?: boolean; diagramacao?: Diagramacao } = {},
+  opcoes: {
+    assinaturas?: boolean
+    quebras?: string[]
+    medir?: boolean
+    diagramacao?: Diagramacao
+    divisiveis?: readonly string[]
+  } = {},
 ): NoObjeto {
   const { ritmo, grafico } = opcoes.diagramacao ?? DIAGRAMACOES[0]
-  const ctx = contexto(d, ritmo)
-  const conteudo: No[] = grupos(ctx, comImagens(d, opcoes), grafico).flatMap((g) => [
-    ...(opcoes.quebras?.includes(g.id) && g.id !== ID_FINAL ? comQuebra(g.nos) : g.nos),
-    ...(g.id !== ID_FINAL || opcoes.medir ? [marcaFim(g.id)] : []),
-  ])
+  const ctx = contexto(d, ritmo, opcoes.divisiveis)
+  const conteudo: No[] = grupos(ctx, comImagens(d, opcoes), grafico).flatMap((g) => {
+    const nos = opcoes.quebras?.includes(g.id) && g.id !== ID_FINAL ? comQuebra(g.nos) : g.nos
+    return [...(opcoes.medir ? comSondas(nos, g.id) : nos), ...(g.id !== ID_FINAL || opcoes.medir ? [marcaFim(g.id)] : [])]
+  })
 
   const e = d.emissao
   const data = dataDoDocumento(d)
@@ -2024,7 +2188,7 @@ export async function gerarCertificadoPdf(d: DadosCertificadoPdf): Promise<Buffe
     return (await montarCertificado(d)).pdf
   } catch (erro) {
     const temImagem = !d.previa && [d.emissao.tecnico.assinatura, d.emissao.signatario.assinatura].some((a) => !vazio(a))
-    if (!temImagem) throw erro
+    if (!temImagem || erro instanceof ErroApi) throw erro
     return (await montarCertificado(d, { assinaturas: false })).pdf
   }
 }
@@ -2056,6 +2220,8 @@ export interface CertificadoMontado {
   ocupacao: number[]
   quebras: string[]
   diagramacao: Diagramacao
+  /** Grupos montados sem blocos mais altos que a página (ver `medirCertificado`); quase sempre nenhum. */
+  divisiveis: string[]
 }
 
 interface Medicao extends CertificadoMontado {
@@ -2065,21 +2231,45 @@ interface Medicao extends CertificadoMontado {
   alturaUtil: number
   /** A marca do fim ficou sozinha no alto de uma página (o fim do conteúdo encostou no pé da anterior). */
   marcaSozinha: boolean
+  /** Grupos com um bloco inteiro descartado pelo pdfmake (mais alto que a página, ver `descartados`). */
+  faltando: string[]
 }
 
+/**
+ * Monta o certificado medindo onde cada grupo acabou. Nada pode sumir: um bloco inteiro mais alto que a página
+ * o pdfmake descarta sem erro (ver `descartados`); o grupo dele é montado de novo dividido (`divisiveis`) e,
+ * se ainda faltar algo, erro, antes de qualquer PDF ser guardado.
+ */
 async function medirCertificado(
   d: DadosCertificadoPdf,
-  opcoes: { assinaturas?: boolean; quebras: string[]; diagramacao: Diagramacao },
+  opcoes: { assinaturas?: boolean; quebras: string[]; diagramacao: Diagramacao; divisiveis?: string[] },
+): Promise<Medicao> {
+  let divisiveis = opcoes.divisiveis ?? []
+  for (;;) {
+    const m = await medirUmaVez(d, { ...opcoes, divisiveis })
+    if (!m.faltando.length) return m
+    const novos = m.faltando.filter((id) => !divisiveis.includes(id))
+    if (!novos.length) throw naoCoube(m.faltando)
+    divisiveis = [...divisiveis, ...novos]
+  }
+}
+
+async function medirUmaVez(
+  d: DadosCertificadoPdf,
+  opcoes: { assinaturas?: boolean; quebras: string[]; diagramacao: Diagramacao; divisiveis: string[] },
 ): Promise<Medicao> {
   const definicao = definicaoCertificado(d, { ...opcoes, medir: true })
   const margemBase = (definicao.pageMargins as number[])[3]
   const util = A4.altura - margemBase - MARGEM_TOPO
   const fins = new Map<string, { pagina: number; topo: number }>()
+  const sondas = new Map<string, { pagina: number; topo: number }>()
   definicao.pageBreakBefore = (
     no: Parameters<typeof quebraAntes>[0] & { id?: string; startPosition?: { pageNumber: number; top: number } },
   ) => {
     if (no.id?.startsWith('fim:') && no.startPosition && !fins.has(no.id.slice(4)))
       fins.set(no.id.slice(4), { pagina: no.startPosition.pageNumber, topo: no.startPosition.top })
+    if (no.id?.startsWith(SONDA) && no.startPosition && !sondas.has(no.id))
+      sondas.set(no.id, { pagina: no.startPosition.pageNumber, topo: no.startPosition.top })
     return quebraAntes(no)
   }
   const pdf: Buffer = await pdfmake().createPdf(definicao).getBuffer()
@@ -2099,9 +2289,11 @@ async function medirCertificado(
     ocupacao,
     quebras: opcoes.quebras,
     diagramacao: opcoes.diagramacao,
+    divisiveis: opcoes.divisiveis,
     fins,
     alturaUtil: util,
     marcaSozinha,
+    faltando: descartados(sondas),
   }
 }
 
@@ -2163,10 +2355,12 @@ export async function montarCertificado(
   let melhor = natural
   const n = natural.paginas
   if (n >= 3 && natural.ocupacao[n - 1] < OCUPACAO_MINIMA_ULTIMA) {
-    const ordem = grupos(contexto(d, diagramacao.ritmo), comImagens(d, opcoes), diagramacao.grafico).map((g) => g.id)
+    const ordem = grupos(contexto(d, diagramacao.ritmo, natural.divisiveis), comImagens(d, opcoes), diagramacao.grafico).map(
+      (g) => g.id,
+    )
     const previstas = quebrasPrevistas(natural, ordem).filter((x) => x.menor >= menorDasUltimas(natural) + GANHO_MINIMO)
     for (const { id } of previstas.slice(0, MAX_TENTATIVAS)) {
-      const m = await medirCertificado(d, { ...opcoes, quebras: [id], diagramacao })
+      const m = await medirCertificado(d, { ...opcoes, quebras: [id], diagramacao, divisiveis: natural.divisiveis })
       // Conferida: o mesmo nº de páginas e as duas últimas mais equilibradas que na paginação natural
       if (m.paginas === n && menorDasUltimas(m) >= menorDasUltimas(natural) + GANHO_MINIMO) {
         melhor = m
@@ -2175,12 +2369,12 @@ export async function montarCertificado(
     }
   }
   // A marca do fim sozinha numa página (o fim encostou no pé da anterior): monta de novo sem ela
+  const { paginas, ocupacao, quebras, divisiveis } = melhor
   if (melhor.marcaSozinha) {
     const pdf = await pdfmake()
-      .createPdf(definicaoCertificado(d, { ...opcoes, quebras: melhor.quebras, diagramacao }))
+      .createPdf(definicaoCertificado(d, { ...opcoes, quebras, diagramacao, divisiveis }))
       .getBuffer()
-    return { pdf, paginas: melhor.paginas, ocupacao: melhor.ocupacao, quebras: melhor.quebras, diagramacao }
+    return { pdf, paginas, ocupacao, quebras, diagramacao, divisiveis }
   }
-  const { pdf, paginas, ocupacao, quebras } = melhor
-  return { pdf, paginas, ocupacao, quebras, diagramacao }
+  return { pdf: melhor.pdf, paginas, ocupacao, quebras, diagramacao, divisiveis }
 }

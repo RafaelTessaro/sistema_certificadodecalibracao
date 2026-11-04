@@ -76,7 +76,13 @@ export interface DetalheBalanca {
 
 export interface DetalheCalibracao {
   calibracao: Calibracao
+  /** O cliente como saiu no certificado (emitido: a cópia congelada na emissão; em andamento: o cadastro). */
   cliente: Cliente | undefined
+  /**
+   * Os e-mails do cadastro atual do cliente, para o "Para" do envio do certificado (não os da cópia congelada na
+   * emissão). Ausente numa resposta de antes desta versão: vale `cliente`.
+   */
+  emailsCliente?: Pick<Cliente, 'email' | 'emailCertificados'> | null
   balanca: Balanca | undefined
   padroes: Padrao[]
   envios: Envio[]
@@ -91,9 +97,14 @@ export interface DetalheCalibracao {
    * o certificado é emitido com ele). null = ainda sem nº (é dado na emissão).
    */
   numeroReservado?: NumeroReservado | null
+  /** Revisão em andamento: o nº com que ela sai (o do certificado revisado, com o -R dela); null = não é revisão. */
+  numeroRevisao?: string | null
   /** Certificado (arquivo) de cada padrão usado: o congelado na emissão, ou o do cadastro. */
   certificadosPadroes: CertificadoDoPadrao[]
-  /** POP: a revisão da emissão (emitido) ou a vigente (em andamento); null = nenhum. */
+  /**
+   * POP: a revisão da emissão (emitido) ou a que o certificado vai citar, a usada na calibração (em andamento: a da
+   * folha de campo, ou a que valia na data dela); null = nenhum.
+   */
   pop: VersaoPop | null
 }
 

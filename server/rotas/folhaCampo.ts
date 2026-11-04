@@ -22,9 +22,10 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
+import { textoPop } from '#shared/arquivos.ts'
 import { pode } from '#shared/permissoes.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente } from '#shared/tipos.ts'
-import { padroesDa } from '../certificados.ts'
+import { padroesDa, popDaCalibracao } from '../certificados.ts'
 import type { Contexto } from '../contexto.ts'
 import { ErroApi } from '../erros.ts'
 import { entradaDe, rascunhoInicial } from '../rascunhos.ts'
@@ -96,8 +97,12 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       balanca: Balanca | null
       padroes: DadosFolhaCampo['padroes']
       tecnico: string
-      /** POP de referência no rodapé (o da emissão, numa calibração emitida; senão, o configurado). */
+      /**
+       * POP de referência no rodapé: o texto e a revisão registrada (null = nenhuma), que fica guardada com a folha
+       * e o certificado da calibração cita (`popDaCalibracao`).
+       */
       procedimento: string
+      popId: number | null
     },
   ) {
     const u = quem(req)
@@ -131,7 +136,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       ...(folha.numeroCertificado ? { numeroCertificado: folha.numeroCertificado } : {}),
     }
     const pdf = await gerarFolhaCampoPdf(dados)
-    return { pdf: repo.guardarPdfFolhaCampo(folha.numero, pdf), numero: folha.numero }
+    return { pdf: repo.guardarPdfFolhaCampo(folha.numero, pdf, e.popId), numero: folha.numero }
   }
 
   /** Folha de uma calibração (rascunho, em revisão ou já emitida); `?nova=<chave>`: folha nova (nº novo). */
@@ -158,8 +163,11 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     const balanca = k.emissao?.balanca ?? repo.obterBalanca(k.balancaId) ?? null
     const padroes = k.emissao?.padroes ?? padroesDa(ctx, k)
     const tecnico = k.emissao?.tecnico.nome ?? ctx.usuarios.obter(k.tecnicoId)?.nome ?? ''
-    // Emitida: o POP que valia na emissão (o do certificado); senão, o vigente
-    const procedimento = k.emissao?.textos.procedimento ?? repo.obterConfig().textos.procedimento
+    // Emitida: o POP do certificado. Em andamento: o que o certificado vai citar (`popDaCalibracao`: o da data da
+    // calibração; numa revisão, o do certificado revisado); a folha nova, o da data (fica no lugar da de antes)
+    const pop = k.emissao
+      ? { procedimento: k.emissao.textos.procedimento, pop: k.emissao.pop ?? null }
+      : popDaCalibracao(ctx, k, { semFolha: !!nova })
     const { pdf, numero } = await gerar(req, {
       chave: nova ? `calibracao:${k.id}:${nova}` : `calibracao:${k.id}`,
       calibracao: entradaDe(k),
@@ -169,7 +177,8 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       balanca,
       padroes,
       tecnico,
-      procedimento,
+      procedimento: pop?.procedimento ?? '',
+      popId: pop?.pop?.id ?? null,
     })
     return enviarPdf(reply, pdf, nomeArquivoDaFolha(k.ordemServico, numero), numero)
   })
@@ -229,6 +238,8 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     // Com a balança, o plano é o que o rascunho teria (pontos e padrões da última calibração dela)
     const calibracao = balanca ? rascunhoInicial(ctx, { balancaId: balanca.id }, u.id) : null
     const padroes = calibracao ? padroesDa(ctx, calibracao) : repo.listarPadroes()
+    // O POP vigente (a folha vai a campo agora)
+    const pop = repo.popVigente()
     const { pdf, numero } = await gerar(req, {
       chave: `avulsa:${chave || randomUUID()}`,
       calibracao,
@@ -237,7 +248,8 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       padroes,
       // O técnico da visita ainda não está definido: a folha sai com a linha para escrever
       tecnico: '',
-      procedimento: repo.obterConfig().textos.procedimento,
+      procedimento: pop ? textoPop(pop) : '',
+      popId: pop?.id ?? null,
     })
     return enviarPdf(reply, pdf, nomeArquivoFolhaCampo(numero), numero)
   })

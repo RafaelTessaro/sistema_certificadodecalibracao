@@ -278,7 +278,7 @@ describe('POP: revisões, quem registra e o certificado', () => {
       ['01', true],
       ['00', false],
     ])
-    // A próxima emissão sai com a revisão 01
+    // A próxima calibração (de hoje, depois da data da revisão 01, sem folha de campo) sai com a revisão 01
     const outra = await c.emitido()
     expect(outra.emissao?.textos.procedimento).toBe('BALANÇAS-POP-123 rev. 01')
     expect(outra.emissao?.pop?.arquivo?.sha256).toBe(pdf.sha256)

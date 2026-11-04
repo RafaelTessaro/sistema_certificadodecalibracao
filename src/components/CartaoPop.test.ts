@@ -26,6 +26,7 @@ vi.mock('../store/sessao', async () => {
 })
 
 const { CartaoPop, LinhaRevisao, RegistrarPopModal } = await import('./CartaoPop')
+const { hojeISO } = await import('../lib/format')
 
 const entrarComo = (nivel: 'ADMIN' | 'COMUM') => {
   sessao.nivel = nivel
@@ -122,5 +123,14 @@ describe('registrar nova revisão do POP', () => {
   it('a vigente com o arquivo, ou o primeiro registro: sem o aviso', () => {
     expect(janela(versao('00', { vigente: true, arquivo: ARQUIVO }))).not.toContain('ainda não tem o arquivo')
     expect(janela(null)).not.toContain('ainda não tem o arquivo')
+  })
+
+  it('a data vai até hoje, e a janela diz que a calibração com folha continua com a revisão da folha', () => {
+    const t = janela(versao('00', { vigente: true, arquivo: ARQUIVO }))
+    expect(t).toMatch(new RegExp(`id="pop-data"[^>]*max="${hojeISO()}"`))
+    const lido = t.replace(/<[^>]+>/g, '')
+    expect(lido).toContain(
+      'As próximas calibrações saem com BALANÇAS-POP-123 rev. 01 no lugar de BALANÇAS-POP-123 rev. 00 (a que já tem folha de campo impressa continua com a da folha).',
+    )
   })
 })

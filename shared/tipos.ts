@@ -675,7 +675,11 @@ export interface EmissaoCertificado {
   /** Número do certificado substituído (revisão). */
   substituiNumero: string
   substituiEmissao: string
-  /** Revisão do POP que valia na emissão (o texto que sai no certificado é `textos.procedimento`). */
+  /**
+   * Revisão do POP usada na calibração (a da folha de campo, ou a que valia na data dela; na revisão do certificado,
+   * a do original; ver `popDaCalibracao` em server/certificados.ts). O texto que sai no certificado é
+   * `textos.procedimento`. Ausente ou null = certificado de antes das revisões do POP.
+   */
   pop?: PopEmitido | null
 }
 

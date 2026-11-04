@@ -21,11 +21,13 @@ import {
   formatarNumeroCertificado,
   hojeLocalIso,
   lerNumeroCertificado,
+  nomeArquivoCertificado,
   normalizarBalanca,
   normalizarCalibracao,
   normalizarCliente,
   normalizarConfig,
   normalizarPadrao,
+  numeroDaRevisao,
   parteSeparada,
   textoBusca,
   textoBuscaBalanca,
@@ -179,14 +181,29 @@ function textoDaStringPdf(bruto: string): string {
  * CC-2026-00042", ver server/pdf/folhaCampo.ts); '' se não houver (folha de antes desta versão, de uma revisão).
  */
 export function numeroCertificadoNoPdf(pdf: Buffer): string {
+  const palavras = palavrasChaveDoPdf(pdf)
+  const m = palavras === null ? null : /(?:^|;\s*)certificado\s+([^;]+?)\s*(?:;|$)/.exec(palavras)
+  return m ? m[1] : ''
+}
+
+/**
+ * O nº do certificado de calibração, lido do PDF dele (nas palavras-chave, desde a primeira versão: "certificado de
+ * calibração; CC-2026-00042; …", ver server/pdf/certificado.ts); '' se não houver.
+ */
+export function numeroDoCertificadoNoPdf(pdf: Buffer): string {
+  const palavras = palavrasChaveDoPdf(pdf)
+  const m = palavras === null ? null : /^\s*certificado de calibra[^;]*;\s*([^;]+?)\s*(?:;|$)/i.exec(palavras)
+  return m ? m[1] : ''
+}
+
+/** As palavras-chave gravadas no PDF (/Keywords), ou null se não houver. */
+function palavrasChaveDoPdf(pdf: Buffer): string | null {
   const texto = pdf.toString('latin1')
   // Direto no dicionário (/Keywords (…)) ou num objeto à parte (/Keywords 31 0 R), como o pdfkit grava
   const literal = String.raw`\(((?:\\[\s\S]|[^\\)])*)\)`
   const ref = new RegExp(String.raw`\/Keywords\s*(?:${literal}|(\d+)\s+(\d+)\s+R)`).exec(texto)
   const bruto = ref && (ref[1] ?? new RegExp(String.raw`(?:^|\s)${ref[2]}\s+${ref[3]}\s+obj\s*${literal}`).exec(texto)?.[1])
-  if (bruto === null || bruto === undefined) return ''
-  const m = /(?:^|;\s*)certificado\s+([^;]+?)\s*(?:;|$)/.exec(textoDaStringPdf(bruto))
-  return m ? m[1] : ''
+  return bruto === null || bruto === undefined ? null : textoDaStringPdf(bruto)
 }
 
 type Linha = { dados: string }
@@ -244,11 +261,21 @@ export class Repositorio {
 
   /** Pasta dos PDFs das folhas de campo (<pasta de dados>/folhas-campo); sem ela, o PDF fica no banco. */
   private pastaFolhas: string
+  /**
+   * Pasta dos PDFs dos certificados emitidos (<pasta de dados>/certificados): um nº que tem PDF nela nunca é
+   * emitido de novo, mesmo que o banco não saiba dele (ver `conferirCertificadosDaPasta`).
+   */
+  private pastaCertificados: string
 
-  constructor(db: Banco, publicar: (msg: MensagemTempoReal) => void = () => {}, opcoes: { pastaFolhas?: string } = {}) {
+  constructor(
+    db: Banco,
+    publicar: (msg: MensagemTempoReal) => void = () => {},
+    opcoes: { pastaFolhas?: string; pastaCertificados?: string } = {},
+  ) {
     this.db = db
     this.publicar = publicar
     this.pastaFolhas = opcoes.pastaFolhas ?? ''
+    this.pastaCertificados = opcoes.pastaCertificados ?? ''
   }
 
   revisao(): number {
@@ -404,9 +431,12 @@ export class Repositorio {
     return this.versoesPop()[0] ?? null
   }
 
-  /** Registra uma revisão nova do POP: passa a valer para os próximos certificados (os emitidos não mudam). */
+  /**
+   * Registra uma revisão nova do POP (com data até hoje): sai nas folhas de campo impressas daqui em diante e vale
+   * para as calibrações sem folha a partir da data dela (`popDaCalibracao` em certificados.ts); os emitidos não mudam.
+   */
   registrarPop(entrada: unknown, por: string): VersaoPop {
-    const valor = validar(normalizarPop(entrada))
+    const valor = validar(normalizarPop(entrada, this.hoje()))
     return transacao(this.db, () => {
       // Maiúsculas e minúsculas não contam, com acento ("Ç" = "ç", que o NOCASE do SQLite não iguala)
       const chave = (c: string) => c.normalize('NFC').toLocaleUpperCase('pt-BR')
@@ -1157,7 +1187,10 @@ export class Repositorio {
    * Emite: dá o número, grava os dados congelados e, numa revisão, marca o certificado original como
    * substituído. O número é o reservado na impressão da folha de campo (o da etiqueta; mesmo de outro ano),
    * que passa a emitido; sem reserva, o próximo da sequência do ano (nunca reutilizada). A revisão herda o
-   * do original, com -R1, -R2… O PDF é gerado depois, a partir desses dados (ver server/certificados.ts).
+   * do original como saiu nele (`numeroDaRevisao`: o formato atual da numeração não conta), com -R1, -R2…
+   * Um nº que já tem PDF na pasta dos certificados (emitido depois da cópia do banco que voltou) nunca é
+   * dado de novo: o reservado fica não utilizado e a calibração recebe outro; a revisão passa para o -R
+   * seguinte. O PDF é gerado depois, a partir desses dados (ver server/certificados.ts).
    */
   emitir(
     id: string,
@@ -1182,24 +1215,37 @@ export class Repositorio {
       let reservado = atual.substituiId ? null : this.numeroReservadoDa(id)
       const original = atual.substituiId ? this.obterCalibracao(atual.substituiId) : undefined
       if (reservado) {
-        // O nº reservado já num certificado (só com o banco mexido à mão): não sai repetido; fica não utilizado
+        // O nº reservado já num certificado (só com o banco mexido à mão) ou com PDF na pasta (emitido depois da
+        // cópia do banco que voltou): não sai repetido; fica não utilizado
         const ocupado = this.db
           .prepare('SELECT 1 FROM calibracoes WHERE ano = ? AND sequencia = ? AND revisao = 0 AND id <> ?')
           .get(reservado.ano, reservado.sequencia, id)
-        if (ocupado) {
+        const comPdf = !ocupado && this.temPdfNaPasta(reservado.ano, reservado.numero)
+        if (ocupado || comPdf) {
           this.naoUtilizado(
             reservado.id,
-            'O nº já estava em outro certificado; a calibração recebeu outro nº na emissão.',
+            ocupado
+              ? 'O nº já estava em outro certificado; a calibração recebeu outro nº na emissão.'
+              : `O nº já tem PDF na pasta certificados (${reservado.ano}/${nomeArquivoCertificado(reservado.numero)}), de um certificado que o banco não conhece; a calibração recebeu outro nº na emissão.`,
             opcoes.por ?? '',
           )
           reservado = null
         }
       }
+      let revisao = atual.revisao
       if (atual.substituiId) {
         if (!original || original.status !== 'EMITIDO' || original.ano === null || original.sequencia === null)
           throw new ErroApi(409, 'O certificado que esta revisão substitui não está mais emitido.')
         ano = original.ano
         sequencia = original.sequencia
+        // O nº do original como saiu nele, com o -R seguinte que não tem PDF na pasta nem está no banco
+        const ocupada = (r: number) =>
+          this.temPdfNaPasta(original.ano!, numeroDaRevisao(original.numero, original.revisao, r)) ||
+          !!this.db
+            .prepare('SELECT 1 FROM calibracoes WHERE ano = ? AND sequencia = ? AND revisao = ? AND id <> ?')
+            .get(original.ano, original.sequencia, r, id)
+        while (ocupada(revisao)) revisao++
+        numero = numeroDaRevisao(original.numero, original.revisao, revisao)
       } else if (reservado) {
         ano = reservado.ano
         sequencia = reservado.sequencia
@@ -1212,10 +1258,10 @@ export class Repositorio {
         ano = Number(this.hoje().slice(0, 4))
         sequencia = this.proximaSequenciaCertificado(ano)
       }
-      numero ||= opcoes.numero(sequencia, ano, atual.revisao)
+      numero ||= opcoes.numero(sequencia, ano, 0)
       let codigo = opcoes.codigo()
       while (this.db.prepare('SELECT 1 FROM calibracoes WHERE codigo = ?').get(codigo)) codigo = opcoes.codigo()
-      const base: Calibracao = { ...atual, status: 'EMITIDO', ano, sequencia, numero, dataEmissao: this.hoje() }
+      const base: Calibracao = { ...atual, status: 'EMITIDO', ano, sequencia, revisao, numero, dataEmissao: this.hoje() }
       const emissao = montar(base, { ano, sequencia, numero, codigo })
       const k: Calibracao = { ...base, emissao, versao: atual.versao + 1, atualizadoEm: em }
       this.gravarCalibracao(k, false)
@@ -1228,11 +1274,28 @@ export class Repositorio {
     })
   }
 
-  /** Grava o hash e o arquivo do PDF gerado (não muda a versão: é complemento da emissão). */
+  /**
+   * O nº com que a revisão em andamento sai: o do certificado revisado, como saiu nele, com o -R dela
+   * (`numeroDaRevisao`; ver `emitir`); null se não é revisão ou o revisado não existe mais.
+   */
+  numeroPrevistoDaRevisao(k: Pick<Calibracao, 'substituiId' | 'revisao'>): string | null {
+    const original = k.substituiId ? this.obterCalibracao(k.substituiId) : undefined
+    return original?.numero ? numeroDaRevisao(original.numero, original.revisao, k.revisao) : null
+  }
+
+  /**
+   * Grava o hash e o arquivo do PDF gerado (não muda a versão: é complemento da emissão). O hash é o do
+   * documento entregue ao cliente (o da verificação pública): depois de gravado, não muda.
+   */
   registrarPdf(id: string, arquivo: string, hashPdf: string) {
     transacao(this.db, () => {
       const k = this.obterCalibracao(id)
       if (!k?.emissao) return
+      if (k.emissao.hashPdf && k.emissao.hashPdf !== hashPdf)
+        throw new ErroApi(
+          409,
+          `O PDF do certificado ${k.numero} já está registrado com outro conteúdo: o registro da emissão não muda.`,
+        )
       const atualizado: Calibracao = { ...k, emissao: { ...k.emissao, arquivo, hashPdf } }
       this.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(atualizado), id)
     })
@@ -1477,15 +1540,23 @@ export class Repositorio {
 
   /**
    * Próximo nº da sequência dos certificados do ano, gravado como o último dado: depois do maior entre o
-   * contador da emissão, os certificados do banco e os nºs reservados (nenhum se repete).
+   * contador da emissão, os certificados do banco e os nºs reservados (nenhum se repete), e sem PDF na pasta dos
+   * certificados (o de um certificado que o banco não conhece; ver `conferirCertificadosDaPasta`).
    */
   private proximaSequenciaCertificado(ano: number): number {
     const chave = `sequencia_${ano}`
     const maior = (tabela: string) =>
       Number((this.db.prepare(`SELECT MAX(sequencia) AS n FROM ${tabela} WHERE ano = ?`).get(ano) as { n: number | null }).n ?? 0)
-    const sequencia = Math.max(Number(lerMeta(this.db, chave) ?? 0), maior('calibracoes'), maior('numeros_reservados')) + 1
+    let sequencia = Math.max(Number(lerMeta(this.db, chave) ?? 0), maior('calibracoes'), maior('numeros_reservados')) + 1
+    const { numeracao } = this.obterConfig()
+    while (this.temPdfNaPasta(ano, formatarNumeroCertificado(numeracao, sequencia, ano, 0))) sequencia++
     gravarMeta(this.db, chave, sequencia)
     return sequencia
+  }
+
+  /** O nº tem PDF na pasta dos certificados (`<ano>/Certificado-<nº>.pdf`)? */
+  private temPdfNaPasta(ano: number, numero: string): boolean {
+    return !!this.pastaCertificados && existsSync(join(this.pastaCertificados, String(ano), nomeArquivoCertificado(numero)))
   }
 
   /** Reserva o próximo nº do ano (formatado como sai no certificado, sem revisão). Dentro da transação. */
@@ -1970,6 +2041,101 @@ export class Repositorio {
     return true
   }
 
+  /**
+   * A pasta dos certificados é a fonte de verdade dos nºs já entregues: o PDF que o banco não conhece (o banco
+   * voltou de uma cópia anterior à emissão dele sem `transplantarRegistros`, ou com o banco atual estragado) é de
+   * um certificado que pode estar com o cliente. O nº dele, lido do PDF (`numeroDoCertificadoNoPdf`; sem ele, do
+   * nome do arquivo), fica não utilizado, com o motivo: nunca é dado a outra calibração nem sai de novo na que o
+   * tinha reservado (ela recebe outro na emissão). O PDF fica na pasta, como está. Roda quando o servidor sobe;
+   * o registro de atividades diz uma vez só quais PDFs o banco não conhece. Devolve os nºs avisados agora.
+   */
+  conferirCertificadosDaPasta(): string[] {
+    const pasta = this.pastaCertificados
+    if (!pasta || !existsSync(pasta)) return []
+    // Os arquivos que o banco conhece: o registrado na emissão e o nome que o nº de cada certificado tem; e os nºs
+    const conhecidos = new Set<string>()
+    const numeros = new Set<string>()
+    const linhas = this.db
+      .prepare("SELECT ano, numero, json_extract(dados, '$.emissao.arquivo') AS arquivo FROM calibracoes WHERE numero <> ''")
+      .all() as Array<{ ano: number | null; numero: string; arquivo: string | null }>
+    for (const l of linhas) {
+      if (l.arquivo) conhecidos.add(l.arquivo)
+      conhecidos.add(`${l.ano ?? 'sem-ano'}/${nomeArquivoCertificado(l.numero)}`)
+      numeros.add(l.numero)
+    }
+    const fora: Array<{ arquivo: string; ano: number }> = []
+    for (const ano of readdirSync(pasta, { withFileTypes: true })) {
+      if (!ano.isDirectory() || !/^\d{4}$/.test(ano.name)) continue
+      for (const nome of readdirSync(join(pasta, ano.name)).sort()) {
+        const arquivo = `${ano.name}/${nome}`
+        if (/\.pdf$/i.test(nome) && !conhecidos.has(arquivo)) fora.push({ arquivo, ano: Number(ano.name) })
+      }
+    }
+    if (!fora.length) return []
+    return transacao(this.db, () => {
+      const chave = 'certificados_fora_do_banco'
+      let avisados: string[] = []
+      try {
+        avisados = JSON.parse(lerMeta(this.db, chave) ?? '[]') as string[]
+      } catch {
+        avisados = []
+      }
+      const { numeracao } = this.obterConfig()
+      const novos: string[] = []
+      for (const f of fora) {
+        const caminho = join(pasta, f.arquivo)
+        const pdf = readFileSync(caminho)
+        const numero = numeroDoCertificadoNoPdf(pdf) || f.arquivo.replace(/^\d{4}\/Certificado-|\.pdf$/gi, '')
+        // Outro arquivo de um certificado que o banco tem (uma cópia salva à mão na pasta): nada a fazer
+        if (numeros.has(numero)) continue
+        // A revisão (-R1…) usa o nº do original, que o banco já tem: só o original reserva a sequência
+        const lido = /-R\d+$/.test(numero)
+          ? null
+          : (lerNumeroCertificado(numeracao, numero, f.ano) ?? lerNumeroCertificado(CONFIG_PADRAO.numeracao, numero, f.ano))
+        if (lido) {
+          const motivo = `Certificado emitido depois da cópia do banco que voltou: o PDF está em certificados/${f.arquivo}, mas o banco não tem a emissão. O nº não é dado de novo.`
+          const registrado = this.db
+            .prepare('SELECT id, situacao FROM numeros_reservados WHERE ano = ? AND sequencia = ?')
+            .get(lido.ano, lido.sequencia) as { id: number; situacao: string } | undefined
+          if (registrado?.situacao === 'reservado') this.naoUtilizado(registrado.id, motivo, '')
+          else if (
+            !registrado &&
+            !this.db
+              .prepare('SELECT 1 FROM calibracoes WHERE ano = ? AND sequencia = ? AND revisao = 0')
+              .get(lido.ano, lido.sequencia)
+          ) {
+            const em = this.dataValida(dataDaImpressaoNoPdf(pdf)) ?? statSync(caminho).mtime.toISOString()
+            this.db
+              .prepare(
+                `INSERT INTO numeros_reservados (numero, ano, sequencia, calibracao_id, folha, reservado_em, reservado_por, situacao, motivo, situacao_em)
+                 VALUES (?, ?, ?, '', '', ?, '', 'nao_utilizado', ?, ?)`,
+              )
+              .run(numero, lido.ano, lido.sequencia, em, motivo, this.agora().toISOString())
+          }
+        }
+        if (!avisados.includes(f.arquivo)) {
+          avisados.push(f.arquivo)
+          novos.push(numero)
+        }
+      }
+      if (novos.length) {
+        gravarMeta(this.db, chave, JSON.stringify(avisados))
+        const um = novos.length === 1
+        const texto = (lista: string) =>
+          um
+            ? `o PDF de certificado ${lista} na pasta certificados, que o banco não conhece, foi emitido depois da cópia do banco que voltou: o nº não é dado de novo, e o PDF fica na pasta`
+            : `${novos.length} PDFs de certificado na pasta certificados que o banco não conhece (${lista}), emitidos depois da cópia do banco que voltou: os nºs não são dados de novo, e os PDFs ficam na pasta`
+        let lista = novos.join(', ')
+        for (let n = novos.length - 1; texto(lista).length > 300 && n > 0; n--) lista = `${novos.slice(0, n).join(', ')}…`
+        this.db
+          .prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'COPIA_RESTAURADA', ?)")
+          .run(this.agora().toISOString(), texto(lista).slice(0, 300))
+        this.mudou('calibracao')
+      }
+      return novos
+    })
+  }
+
   /** A data ISO, se for de uma impressão possível (de 2020 até agora); senão null. */
   private dataValida(iso: string | null): string | null {
     const t = iso ? Date.parse(iso) : NaN
@@ -2069,24 +2235,40 @@ export class Repositorio {
   /**
    * Guarda o PDF da primeira impressão da folha (só se ainda não houver um) e devolve o guardado: dois
    * pedidos ao mesmo tempo recebem o mesmo arquivo, e toda reimpressão é igual à primeira, byte a byte. O
-   * arquivo vai para a pasta das folhas (sem ela, para o banco, como antes).
+   * arquivo vai para a pasta das folhas (sem ela, para o banco, como antes). `popId`: a revisão do POP impressa
+   * nela (null = nenhuma), que o certificado da calibração cita (`popDaFolhaDaCalibracao`).
    */
-  guardarPdfFolhaCampo(numero: string, pdf: Buffer): Buffer {
+  guardarPdfFolhaCampo(numero: string, pdf: Buffer, popId: number | null = null): Buffer {
     return transacao(this.db, () => {
       const guardado = this.pdfFolhaCampo(numero)
       if (guardado) return guardado
       const l = this.db.prepare('SELECT ano FROM folhas_campo WHERE numero = ?').get(numero) as { ano: number } | undefined
       if (!l) return pdf
       if (!this.pastaFolhas) {
-        this.db.prepare('UPDATE folhas_campo SET pdf = ? WHERE numero = ? AND pdf IS NULL').run(pdf, numero)
+        this.db.prepare('UPDATE folhas_campo SET pdf = ?, pop_id = ? WHERE numero = ? AND pdf IS NULL').run(pdf, popId, numero)
         return pdf
       }
       const { arquivo, sha256 } = this.gravarArquivoDaFolha(numero, l.ano, pdf)
       this.db
-        .prepare("UPDATE folhas_campo SET pdf_arquivo = ?, pdf_sha256 = ? WHERE numero = ? AND pdf_arquivo = ''")
-        .run(arquivo, sha256, numero)
+        .prepare("UPDATE folhas_campo SET pdf_arquivo = ?, pdf_sha256 = ?, pop_id = ? WHERE numero = ? AND pdf_arquivo = ''")
+        .run(arquivo, sha256, popId, numero)
       return pdf
     })
+  }
+
+  /**
+   * A revisão do POP impressa na folha de campo da calibração (a vigente, `folhaCampoDaCalibracao`), e se a folha é
+   * a do certificado revisado (`herdada`); null: sem folha, folha impressa sem POP registrado ou antes de o sistema
+   * guardar isso, ou a revisão não existe mais neste banco (cópia de segurança antiga).
+   */
+  popDaFolhaDaCalibracao(calibracaoId: string): { pop: VersaoPop; herdada: boolean } | null {
+    const folha = this.folhaCampoDaCalibracao(calibracaoId)
+    if (!folha) return null
+    const l = this.db.prepare('SELECT pop_id FROM folhas_campo WHERE numero = ?').get(folha.numero) as
+      { pop_id: number | null } | undefined
+    if (l?.pop_id === null || l?.pop_id === undefined) return null
+    const pop = this.versoesPop().find((v) => v.id === Number(l.pop_id))
+    return pop ? { pop, herdada: !!folha.herdada } : null
   }
 
   private folhaCampo(numero: string): FolhaCampoImpressa | undefined {

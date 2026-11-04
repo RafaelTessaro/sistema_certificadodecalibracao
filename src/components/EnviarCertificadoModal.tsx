@@ -2,7 +2,7 @@ import { CircleAlert, FileImage, FileText, Loader2, Lock, Mail, Paperclip, Send,
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { LIMITE_EMAIL_BYTES, problemaDosAnexos } from '#shared/arquivos.ts'
-import { descricaoBalanca, emailValido, formatarDataBr, listaEmails, preencherModelo } from '#shared/dominio.ts'
+import { descricaoBalanca, emailValido, formatarDataBr, listaEmails, paraSugerido, preencherModelo } from '#shared/dominio.ts'
 import type { AnexoEmailDisponivel, Balanca, Calibracao, Cliente } from '#shared/tipos.ts'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
@@ -22,21 +22,27 @@ function dosPadroes(ids: string[]) {
 
 /**
  * Envia o PDF do certificado emitido por e-mail, com o assunto e a mensagem do modelo das configurações, e os
- * certificados de calibração dos padrões usados (todos marcados; o PDF do certificado vai sempre).
+ * certificados de calibração dos padrões usados (todos marcados; o PDF do certificado vai sempre). O "Para" vem
+ * dos e-mails do cadastro atual do cliente (`emailsCliente`); o resto da mensagem, do certificado (`cliente`).
  */
 export function EnviarCertificadoModal({
   aberto,
   aoFechar,
   calibracao,
   cliente,
+  emailsCliente,
   balanca,
 }: {
   aberto: boolean
   aoFechar: () => void
   calibracao: Calibracao
   cliente: Cliente | undefined
+  /** Os e-mails do cadastro atual do cliente; ausente, os de `cliente`. */
+  emailsCliente?: Pick<Cliente, 'email' | 'emailCertificados'> | null
   balanca: Balanca | undefined
 }) {
+  const contatos = emailsCliente ?? cliente
+  const sugerido = paraSugerido(contatos)
   const { dados: config } = useConsulta(aberto ? 'config' : null, () => api.config().then((r) => r.config), ['config'])
   const { dados: email } = useConsulta(aberto ? 'config:email' : null, () => api.configEmail(), ['config'])
   const {
@@ -65,10 +71,10 @@ export function EnviarCertificadoModal({
       data: formatarDataBr(calibracao.dataCalibracao),
       os: calibracao.ordemServico,
     }
-    setPara((p) => p || listaEmails(cliente?.emailCertificados || cliente?.email || '').join(', '))
+    setPara((p) => p || sugerido)
     setAssunto((a) => a || preencherModelo(config.emailAssunto, valores))
     setTexto((t) => t || preencherModelo(config.emailMensagem, valores))
-  }, [aberto, config, calibracao, cliente, balanca])
+  }, [aberto, config, calibracao, cliente, balanca, sugerido])
 
   useEffect(() => {
     if (aberto) return
@@ -160,11 +166,7 @@ export function EnviarCertificadoModal({
         <Field
           label="Para"
           erro={erroPara}
-          hint={
-            cliente && !cliente.emailCertificados && !cliente.email
-              ? 'O cliente não tem e-mail cadastrado.'
-              : 'Separe vários e-mails com vírgula.'
-          }
+          hint={contatos && !sugerido ? 'O cliente não tem e-mail cadastrado.' : 'Separe vários e-mails com vírgula.'}
         >
           <Input
             value={para}

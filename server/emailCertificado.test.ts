@@ -81,6 +81,36 @@ const enviar = (k: Calibracao, extra: Record<string, unknown> = {}, cookie = t.c
     payload: { para: 'qualidade@mercado.com.br', assunto: `Certificado ${k.numero}`, texto: 'Segue.', ...extra },
   })
 
+describe('destinatário sugerido do e-mail do certificado', () => {
+  const detalhe = async (k: Calibracao) => (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json()
+  async function mudarCliente(extra: Record<string, unknown>) {
+    const atual = t.ctx.repo.obterCliente(c.cliente.id)!
+    const r = await t.chamar('PUT', `/api/clientes/${atual.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...atual, ...extra, versao: atual.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+  }
+
+  it('os e-mails do cadastro atual do cliente (o certificado continua com a cópia da emissão)', async () => {
+    const k = await c.emitido()
+    await mudarCliente({ emailCertificados: 'novo-responsavel@mercado.com.br' })
+    const d = await detalhe(k)
+    expect(d.emailsCliente).toEqual({ email: '', emailCertificados: 'novo-responsavel@mercado.com.br' })
+    expect(d.cliente.emailCertificados).toBe('qualidade@mercado.com.br')
+  })
+
+  it('cliente sem e-mail na emissão e cadastrado depois: o e-mail novo', async () => {
+    await mudarCliente({ emailCertificados: '' })
+    const k = await c.emitido()
+    expect((await detalhe(k)).emailsCliente).toEqual({ email: '', emailCertificados: '' })
+    await mudarCliente({ email: 'contato@mercado.com.br' })
+    const d = await detalhe(k)
+    expect(d.emailsCliente).toEqual({ email: 'contato@mercado.com.br', emailCertificados: '' })
+    expect(d.cliente).toMatchObject({ email: '', emailCertificados: '' })
+  })
+})
+
 describe('anexos do e-mail do certificado', () => {
   it('vão o PDF e os certificados dos padrões; avisa os padrões sem arquivo; o histórico guarda os nomes', async () => {
     const pdfJp = ARQUIVOS_TESTE.pdf('certificado do jogo JP-01')
@@ -179,6 +209,36 @@ describe('anexos do e-mail do certificado', () => {
     // Um certificado emitido agora leva o novo
     const outro = await c.emitido()
     expect((await anexosDe(outro)).anexos.map((a) => a.id)).toEqual(['certificado', `arquivo:${sha(novo)}`])
+  })
+
+  it('rascunho emitido depois de o padrão ser calibrado de novo: vai o arquivo do certificado do dia da calibração', async () => {
+    const doDia = ARQUIVOS_TESTE.pdf('certificado do dia')
+    const p = await atualizar(c.pesos, { certificadoArquivo: await c.enviarArquivo(doDia, 'do-dia.pdf') })
+    const pronta = await c.calibracaoPronta()
+    const r = await t.chamar('PUT', `/api/calibracoes/${pronta.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...pronta, dataCalibracao: '2026-10-20', versao: pronta.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    // Calibrado de novo depois da visita, antes da emissão: certificado, arquivo e correções novos
+    const novo = ARQUIVOS_TESTE.pdf('certificado posterior')
+    await atualizar(p, {
+      certificado: 'LAB-0999/2026',
+      dataCalibracao: '2026-10-25',
+      validade: '2027-10-25',
+      certificadoArquivo: await c.enviarArquivo(novo, 'posterior.pdf'),
+      pesos: p.pesos.map((w) => ({ ...w, correcao: w.correcao + 900 })),
+    })
+    const e = await c.emitir(r.json().calibracao)
+    expect(e.statusCode, e.body).toBe(200)
+    const k: Calibracao = e.json().calibracao
+    expect(k.emissao?.padroes[0]).toMatchObject({ certificado: 'LAB-0456/2026', dataCalibracao: '2026-01-10' })
+    expect(k.emissao?.padroes[0].pesos.map((w) => w.correcao)).toEqual([40, -30, 10, 20])
+    const { anexos } = await anexosDe(k)
+    expect(anexos.map((a) => [a.id, a.nome])).toEqual([
+      ['certificado', `Certificado-${k.numero}.pdf`],
+      [`arquivo:${sha(doDia)}`, 'Certificado-padrao-JP-01_LAB-0456-2026.pdf'],
+    ])
   })
 
   it('arquivo errado trocado no cadastro com o mesmo nº: os já emitidos passam a levar o certo, mesmo depois de nova calibração', async () => {

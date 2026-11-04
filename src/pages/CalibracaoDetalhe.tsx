@@ -484,6 +484,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
         aoFechar={() => setEnviando(false)}
         calibracao={k}
         cliente={cliente}
+        emailsCliente={dados.emailsCliente}
         balanca={balanca}
       />
       <MotivoModal

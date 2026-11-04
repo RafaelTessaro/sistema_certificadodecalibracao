@@ -14,7 +14,7 @@ import {
   opcoesDaClasse,
   somarMeses,
 } from '#shared/dominio.ts'
-import type { Calibracao, StatusCalibracao } from '#shared/tipos.ts'
+import type { Calibracao, Cliente, StatusCalibracao } from '#shared/tipos.ts'
 import {
   anexosDoCertificado,
   certificadosDosPadroes,
@@ -22,6 +22,7 @@ import {
   padroesDa,
   pdfDaCalibracao,
   pendenciasDa,
+  popDaCalibracao,
   previa,
 } from '../certificados.ts'
 import type { Contexto } from '../contexto.ts'
@@ -41,6 +42,9 @@ type ComId = FastifyRequest<{ Params: { id: string } }>
 type Corpo = Record<string, unknown>
 const corpo = (req: FastifyRequest): Corpo => (req.body && typeof req.body === 'object' ? (req.body as Corpo) : {})
 const versaoDe = (c: Corpo) => (typeof c.versao === 'number' ? c.versao : undefined)
+/** Só os e-mails do cliente (o "Para" sugerido no envio do certificado); null sem cliente. */
+const emailsDoCliente = (c: Cliente | undefined) =>
+  c ? { email: c.email ?? '', emailCertificados: c.emailCertificados ?? '' } : null
 
 export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, email: ReturnType<typeof criarModuloEmail>) {
   const { repo } = ctx
@@ -72,10 +76,12 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
   app.get('/api/calibracoes/:id', async (req: ComId) => {
     const k = obter(req.params.id)
     const aberta = k.status === 'RASCUNHO' || k.status === 'REVISAO'
-    const versoesPop = repo.versoesPop()
     return {
       calibracao: k,
       cliente: k.emissao?.cliente ?? repo.obterCliente(k.clienteId),
+      // Os e-mails do cadastro atual do cliente (o "Para" do envio do certificado): o cliente pode ter trocado o
+      // e-mail de recebimento depois da emissão (o resto do certificado continua com a cópia congelada)
+      emailsCliente: emailsDoCliente(repo.obterCliente(k.clienteId) ?? k.emissao?.cliente),
       balanca: k.emissao?.balanca ?? repo.obterBalanca(k.balancaId),
       padroes: k.emissao?.padroes ?? padroesDa(ctx, k),
       envios: repo.listarEnvios({ calibracaoId: k.id }),
@@ -84,13 +90,16 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       folhaCampo: repo.folhaCampoDaCalibracao(k.id),
       // Em andamento: o nº de certificado já reservado (impresso na folha de campo), com que ela vai ser emitida
       numeroReservado: aberta ? repo.numeroReservadoDa(k.id) : null,
+      // Revisão em andamento: o nº com que ela sai (o do certificado revisado, com o -R dela)
+      numeroRevisao: aberta ? repo.numeroPrevistoDaRevisao(k) : null,
       certificadosPadroes: certificadosDosPadroes(ctx, k),
-      // Emitido: a revisão do POP da emissão (com o arquivo, mesmo se anexado depois); em andamento: a vigente
+      // Emitido: a revisão do POP da emissão (com o arquivo, mesmo se anexado depois); em andamento: a que o
+      // certificado vai citar, a usada na calibração (`popDaCalibracao`)
       pop: k.emissao
         ? k.emissao.pop
-          ? (versoesPop.find((v) => v.id === k.emissao!.pop!.id) ?? null)
+          ? (repo.versoesPop().find((v) => v.id === k.emissao!.pop!.id) ?? null)
           : null
-        : (versoesPop[0] ?? null),
+        : (popDaCalibracao(ctx, k)?.versao ?? null),
     }
   })
 

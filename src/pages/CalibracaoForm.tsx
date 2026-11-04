@@ -336,6 +336,8 @@ interface Carregado {
   padroes: Padrao[]
   config: Configuracoes
   equipe: MembroEquipe[]
+  /** Revisão: o nº com que ela sai (o do certificado revisado, com o -R dela); null = não é revisão. */
+  numeroRevisao: string | null
 }
 
 function EditorCalibracao({ id }: { id: string }) {
@@ -380,6 +382,7 @@ function EditorCalibracao({ id }: { id: string }) {
           padroes: p.padroes,
           config: c.config,
           equipe: e.equipe,
+          numeroRevisao: d.numeroRevisao ?? null,
         })
         setF(inicial.f)
         setFolha(inicial.folha)
@@ -854,6 +857,7 @@ function EditorCalibracao({ id }: { id: string }) {
                 <EtapaRevisao
                   ctx={ctx}
                   numeroReservado={numeroReservado}
+                  numeroRevisao={dados.numeroRevisao}
                   pendencias={pendencias}
                   salvando={salvo === 'salvando'}
                   aoVisualizar={() => void verPrevia()}

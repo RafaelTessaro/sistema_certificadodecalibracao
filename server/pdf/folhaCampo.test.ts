@@ -2029,6 +2029,49 @@ describe.runIf(temPdftotext)('nº do certificado longo (outro formato de numera�
     // No alto da página e no título do passo 8: duas linhas, o nº inteiro em cada uma
     expect(linhas.filter((l) => l.includes(numero))).toHaveLength(2)
   })
+
+  /** Palavras do alto de cada página: o cabeçalho e a faixa da OS (acima do conteúdo). */
+  const altoDasPaginas = (pdf: Buffer) => palavrasDoPdf(pdf).map((p) => p.filter((w) => w.y1 < TOPO_CABECALHO + MODULO + 27))
+
+  it.each(['LAB-CAL-2026-00407', 'LAB-CAL-2026-00401', 'CAL-BC-2026/00410', 'CAL-BC-2026/00403'])(
+    '%s: o nº inteiro (numa palavra) no alto de toda página, e a faixa da OS em todas',
+    async (numero) => {
+      const d = { ...folhaPlataforma(), numeroCertificado: numero }
+      const m = await montar(d)
+      expect(m.faltando).toEqual([])
+      const alto = altoDasPaginas(m.pdf)
+      expect(alto).toHaveLength(m.paginas)
+      for (const [i, p] of alto.entries()) {
+        const textos = p.map((w) => w.texto)
+        expect(textos, `página ${i + 1}`).toContain(numero)
+        expect(textos, `página ${i + 1}`).toContain(d.numero)
+        expect(
+          textos.filter((x) => x === 'OS-2026-0512'),
+          `página ${i + 1}`,
+        ).toHaveLength(1)
+      }
+    },
+  )
+
+  it('nº de 40 caracteres: a letra diminui, os dois nºs ficam inteiros e dentro da margem, e a OS em todas', async () => {
+    const numero = 'LABORATORIO-CALIBRACAO-BALANCAS-2026-00042'
+    const d = { ...folhaPlataforma(), numeroCertificado: numero }
+    const m = await montar(d)
+    expect(m.faltando).toEqual([])
+    for (const [i, p] of altoDasPaginas(m.pdf).entries()) {
+      for (const n of [numero, d.numero]) {
+        const w = p.find((x) => x.texto === n)
+        expect(w, `${n}, página ${i + 1}`).toBeDefined()
+        expect(w!.x1, `${n}, página ${i + 1}`).toBeLessThanOrEqual(A4.largura - 34 + 0.5)
+      }
+      // O título da folha numa linha só e a OS
+      expect(corrido(p.map((w) => w.texto).join(' ')), `página ${i + 1}`).toContain('FOLHA DE CAMPO — CALIBRAÇÃO DE BALANÇA')
+      expect(
+        p.filter((x) => x.texto === 'OS-2026-0512'),
+        `página ${i + 1}`,
+      ).toHaveLength(1)
+    }
+  })
 })
 
 describe.runIf(temPdftotext)(

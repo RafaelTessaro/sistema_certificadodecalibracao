@@ -927,10 +927,33 @@ export function transplantarUsuarios(origem: Banco, destino: Banco): { usuarios:
  * que ficaria com duas folhas vigentes (a da cópia e a impressa depois dela, que no banco atual a
  * substituiu) volta a ter uma só (`conciliarVigentes`). Nenhuma calibração da cópia termina com duas
  * vigentes (`umaVigentePorCalibracao`). Devolve quantas passaram; o registro de atividades da cópia guarda
- * quais. Os nºs de certificado reservados depois da cópia (impressos nas folhas) passam junto
- * (`transplantarNumeros`).
+ * quais. Os certificados emitidos depois da cópia (`transplantarCertificados`) e os nºs de certificado reservados
+ * depois dela (impressos nas folhas; `transplantarNumeros`) passam junto, antes, na mesma transação: a folha de uma
+ * calibração emitida depois da cópia continua ligada a ela. Ver `transplantarRegistros`.
  */
 export function transplantarFolhasCampo(origem: Banco, destino: Banco): number {
+  return transplantarRegistros(origem, destino).folhasCampo
+}
+
+/**
+ * Restauração de uma cópia .db (`redefinir-senha.mjs transplantar`): o que já saiu do laboratório depois da cópia
+ * passa de `origem` (o banco atual) para `destino` (a cópia que vai voltar), numa transação só: os certificados
+ * emitidos, cancelados ou substituídos (`transplantarCertificados`), os nºs de certificado reservados
+ * (`transplantarNumeros`) e as folhas de campo impressas (`transplantarFolhasCampo`). Devolve quantas folhas e
+ * quantos certificados passaram.
+ */
+export function transplantarRegistros(origem: Banco, destino: Banco): { folhasCampo: number; certificados: number } {
+  let certificados = 0
+  let folhasCampo = 0
+  transacao(destino, () => {
+    certificados = transplantarCertificados(origem, destino).length
+    folhasCampo = passarFolhasCampo(origem, destino)
+  })
+  return { folhasCampo, certificados }
+}
+
+/** As folhas de campo de `origem` que faltam em `destino` (ver `transplantarFolhasCampo`). Dentro da transação. */
+function passarFolhasCampo(origem: Banco, destino: Banco): number {
   const colunas = (db: Banco) =>
     (db.prepare('PRAGMA table_info(folhas_campo)').all() as Array<{ name: string }>).map((c) => c.name)
   const comuns = colunas(origem).filter((c) => colunas(destino).includes(c))
@@ -1002,17 +1025,146 @@ export function transplantarFolhasCampo(origem: Banco, destino: Banco): number {
 const temTabela = (db: Banco, nome: string) =>
   !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(nome)
 
+/** As colunas da tabela que os dois bancos têm (a cópia pode ser de uma versão anterior). */
+const colunasComuns = (origem: Banco, destino: Banco, tabela: string) => {
+  const colunas = (db: Banco) => (db.prepare(`PRAGMA table_info(${tabela})`).all() as Array<{ name: string }>).map((c) => c.name)
+  const doDestino = colunas(destino)
+  return colunas(origem).filter((c) => doDestino.includes(c))
+}
+
+type LinhaBanco = Record<string, string | number | Uint8Array | null>
+
+/** `lista` (até caber em `texto` com 300 letras, com "…" quando não cabe). */
+function caberNoRegistro(texto: (lista: string) => string, itens: string[]): string {
+  let lista = itens.join(', ')
+  for (let n = itens.length - 1; texto(lista).length > 300 && n > 0; n--) lista = `${itens.slice(0, n).join(', ')}…`
+  return texto(lista)
+}
+
+/**
+ * A linha `id` de `tabela` (clientes ou balanças) passa de `origem` para `destino` se faltar lá (com o cliente da
+ * balança antes, pela chave estrangeira). Devolve se ela existe em `destino` no fim.
+ */
+function garantirCadastro(origem: Banco, destino: Banco, tabela: 'clientes' | 'balancas', id: string): boolean {
+  if (destino.prepare(`SELECT 1 FROM ${tabela} WHERE id = ?`).get(id)) return true
+  const comuns = colunasComuns(origem, destino, tabela)
+  const l = origem.prepare(`SELECT ${comuns.join(', ')} FROM ${tabela} WHERE id = ?`).get(id) as LinhaBanco | undefined
+  if (!l) return false
+  if (tabela === 'balancas' && !garantirCadastro(origem, destino, 'clientes', String(l.cliente_id))) return false
+  destino
+    .prepare(`INSERT INTO ${tabela} (${comuns.join(', ')}) VALUES (${comuns.map(() => '?').join(', ')})`)
+    .run(...comuns.map((c) => l[c] ?? null))
+  return true
+}
+
+/**
+ * Restauração de uma cópia .db: os certificados emitidos, cancelados ou substituídos depois da cópia passam do banco
+ * atual (`origem`) para ela (`destino`), como estão nele. O PDF entregue (na pasta certificados, que a restauração
+ * não apaga) continua valendo, com o mesmo nº, a mesma data e o mesmo código de autenticidade (o QR code do papel
+ * confere), e nada é emitido de novo com outro conteúdo. Vai a linha inteira da calibração, com a emissão congelada:
+ * a da cópia (em andamento, ou emitida e depois cancelada ou revisada) fica como no banco atual, e a que a cópia não
+ * tem entra, com o cliente e a balança que faltarem, os arquivos citados na emissão (certificados dos padrões, POP)
+ * e os envios por e-mail dela. O que a cópia tem igual não muda. O que repetiria na cópia um nº ou um código de
+ * outro certificado fica de fora (o registro de atividades diz qual). Devolve os nºs que passaram. Dentro da
+ * transação de `transplantarRegistros`, antes dos nºs e das folhas.
+ */
+function transplantarCertificados(origem: Banco, destino: Banco): string[] {
+  if (!temTabela(origem, 'calibracoes') || !temTabela(destino, 'calibracoes')) return []
+  const comuns = colunasComuns(origem, destino, 'calibracoes')
+  for (const c of ['id', 'status', 'ano', 'sequencia', 'revisao', 'numero', 'codigo', 'cliente_id', 'balanca_id', 'dados'])
+    if (!comuns.includes(c)) return []
+  const linhas = origem
+    .prepare(
+      `SELECT ${comuns.join(', ')} FROM calibracoes WHERE status IN ('EMITIDO', 'CANCELADO', 'SUBSTITUIDO')
+        ORDER BY ano, sequencia, revisao`,
+    )
+    .all() as LinhaBanco[]
+  const naCopia = destino.prepare('SELECT status, dados FROM calibracoes WHERE id = ?')
+  const numeroOcupado = destino.prepare('SELECT 1 FROM calibracoes WHERE ano = ? AND sequencia = ? AND revisao = ? AND id <> ?')
+  const codigoOcupado = destino.prepare("SELECT 1 FROM calibracoes WHERE codigo = ? AND codigo <> '' AND id <> ?")
+  const semId = comuns.filter((c) => c !== 'id')
+  const trocar = destino.prepare(`UPDATE calibracoes SET ${semId.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`)
+  const inserir = destino.prepare(`INSERT INTO calibracoes (${comuns.join(', ')}) VALUES (${comuns.map(() => '?').join(', ')})`)
+  const passaram: LinhaBanco[] = []
+  const deFora: string[] = []
+  for (const l of linhas) {
+    const copia = naCopia.get(l.id) as { status: string; dados: string } | undefined
+    if (copia && copia.status === l.status && copia.dados === l.dados) continue
+    if (
+      numeroOcupado.get(l.ano, l.sequencia, l.revisao, l.id) ||
+      codigoOcupado.get(l.codigo, l.id) ||
+      !garantirCadastro(origem, destino, 'clientes', String(l.cliente_id)) ||
+      !garantirCadastro(origem, destino, 'balancas', String(l.balanca_id))
+    ) {
+      deFora.push(String(l.numero))
+      continue
+    }
+    if (copia) trocar.run(...semId.map((c) => l[c] ?? null), l.id)
+    else inserir.run(...comuns.map((c) => l[c] ?? null))
+    passaram.push(l)
+  }
+  if (!passaram.length && !deFora.length) return []
+
+  // Os arquivos guardados no banco que a emissão cita (o certificado de cada padrão, o POP) e os envios por e-mail
+  if (temTabela(origem, 'arquivos') && temTabela(destino, 'arquivos')) {
+    const citados = new Set(passaram.flatMap((l) => [...String(l.dados).matchAll(/"sha256":"([0-9a-f]{64})"/g)].map((m) => m[1])))
+    const colunasArquivo = colunasComuns(origem, destino, 'arquivos')
+    const temArquivo = destino.prepare('SELECT 1 FROM arquivos WHERE sha256 = ?')
+    const doAtual = origem.prepare(`SELECT ${colunasArquivo.join(', ')} FROM arquivos WHERE sha256 = ?`)
+    const guardar = destino.prepare(
+      `INSERT INTO arquivos (${colunasArquivo.join(', ')}) VALUES (${colunasArquivo.map(() => '?').join(', ')})`,
+    )
+    for (const sha256 of citados) {
+      const a = temArquivo.get(sha256) ? undefined : (doAtual.get(sha256) as LinhaBanco | undefined)
+      if (a) guardar.run(...colunasArquivo.map((c) => a[c] ?? null))
+    }
+  }
+  if (temTabela(origem, 'envios') && temTabela(destino, 'envios')) {
+    const colunasEnvio = colunasComuns(origem, destino, 'envios')
+    const temEnvio = destino.prepare('SELECT 1 FROM envios WHERE id = ?')
+    const doAtual = origem.prepare(`SELECT ${colunasEnvio.join(', ')} FROM envios WHERE calibracao_id = ? ORDER BY em`)
+    const guardar = destino.prepare(
+      `INSERT INTO envios (${colunasEnvio.join(', ')}) VALUES (${colunasEnvio.map(() => '?').join(', ')})`,
+    )
+    for (const l of passaram)
+      for (const e of doAtual.all(l.id) as LinhaBanco[])
+        if (!temEnvio.get(e.id)) guardar.run(...colunasEnvio.map((c) => e[c] ?? null))
+  }
+
+  const numeros = passaram.map((l) => String(l.numero))
+  const partes = [
+    numeros.length === 1
+      ? `o certificado ${numeros[0]}, emitido ou alterado depois da cópia, continua como no banco atual (o mesmo nº, a mesma situação e o mesmo código de autenticidade): o PDF entregue continua valendo`
+      : numeros.length
+        ? caberNoRegistro(
+            (lista) =>
+              `${numeros.length} certificados emitidos ou alterados depois da cópia (${lista}) continuam como no banco atual (o mesmo nº, a mesma situação e o mesmo código de autenticidade): os PDFs entregues continuam valendo`,
+            numeros,
+          )
+        : '',
+    deFora.length
+      ? caberNoRegistro(
+          (lista) =>
+            `${deFora.length === 1 ? 'o certificado' : 'os certificados'} ${lista}, do banco atual, não ${deFora.length === 1 ? 'passou' : 'passaram'}: o nº ou o código já está noutro certificado da cópia`,
+          deFora,
+        )
+      : '',
+  ].filter(Boolean)
+  for (const detalhe of partes) gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe })
+  return numeros
+}
+
 /**
  * Os nºs de certificado reservados no banco atual (`origem`) depois da cópia (`destino`) passam para ela, como
  * estavam: eles já estão nas folhas de campo e nas etiquetas das balanças, e nunca podem ir para outro
  * certificado. O nº reservado para uma calibração que não existe na cópia fica com a folha em que saiu, como o
  * da folha avulsa: passa para a calibração refeita a que ela for ligada. A calibração que na cópia tem outro nº
  * reservado fica com o do banco atual (o do papel ligado a ela depois da cópia, que a passagem das folhas
- * também liga), e o da cópia fica como está no banco atual. O nº emitido depois da cópia para uma calibração
- * que na cópia ainda está em andamento volta como reservado para ela: a reemissão sai com o mesmo nº da
- * etiqueta, da folha e do PDF já entregue. O contador da emissão (`sequencia_<ano>`) também não volta: os
- * certificados emitidos depois da cópia têm o PDF na pasta e podem estar com o cliente. Grava no registro de
- * atividades quantos passaram; devolve quais.
+ * também liga), e o da cópia fica como está no banco atual. O nº emitido depois da cópia fica emitido (o
+ * certificado passou antes, em `transplantarCertificados`), também o que a cópia tinha como reservado: nunca é
+ * dado de novo. O contador da emissão (`sequencia_<ano>`) também não volta: os certificados emitidos depois da
+ * cópia têm o PDF na pasta e podem estar com o cliente. Grava no registro de atividades quantos passaram;
+ * devolve quais.
  */
 function transplantarNumeros(origem: Banco, destino: Banco): string[] {
   if (!temTabela(origem, 'numeros_reservados') || !temTabela(destino, 'numeros_reservados')) return []
@@ -1034,12 +1186,8 @@ function transplantarNumeros(origem: Banco, destino: Banco): string[] {
   const noAtual = origem.prepare(
     'SELECT calibracao_id, situacao, motivo, situacao_em, situacao_por FROM numeros_reservados WHERE ano = ? AND sequencia = ?',
   )
-  const existe = destino.prepare('SELECT 1 FROM numeros_reservados WHERE ano = ? AND sequencia = ?')
+  const naCopia = destino.prepare('SELECT id, situacao FROM numeros_reservados WHERE ano = ? AND sequencia = ?')
   const calibracao = destino.prepare('SELECT 1 FROM calibracoes WHERE id = ?')
-  // Em andamento e ainda sem nº (a revisão sai com o do revisado: não tem nº reservado)
-  const emAndamento = destino.prepare(
-    "SELECT 1 FROM calibracoes WHERE id = ? AND status IN ('RASCUNHO', 'REVISAO') AND substitui_id = '' AND numero = ''",
-  )
   const reservadoNaCopia = destino.prepare(
     "SELECT id, ano, sequencia FROM numeros_reservados WHERE calibracao_id = ? AND situacao = 'reservado'",
   )
@@ -1050,18 +1198,19 @@ function transplantarNumeros(origem: Banco, destino: Banco): string[] {
     `INSERT INTO numeros_reservados (${colunas.join(', ')}) VALUES (${colunas.map(() => '?').join(', ')})`,
   )
   const passaram: string[] = []
-  const reservadosDeNovo: string[] = []
+  const emitidos: string[] = []
   for (const l of linhas) {
-    if (existe.get(l.ano, l.sequencia)) continue
+    const ja = naCopia.get(l.ano, l.sequencia) as { id: number; situacao: string } | undefined
+    if (ja) {
+      // Reservado na cópia e emitido depois dela: emitido, como no banco atual
+      if (ja.situacao === 'reservado' && l.situacao === 'emitido') {
+        comoNoAtual.run(l.calibracao_id, l.situacao, l.motivo, l.situacao_em, l.situacao_por, ja.id)
+        emitidos.push(String(l.numero))
+      }
+      continue
+    }
     const linha = { ...l }
     const dono = String(linha.calibracao_id)
-    // Emitido depois da cópia, mas a calibração voltou em andamento: reservado para ela de novo
-    if (linha.situacao === 'emitido' && dono && emAndamento.get(dono)) {
-      linha.situacao = 'reservado'
-      linha.situacao_em = ''
-      linha.situacao_por = ''
-      reservadosDeNovo.push(String(l.numero))
-    }
     if (linha.situacao === 'reservado' && dono) {
       if (!calibracao.get(dono)) linha.calibracao_id = ''
       else {
@@ -1090,20 +1239,19 @@ function transplantarNumeros(origem: Banco, destino: Banco): string[] {
     const atual = lerContador.get(c.chave) as { valor: string } | undefined
     if (Number(c.valor) > Number(atual?.valor ?? 0)) gravarContador.run(c.chave, c.valor)
   }
-  if (passaram.length)
-    gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', {
-      ip: 'local',
-      detalhe: [
-        passaram.length === 1
-          ? `o nº de certificado reservado depois da cópia (${passaram[0]}) continua registrado: os nºs não se repetem`
-          : `${passaram.length} nºs de certificado reservados depois da cópia (${passaram[0]} a ${passaram.at(-1)}) continuam registrados: os nºs não se repetem`,
-        reservadosDeNovo.length
-          ? `${reservadosDeNovo.join(', ')}, emitido${reservadosDeNovo.length > 1 ? 's' : ''} depois da cópia, volta${reservadosDeNovo.length > 1 ? 'm' : ''} como reservado${reservadosDeNovo.length > 1 ? 's' : ''} para a calibração em andamento na cópia (a reemissão usa o mesmo nº)`
-          : '',
-      ]
-        .filter(Boolean)
-        .join('; '),
-    })
+  const detalhe = [
+    passaram.length === 1
+      ? `o nº de certificado reservado depois da cópia (${passaram[0]}) continua registrado: os nºs não se repetem`
+      : passaram.length
+        ? `${passaram.length} nºs de certificado reservados depois da cópia (${passaram[0]} a ${passaram.at(-1)}) continuam registrados: os nºs não se repetem`
+        : '',
+    emitidos.length
+      ? `${emitidos.join(', ')}, reservado${emitidos.length > 1 ? 's' : ''} na cópia, ${emitidos.length > 1 ? 'ficam emitidos' : 'fica emitido'}, como no banco atual`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('; ')
+  if (detalhe) gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe })
   return passaram
 }
 

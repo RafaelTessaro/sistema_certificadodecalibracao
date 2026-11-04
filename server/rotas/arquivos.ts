@@ -83,7 +83,7 @@ export async function rotasArquivos(app: FastifyInstance, ctx: Contexto) {
     return { atual: versoes[0] ?? null, versoes }
   })
 
-  /** Registra uma revisão nova do POP (vale para os próximos certificados). */
+  /** Registra uma revisão nova do POP, com data até hoje (vale para as próximas folhas de campo e calibrações). */
   app.post('/api/pop', async (req, reply) => {
     const u = quem(req)
     const versao = repo.registrarPop(req.body, u.nome)

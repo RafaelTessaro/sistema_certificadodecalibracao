@@ -210,6 +210,11 @@ const MIGRACOES: Migracao[] = [
   // exigências da época, como a revisão aberta depois (`calculoLegado`, que o servidor marca ao criar a revisão):
   // sai com os mesmos números do original e não pede um ΔT pesos − ar que nunca foi medido.
   revisoesLegadas,
+
+  // 10: a revisão do POP impressa em cada folha de campo (pop_id; nulo = nenhuma registrada na impressão): o
+  // certificado cita o método usado na calibração (ISO/IEC 17025, 7.8.2.1), o da folha, não o vigente na emissão
+  // (`popDaCalibracao` em certificados.ts). As folhas já impressas ficam com a vigente na primeira impressão.
+  popDasFolhas,
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
@@ -306,6 +311,19 @@ function revisoesLegadas(db: Banco) {
         marcadas,
       ),
     )
+}
+
+/**
+ * Migração 10 (ver acima). Repetível: só acrescenta a coluna e preenche as folhas sem ela. A vigente na primeira
+ * impressão é a última registrada até ela (`Repositorio.popVigente`: a de maior id); antes de todas, nenhuma.
+ */
+function popDasFolhas(db: Banco) {
+  acrescentarColuna(db, 'folhas_campo', 'pop_id', 'INTEGER')
+  db.exec(
+    `UPDATE folhas_campo
+        SET pop_id = (SELECT MAX(p.id) FROM pop_versoes p WHERE p.criado_em <= folhas_campo.impressa_em)
+      WHERE pop_id IS NULL`,
+  )
 }
 
 /** O código de procedimento de exemplo que vinha nas configurações até a versão 1.0.1 (não é o POP de ninguém). */

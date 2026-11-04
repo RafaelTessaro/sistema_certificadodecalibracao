@@ -1,7 +1,7 @@
 // Arquivos guardados no sistema (o certificado de calibração de cada padrão e o POP): o tipo é conferido
 // pelo conteúdo (os primeiros bytes), nunca pelo nome; o mesmo arquivo vale para o servidor e para as telas.
 
-import type { ArquivoAnexo } from './tipos.ts'
+import type { ArquivoAnexo, VersaoPop } from './tipos.ts'
 
 // Sem importar de dominio.ts (que importa daqui): os três utilitários que este módulo usa
 const obj = (v: unknown): Record<string, unknown> =>
@@ -155,6 +155,17 @@ export function textoPop(p: { codigo: string; revisao: string }): string {
   return r ? `${c} rev. ${r}` : c
 }
 
+/**
+ * A revisão do POP que valia numa data (yyyy-MM-dd): a última registrada com data até ela (a de maior id, como a
+ * vigente); antes de todas, a mais antiga (a trazida das configurações tem a data da atualização do sistema); sem
+ * data válida, a vigente. `versoes`: da mais nova para a mais antiga (`Repositorio.versoesPop`). null = nenhuma.
+ */
+export function popNaData(versoes: VersaoPop[], data: string): VersaoPop | null {
+  if (!versoes.length) return null
+  if (!dataIsoValida(data)) return versoes[0]
+  return versoes.find((v) => dataIsoValida(v.data) && v.data <= data) ?? versoes[versoes.length - 1]
+}
+
 /** "PT-CAL-01 rev. 0" → código e revisão (o texto sem "rev." fica inteiro no código). */
 export function separarProcedimento(p: string): { codigo: string; revisao: string } {
   const m = p.trim().match(/^(.*?)\s+rev\.?\s*(\S+)$/i)
@@ -171,7 +182,11 @@ export interface EntradaPop {
   observacao: string
 }
 
-export function normalizarPop(entrada: unknown): { valor: EntradaPop; erros: string[] } {
+/**
+ * Confere o registro de uma revisão do POP. `hoje` (yyyy-MM-dd): a data da revisão não pode ser depois dele (o
+ * certificado cita a revisão pela data da calibração: uma com data no futuro não foi a usada em nenhuma).
+ */
+export function normalizarPop(entrada: unknown, hoje?: string): { valor: EntradaPop; erros: string[] } {
   const r = obj(entrada)
   const erros: string[] = []
   const codigo = texto(r.codigo, 60).replace(/\s+/g, ' ')
@@ -181,6 +196,7 @@ export function normalizarPop(entrada: unknown): { valor: EntradaPop; erros: str
   if (!revisao) erros.push('Informe a revisão do POP com números (ex.: 00, 01).')
   const data = dataIsoValida(r.data) ? (r.data as string) : ''
   if (!data) erros.push('Informe a data da revisão do POP.')
+  else if (hoje && data > hoje) erros.push('A data da revisão do POP não pode ser no futuro.')
   const arquivo = typeof r.arquivo === 'string' ? r.arquivo.toLowerCase() : ''
   if (arquivo && !SHA256_VALIDO.test(arquivo)) erros.push('Arquivo do POP inválido. Envie o arquivo de novo.')
   return { valor: { codigo, revisao, data, arquivo, observacao: texto(r.observacao, 300) }, erros }

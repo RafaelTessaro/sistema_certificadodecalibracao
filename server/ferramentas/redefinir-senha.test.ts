@@ -312,6 +312,7 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
         loginsCopia: ['antigo'],
         loginsAtuais: ['admin', 'maria'],
         folhasCampo: 0,
+        certificados: 0,
       })
       // Tudo gravado no próprio .db: o script move só ele
       expect(existsSync(`${restaurado}-wal`)).toBe(false)
@@ -338,6 +339,7 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
         loginsCopia: ['antigo'],
         loginsAtuais: [],
         folhasCampo: 0,
+        certificados: 0,
       })
       await comBanco(restaurado, (db) => {
         expect((db.prepare('SELECT login FROM usuarios').all() as Linha[]).map((l) => l.login)).toEqual(['antigo'])
@@ -358,6 +360,7 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
         loginsCopia: ['antigo'],
         loginsAtuais: ['admin', 'maria'],
         folhasCampo: 0,
+        certificados: 0,
       })
       expect(await contar(restaurado, 'SELECT COUNT(*) AS n FROM sessoes')).toBe(0)
       expect(await contar(restaurado, 'SELECT COUNT(*) AS n FROM usuarios')).toBe(1)

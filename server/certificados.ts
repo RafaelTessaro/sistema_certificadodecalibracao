@@ -1,11 +1,14 @@
 // Emissão e PDF dos certificados: monta os dados congelados, calcula, gera o PDF e o guarda em
-// <dados>/certificados/<ano>/. O PDF emitido é sempre servido do arquivo; se ele sumir, é gerado
-// de novo a partir dos dados congelados (fica igual).
+// <dados>/certificados/<ano>/. O PDF emitido é o documento entregue ao cliente (o SHA-256 dele sai na
+// verificação pública): é sempre servido do arquivo, conferido pelo hash, e o hash da emissão nunca muda.
+// Se o arquivo sumir, o PDF refeito dos dados congelados só volta para a pasta se sair idêntico (a mesma
+// versão do gerador); com outro layout seria outro documento, e é erro (`pdfEmitido`). Nenhum PDF da pasta é
+// sobrescrito (`gravarSemSobrescrever`).
 
 import { createHash, randomInt } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { nomeArquivoSimples, PENDENCIA_POP, textoPop, tipoDoMime } from '#shared/arquivos.ts'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { nomeArquivoSimples, PENDENCIA_POP, popNaData, textoPop, tipoDoMime } from '#shared/arquivos.ts'
 import { calcularCalibracao } from '#shared/calibracao.ts'
 import {
   arquivoDoCertificado,
@@ -25,10 +28,13 @@ import type {
   Configuracoes,
   EmissaoCertificado,
   Padrao,
+  PopEmitido,
   Signatario,
   Usuario,
+  VersaoPop,
 } from '#shared/tipos.ts'
 import type { Contexto } from './contexto.ts'
+import { PROCEDIMENTO_EXEMPLO_ANTIGO } from './db.ts'
 import { ErroApi } from './erros.ts'
 import { gerarCertificadoPdf } from './pdf/certificado.ts'
 
@@ -64,6 +70,61 @@ export { PENDENCIA_POP }
 /** O que sai no lugar do código do POP na prévia, enquanto nenhum POP foi registrado. */
 export const PREVIA_SEM_POP = '(não cadastrado)'
 
+/** A revisão do POP de uma calibração: `versao` (a registrada, com o arquivo; null = não está mais no banco ou é o
+ * texto de um certificado legado), `pop` (o que fica congelado na emissão) e o texto que sai no certificado. */
+export interface PopDaCalibracao {
+  versao: VersaoPop | null
+  pop: PopEmitido | null
+  procedimento: string
+}
+
+const popEmitido = (v: VersaoPop): PopEmitido => ({
+  id: v.id,
+  codigo: v.codigo,
+  revisao: v.revisao,
+  data: v.data,
+  arquivo: v.arquivo,
+})
+const daVersao = (v: VersaoPop): PopDaCalibracao => ({ versao: v, pop: popEmitido(v), procedimento: textoPop(v) })
+
+/**
+ * A revisão do POP usada na calibração, a que o certificado cita (ISO/IEC 17025, 7.8.2.1: o método usado), e não a
+ * vigente na emissão; null = nenhuma (sem POP registrado: pendência). Nesta ordem:
+ * - a impressa na folha de campo da própria calibração (`Repositorio.popDaFolhaDaCalibracao`; numa revisão, a
+ *   folha avulsa de uma visita nova, ligada a ela), salvo `semFolha` (a folha nova, que fica no lugar dela);
+ * - revisão de certificado (a mesma visita): a do certificado revisado, com o mesmo texto (o arquivo é o que a
+ *   revisão do POP tem agora: o anexado depois). O certificado emitido antes das revisões do POP: o procedimento que
+ *   saiu nele (o exemplo de fábrica não conta);
+ * - a impressa na folha herdada do certificado revisado;
+ * - a que valia na data da calibração (`popNaData`: antes de todas, a mais antiga; sem a data, a vigente).
+ */
+export function popDaCalibracao(
+  ctx: Contexto,
+  k: Pick<Calibracao, 'id' | 'substituiId' | 'dataCalibracao'>,
+  opcoes: { semFolha?: boolean } = {},
+): PopDaCalibracao | null {
+  const versoes = ctx.repo.versoesPop()
+  const daFolha = opcoes.semFolha ? null : ctx.repo.popDaFolhaDaCalibracao(k.id)
+  if (daFolha && !daFolha.herdada) return daVersao(daFolha.pop)
+  const original = k.substituiId ? ctx.repo.obterCalibracao(k.substituiId)?.emissao : undefined
+  if (original?.pop) {
+    const congelado = original.pop
+    const v = versoes.find((x) => x.id === congelado.id && x.codigo === congelado.codigo && x.revisao === congelado.revisao)
+    return {
+      versao: v ?? null,
+      pop: v ? popEmitido(v) : congelado,
+      procedimento: original.textos.procedimento || textoPop(congelado),
+    }
+  }
+  const legado = original?.textos.procedimento?.trim() ?? ''
+  if (legado && legado !== PROCEDIMENTO_EXEMPLO_ANTIGO) {
+    const v = versoes.find((x) => textoPop(x) === legado)
+    return { versao: v ?? null, pop: v ? popEmitido(v) : null, procedimento: original!.textos.procedimento }
+  }
+  const v = daFolha?.pop ?? popNaData(versoes, k.dataCalibracao)
+  return v ? daVersao(v) : null
+}
+
 /** O que falta para emitir: cadastro, padrões, POP e cálculo. */
 export function pendenciasDa(ctx: Contexto, k: Calibracao): string[] {
   const balanca = ctx.repo.obterBalanca(k.balancaId)
@@ -77,7 +138,7 @@ export function pendenciasDa(ctx: Contexto, k: Calibracao): string[] {
   })
   // Técnico com a conta excluída (desativada continua valendo): o certificado sairia sem quem executou
   if (k.tecnicoId && !ctx.usuarios.obter(k.tecnicoId)) p.push(PENDENCIA_TECNICO_EXCLUIDO)
-  if (!ctx.repo.popVigente()) p.push(PENDENCIA_POP)
+  if (!popDaCalibracao(ctx, k)) p.push(PENDENCIA_POP)
   try {
     const { resultado, comoEncontrado } = calcularCalibracao(k, balanca, padroes)
     p.push(...resultado.pendencias)
@@ -88,7 +149,10 @@ export function pendenciasDa(ctx: Contexto, k: Calibracao): string[] {
   return [...new Set(p)]
 }
 
-/** Dados do certificado a partir dos cadastros atuais (emissão e prévia do rascunho). */
+/**
+ * Dados do certificado a partir dos cadastros atuais (emissão e prévia do rascunho); os padrões como valiam para a
+ * calibração (`padroesDa`) e o POP usado nela (`popDaCalibracao`).
+ */
 export function montarEmissao(
   ctx: Contexto,
   k: Calibracao,
@@ -99,7 +163,7 @@ export function montarEmissao(
   const balanca = ctx.repo.obterBalanca(k.balancaId)
   if (!cliente || !balanca) throw new ErroApi(409, 'O cliente ou a balança desta calibração não existe mais.')
   const original = k.substituiId ? ctx.repo.obterCalibracao(k.substituiId) : undefined
-  const pop = ctx.repo.popVigente()
+  const pop = popDaCalibracao(ctx, k)
   return {
     emitidoEm: new Date().toISOString(),
     emitidoPor: extra.emitidoPor,
@@ -117,10 +181,10 @@ export function montarEmissao(
     })),
     tecnico: signatarioDe(ctx.usuarios.obter(k.tecnicoId)),
     signatario: signatarioDe(ctx.usuarios.obter(extra.signatarioId)),
-    // O código e a revisão do POP que vale agora (sai em toda página); a prévia sem POP avisa no lugar
+    // O código e a revisão do POP usado na calibração (sai em toda página); a prévia sem POP avisa no lugar
     // (sem POP não há emissão: é pendência)
-    textos: { ...config.textos, procedimento: pop ? textoPop(pop) : PREVIA_SEM_POP },
-    pop: pop ? { id: pop.id, codigo: pop.codigo, revisao: pop.revisao, data: pop.data, arquivo: pop.arquivo } : null,
+    textos: { ...config.textos, procedimento: pop ? pop.procedimento : PREVIA_SEM_POP },
+    pop: pop?.pop ?? null,
     substituiNumero: original?.numero ?? '',
     substituiEmissao: original?.dataEmissao ?? '',
   }
@@ -213,7 +277,18 @@ export async function gerarPdf(k: Calibracao, emissao: EmissaoCertificado, marca
   return gerarCertificadoPdf({ calibracao: k, emissao, resultado, comoEncontrado, marcaDagua, previa })
 }
 
-const pastaCertificados = (ctx: Contexto, ano: number | null) => join(ctx.pastaDados, 'certificados', String(ano ?? 'sem-ano'))
+/** Onde fica o PDF do certificado, dentro de <dados>/certificados: "<ano>/Certificado-<nº>.pdf". */
+const arquivoDoPdf = (k: Calibracao) => `${k.ano ?? 'sem-ano'}/${nomeArquivoCertificado(k.numero)}`
+
+const sha256 = (b: Buffer) => createHash('sha256').update(b).digest('hex')
+
+/** Grava o arquivo inteiro ou nada (um arquivo pela metade não fica no lugar do certificado). */
+function gravarArquivo(caminho: string, conteudo: Buffer) {
+  mkdirSync(dirname(caminho), { recursive: true })
+  const parcial = `${caminho}.parcial`
+  writeFileSync(parcial, conteudo)
+  renameSync(parcial, caminho)
+}
 
 /**
  * Emite: confere, dá o número (o reservado na impressão da folha de campo, se houver; ver `Repositorio.emitir`),
@@ -257,32 +332,85 @@ export async function emitirCertificado(
   return ctx.repo.obterCalibracao(id)!
 }
 
-/** Gera o PDF do certificado emitido e grava o arquivo e o hash. */
+/**
+ * Gera o PDF do certificado emitido e grava o arquivo e o hash: só na emissão (ou se o servidor caiu entre a
+ * emissão e esta gravação, sem o hash registrado). Depois disso, o hash da emissão não muda (`pdfEmitido`).
+ * Nunca grava por cima de outro PDF (`gravarSemSobrescrever`).
+ */
 async function salvarPdf(ctx: Contexto, k: Calibracao): Promise<Buffer> {
   if (!k.emissao) throw new ErroApi(409, 'Certificado sem dados de emissão.')
   const pdf = await gerarPdf(k, k.emissao, '')
-  const pasta = pastaCertificados(ctx, k.ano)
-  mkdirSync(pasta, { recursive: true })
-  const arquivo = nomeArquivoCertificado(k.numero)
-  writeFileSync(join(pasta, arquivo), pdf)
-  ctx.repo.registrarPdf(k.id, `${k.ano}/${arquivo}`, createHash('sha256').update(pdf).digest('hex'))
+  const hash = sha256(pdf)
+  const arquivo = gravarSemSobrescrever(ctx, k, arquivoDoPdf(k), pdf, hash)
+  ctx.repo.registrarPdf(k.id, arquivo, hash)
   return pdf
 }
 
 /**
+ * Grava o PDF em <dados>/certificados/`arquivo` sem nunca sobrescrever outro documento: o arquivo com o mesmo nome
+ * e outro conteúdo é de um certificado já entregue que o banco não conhece (o banco voltou de uma cópia anterior à
+ * emissão dele). Ele fica como está, e o novo ganha o começo do sha256 no nome ("Certificado-<nº>-<sha12>.pdf"),
+ * com o aviso no registro de atividades. O mesmo conteúdo (gravar de novo) fica onde está. Devolve onde ficou.
+ */
+function gravarSemSobrescrever(ctx: Contexto, k: Calibracao, arquivo: string, pdf: Buffer, hash: string): string {
+  const pasta = join(ctx.pastaDados, 'certificados')
+  const mesmo = (a: string) => sha256(readFileSync(join(pasta, a))) === hash
+  if (!existsSync(join(pasta, arquivo))) {
+    gravarArquivo(join(pasta, arquivo), pdf)
+    return arquivo
+  }
+  if (mesmo(arquivo)) return arquivo
+  const outro = arquivo.replace(/\.pdf$/i, '') + `-${hash.slice(0, 12)}.pdf`
+  if (existsSync(join(pasta, outro))) {
+    if (mesmo(outro)) return outro
+    throw new ErroApi(409, `Já há outros arquivos com o nome do PDF do certificado ${k.numero} na pasta certificados.`)
+  }
+  gravarArquivo(join(pasta, outro), pdf)
+  const detalhe = `O PDF do certificado ${k.numero} foi gravado em certificados/${outro}: já havia outro arquivo com o mesmo nome (certificados/${arquivo}), que ficou como estava.`
+  ctx.usuarios.registrar('COPIA_RESTAURADA', { ip: 'local', detalhe })
+  ctx.log.warn(`[certificados] ${detalhe}`)
+  return outro
+}
+
+/**
+ * O PDF do certificado emitido, o documento entregue ao cliente: o arquivo guardado, conferido pelo SHA-256 da
+ * emissão (o da verificação pública). O arquivo alterado é erro. O que sumiu é refeito dos dados congelados e
+ * só volta para a pasta se sair idêntico (a mesma versão do gerador); senão — outra versão, outro layout — é
+ * erro, e nada é gravado: um PDF refeito agora não seria o documento emitido. O hash da emissão nunca muda.
+ */
+async function pdfEmitido(ctx: Contexto, k: Calibracao, emissao: EmissaoCertificado): Promise<Buffer> {
+  if (!emissao.hashPdf) return salvarPdf(ctx, k)
+  const arquivo = emissao.arquivo || arquivoDoPdf(k)
+  const caminho = join(ctx.pastaDados, 'certificados', arquivo)
+  if (existsSync(caminho)) {
+    const pdf = readFileSync(caminho)
+    if (sha256(pdf) !== emissao.hashPdf)
+      throw new ErroApi(
+        409,
+        `O PDF do certificado ${k.numero} (certificados/${arquivo}) foi alterado depois da emissão. Volte o original da cópia de segurança externa.`,
+      )
+    return pdf
+  }
+  const refeito = await gerarPdf(k, emissao, '')
+  if (sha256(refeito) !== emissao.hashPdf)
+    throw new ErroApi(
+      409,
+      `O PDF do certificado ${k.numero} não está na pasta de dados (certificados/${arquivo}). Volte essa pasta da cópia de segurança externa: um PDF refeito agora não seria o mesmo documento.`,
+    )
+  gravarArquivo(caminho, refeito)
+  return refeito
+}
+
+/**
  * PDF para baixar ou enviar:
- * - emitido: o arquivo guardado (refeito a partir dos dados congelados se tiver sumido);
- * - cancelado ou substituído: refeito com a marca d'água;
+ * - emitido: o arquivo guardado, conferido pelo hash da emissão (`pdfEmitido`);
+ * - cancelado ou substituído: refeito com a marca d'água (o arquivo e o hash da emissão ficam como estão);
  * - rascunho: prévia com marca d'água e número provisório, sem as imagens das assinaturas (ninguém autorizou).
  */
 export async function pdfDaCalibracao(ctx: Contexto, k: Calibracao): Promise<Buffer> {
   const config = ctx.repo.obterConfig()
   if (k.emissao) {
-    if (k.status === 'EMITIDO') {
-      const caminho = k.emissao.arquivo ? join(ctx.pastaDados, 'certificados', k.emissao.arquivo) : ''
-      if (caminho && existsSync(caminho)) return readFileSync(caminho)
-      return salvarPdf(ctx, k)
-    }
+    if (k.status === 'EMITIDO') return pdfEmitido(ctx, k, k.emissao)
     return gerarPdf(k, k.emissao, k.status === 'CANCELADO' ? 'CANCELADO' : 'SUBSTITUÍDO')
   }
   return previa(ctx, k, config)

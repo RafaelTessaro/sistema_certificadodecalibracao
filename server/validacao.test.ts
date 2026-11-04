@@ -260,6 +260,29 @@ describe('padrões como valiam no dia da calibração', () => {
     expect((await emitir(k)).statusCode).toBe(409)
   })
 
+  it('certificado do jogo corrigido para o anterior (vencido no dia) e depois recalibrado: continua vencido', async () => {
+    // O cadastro tinha o LAB-0456/2026 (10/01/2026) por engano; o que valia era o LAB-0456/2025, vencido em 15/10/2026
+    const atual = padraoAtual()
+    const corrigido = await t.chamar('PUT', `/api/padroes/${atual.id}`, {
+      cookie: t.cookieAdmin,
+      payload: {
+        ...atual,
+        certificado: 'LAB-0456/2025',
+        dataCalibracao: '2025-10-10',
+        validade: '2026-10-15',
+        versao: atual.versao,
+      },
+    })
+    expect(corrigido.statusCode, corrigido.body).toBe(200)
+    const k = await prontaEm('2026-10-20')
+    const pendencia = 'O padrão JP-01 estava vencido na data da calibração (15/10/2026).'
+    expect(await pendenciasDe(k)).toEqual([pendencia])
+    await recalibrarPelaTela({ certificado: 'LAB-0999/2026', dataCalibracao: '2026-10-25', validade: '2027-10-25' })
+    expect(await pendenciasDe(k)).toEqual([pendencia])
+    expect((await detalhe(k)).padroes[0]).toMatchObject({ certificado: 'LAB-0456/2025', validade: '2026-10-15' })
+    expect((await emitir(k)).statusCode).toBe(409)
+  })
+
   it('revisão depois da recalibração (sem a versão de antes no cadastro): os padrões da emissão original', async () => {
     const original = (await c.emitir(await prontaEm('2026-03-02'))).json().calibracao as Calibracao
     recalibrarSemHistorico()

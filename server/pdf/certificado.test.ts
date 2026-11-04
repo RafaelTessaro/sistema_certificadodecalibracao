@@ -9,10 +9,12 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { REPRODUCAO_ANTIGA, TEXTOS_ANTIGOS, TEXTOS_PADRAO } from '#shared/dominio.ts'
+import { multilinha, REPRODUCAO_ANTIGA, TEXTOS_ANTIGOS, TEXTOS_PADRAO } from '#shared/dominio.ts'
 import { densidadeAr, posicoesExcentricidade } from '#shared/metrologia/index.ts'
-import { pdfmake } from './base.ts'
+import { A4, pdfmake } from './base.ts'
 import {
+  comSondas,
+  descartados,
   DIAGRAMACOES,
   definicaoCertificado,
   gerarCertificadoPdf,
@@ -1495,5 +1497,314 @@ describe('EMA na tabela do erro de indicação', () => {
     expect(textoEmaDoPonto(ponto('0,0015'))).toBe('±0,0015')
     expect(textoEmaDoPonto(ponto('0,0015', '0,005'))).toBe('±0,0015 ↑ / ±0,005 ↓')
     expect(textoEmaDoPonto(ponto(''))).toBe('—')
+  })
+})
+
+// ---- Nada some do certificado; nº inteiro no cabeçalho; grade dentro da margem -------------------------------
+
+/** Nº de páginas do PDF (pdfinfo). */
+function paginasDoPdf(pdf: Buffer): number {
+  const r = spawnSync('pdfinfo', ['-'], { input: pdf })
+  return Number(/Pages:\s+(\d+)/.exec(r.stdout.toString())?.[1] ?? 0)
+}
+
+interface PalavraPdf {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+  texto: string
+}
+
+/** Palavras de cada página, com a caixa (pt, do canto de cima), pelo `pdftotext -bbox`. */
+function palavrasDoPdf(pdf: Buffer): PalavraPdf[][] {
+  const r = spawnSync('pdftotext', ['-bbox', '-enc', 'UTF-8', '-', '-'], { input: pdf, maxBuffer: 50 * 1024 * 1024 })
+  return r.stdout
+    .toString('utf8')
+    .split('<page ')
+    .slice(1)
+    .map((p) =>
+      [...p.matchAll(/<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]*)<\/word>/g)].map((m) => ({
+        x0: Number(m[1]),
+        y0: Number(m[2]),
+        x1: Number(m[3]),
+        y1: Number(m[4]),
+        texto: m[5].replace(/&amp;/g, '&'),
+      })),
+    )
+}
+
+/** Palavras do cabeçalho de cada página (acima da margem de cima do conteúdo, 80 pt). */
+const cabecalhosDoPdf = (pdf: Buffer) => palavrasDoPdf(pdf).map((p) => p.filter((w) => w.y1 < 80).map((w) => w.texto))
+
+describe.runIf(temPdftotext)('nada some do certificado: bloco mais alto que a página', { timeout: 180_000 }, () => {
+  const comOpiniao = (linhas: string[]) => {
+    const d = exemploBalanca32kg()
+    d.calibracao.opinioes = multilinha(linhas.join('\n'))
+    return { ...recalculado(d), marcaDagua: '' }
+  }
+
+  /** O texto do PDF e as conferências de sempre: páginas contadas = as do PDF, o fim e as assinaturas na última. */
+  function conferirInteiro(m: Awaited<ReturnType<typeof montarCertificado>>) {
+    const texto = textoDoPdf(m.pdf)
+    expect(m.paginas).toBe(paginasDoPdf(m.pdf))
+    expect(m.paginas).toBe(folhas(texto).length)
+    const ultima = corrido(folhas(texto).at(-1)!)
+    expect(ultima).toMatch(/EXECUTADO (E AUTORIZADO )?POR/)
+    expect(ultima).toContain('Fim do Certificado de Calibração')
+    return corrido(texto)
+  }
+
+  it('opinião de 60 linhas curtas (2 690 caracteres): todas as linhas saem', async () => {
+    const linhas = Array.from({ length: 60 }, (_, i) => `Ponto ${i + 1}: erro dentro do EMA, sem tendência.`)
+    const d = comOpiniao(linhas)
+    expect(d.calibracao.opinioes.length).toBeLessThanOrEqual(5000)
+    const t = conferirInteiro(await montarCertificado(d))
+    expect(t).toContain('OPINIÕES E INTERPRETAÇÕES')
+    for (const l of linhas) expect(t).toContain(l)
+  })
+
+  it('opinião de 80 linhas mínimas (menos de 1 500 caracteres): o título e todas as linhas saem', async () => {
+    const linhas = Array.from({ length: 80 }, (_, i) => `P${i + 1}: ok.`)
+    const d = comOpiniao(linhas)
+    expect(d.calibracao.opinioes.length).toBeLessThan(1500)
+    const t = conferirInteiro(await montarCertificado(d))
+    expect(t).toContain('OPINIÕES E INTERPRETAÇÕES')
+    expect([...t.matchAll(/\bP(\d+): ok\./g)].map((x) => Number(x[1]))).toEqual(linhas.map((_, i) => i + 1))
+  })
+
+  it('opinião longa não vai inteira (divide-se onde a página acaba); a curta continua inteira, na caixa', () => {
+    const longa = definicaoCertificado(comOpiniao(Array.from({ length: 30 }, (_, i) => `P${i + 1}: ok.`))) as {
+      content: NoPdf[]
+    }
+    const json = (x: unknown) => JSON.stringify(x)
+    const opiniao = longa.content.find((x) => json(x).includes('OPINIÕES E INTERPRETAÇÕES'))!
+    expect(json(opiniao)).not.toContain('"unbreakable":true')
+    const curta = definicaoCertificado(comOpiniao(['Erros dentro do EMA em todos os pontos.'])) as { content: NoPdf[] }
+    expect(curta.content.find((x) => json(x).includes('OPINIÕES E INTERPRETAÇÕES'))).toMatchObject({ unbreakable: true })
+  })
+
+  /** Quatro declarações distintas de ≈ 2 200 caracteres (o limite das Configurações é 3 000 cada). */
+  function comDeclaracoesLongas(): DadosCertificadoPdf {
+    const d = exemploBalanca32kg()
+    const frase = (i: number) =>
+      `Frase ${String(i).padStart(3, '0')} de uma declaração mais longa redigida pela empresa para os seus certificados.`
+    const declaracao = (n: number) =>
+      multilinha(
+        `Declaração D${n} começa aqui. ${Array.from({ length: 24 }, (_, i) => frase(i)).join(' ')} D${n} termina aqui.`,
+        3000,
+      )
+    d.emissao.textos = {
+      ...d.emissao.textos,
+      incerteza: declaracao(1),
+      abrangencia: declaracao(2),
+      naoAcreditado: declaracao(3),
+      controleLegal: declaracao(4),
+    }
+    return { ...d, marcaDagua: '' }
+  }
+
+  it('4 declarações de 2 200 caracteres: todas saem, com as assinaturas e o fim na última página', async () => {
+    const d = comDeclaracoesLongas()
+    expect(d.emissao.textos.incerteza.length).toBeGreaterThan(2100)
+    const m = await montarCertificado(d)
+    const t = conferirInteiro(m)
+    expect(t).toMatch(/\d+ DECLARAÇÕES 1\. Declaração D1 começa aqui\./)
+    for (const n of [1, 2, 3, 4]) {
+      expect(t).toContain(`Declaração D${n} começa aqui.`)
+      expect(t).toContain(`D${n} termina aqui.`)
+    }
+    // As declarações foram divididas (o bloco único não cabia numa página)
+    expect(m.divisiveis).toEqual(['declaracoes'])
+  })
+
+  it('declarações divididas: o título com a 1ª e a última com o fim, inteiros; as do meio se dividem', () => {
+    const d = comDeclaracoesLongas()
+    const doc = definicaoCertificado(d, { divisiveis: ['declaracoes'] }) as { content: NoPdf[] }
+    const i = doc.content.findIndex((x) => JSON.stringify(x).includes('DECLARAÇÕES'))
+    const [primeira, d2, d3, ultima] = doc.content.slice(i)
+    expect(primeira.unbreakable).toBe(true)
+    expect(JSON.stringify(primeira)).toContain('Declaração D1 começa aqui.')
+    for (const [no, n] of [
+      [d2, 2],
+      [d3, 3],
+    ] as const) {
+      expect(no.unbreakable).toBeUndefined()
+      expect(JSON.stringify(no)).toContain(`Declaração D${n} começa aqui.`)
+    }
+    expect(ultima.unbreakable).toBe(true)
+    expect(JSON.stringify(ultima)).toContain('Declaração D4 começa aqui.')
+    expect(JSON.stringify(ultima)).toContain('— Fim do Certificado de Calibração nº')
+    expect(doc.content.length).toBe(i + 4)
+  })
+
+  it.each([...EXEMPLOS.map((e) => ({ nome: e.arquivo, dados: e.dados })), ...VARIANTES.slice(0, 3)])(
+    '$nome: o que cabe não muda (nada dividido) e as páginas contadas são as do PDF',
+    async ({ dados }) => {
+      const m = await montarCertificado({ ...dados(), marcaDagua: '' })
+      expect(m.divisiveis).toEqual([])
+      expect(m.paginas).toBe(paginasDoPdf(m.pdf))
+    },
+  )
+
+  it('observações e outras seções divididas: sem bloco inteiro (o título só não fica sozinho no pé da página)', () => {
+    const d = exemploBancada()
+    const json = (x: unknown) => JSON.stringify(x)
+    const doc = definicaoCertificado(d, { divisiveis: ['observacoes', 'dados'] }) as { content: NoPdf[] }
+    const i = doc.content.findIndex((x) => json(x).includes('OBSERVAÇÕES'))
+    expect(doc.content[i]).toMatchObject({ style: 'secao', headlineLevel: expect.any(Number) })
+    const lista = doc.content.slice(i).find((x) => 'ul' in x) as { ul: unknown[] }
+    expect(lista.ul.length).toBeGreaterThan(1)
+    expect(
+      json(
+        doc.content.slice(
+          i,
+          doc.content.findIndex((x) => x.id === 'fim:observacoes'),
+        ),
+      ),
+    ).not.toContain('"unbreakable"')
+    // Os dados da calibração (sem divisão própria): sem nenhum bloco inteiro
+    const dados = doc.content.slice(
+      0,
+      doc.content.findIndex((x) => x.id === 'fim:dados'),
+    )
+    expect(json(dados)).toContain('DADOS DA CALIBRAÇÃO')
+    expect(json(dados)).not.toContain('"unbreakable"')
+    // O que não foi dividido continua como sempre
+    expect(doc.content.at(-1)!.unbreakable).toBe(true)
+  })
+
+  it('o descarte é visto pelas sondas de altura zero: nem o bloco que encosta no pé da página nem o que passa para a seguinte contam', async () => {
+    // Página de 400 pt com a margem de cima do certificado (80 pt): 270 pt úteis; cada linha tem 12,1 pt
+    const linha = (i: number) => ({ text: `linha ${i}`, fontSize: 10, lineHeight: 1 })
+    async function medir(antes: number, linhas: number, margemBaixo = 0) {
+      const bloco = {
+        stack: Array.from({ length: linhas }, (_, i) => linha(i)),
+        unbreakable: true,
+        margin: [0, 0, 0, margemBaixo],
+      }
+      const sondas = new Map<string, { pagina: number; topo: number }>()
+      const doc = {
+        pageSize: { width: 300, height: 400 },
+        pageMargins: [20, 80, 20, 50],
+        defaultStyle: { font: 'Inter' },
+        content: [
+          { text: 'antes', fontSize: 10, lineHeight: 1, margin: [0, antes, 0, 0] },
+          ...comSondas([bloco], 'teste'),
+          linha(99),
+        ],
+        pageBreakBefore: (no: { id?: string; startPosition?: { pageNumber: number; top: number } }) => {
+          if (no.id && no.startPosition) sondas.set(no.id, { pagina: no.startPosition.pageNumber, topo: no.startPosition.top })
+          return false
+        },
+      }
+      await pdfmake().createPdf(doc).getBuffer()
+      return { faltando: descartados(sondas), depois: sondas.get('sonda:depois:teste:0')! }
+    }
+    // Cabe; passa para a seguinte (e termina abaixo do alto dela)
+    expect(await medir(0, 10)).toMatchObject({ faltando: [], depois: { pagina: 1 } })
+    expect(await medir(150, 10)).toMatchObject({ faltando: [], depois: { pagina: 2 } })
+    // Encosta no pé da página (sobram 0,05 pt), também com a margem de baixo que não cabe: a sonda fica embaixo dele
+    for (const margem of [0, 5]) {
+      const r = await medir(136.85, 10, margem)
+      expect(r.faltando).toEqual([])
+      expect(r.depois.pagina).toBe(1)
+      expect(r.depois.topo).toBeGreaterThan(349.9)
+    }
+    // Mais alto que a página (30 linhas = 363 pt): descartado, vindo do alto ou do meio da página
+    expect((await medir(0, 30)).faltando).toEqual(['teste'])
+    expect((await medir(100, 30, 5)).faltando).toEqual(['teste'])
+  })
+
+  it('o que não cabe numa página nem dividido: erro, sem PDF (nada sai faltando)', async () => {
+    const d = exemploBancada()
+    // Fora dos limites do sistema (uma declaração tem até 3 000 caracteres): mais alta que uma página sozinha
+    d.emissao.textos = { ...d.emissao.textos, incerteza: 'Texto longo demais para uma página. '.repeat(1200) }
+    await expect(montarCertificado(d)).rejects.toMatchObject({
+      status: 500,
+      message: expect.stringMatching(/não coube nas páginas.*declarações e assinaturas.*Nada foi guardado/),
+    })
+  })
+})
+
+describe.runIf(temPdftotext)('nº do certificado inteiro no cabeçalho de toda página', { timeout: 120_000 }, () => {
+  it.each([
+    { numero: 'CC-2026-00042-R1', pop: 'POP-01 rev. 0' },
+    { numero: 'CC-2026-00042-R1', pop: '' },
+    { numero: 'LAB-CAL-2026-00408', pop: 'POP-CAL-01 rev. 00' },
+    { numero: 'LAB-CAL-2026-00447', pop: 'POP-CAL-01 rev. 00' },
+  ])('$numero com o POP "$pop": o nº numa palavra só, no alto de cada página', async ({ numero, pop }) => {
+    const d = exemploPlataforma()
+    d.calibracao.numero = numero
+    d.emissao.textos = { ...d.emissao.textos, procedimento: pop }
+    const m = await montarCertificado({ ...d, marcaDagua: '' })
+    const cabecalhos = cabecalhosDoPdf(m.pdf)
+    expect(cabecalhos).toHaveLength(m.paginas)
+    for (const [i, c] of cabecalhos.entries()) expect(c, `página ${i + 1}`).toContain(numero)
+  })
+
+  it('nº muito longo (formato de até 40 caracteres): a letra diminui, o nº fica inteiro e dentro da margem', async () => {
+    const numero = 'LABORATORIO-CALIBRACAO-BALANCAS-2026-00042'
+    const d = exemploPlataforma()
+    d.calibracao.numero = numero
+    const m = await montarCertificado({ ...d, marcaDagua: '' })
+    for (const [i, p] of palavrasDoPdf(m.pdf).entries()) {
+      const w = p.find((x) => x.texto === numero && x.y1 < 80)
+      expect(w, `página ${i + 1}`).toBeDefined()
+      expect(w!.x1, `página ${i + 1}`).toBeLessThanOrEqual(A4.largura - 45 + 0.5)
+      // A marca continua inteira, à esquerda
+      expect(
+        p
+          .filter((x) => x.y1 < 80)
+          .map((x) => x.texto)
+          .join(' '),
+      ).toContain(d.emissao.empresa.nomeFantasia.toUpperCase())
+    }
+  })
+})
+
+describe.runIf(temPdftotext)('grade "RÓTULO / valor": palavra longa quebra dentro da célula', { timeout: 60_000 }, () => {
+  it.each([
+    {
+      nome: 'e-mail do contato com 64 caracteres',
+      mudar: (d: DadosCertificadoPdf) => {
+        d.emissao.cliente.email = 'garantia.qualidade.metrologia@frigorificovaledocorumbatai.com.br'
+      },
+    },
+    {
+      nome: 'nº de série com 31 caracteres sem espaço',
+      mudar: (d: DadosCertificadoPdf) => {
+        d.emissao.balanca.numeroSerie = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ01234'
+      },
+    },
+  ])('$nome: nada passa da margem direita e o CNPJ sai inteiro', async ({ mudar }) => {
+    const d = exemploPlataforma()
+    mudar(d)
+    const pdf = await gerarCertificadoPdf({ ...d, marcaDagua: '' })
+    const [p1] = palavrasDoPdf(pdf)
+    const fora = p1.filter((w) => w.x1 > A4.largura - 45 + 0.5).map((w) => `${w.texto} (${w.x1})`)
+    expect(fora).toEqual([])
+    expect(p1.map((w) => w.texto)).toContain('11.444.777/0001-61')
+  })
+
+  it('no layout normal, as colunas são as de antes (colunas iguais; a última da metrologia com o resto)', () => {
+    const doc = definicaoCertificado(exemploPlataforma()) as { content: unknown }
+    const larguras: number[][] = []
+    const visitar = (no: unknown) => {
+      if (Array.isArray(no)) no.forEach(visitar)
+      else if (no && typeof no === 'object') {
+        const x = no as { table?: { widths?: unknown[]; body?: unknown[][] } }
+        if (x.table?.widths && JSON.stringify(x.table.body).includes('"style":"rotulo"'))
+          larguras.push(x.table.widths as number[])
+        Object.values(no).forEach(visitar)
+      }
+    }
+    visitar(doc.content)
+    expect(larguras.length).toBeGreaterThan(3)
+    for (const l of larguras) {
+      expect(l.every((x) => typeof x === 'number')).toBe(true)
+      // Cada coluna com a folga de 8 pt à direita: somadas, a largura útil (595,28 − 2 × 45)
+      expect(l.reduce((a, b) => a + b + 8, 0)).toBeCloseTo(A4.largura - 90, 6)
+    }
   })
 })

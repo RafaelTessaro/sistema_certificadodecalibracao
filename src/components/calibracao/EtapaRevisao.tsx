@@ -13,6 +13,7 @@ import { AvisoItem } from './PainelResultados'
 export function EtapaRevisao({
   ctx,
   numeroReservado = null,
+  numeroRevisao = null,
   pendencias,
   salvando,
   aoVisualizar,
@@ -23,6 +24,8 @@ export function EtapaRevisao({
   ctx: ContextoEtapa
   /** O nº reservado na impressão da folha de campo (o da etiqueta): o certificado é emitido com ele. */
   numeroReservado?: Pick<NumeroReservado, 'numero' | 'folha'> | null
+  /** Revisão: o nº com que ela sai (o do certificado revisado, com o -R dela). */
+  numeroRevisao?: string | null
   pendencias: string[]
   salvando: boolean
   aoVisualizar: () => void
@@ -138,6 +141,11 @@ export function EtapaRevisao({
                   <span className="font-normal text-muted">
                     (reservado na folha <span className="tnum whitespace-nowrap">{numeroReservado.folha}</span>)
                   </span>
+                </p>
+              ) : numeroRevisao ? (
+                <p className="mt-0.5 font-medium text-ink">
+                  <span className="tnum">{numeroRevisao}</span>{' '}
+                  <span className="font-normal text-muted">(o do certificado revisado)</span>
                 </p>
               ) : (
                 <p className="tnum mt-0.5 font-medium text-ink">Gerado na emissão (ex.: {exemplo})</p>
