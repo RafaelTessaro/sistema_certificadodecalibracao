@@ -36,6 +36,13 @@ Numa instalação nova, antes da tela "Tipo de instalação", o setup procura um
 | Atalhos          | Área de Trabalho e Menu Iniciar (todos os usuários): "BC Calibração" (`http://localhost:PORTA`), "Redefinir senha do BC Calibração" (pede permissão de administrador) e "Pasta dos certificados e backups"                                                                                                                                                                                                                                                                                                                                          |
 | Página final     | Como os outros computadores acessam (instalar a estação ou abrir `http://NOMEDOCOMPUTADOR:PORTA` e os IPs no navegador) e a opção de abrir o sistema. **No primeiro acesso, abra o sistema no próprio servidor**: ele pede para criar o administrador                                                                                                                                                                                                                                                                                               |
 
+**Depois de atualizar para a 1.0.4** (correções; nada a fazer na atualização):
+
+1. **Revisões em andamento:** a aberta antes da 1.0.3 passa a usar os padrões da emissão do certificado revisado (o certificado e as correções da época), mesmo que o padrão tenha sido desativado ou recalibrado depois. A de um certificado emitido na 1.0.3 com as regras do POP, a partir de um rascunho da 1.0.1, passa a seguir essas regras, como o certificado. O registro de atividades lista as revisões corrigidas.
+2. **Revisão de um certificado da 1.0.1 ou da 1.0.2:** "Pesos sem EMA conhecido" e "Pesos sem incerteza conhecida" voltam a ser avisos, como na época, e não impedem mais a emissão.
+3. **Folha de campo:** o bloco Anotações passou para o fim da folha, depois das assinaturas, e a OS sai só no passo 2. A reimpressão de uma folha já impressa continua igual à primeira; a arrumação nova vale para as folhas novas.
+4. **Voltar uma cópia** (passo 3 de [Depois de instalado](#depois-de-instalado)): a revisão do POP citada pelos certificados que passam vai junto, e eles continuam mostrando a revisão certa.
+
 **Depois de atualizar para a 1.0.3:**
 
 1. **Folha de campo rev. 03:** sai em 2 páginas (frente e verso), com 8 passos e só a medição. A reimpressão de uma folha já impressa sai igual à primeira (rev. 02). Para ter a rev. 03, use **Folha nova (novo nº)**: o nº do certificado reservado não muda.
@@ -115,7 +122,7 @@ Desinstalar.exe /S /REMOVERDADOS   (apaga os dados)
 - **Voltar uma cópia do banco** (o `antes-da-versao-X.db` de uma atualização ou uma cópia da pasta `backups\`), num prompt de comando como administrador:
   1. pare o serviço: `net stop BCCalibracao`;
   2. copie a cópia para `dados\restaurar.db` (a de `backups\` fica como está);
-  3. passe para ela as contas, os certificados e as folhas de campo de hoje, **antes** de pôr a cópia no lugar. Os certificados emitidos (ou cancelados e revisados) depois da cópia já estão com os clientes: continuam como estão, com o mesmo nº e o mesmo código, e o QR code do papel continua conferindo. As folhas impressas depois da cópia já estão no papel, com os técnicos: continuam registradas (e ligadas às calibrações que a cópia tem, com a revisão do POP impressa nelas), e os nºs delas nunca se repetem. Cada certificado emitido, cancelado ou revisado fica com a folha de campo que tinha, e os nºs reservados, com a situação de hoje:
+  3. passe para ela as contas, os certificados e as folhas de campo de hoje, **antes** de pôr a cópia no lugar. Os certificados emitidos (ou cancelados e revisados) depois da cópia já estão com os clientes: continuam como estão, com o mesmo nº, o mesmo código e a revisão do POP que citam (ela passa junto), e o QR code do papel continua conferindo. As folhas impressas depois da cópia já estão no papel, com os técnicos: continuam registradas (e ligadas às calibrações que a cópia tem, com a revisão do POP impressa nelas), e os nºs delas nunca se repetem. Cada certificado emitido, cancelado ou revisado fica com a folha de campo que tinha, e os nºs reservados, com a situação de hoje:
      ```
      cd "C:\Program Files\BC Calibracao"
      node\node.exe server\ferramentas\redefinir-senha.mjs transplantar "C:\ProgramData\BC Calibracao\dados\bc-calibracao.db" "C:\ProgramData\BC Calibracao\dados\restaurar.db"
