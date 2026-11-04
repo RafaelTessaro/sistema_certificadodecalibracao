@@ -1249,7 +1249,11 @@ function passarPops(origem: Banco, destino: Banco) {
   const destinos = new Map<number, number | null>()
   const registradas: string[] = []
   const semId = new Map<string, string[]>()
-  const daFolha = (numero: string, id: number): number | null => {
+  /**
+   * O id na cópia da revisão `id` do banco atual: a mesma (código e nº) já na cópia, ou ela, que passa agora com o mesmo
+   * id e o arquivo (`registradas`); null = não passou (o id na cópia é de outra revisão) ou não existe no banco atual.
+   */
+  const garantir = (id: number): number | null => {
     if (!usar) return null
     if (!destinos.has(id)) {
       const o = doAtual!.get(id) as LinhaBanco | undefined
@@ -1270,14 +1274,22 @@ function passarPops(origem: Banco, destino: Banco) {
         }
       }
       destinos.set(id, fica)
-      if (o && fica === null) semId.set(texto(o), [])
     }
-    const fica = destinos.get(id) ?? null
-    const o = fica === null ? (doAtual?.get(id) as LinhaBanco | undefined) : undefined
-    if (o) semId.get(texto(o))?.push(numero)
+    return destinos.get(id) ?? null
+  }
+  const daFolha = (numero: string, id: number): number | null => {
+    const fica = garantir(id)
+    const o = fica === null && usar ? (doAtual!.get(id) as LinhaBanco | undefined) : undefined
+    if (o) {
+      if (!semId.has(texto(o))) semId.set(texto(o), [])
+      semId.get(texto(o))!.push(numero)
+    }
     return fica
   }
   return {
+    garantir,
+    /** As revisões que passaram agora (código e nº), para o registro de atividades de quem as passou. */
+    registradas: () => [...registradas],
     daFolha,
     conferirFolhasDaCopia() {
       if (!usar) return
@@ -1432,6 +1444,24 @@ function transplantarCertificados(origem: Banco, destino: Banco): string[] {
         if (!temEnvio.get(e.id)) guardar.run(...colunasEnvio.map((c) => e[c] ?? null))
   }
 
+  // A revisão do POP citada pela emissão (`emissao.pop`) passa junto, como a das folhas de campo (`passarPops`): a
+  // cópia de antes do registro do POP não regride o vigente, e a revisão registrada depois nela nunca recebe o id dela
+  // (o certificado mostraria outra revisão como "o POP da emissão")
+  const pops = passarPops(origem, destino)
+  const popsSemId: Array<{ numero: string; pop: string }> = []
+  for (const l of passaram) {
+    let pop: { id?: unknown; codigo?: unknown; revisao?: unknown } | null | undefined
+    try {
+      pop = (JSON.parse(String(l.dados)) as { emissao?: { pop?: typeof pop } | null }).emissao?.pop
+    } catch {
+      pop = null
+    }
+    if (!pop || typeof pop.id !== 'number') continue
+    if (pops.garantir(pop.id) === null)
+      popsSemId.push({ numero: String(l.numero), pop: `${String(pop.codigo)} rev. ${String(pop.revisao)}` })
+  }
+  const popsRegistradas = pops.registradas()
+
   const numeros = passaram.map((l) => String(l.numero))
   const partes = [
     numeros.length === 1
@@ -1450,6 +1480,19 @@ function transplantarCertificados(origem: Banco, destino: Banco): string[] {
           deFora,
         )
       : '',
+    popsRegistradas.length === 1
+      ? `a revisão do POP citada pelo${passaram.length > 1 ? 's certificados que passaram' : ' certificado que passou'} (${popsRegistradas[0]}) continua registrada, como no banco atual`
+      : popsRegistradas.length
+        ? `as revisões do POP citadas pelos certificados que passaram (${popsRegistradas.join(', ')}) continuam registradas, como no banco atual`
+        : '',
+    ...[...new Set(popsSemId.map((x) => x.pop))].map((pop) => {
+      const certificados = popsSemId.filter((x) => x.pop === pop).map((x) => x.numero)
+      return caberNoRegistro(
+        (lista) =>
+          `a revisão do POP citada pelo${certificados.length > 1 ? 's certificados' : ' certificado'} ${lista} (${pop}) não passou para a cópia (o id dela já é de outra revisão lá): o PDF entregue continua citando-a`,
+        certificados,
+      )
+    }),
   ].filter(Boolean)
   for (const detalhe of partes) gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe })
   return numeros

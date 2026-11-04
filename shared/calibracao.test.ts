@@ -11,6 +11,7 @@ import {
   opcoesComoEncontrado,
   pecaParaCalculo,
   pesosAtendemNaCarga,
+  pontosEmOrdemDeCarga,
   pontosSugeridos,
   regrasDoPopComoAviso,
   termicaDoAmbiente,
@@ -96,7 +97,8 @@ describe('cargas', () => {
       ],
     }
     const entrada = entradaDoCalculo({ ...calibracaoVazia(), indicacao }, balanca, [pesos])
-    expect(entrada.indicacao.pontos.map((p) => p.carga)).toEqual([5000, 10_000, 5000])
+    // (os pontos vão em ordem de carga: `pontosEmOrdemDeCarga`)
+    expect(Object.fromEntries(entrada.indicacao.pontos.map((p) => [p.id, p.carga]))).toEqual({ a: 5000, b: 10_000, c: 5000 })
     // Substituição desligada: só os pesos
     const sem = entradaDoCalculo(
       { ...calibracaoVazia(), indicacao: { ...indicacao, substituicao: { ...indicacao.substituicao, ativa: false } } },
@@ -353,11 +355,11 @@ describe('classe I: ligação com o motor', () => {
   it('calibração classe I completa: densidade do ar medida e convecção, sem pendências do cálculo', () => {
     const r = calcularCalibracao(calibracaoClasseI(), analitica, [jogoE2])
     expect(r.resultado.pendencias).toEqual([])
-    const o = r.resultado.pontos[1].crescente!
+    const o = r.resultado.pontos.find((p) => p.id === 'c')!.crescente!
     expect(o.correcaoEmpuxo).toBeCloseTo(0.000015653, 9)
     expect(o.uConveccao).toBeCloseTo(0.00008 / Math.sqrt(3), 12)
     // Deriva = EMA (o padrão da empresa, D4): u(δm_D) = 0,3 mg/√3 domina; U = 0,000 398 g
-    expect(r.resultado.pontos[1].texto.U).toBe('0,00040')
+    expect(r.resultado.pontos.find((p) => p.id === 'c')!.texto.U).toBe('0,00040')
     // Sem o ΔT registrado, a convecção é pendência
     const semDt = calcularCalibracao(
       calibracaoClasseI({ ambiente: { ...calibracaoClasseI().ambiente, deltaTPesos: null } }),
@@ -385,15 +387,15 @@ describe('classe I: ligação com o motor', () => {
     const ce = r.comoEncontrado!
     // A densidade do ar entra, com u(ρa) da situação A (A3-2, 10 K)
     expect(ce.ar!.incerteza / ce.ar!.densidade).toBeCloseTo(1.5492e-2, 6)
-    expect(ce.pontos[1].crescente!.correcaoEmpuxo).toBeCloseTo(0.000015653, 9)
+    expect(ce.pontos.find((p) => p.id === 'c')!.crescente!.correcaoEmpuxo).toBeCloseTo(0.000015653, 9)
     expect(ce.pendencias).toEqual([])
     const avisos = ce.avisos.map((a) => a.mensagem).join('\n')
     expect(avisos).not.toMatch(/empuxo estimado sem a densidade do ar|7\.1\.2-5c/)
     // O U do "como encontrado" fica perto do final (com a 5d era cerca de 7 vezes maior)
-    const uFinal = r.resultado.pontos[1].crescente!.U
-    const uAntes = ce.pontos[1].crescente!.U
+    const uFinal = r.resultado.pontos.find((p) => p.id === 'c')!.crescente!.U
+    const uAntes = ce.pontos.find((p) => p.id === 'c')!.crescente!.U
     expect(uAntes / uFinal).toBeLessThan(1.05)
-    expect(ce.pontos[1].texto.U).toBe('0,00040')
+    expect(ce.pontos.find((p) => p.id === 'c')!.texto.U).toBe('0,00040')
     // Sem a umidade, o "como encontrado" cai na 5d com a pendência do ar
     const semUr = calcularCalibracao({ ...k, ambiente: { ...k.ambiente, umidadeInicial: null, umidadeFinal: null } }, analitica, [
       jogoE2,
@@ -707,6 +709,29 @@ describe('montagem das cargas pela classe dos pesos', () => {
     // Classe II de 6 kg: sem o M1, E2 e F1 não fecham Max; o M1 fica
     expect(ids({ ...marte, faixas: [{ max: 6000, e: 0.1, d: 0.01 }] })).toEqual(['JP-M1', 'JP-F1', 'JP-E2', 'TH-01'])
   })
+
+  it('rascunho sem histórico: o barômetro só onde a pressão é obrigatória (classes I e II)', () => {
+    const th: Padrao = { ...jogoDe('th', 'TH-01', []), tipo: 'TERMOHIGROMETRO', classe: '' }
+    const bar: Padrao = { ...jogoDe('bar', 'BAR-01', []), tipo: 'BAROMETRO', classe: '' }
+    const td: Padrao = { ...jogoDe('td', 'TD-01', []), tipo: 'OUTRO', classe: '' }
+    const todos = [m1, f1, e2, th, bar, td]
+    const temBarometro = (b: Parameters<typeof padroesSemHistorico>[1]) =>
+      padroesSemHistorico(todos, b).some((p) => p.tipo === 'BAROMETRO')
+    // Classes III e IIII e sem classe: a pressão é opcional (a folha imprime "Pressão, opcional"); sem o barômetro
+    // marcado, a etapa 8 não pede a pressão que ninguém mediu. Ele continua disponível para marcar à mão
+    expect(temBarometro(balanca30)).toBe(false)
+    expect(temBarometro('III')).toBe(false)
+    expect(temBarometro({ ...balanca30, classe: 'IIII', faixas: [{ max: 30, e: 0.02, d: 0.02 }] })).toBe(false)
+    expect(temBarometro('IIII')).toBe(false)
+    expect(temBarometro('')).toBe(false)
+    // Classes I e II: a pressão é obrigatória, o barômetro vem marcado
+    expect(temBarometro(marte)).toBe(true)
+    expect(temBarometro('II')).toBe(true)
+    expect(temBarometro('I')).toBe(true)
+    // A balança ainda não conhecida (folha em branco): todos, como antes
+    expect(temBarometro(null)).toBe(true)
+    expect(temBarometro(undefined)).toBe(true)
+  })
 })
 
 describe('jogo sem a classe R111 (EMA desconhecido)', () => {
@@ -722,6 +747,30 @@ describe('jogo sem a classe R111 (EMA desconhecido)', () => {
     const semU = { ...semClasse, pesos: semClasse.pesos.map((w) => ({ ...w, incerteza: 0 })) }
     expect(calcularCalibracao(k(), balanca30, [semU]).resultado.pendencias).toEqual([pendencia])
     expect(calcularCalibracao(k(), balanca30, [{ ...semClasse, classe: 'M1' }]).resultado.pendencias).toEqual([])
+  })
+
+  it('revisão de um certificado de antes das regras (1.0.1/1.0.2): sem a pendência, os avisos da época e os mesmos números', () => {
+    // A revisão de um certificado emitido sem `regrasDoPop` (e a de um registro de antes da classe I): a mesma visita
+    for (const extra of [{ substituiId: 'cal-original' }, { substituiId: 'cal-original', calculoLegado: true }]) {
+      for (const jogo of [semClasse, { ...semClasse, uso: 'NOMINAL' as const }]) {
+        const revisao = { ...k(), ...extra }
+        const r = calcularCalibracao(revisao, balanca30, [jogo]).resultado
+        expect(r.pendencias, `${JSON.stringify(extra)} ${jogo.uso}`).toEqual([])
+        expect(r.avisos.map((a) => a.mensagem).join('\n')).toMatch(/Classe dos pesos não conferida em .*: pesos sem a classe/)
+        // Os números da revisão são os de antes (o cadastro do jogo não precisa mudar)
+        expect(r.pontos.map((p) => p.texto.U)).toEqual(
+          calcularCalibracao(k(), balanca30, [jogo]).resultado.pontos.map((p) => p.texto.U),
+        )
+      }
+      // Pelo nominal sem a classe: o aviso de antes (não a pendência)
+      const nominal = calcularCalibracao({ ...k(), ...extra }, balanca30, [{ ...semClasse, uso: 'NOMINAL' }]).resultado
+      expect(nominal.avisos.map((a) => a.mensagem).join('\n')).toMatch(
+        /^Pesos sem incerteza conhecida \(classe ou U do certificado\) em /m,
+      )
+    }
+    // A revisão de um certificado emitido com as regras do POP: a pendência, como na calibração nova
+    const comRegras = { ...k(), substituiId: 'cal-original', regrasDoPop: true }
+    expect(calcularCalibracao(comRegras, balanca30, [semClasse]).resultado.pendencias).toEqual([pendencia])
   })
 })
 
@@ -898,5 +947,53 @@ describe('revisão: o zero antes da excentricidade (método 3) também vem do ce
       ],
     }
     expect(leiturasOriginais(k).referenciasExcentricidade).toEqual([0, null])
+  })
+})
+
+// ---- A ordem dos pontos: o certificado diz "cargas crescentes" ---------------------------------------------------
+
+describe('pontos em ordem de carga (o ponto acrescentado no fim com carga menor)', () => {
+  const J = jogoDe('j', 'JP-J', [20_000, 10_000, 5000, 2000, 1000])
+  const ponto = (c: number, leitura: number | null = c) =>
+    pontoDe(`p${c}`, c, c ? montarCarga(c, 'kg', [J]).pecas : [], leitura, { pecasManuais: false })
+  const cargas = (pontos: ReadonlyArray<{ carga: number }>) => pontos.map((p) => p.carga)
+
+  it('ordena as cargas e deixa os pontos sem carga onde estão (o zero e a carga esquecida)', () => {
+    expect(cargas(pontosEmOrdemDeCarga([0, 10, 20, 30, 5].map((carga) => ({ carga }))))).toEqual([0, 5, 10, 20, 30])
+    // A carga esquecida (0) continua no lugar dela: a pendência cita o nº do ponto na tabela
+    expect(cargas(pontosEmOrdemDeCarga([0, 10, 0, 5].map((carga) => ({ carga }))))).toEqual([0, 5, 0, 10])
+    // Já em ordem: o mesmo array (a tela não grava nada)
+    const ordem = [0, 5, 10].map((carga) => ({ carga }))
+    expect(pontosEmOrdemDeCarga(ordem)).toBe(ordem)
+    // Mesma carga: a ordem de antes (estável)
+    expect(
+      pontosEmOrdemDeCarga([
+        { carga: 10, id: 'a' },
+        { carga: 5, id: 'b' },
+        { carga: 10, id: 'c' },
+      ]).map((p) => p.id),
+    ).toEqual(['b', 'a', 'c'])
+  })
+
+  it('calibração nova: a entrada do cálculo, o resultado (resumo e certificado) saem em ordem crescente', () => {
+    for (const metodo of ['CONTINUO', 'CRESCENTE_DECRESCENTE', 'DESCONTINUO'] as const) {
+      const k = calibracaoDe(
+        [0, 10, 20, 30, 5].map((c) => ponto(c)),
+        { metodo },
+      )
+      expect(cargas(entradaDoCalculo(k, balanca30, [J]).indicacao.pontos), metodo).toEqual([0, 5, 10, 20, 30])
+      const { resultado } = calcularCalibracao(k, balanca30, [J])
+      expect(cargas(resultado.pontos), metodo).toEqual([0, 5, 10, 20, 30])
+      // O ponto continua o mesmo (o id, as leituras)
+      expect(resultado.pontos[1]).toMatchObject({ id: 'p5', carga: 5 })
+      expect(resultado.pendencias, metodo).toEqual([])
+    }
+  })
+
+  it('o registro de antes das regras (revisão de um certificado 1.0.2): a ordem como na época', () => {
+    const k = { ...calibracaoDe([0, 10, 20, 30, 5].map((c) => ponto(c))), substituiId: 'cal-original' }
+    expect(cargas(entradaDoCalculo(k, balanca30, [J]).indicacao.pontos)).toEqual([0, 10, 20, 30, 5])
+    const legado = { ...calibracaoDe([0, 10, 20, 30, 5].map((c) => ponto(c))), calculoLegado: true }
+    expect(cargas(calcularCalibracao(legado, balanca30, [J]).resultado.pontos)).toEqual([0, 10, 20, 30, 5])
   })
 })

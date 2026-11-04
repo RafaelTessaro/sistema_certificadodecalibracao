@@ -470,14 +470,17 @@ export function opcoesDaClasse(o: OpcoesCalculo, classe: ClasseExatidao | null |
  * exigências da época: o "como encontrado" com as opções do ensaio final e sem as pendências novas da classe I
  * (empuxo, convecção, classe e uso dos jogos, termômetro do ΔT). Assim a revisão que só corrige o endereço sai com os
  * mesmos números e não pede um ΔT pesos − ar que nunca foi medido. Rascunho gravado antes desta versão não é legado:
- * ainda não foi emitido.
+ * ainda não foi emitido. Nem o certificado emitido com as regras do POP (`EmissaoCertificado.regrasDoPop`) a partir de
+ * um rascunho da 1.0.1 que não foi regravado (as opções ainda sem a convecção): ele saiu com o cálculo de hoje.
  */
 export function calculoLegado(k: {
   opcoes: Pick<OpcoesCalculo, 'conveccao'>
   calculoLegado?: boolean
   emissao?: unknown
 }): boolean {
-  return k.calculoLegado === true || (!!k.emissao && k.opcoes.conveccao === undefined)
+  if (k.calculoLegado === true) return true
+  const emissao = k.emissao as { regrasDoPop?: boolean } | null | undefined
+  return !!emissao && k.opcoes.conveccao === undefined && emissao.regrasDoPop !== true
 }
 
 /**
@@ -1907,6 +1910,24 @@ export const deltaTMaximo = (classe: ClasseExatidao | null | undefined): number 
 /** A pressão atmosférica é obrigatória (com barômetro calibrado) nas classes I e II; nas demais, opcional. */
 export const pressaoObrigatoria = (classe: ClasseExatidao | null | undefined): boolean => classeFina(classe)
 
+/**
+ * Classe I com o ΔT pesos − ar medido: ele sai no certificado com o termômetro de duas entradas, cadastrado como padrão
+ * "Outro" (POP 6.2). A pendência diz onde cadastrá-lo (sem nenhum "Outro", a etapa não tem cartão para escolher) e a
+ * alternativa da aclimatação.
+ */
+export const PENDENCIA_TERMOMETRO_DUAS_ENTRADAS =
+  'Balança classe I com o ΔT pesos − ar medido: escolha nos padrões o termômetro de duas entradas (cadastre-o em Padrões → Novo padrão → Outro, se ainda não estiver cadastrado) ou registre o ΔT pela aclimatação.'
+
+/** O aviso da etapa Padrões e ambiente (classe I, ΔT medido) sem nenhum padrão "Outro" ativo cadastrado. */
+export const AVISO_SEM_TERMOMETRO_DUAS_ENTRADAS =
+  'Nenhum termômetro de duas entradas cadastrado: o ΔT medido precisa dele nos padrões. Cadastre-o em Padrões → Novo padrão → Outro, ou registre o ΔT pela aclimatação.'
+
+/** Classe I sem nenhum padrão "Outro" ativo (o termômetro de duas entradas do ΔT pesos − ar, POP 6.2)? */
+export const semTermometroDuasEntradas = (
+  classe: ClasseExatidao | null | undefined,
+  padroes: ReadonlyArray<Pick<Padrao, 'tipo' | 'ativo'>>,
+): boolean => classe === 'I' && !padroes.some((p) => p.tipo === 'OUTRO' && p.ativo)
+
 /** Classes de pesos aceitas na balança classe I (OIML R 111-1, 1.3.1). */
 export const CLASSES_PESO_CLASSE_I: readonly ClassePeso[] = ['E1', 'E2', 'F1']
 
@@ -1916,7 +1937,10 @@ export type BalancaDosPadroes = Pick<Balanca, 'classe' | 'unidade' | 'tipoFaixas
 /**
  * Padrões de um rascunho sem calibração anterior da balança (e da folha de campo sem rascunho): os ativos, menos os
  * do tipo "Outro". Na classe I, só os jogos E1, E2 e F1, e os "Outro" entram: o termômetro de duas entradas do
- * ΔT pesos − ar é cadastrado assim (POP 6.2). Com a balança (não só a classe), nas outras classes ficam de fora os
+ * ΔT pesos − ar é cadastrado assim (POP 6.2). O barômetro, só onde a pressão é obrigatória (classes I e II,
+ * `pressaoObrigatoria`): nas classes III e IIII e sem classe ela é opcional, e o barômetro marcado sem a pressão
+ * registrada bloquearia a emissão (ele continua para marcar à mão, e a folha o lista com os outros previstos). Com a
+ * balança ainda não conhecida (null), ele fica. Com a balança (não só a classe), nas outras classes ficam de fora os
  * jogos de classe pior que a mínima para ela (`classeMinimaPesos`, POP 6.1), quando os outros jogos ainda montam Max;
  * se não montam, todos ficam (a montagem e o cálculo avisam).
  */
@@ -1926,9 +1950,11 @@ export function padroesSemHistorico<P extends Pick<Padrao, 'ativo' | 'tipo' | 'c
 ): P[] {
   const b = balanca && typeof balanca === 'object' ? balanca : null
   const classe = b ? b.classe : (balanca as ClasseExatidao | null | undefined)
+  const semBarometro = classe !== null && classe !== undefined && !pressaoObrigatoria(classe)
   const escolhidos = padroes.filter(
     (p) =>
       p.ativo &&
+      !(semBarometro && p.tipo === 'BAROMETRO') &&
       (classe === 'I' ? p.tipo !== 'PESOS' || CLASSES_PESO_CLASSE_I.includes(p.classe as ClassePeso) : p.tipo !== 'OUTRO'),
   )
   const minima = b && classe !== 'I' ? classeMinimaPesos(b) : null
@@ -2138,14 +2164,17 @@ export function pendenciasEmissao(
           `Balança classe I: use o jogo ${pad.identificacao} pelo valor do certificado (cadastro do padrão; POP 6.1; OIML R 111-1, 5.3.2).`,
         )
     }
-    // A peça sem a U no cadastro entraria pelo nominal, sem a correção do certificado (na classe I, mais de 1 d)
-    for (const x of pecasSemUDoCertificado([c.indicacao, c.comoEncontrado], jogos))
-      p.push(
-        `Balança classe I: o jogo ${x.padrao.identificacao} está sem a incerteza (U) do certificado ${x.pecas > 1 ? 'das' : 'da'} ${textoPecas(x)}; complete o cadastro do padrão (POP 6.1).`,
-      )
+    // A peça sem a U no cadastro entraria pelo nominal, sem a correção do certificado (na classe I, mais de 1 d). Regra
+    // da 1.0.3: a revisão de um certificado de antes dela fica como na época (o cálculo dá o aviso "Correção do
+    // certificado ignorada")
+    if (regrasDoPop)
+      for (const x of pecasSemUDoCertificado([c.indicacao, c.comoEncontrado], jogos))
+        p.push(
+          `Balança classe I: o jogo ${x.padrao.identificacao} está sem a incerteza (U) do certificado ${x.pecas > 1 ? 'das' : 'da'} ${textoPecas(x)}; complete o cadastro do padrão (POP 6.1).`,
+        )
     // O ΔT medido sai no certificado: o termômetro de duas entradas (padrão "Outro", POP 6.2) entra na lista
     if (typeof amb.deltaTPesos === 'number' && !contexto.padroes.some((x) => x.tipo === 'OUTRO'))
-      p.push('Balança classe I com o ΔT pesos − ar medido: escolha nos padrões o termômetro de duas entradas.')
+      p.push(PENDENCIA_TERMOMETRO_DUAS_ENTRADAS)
     if (c.opcoes.empuxo === 'NENHUM')
       p.push('Balança classe I: o empuxo do ar precisa entrar no cálculo (Opções do cálculo, na Conclusão).')
     if ((c.opcoes.conveccao ?? 'NAO_CONSIDERAR') !== 'CALCULAR')

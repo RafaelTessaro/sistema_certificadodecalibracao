@@ -243,6 +243,13 @@ const MIGRACOES: Migracao[] = [
   // avisos. A balança que não pesa corretamente e as leituras fora do esperado continuam pendências; as novas seguem as
   // regras inteiras.
   medidasAntesDasRegras,
+
+  // 15: (a) a revisão aberta antes da 1.0.3 ganha os padrões congelados na emissão do certificado revisado
+  // (`padroesCongelados`, que a 1.0.3 grava ao criar a revisão): ela é a mesma visita, e usa o certificado e as
+  // correções da época, mesmo com o padrão desativado ou recalibrado depois. (b) A revisão aberta na 1.0.3 de um
+  // certificado emitido com as regras do POP a partir de um rascunho da 1.0.1 não regravado (as opções sem a convecção),
+  // que nasceu marcada como legada, passa a seguir as regras do POP, como o servidor faz hoje (`calculoLegado`).
+  revisoesComOsPadroesDaEmissao,
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
@@ -377,6 +384,67 @@ function medidasAntesDasRegras(db: Banco) {
           ? 'A calibração em andamento medida antes desta versão sai com os mínimos do POP como avisos (a visita já aconteceu); as novas seguem as regras. Confira: '
           : `${marcadas.length} calibrações em andamento medidas antes desta versão saem com os mínimos do POP como avisos (a visita já aconteceu); as novas seguem as regras. Confira: `,
         marcadas,
+      ),
+    )
+}
+
+/**
+ * Migração 15 (ver acima). Repetível: só mexe na revisão em andamento (rascunho ou em revisão) sem os padrões
+ * congelados (o certificado revisado com padrões na emissão) ou marcada como legada sem que o certificado revisado seja
+ * (a regra é a mesma de `Repositorio.criarCalibracao`). Não sobe a versão: são campos do servidor, que a tela não grava.
+ * O registro de atividades diz quais.
+ */
+function revisoesComOsPadroesDaEmissao(db: Banco) {
+  const abertas = db
+    .prepare(
+      `SELECT r.id, r.dados, o.dados AS original FROM calibracoes r JOIN calibracoes o ON o.id = r.substitui_id
+        WHERE r.substitui_id <> '' AND r.status IN ('RASCUNHO','REVISAO')
+        ORDER BY r.criado_em, r.id`,
+    )
+    .all() as Array<{ id: string; dados: string; original: string }>
+  const gravar = db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
+  const congeladas: string[] = []
+  const comRegras: string[] = []
+  for (const l of abertas) {
+    const k = JSON.parse(l.dados) as Calibracao
+    const original = JSON.parse(l.original) as Calibracao
+    const nome = original.numero || l.id
+    let novo: Calibracao = k
+    const padroes = original.emissao?.padroes
+    if (!k.padroesCongelados && Array.isArray(padroes) && padroes.length) {
+      novo = { ...novo, padroesCongelados: padroes }
+      congeladas.push(nome)
+    }
+    if (k.calculoLegado === true && !calculoLegado({ ...original, opcoes: original.opcoes ?? {} })) {
+      const { calculoLegado: _legado, ...resto } = novo
+      novo = resto
+      if (original.emissao?.regrasDoPop === true) {
+        novo.regrasDoPop = true
+        if (original.minimosComoAviso === true) novo.minimosComoAviso = true
+      }
+      comRegras.push(nome)
+    }
+    if (novo !== k) gravar.run(JSON.stringify(novo), l.id)
+  }
+  const registrar = db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)")
+  if (congeladas.length)
+    registrar.run(
+      new Date().toISOString(),
+      detalheLista(
+        congeladas.length === 1
+          ? 'A revisão aberta antes desta versão passa a usar os padrões da emissão do certificado revisado (o certificado e as correções da época). Certificado: '
+          : `${congeladas.length} revisões abertas antes desta versão passam a usar os padrões da emissão dos certificados revisados (o certificado e as correções da época). Certificados: `,
+        congeladas,
+      ),
+    )
+  if (comRegras.length)
+    registrar.run(
+      new Date().toISOString(),
+      detalheLista(
+        comRegras.length === 1
+          ? 'A revisão do certificado emitido com as regras do POP segue as regras dele (não o cálculo de antes da classe I). Certificado: '
+          : `${comRegras.length} revisões de certificados emitidos com as regras do POP seguem as regras deles (não o cálculo de antes da classe I). Certificados: `,
+        comRegras,
       ),
     )
 }

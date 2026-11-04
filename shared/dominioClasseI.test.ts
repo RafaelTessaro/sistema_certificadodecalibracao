@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   AMBIENTE_VAZIO,
+  calculoLegado,
   calibracaoVazia,
   deltaTMaximo,
   deltaTPesosMaximo,
@@ -18,6 +19,24 @@ import {
   verificacoesAntesDeCalibrar,
 } from './dominio.ts'
 import { repetibilidadesSugeridas } from './metrologia/sugestoes.ts'
+
+describe('calculoLegado: o registro de antes do cálculo da classe I', () => {
+  const { conveccao: _c, ...resto } = OPCOES_CALCULO_PADRAO
+  const semConveccao: Pick<typeof OPCOES_CALCULO_PADRAO, 'conveccao'> = { ...resto, conveccao: undefined }
+  it('o emitido sem a convecção nas opções (1.0.1) e a revisão marcada; o rascunho não', () => {
+    expect(calculoLegado({ opcoes: semConveccao, emissao: { padroes: [] } })).toBe(true)
+    expect(calculoLegado({ opcoes: OPCOES_CALCULO_PADRAO, calculoLegado: true })).toBe(true)
+    expect(calculoLegado({ opcoes: semConveccao })).toBe(false)
+    expect(calculoLegado({ opcoes: semConveccao, emissao: null })).toBe(false)
+    expect(calculoLegado({ opcoes: OPCOES_CALCULO_PADRAO, emissao: { padroes: [] } })).toBe(false)
+  })
+
+  it('o emitido com as regras do POP a partir de um rascunho da 1.0.1 não regravado (sem a convecção) não é legado', () => {
+    expect(calculoLegado({ opcoes: semConveccao, emissao: { regrasDoPop: true } })).toBe(false)
+    // A revisão marcada continua legada
+    expect(calculoLegado({ opcoes: semConveccao, emissao: { regrasDoPop: true }, calculoLegado: true })).toBe(true)
+  })
+})
 
 describe('normalização dos campos novos', () => {
   it('opções: aceita o empuxo MEDIDO e a convecção; o padrão continua sem convecção e com o 5d', () => {

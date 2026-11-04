@@ -16,16 +16,8 @@ import {
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CLIENTE_VAZIO, normalizarCliente, UFS } from '#shared/dominio.ts'
-import {
-  cnpjValido,
-  cpfValido,
-  mascaraCep,
-  mascaraDocumento,
-  mascaraTelefone,
-  normalizarCnpj,
-  somenteDigitos,
-} from '#shared/documentos.ts'
+import { normalizarCliente, UFS } from '#shared/dominio.ts'
+import { cnpjValido, mascaraCep, mascaraDocumento, mascaraTelefone, normalizarCnpj, somenteDigitos } from '#shared/documentos.ts'
 import type { Cliente, ClienteInput, TipoCliente } from '#shared/tipos.ts'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
@@ -37,6 +29,7 @@ import {
   consultarCnpj,
   duplicadoDoErro,
   erroDeConsulta,
+  formularioInicialCliente,
   mesclarCep,
   mesclarConsulta,
   rotuloSituacao,
@@ -113,30 +106,6 @@ type EstadoConsulta =
 
 type EstadoCep = { estado: 'ocioso' | 'carregando' } | { estado: 'ok' | 'erro'; mensagem: string }
 
-/** Estado inicial: aceita um CNPJ/CPF digitado na busca de outra tela como "nome inicial". */
-function formularioInicial(cliente?: Cliente, nomeInicial?: string, tipoInicial?: TipoCliente): ClienteInput {
-  if (cliente) {
-    const { id: _i, versao: _v, criadoEm: _c, atualizadoEm: _a, ...resto } = cliente
-    return { ...CLIENTE_VAZIO, ...resto }
-  }
-  const base: ClienteInput = {
-    ...CLIENTE_VAZIO,
-    tipo: tipoInicial ?? 'PJ',
-    nome: nomeInicial?.trim() ?? '',
-    uf: 'SP',
-  }
-  const digitos = somenteDigitos(base.nome)
-  if (/^[\d./\-\s]+$/.test(base.nome)) {
-    if (cnpjValido(digitos)) return { ...base, tipo: 'PJ', nome: '', documento: mascaraDocumento(digitos, 'PJ') }
-    if (cpfValido(digitos)) return { ...base, tipo: 'PF', nome: '', documento: mascaraDocumento(digitos, 'PF') }
-  }
-  // CNPJ alfanumérico ("12.ABC.345/01DE-35"): só letras, números e pontuação, com vários algarismos (não é um nome)
-  if (/^[\dA-Za-z./\-\s]+$/.test(base.nome) && digitos.length >= 4 && cnpjValido(base.nome)) {
-    return { ...base, tipo: 'PJ', nome: '', documento: mascaraDocumento(base.nome, 'PJ') }
-  }
-  return base
-}
-
 function FormularioCliente({
   cliente,
   nomeInicial,
@@ -153,7 +122,7 @@ function FormularioCliente({
   setSalvando: (v: boolean) => void
 }) {
   const navegar = useNavigate()
-  const [f, setF] = useState<ClienteInput>(() => formularioInicial(cliente, nomeInicial, tipoInicial))
+  const [f, setF] = useState<ClienteInput>(() => formularioInicialCliente(cliente, nomeInicial, tipoInicial))
   // Versão que o usuário abriu para editar: se outra pessoa salvar antes, avisamos
   const [versaoBase, setVersaoBase] = useState(cliente?.versao)
   const [tentou, setTentou] = useState(false)

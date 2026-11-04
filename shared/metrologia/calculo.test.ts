@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { OpcoesCalculo } from '../tipos.ts'
 import { calcular, cargaDaDescida, cargaDaFaixaDecrescente, leituraImplausivel } from './calculo.ts'
 import { pesosMinimosSubstituicao } from './sugestoes.ts'
-import type { EntradaCalculo, Orcamento, PecaCalculo, PontoCalculo } from './tipos.ts'
+import type { EntradaCalculo, Orcamento, PecaCalculo, PontoCalculo, ResultadoCalculo } from './tipos.ts'
 
 const OPCOES: OpcoesCalculo = {
   empuxo: 'NAO_AJUSTADO',
@@ -957,17 +957,32 @@ describe('pesos sem EMA conhecido', () => {
     jogo: 'JP-B',
     ...extra,
   })
-  const calc = (peca: PecaCalculo, opcoes: Partial<OpcoesCalculo> = {}) => {
+  /** A calibração nova (`regrasDoPop`); `legado`: o registro de antes das regras (a revisão de um certificado 1.0.2). */
+  const calc = (peca: PecaCalculo, opcoes: Partial<OpcoesCalculo> = {}, legado = false) => {
     const e = exemplo30kg(opcoes)
+    if (!legado) e.regrasDoPop = true
+    // Os 5 pontos do POP (7.7); os de 5 kg e 20 kg com os pesos M1 do exemplo
     e.indicacao.pontos = [
       ponto('0', 0, [], 0, 0),
+      ponto('5', 5000, [P5A], 5000, 5005),
       ponto('10', 10000, [peca], 10000, 10005),
+      ponto('20', 20000, [P5A, P5B, P5C, P5D], 20005, 20010),
       ponto('30', 30000, [{ ...peca, quantidade: 3 }], 30005, 30005),
     ]
     return calcular(e)
   }
   const pendencia =
     'Pesos sem EMA conhecido (OIML R 111): o jogo JP-B está sem a classe. O EMA entra na incerteza dos pesos (deriva, empuxo ou valor nominal); confira a classe no cadastro do padrão.'
+  const semEspacoFino = (avisos: ResultadoCalculo['avisos']) =>
+    avisos.map((a) => ({ ...a, mensagem: a.mensagem.replace(/[\u00A0\u2009\u202F]/g, ' ') }))
+  const naoConferida = {
+    nivel: 'atencao',
+    mensagem: 'Classe dos pesos não conferida em 10 000 g; 30 000 g: pesos sem a classe OIML R 111 (R76 3.7.1).',
+  }
+  const semIncertezaAviso = {
+    nivel: 'atencao',
+    mensagem: 'Pesos sem incerteza conhecida (classe ou U do certificado) em 10 000 g; 30 000 g.',
+  }
 
   it('pelo certificado e sem a classe, com a deriva pelo EMA (o padrão): pendência', () => {
     const r = calc(semClasse())
@@ -1004,6 +1019,37 @@ describe('pesos sem EMA conhecido', () => {
     expect(r.pendencias.map((p) => p.replace(/[\u00A0\u2009\u202F]/g, ' '))).toEqual([
       'Pesos sem incerteza conhecida (classe ou U do certificado) em 10 000 g; 30 000 g.',
     ])
+  })
+
+  // Registro de antes das regras do POP (a revisão de um certificado emitido na 1.0.1/1.0.2, sem `regrasDoPop`): as
+  // exigências da época. Sem pendência nova (a revisão que só corrige o endereço sai com os mesmos números); só avisos
+  describe('no registro de antes das regras (revisão de um certificado 1.0.2): avisos, como na época', () => {
+    it('pelo certificado e sem a classe: sem pendência, a classe dos pesos não conferida; os mesmos números', () => {
+      const legado = calc(semClasse(), {}, true)
+      expect(legado.pendencias).toEqual([])
+      expect(semEspacoFino(legado.avisos)).toContainEqual(naoConferida)
+      expect(legado.avisos.map((a) => a.mensagem).join('\n')).not.toMatch(/Pesos sem EMA conhecido/)
+      // Os números são os da calibração nova (o EMA que falta não muda o cálculo; só a exigência)
+      expect(legado.pontos.map((p) => p.texto.U)).toEqual(calc(semClasse()).pontos.map((p) => p.texto.U))
+      // A mesma entrada com as regras do POP: a pendência
+      expect(calc(semClasse()).pendencias).toEqual([pendencia])
+    })
+
+    it('pelo nominal sem a classe: o aviso de antes (sem incerteza conhecida), nunca pendência', () => {
+      const nominal = semClasse({ usarCertificado: false, incerteza: 0, correcao: 0 })
+      const legado = calc(nominal, {}, true)
+      expect(legado.pendencias).toEqual([])
+      expect(semEspacoFino(legado.avisos)).toEqual(expect.arrayContaining([semIncertezaAviso, naoConferida]))
+      expect(calc(nominal).pendencias).toEqual([pendencia])
+    })
+
+    it('certificado sem U e com a classe: o aviso de antes no lugar da pendência', () => {
+      const semU = semClasse({ classe: 'M1', ema: 0.5, incerteza: 0 })
+      const legado = calc(semU, {}, true)
+      expect(legado.pendencias).toEqual([])
+      expect(semEspacoFino(legado.avisos)).toContainEqual(semIncertezaAviso)
+      expect(calc(semU).pendencias).toHaveLength(1)
+    })
   })
 })
 

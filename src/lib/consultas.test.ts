@@ -9,6 +9,7 @@ import {
   duplicadoDoErro,
   serieRepetidaDoErro,
   erroDeConsulta,
+  formularioInicialCliente,
   mesclarCep,
   mesclarConsulta,
   trocarTipoCliente,
@@ -111,6 +112,54 @@ describe('mesclarConsulta', () => {
     // Nome de exibição e contato escolhidos à mão ficam
     expect(novo.nome).toBe('Padaria do João')
     expect(novo.telefone).toBe('(19) 3524-0000')
+  })
+
+  // O cadastro novo já abre com a UF SP: a consulta do CNPJ de uma empresa de outro estado não pode deixar a cidade e
+  // o CEP dela com "/SP" (o endereço sai assim no cadastro, na folha de campo e no certificado)
+  describe('a UF acompanha a cidade da consulta', () => {
+    const gaucha: DadosCnpj = {
+      ...empresaA,
+      cnpj: '11.222.333/0001-81',
+      cep: '95760-000',
+      logradouro: 'Rua Pinheiro Machado',
+      bairro: 'Centro',
+      cidade: 'Sao Sebastiao do Cai',
+      uf: 'RS',
+    }
+    const rs = { cidade: 'Sao Sebastiao do Cai', uf: 'RS', cep: '95760-000' }
+
+    it('a UF que veio pronta (SP) dá lugar à da consulta, com ou sem ela entre os valores da consulta anterior', () => {
+      expect(mesclarConsulta({ ...CLIENTE_VAZIO, uf: 'SP' }, rs, { uf: 'SP' }, false).form.uf).toBe('RS')
+      expect(mesclarConsulta({ ...CLIENTE_VAZIO, uf: 'SP' }, rs, {}, false).form.uf).toBe('RS')
+    })
+
+    it('o formulário do cliente novo: a UF padrão não bloqueia a da consulta, e nada aparece como "mantido"', () => {
+      const inicial = formularioInicialCliente(undefined, '11.222.333/0001-81')
+      expect(inicial).toMatchObject({ tipo: 'PJ', documento: '11.222.333/0001-81', uf: 'SP' })
+      const novos = camposDoCnpj(gaucha)
+      const { form: novo, aplicados } = mesclarConsulta(inicial, novos, valoresDaConsultaAnterior(undefined), false)
+      expect(novo).toMatchObject({ cidade: 'Sao Sebastiao do Cai', cep: '95760-000', uf: 'RS' })
+      expect(aplicados.uf).toBe('RS')
+      expect(camposMantidos(novo, novos)).toEqual([])
+      // Sem endereço na Receita, a UF padrão fica
+      const semEndereco = { ...novos, cep: '', logradouro: '', numero: '', bairro: '', cidade: '', uf: '' }
+      expect(mesclarConsulta(inicial, semEndereco, {}, false).form.uf).toBe('SP')
+    })
+
+    it('a cidade digitada à mão fica com a UF de quem a digitou (sem misturar "Campinas/RS")', () => {
+      const digitada = { ...CLIENTE_VAZIO, cidade: 'Campinas', uf: 'SP' }
+      const r = mesclarConsulta(digitada, camposDoCnpj(gaucha), { uf: 'SP' }, false)
+      expect(r.form).toMatchObject({ cidade: 'Campinas', uf: 'SP' })
+      expect(r.aplicados.uf).toBeUndefined()
+      // A mesma cidade da consulta (sem acento, em minúsculas): a UF dela
+      const mesma = mesclarConsulta({ ...CLIENTE_VAZIO, cidade: 'são sebastião do caí', uf: 'SP' }, rs, {}, false)
+      expect(mesma.form.uf).toBe('RS')
+      // "Consultar" (sobrescrever) troca tudo, como antes
+      expect(mesclarConsulta(digitada, camposDoCnpj(gaucha), {}, true).form).toMatchObject({
+        cidade: 'Sao Sebastiao do Cai',
+        uf: 'RS',
+      })
+    })
   })
 
   it('cliente que nunca foi consultado (ou não é empresa) não tem valores "da consulta"', () => {

@@ -9,6 +9,8 @@
 // Migração 12: as balanças de cada lembrete de calibração (vazio nos de antes).
 // Migração 13: os endereços que o servidor de e-mail recusou em cada envio (vazio nos de antes).
 // Migração 14: o rascunho já medido antes das regras do POP mantém os mínimos como avisos (a visita já aconteceu).
+// Migração 15: a revisão aberta antes da 1.0.3 ganha os padrões da emissão do certificado revisado; a marcada como legada
+// de um certificado emitido com as regras do POP passa a segui-las.
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
@@ -20,7 +22,7 @@ import { detalheTrocaIndicador, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 14
+const ULTIMA = 15
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -600,9 +602,10 @@ describe('migração 9: revisão aberta antes do cálculo da classe I', () => {
     const rev = calibracao(db, 'k2')
     expect(rev.calculoLegado).toBe(true)
     expect(calculoLegado(rev)).toBe(true)
-    // O resto do registro fica como estava
-    const { calculoLegado: _l, ...semMarca } = rev
+    // O resto do registro fica como estava (a migração 15 congela os padrões da emissão original)
+    const { calculoLegado: _l, padroesCongelados, ...semMarca } = rev
     expect(semMarca).toEqual(antes)
+    expect(padroesCongelados).toEqual(original.emissao.padroes)
     expect(pendenciasEmissao(rev, contexto)).toEqual([])
     const doOriginal = calcularCalibracao(original, d.emissao.balanca, d.emissao.padroes)
     const daRevisao = calcularCalibracao(rev, d.emissao.balanca, d.emissao.padroes)
@@ -620,6 +623,7 @@ describe('migração 9: revisão aberta antes do cálculo da classe I', () => {
         .map((r) => r.detalhe),
     ).toEqual([
       `A revisão aberta antes desta versão mantém o cálculo da época, sem as regras novas da classe I. Certificado: ${original.numero}.`,
+      `A revisão aberta antes desta versão passa a usar os padrões da emissão do certificado revisado (o certificado e as correções da época). Certificado: ${original.numero}.`,
     ])
   })
 
@@ -653,7 +657,8 @@ describe('migração 9: revisão aberta antes do cálculo da classe I', () => {
     db.exec('PRAGMA user_version = 8')
     migrar(db)
     expect(calibracao(db, 'k2')).toEqual(depois)
-    expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(1)
+    // A 9 e a 15 (os padrões congelados), uma vez cada
+    expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(2)
   })
 })
 
@@ -993,5 +998,94 @@ describe('migração 14: a calibração em andamento já medida antes das regras
     migrar(db)
     expect(dados(db)).toEqual(depois)
     expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(1)
+  })
+})
+
+describe('migração 15: as revisões abertas antes da 1.0.3 e as marcadas como legadas sem ser', () => {
+  const JOGO = { id: 'j1', identificacao: 'JP-01', tipo: 'PESOS', certificado: 'LAB-0456', dataCalibracao: '2026-01-10' }
+  const SEM_CONVECCAO = { ...OPCOES_CALCULO_PADRAO, conveccao: undefined }
+  /**
+   * Banco na versão 14 com: o1 (emitido na 1.0.2, com o jogo na emissão) e r1 (revisão dele aberta na 1.0.2, sem os
+   * padrões congelados); o2 (emitido pela 1.0.3 de um rascunho da 1.0.1 não regravado: sem a convecção, com as regras
+   * do POP e os mínimos como avisos) e r2 (revisão dele, marcada como legada); o3 (emitido na 1.0.1, sem a convecção) e
+   * r3 (revisão dele, legada de verdade, já com os padrões); r4 (revisão de o2 emitida: fica como está).
+   */
+  function bancoV14() {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 1)
+    db.prepare(
+      `INSERT INTO clientes (id, tipo, documento, nome, busca, ativo, dados, versao, criado_em, atualizado_em)
+       VALUES ('c1', 'PJ', '', 'Frigorífico', 'frigorifico', 1, '{}', 1, ?, ?)`,
+    ).run(EM, EM)
+    inserirBalanca(db, 'b1', { numeroSerie: 'TL-2231', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
+    migrar(db, 14)
+    const inserir = db.prepare(
+      `INSERT INTO calibracoes (id, status, numero, cliente_id, balanca_id, substitui_id, dados, versao, criado_em, atualizado_em)
+       VALUES (?, ?, ?, 'c1', 'b1', ?, ?, 4, ?, ?)`,
+    )
+    const calibracao = (id: string, status: string, numero: string, substitui: string, dados: Record<string, unknown>) =>
+      inserir.run(id, status, numero, substitui, JSON.stringify({ id, status, numero, substituiId: substitui, ...dados }), EM, EM)
+    calibracao('o1', 'EMITIDO', 'CC-2026-00001', '', { opcoes: OPCOES_CALCULO_PADRAO, emissao: { padroes: [JOGO] } })
+    calibracao('r1', 'RASCUNHO', '', 'o1', { opcoes: OPCOES_CALCULO_PADRAO, padroesIds: ['j1'] })
+    calibracao('o2', 'EMITIDO', 'CC-2026-00002', '', {
+      opcoes: SEM_CONVECCAO,
+      minimosComoAviso: true,
+      emissao: { padroes: [JOGO], regrasDoPop: true },
+    })
+    calibracao('r2', 'REVISAO', '', 'o2', { opcoes: SEM_CONVECCAO, calculoLegado: true, padroesCongelados: [JOGO] })
+    calibracao('o3', 'EMITIDO', 'CC-2026-00003', '', { opcoes: SEM_CONVECCAO, emissao: { padroes: [JOGO] } })
+    calibracao('r3', 'RASCUNHO', '', 'o3', { opcoes: SEM_CONVECCAO, calculoLegado: true, padroesCongelados: [JOGO] })
+    calibracao('r4', 'EMITIDO', 'CC-2026-00002-R1', 'o2', {
+      opcoes: SEM_CONVECCAO,
+      calculoLegado: true,
+      emissao: { padroes: [] },
+    })
+    return db
+  }
+  const dados = (db: DatabaseSync) =>
+    Object.fromEntries(
+      (
+        db.prepare('SELECT id, dados, versao FROM calibracoes ORDER BY id').all() as Array<{
+          id: string
+          dados: string
+          versao: number
+        }>
+      ).map((l) => [l.id, { ...(JSON.parse(l.dados) as Record<string, unknown>), _versao: l.versao }]),
+    )
+
+  it('a revisão sem os padrões ganha os da emissão; a legada sem ser segue as regras do certificado revisado', () => {
+    const db = bancoV14()
+    const antes = dados(db)
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    const depois = dados(db)
+    expect(depois.r1).toEqual({ ...antes.r1, padroesCongelados: [JOGO] })
+    const { calculoLegado: _l, ...r2 } = antes.r2 as Record<string, unknown>
+    expect(depois.r2).toEqual({ ...r2, regrasDoPop: true, minimosComoAviso: true })
+    expect(calculoLegado(depois.r2 as unknown as Calibracao)).toBe(false)
+    // A revisão legada de verdade, os emitidos e a revisão já emitida: como estavam (sem subir a versão)
+    for (const id of ['o1', 'o2', 'o3', 'r3', 'r4']) expect(depois[id], id).toEqual(antes[id])
+    expect(
+      registros(db)
+        .filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
+        .map((r) => r.detalhe),
+    ).toEqual([
+      'A revisão aberta antes desta versão passa a usar os padrões da emissão do certificado revisado (o certificado e as correções da época). Certificado: CC-2026-00001.',
+      'A revisão do certificado emitido com as regras do POP segue as regras dele (não o cálculo de antes da classe I). Certificado: CC-2026-00002.',
+    ])
+  })
+
+  it('pode ser repetida sem mudar nada nem registrar de novo; sem o que ajustar, não registra', () => {
+    const db = bancoV14()
+    migrar(db)
+    const depois = dados(db)
+    db.exec('PRAGMA user_version = 14')
+    migrar(db)
+    expect(dados(db)).toEqual(depois)
+    expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(2)
+    const nada = bancoV14()
+    nada.exec("DELETE FROM calibracoes WHERE id IN ('r1', 'r2')")
+    migrar(nada)
+    expect(registros(nada).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toEqual([])
   })
 })

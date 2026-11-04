@@ -90,6 +90,30 @@ describe('planoDaFolha', () => {
     expect(naFolha({ ...d, balanca: { ...d.balanca!, classe: 'II' } })).toContain('BR-01')
   })
 
+  it('classes III e IIII: o barômetro fora do rascunho (pressão opcional) segue na linha dos outros', () => {
+    const d = folhaRodoviaria()
+    const semBarometro = {
+      ...d,
+      calibracao: { ...d.calibracao!, padroesIds: d.calibracao!.padroesIds.filter((id) => id !== 'pad-br01') },
+    }
+    expect(d.padroes.find((p) => p.id === 'pad-br01')?.tipo).toBe('BAROMETRO')
+    expect(semBarometro.calibracao.padroesIds).not.toContain('pad-br01')
+    for (const classe of ['III', 'IIII', ''] as const) {
+      const x = { ...semBarometro, balanca: { ...d.balanca!, classe } }
+      expect(
+        plano(x).padroes.map((p) => [p.padrao.identificacao, p.naFolha]),
+        classe,
+      ).toEqual([
+        ['PP500-01 a 20', true],
+        ['TH-01', true],
+        ['BR-01', false],
+      ])
+    }
+    // Desativado, nada
+    const inativo = { ...semBarometro, padroes: d.padroes.map((p) => (p.id === 'pad-br01' ? { ...p, ativo: false } : p)) }
+    expect(plano(inativo).padroes.map((p) => p.padrao.identificacao)).not.toContain('BR-01')
+  })
+
   it('rodoviária: substituição em etapas sem acusar falta de pesos nos pontos acima de 10 t', () => {
     const p = plano(folhaRodoviaria())
     expect(p.substituicao).toMatchObject({ ativa: true, carga: 10_000, etapas: 3, pesos: '20 × 500 kg' })
@@ -458,12 +482,32 @@ describe('padroesPrevistos', () => {
     const m1 = { ...folhaEmBranco().padroes[1], id: 'pad-m1' }
     const todos = [...d.padroes, m1]
     expect(padroesPrevistos(null, todos, 'I').map((p) => p.identificacao)).toEqual(['JE2-01', 'TH-01', 'BR-01', 'TD-01'])
-    // Nas outras classes, como sempre: os ativos menos "outro"
-    expect(padroesPrevistos(null, todos, 'III').map((p) => p.identificacao)).toEqual(['JE2-01', 'TH-01', 'BR-01', 'JP-01'])
+    // Nas outras classes, os ativos menos "outro"; nas III e IIII, também sem o barômetro (a pressão é opcional)
+    expect(padroesPrevistos(null, todos, 'II').map((p) => p.identificacao)).toEqual(['JE2-01', 'TH-01', 'BR-01', 'JP-01'])
+    expect(padroesPrevistos(null, todos, 'III').map((p) => p.identificacao)).toEqual(['JE2-01', 'TH-01', 'JP-01'])
     // A folha da balança classe I sem rascunho também leva o TD-01 no passo 1
     const semRascunho = planoDaFolha(null, d.balanca!, todos, '2026-10-26')
     expect(semRascunho.padroes.filter((x) => x.naFolha).map((x) => x.padrao.identificacao)).toContain('TD-01')
     expect(semRascunho.padroes.map((x) => x.padrao.identificacao)).not.toContain('JP-01')
+  })
+})
+
+describe('planoDaFolha: balança classe I sem o termômetro de duas entradas', () => {
+  const AVISO =
+    'Nenhum termômetro de duas entradas (padrão Outro) previsto: o ΔT do passo 4 precisa dele. Cadastre-o em Padrões → Novo padrão → Outro e escolha-o nos padrões da calibração antes de sair.'
+
+  it('sem padrão "Outro" previsto: o aviso em "Resolva antes de sair"; com ele, nada', () => {
+    const d = folhaClasseI()
+    expect(d.padroes.some((p) => p.tipo === 'OUTRO')).toBe(true)
+    expect(plano(d).avisos).not.toContain(AVISO)
+    const sem = { ...d, padroes: d.padroes.filter((p) => p.tipo !== 'OUTRO') }
+    expect(plano(sem).avisos).toContain(AVISO)
+    // Desativado: como se não houvesse
+    const inativo = { ...d, padroes: d.padroes.map((p) => (p.tipo === 'OUTRO' ? { ...p, ativo: false } : p)) }
+    expect(plano(inativo).avisos).toContain(AVISO)
+    // Nas outras classes, o ΔT não vai na folha
+    const classeII = { ...sem, balanca: { ...sem.balanca!, classe: 'II' as const } }
+    expect(plano(classeII).avisos).not.toContain(AVISO)
   })
 })
 

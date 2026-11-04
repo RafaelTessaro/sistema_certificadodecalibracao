@@ -9,7 +9,7 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { AJUSTES } from '#shared/dominio.ts'
+import { AJUSTES, calibracaoVazia, padroesSemHistorico } from '#shared/dominio.ts'
 import { AVISO_ETIQUETA, FORMULARIO_FOLHA_CAMPO } from '#shared/folhaCampo.ts'
 import type { Padrao } from '#shared/tipos.ts'
 import { A4, BASE_RODAPE, MODULO, pdfmake, TOPO_CABECALHO } from './base.ts'
@@ -42,7 +42,7 @@ import {
   ONDE_ANOTAR,
   TITULO_ANOTACOES,
 } from './folhaCampo.ts'
-import { POP_EXEMPLO } from './exemplosCertificado.ts'
+import { exemploClasseI, POP_EXEMPLO } from './exemplosCertificado.ts'
 
 const temPdftotext = !spawnSync('pdftotext', ['-v'], { stdio: 'ignore' }).error
 
@@ -152,9 +152,10 @@ function alturaDaLinha(pdf: Buffer, paginas: Palavra[][], rotulo: string[]): { p
 }
 
 /**
- * As amostras e o máximo de páginas de cada uma (rev. 03, só a medição: frente e verso de uma folha). Todas cabem em 2,
- * também as rodoviárias (a multi-intervalo, com 11 pontos e 7 etapas de substituição) e a em branco com os 8 padrões
- * ativos de uma empresa maior.
+ * As amostras e o máximo de páginas de cada uma (rev. 03, só a medição: frente e verso de uma folha). Os 8 passos cabem
+ * em 2 em todas, também nas rodoviárias e na em branco com os 8 padrões ativos de uma empresa maior; as Anotações vêm
+ * por último, no fim do verso. Na rodoviária multi-intervalo (11 pontos e 7 etapas de substituição), o verso fica cheio
+ * e as Anotações vão sozinhas para uma 3ª página.
  */
 const EXEMPLOS: Array<{ nome: string; dados: () => DadosFolhaCampo; maxPaginas: number }> = [
   { nome: 'plataforma 300 kg (rascunho do último certificado)', dados: folhaPlataforma, maxPaginas: 2 },
@@ -163,7 +164,7 @@ const EXEMPLOS: Array<{ nome: string; dados: () => DadosFolhaCampo; maxPaginas: 
   { nome: 'em branco', dados: folhaEmBranco, maxPaginas: 2 },
   { nome: 'rodoviária 60 t sem calibração anterior', dados: folhaRodoviariaSemHistorico, maxPaginas: 2 },
   { nome: 'em branco com 8 padrões', dados: folhaEmBrancoOitoPadroes, maxPaginas: 2 },
-  { nome: 'rodoviária multi-intervalo 80 t, 11 pontos e 7 etapas', dados: () => folhaRodoviariaMultiIntervalo(), maxPaginas: 2 },
+  { nome: 'rodoviária multi-intervalo 80 t, 11 pontos e 7 etapas', dados: () => folhaRodoviariaMultiIntervalo(), maxPaginas: 3 },
   { nome: 'analítica classe I 220 g × 0,1 mg (sem histórico)', dados: folhaClasseI, maxPaginas: 2 },
 ]
 
@@ -317,8 +318,8 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
         }
       }
       visitar((definicaoFolhaCampo(dados()) as { content: unknown }).content)
-      // O local e o método (e, na em branco, a classe, as faixas e o receptor)
-      expect(quadrados.length).toBeGreaterThanOrEqual(6)
+      // O local (2) e o método (3, sem o "Decrescente"); na em branco, também a classe, as faixas e o receptor
+      expect(quadrados.length).toBeGreaterThanOrEqual(5)
       expect(quadrados.filter((q) => q.color !== '#FFFFFF')).toEqual([])
     }
     // A plataforma prevê o local e o método
@@ -338,6 +339,8 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     const m = await montar(e.dados())
     expect(m.paginas).toBeLessThanOrEqual(e.maxPaginas)
     expect(m.faltando).toEqual([])
+    // Os 8 passos em 2 páginas (frente e verso); uma 3ª só com as Anotações
+    expect(m.marcas.get('fim:passo-7')?.pagina).toBe(2)
   })
 
   it('sem "confere" nem caixas de correção ou de observações: o diferente e as observações vão em Anotações, no fim da folha (uma linha no alto da página 1)', () => {
@@ -423,7 +426,8 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     // diz quando, na própria célula
     expect(t).toContain('{"text":"ΔT pesos − ar ●"},{"text":" (°C)"')
     expect(t.match(/"ΔT pesos − ar ●"/g)).toHaveLength(1)
-    expect(t).toContain('{"text":"antes do 1º ensaio · até 1 °C","fontSize":6.2}')
+    // (a dica de quando, embaixo do título da coluna: a caixa de escrever fica livre)
+    expect(t).toContain('{"text":"antes do 1º ensaio · até 1 °C","fontSize":6.6')
     // Umidade obrigatória (densidade do ar) e pressão obrigatória: uma coluna cada, para o início e o fim
     expect(t.match(/"Umidade ●"/g)).toHaveLength(1)
     expect(t.match(/"Pressão ●"/g)).toHaveLength(1)
@@ -459,11 +463,12 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
       expect(t).not.toContain('não use a folha em branco')
       expect(t).not.toMatch(/classe[\s\u00a0]I(?![I\w])|uma peça só/)
       expect(t).not.toContain('{"text":"I","fontSize"')
-      // A pressão: obrigatória na classe II (na classe I também, mas ela não usa esta folha)
-      expect(t).toContain(`{"text":"obrigatória na classe${' '}II","fontSize":6.2}`)
+      // A pressão: obrigatória na classe II (na classe I também, mas ela não usa esta folha), embaixo do título da coluna
+      expect(t).toContain('{"text":"obrigatória na classe\u00a0II","fontSize":6.6')
       // Excentricidade pelo método 1, sem a linha do zero antes de cada posição
       expect(t).toContain(`"${METODO_EXCENTRICIDADE_FOLHA.demais}"`)
-      // Repetibilidade: quantas vezes no canto das caixas (5; 3 com 100 kg ou mais); as outras, opcionais (com 10, k = 2)
+      // Repetibilidade: quantas vezes nos nº em cima das caixas (5; 3 com 100 kg ou mais); as outras, opcionais (com 10,
+      // k = 2)
       for (const x of ['4ª · < 100 kg', '5ª · < 100 kg', '6ª · opcional', '7ª · opcional', '10ª · opcional', '12ª · opcional'])
         expect(t).toContain(x)
     }
@@ -691,7 +696,8 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(LEMBRETE_AMBIENTE_FIM).toBe('Antes de assinar: preencha a linha Fim do passo 4.')
     expect(t).toContain('Portaria Inmetro/Dimel nº')
     expect(t).toContain('0236/2009')
-    expect(t).toContain('Toledo do Brasil 2180 · nº')
+    // A plataforma e o nº de série dela: o "·" e o "nº" vão com o nº, na linha de baixo (não se partem)
+    expect(t).toMatch(/Toledo do Brasil 2180 .{0,120}· nº 2180-0041273/)
     // Recados de acesso na chegada (página 1), não no fim
     expect(corrido(paginas[0])).toContain('Procurar a Juliana na portaria 2')
     // A data da calibração uma vez só, no passo 8 (com a prevista como dica); na chegada, só a hora de início
@@ -788,7 +794,9 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     for (const x of ['5 ERRO DE INDICAÇÃO NO SISTEMA', 'Pesos diferentes dos impressos', '33,00', 'RETORNO AO ZERO'])
       expect(corrido(paginas[1])).toContain(x)
     expect(texto).not.toContain('(CONTINUAÇÃO)')
-    expect(texto).not.toMatch(/na próxima página/)
+    // Sem o aviso das tabelas (elas vão com o título); a frente acaba com a linha de continuação
+    expect(texto).not.toMatch(/Tabelas? (dos pontos )?na próxima página/)
+    expect(corrido(paginas[0])).toContain('Continua na próxima página: passos 5 a 8 e, no fim da folha, Anotações.')
     conferirComum(texto)
     const t = corrido(texto)
     expect(t).toContain('pontos, cargas e posições sugeridos pelo sistema')
@@ -803,7 +811,8 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toMatch(/0,040 .{0,20}2 × 20 g/)
     // Repetibilidade: um ensaio por intervalo (POP 7.9), numa tabela só, sem cabeçalho (como o ensaio único): o nº, a
     // carga nas casas de d do intervalo de cada uma (16,5 kg: d = 10 g), os pesos e quantas vezes na célula cinza; a
-    // hora ao lado; as leituras com a carga e o zero, 6 colunas (5 previstas: a 6ª, opcional)
+    // hora ao lado; as leituras com a carga e o zero, 6 colunas (5 previstas: a 6ª, opcional), com a hora e o nº de cada
+    // leitura numa linha miúda em cima de todos os ensaios
     const rep = t.slice(t.indexOf('6 REPETIBILIDADE'), t.indexOf('7 EXCENTRICIDADE'))
     for (const [n, carga] of [
       [1, '4,800'],
@@ -815,7 +824,8 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(rep.match(/Com a carga \(kg\)/g)).toHaveLength(3)
     expect(rep.match(/Zero após retirar \(kg\)/g)).toHaveLength(3)
     expect(rep.match(/no centro, 5 vezes \(mín. 5\)/g)).toHaveLength(3)
-    expect(rep.match(/6ª · opcional/g)).toHaveLength(3)
+    expect(rep.match(/6ª · opcional/g)).toHaveLength(1)
+    expect(rep).toMatch(/Hora 1ª 2ª 3ª 4ª 5ª 6ª · opcional/)
     expect(rep).toContain('2 × 2 kg + 500 g + 200 g + 100 g')
     // Excentricidade: no mínimo 1/3 de Max (11 kg), num valor redondo acima (na tabela das posições)
     expect(t).toMatch(/Carga \(kg\) ?15,000/)
@@ -1449,6 +1459,10 @@ describe.runIf(temPdftotext)('nada some do PDF (bloco maior que a página)', { t
     const t = corrido(textoDoPdf(m.pdf))
     for (const x of TITULOS_PASSOS) expect(t).toContain(x)
     expect(t).toContain('150 vezes')
+    // As Anotações também, por último (a folha manda anotar nelas)
+    expect(m.extras.anotacoes?.altura).toBeGreaterThanOrEqual(60)
+    expect(m.marcas.get('fim:anotacoes')?.pagina).toBe(m.paginas)
+    expect(t.indexOf('8 ASSINATURAS')).toBeLessThan(t.indexOf('ANOTAÇÕES — '))
   })
 })
 
@@ -1482,7 +1496,7 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     k.indicacao = { ...k.indicacao, metodo: 'CONTINUO' }
     const t = corrido(textoDoPdf(await gerarFolhaCampoPdf({ ...d, calibracao: k })))
     expect(t).toMatch(
-      /Como as cargas foram aplicadas Início do ensaio Crescente e decrescente Crescente com descarga Crescente contínuo PREVISTO Decrescente ____:____/,
+      /Como as cargas foram aplicadas Início do ensaio Crescente e decrescente Crescente com descarga Crescente contínuo PREVISTO ____:____/,
     )
     expect(t.match(/Início do ensaio/g)).toHaveLength(1)
     expect(t).toContain('(vá somando os pesos, sem descarregar)')
@@ -1541,7 +1555,9 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
 
   it('rodoviária multi-intervalo (11 pontos e 7 etapas): o título e o método no pé da frente, com o aviso; as tabelas juntas no verso', async () => {
     const m = await montar(folhaRodoviariaMultiIntervalo())
-    expect(m.paginas).toBe(2)
+    // Os passos em 2 páginas; o verso cheio: as Anotações sozinhas numa 3ª
+    expect(m.paginas).toBe(3)
+    expect(m.marcas.get('fim:passo-7')?.pagina).toBe(2)
     expect(m.extras.etapasAParte).toBeFalsy()
     expect(m.extras.avisoPontos).toBe(true)
     // Os ensaios não cabem inteiros no verso: o título do passo 5 fica na frente
@@ -1556,6 +1572,7 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     expect(verso).toMatch(/Cargas de substituição — 10 000 kg de pesos padrão em cada etapa/)
     // A repetibilidade, a excentricidade inteira e as assinaturas também no verso
     expect(verso).toMatch(/6 REPETIBILIDADE .*7 EXCENTRICIDADE .*Carga usada \(kg\) .*8 ASSINATURAS/)
+    expect(verso).not.toContain('ANOTAÇÕES — ')
   })
 
   it('rodoviária 60 t sem histórico (verso cheio, com o lembrete do ambiente do fim): o título e o método no pé da frente, com o aviso; as tabelas juntas no verso', async () => {
@@ -1601,14 +1618,17 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     expect(paginas.join(' ').match(/[Ee]m cada etapa, anote a indicação/g)).toHaveLength(1)
   })
 
-  it('anotações enormes na chegada (rodoviária multi-intervalo): as tabelas juntas, nada some, 2 páginas', async () => {
+  it('anotações enormes na chegada (rodoviária multi-intervalo): as tabelas juntas, nada some, os passos em 2 páginas', async () => {
     const d = folhaRodoviariaMultiIntervalo()
     d.calibracao = {
       ...d.calibracao!,
       anotacoesInternas: 'Ligar para o Eng. Ricardo 30 min antes de chegar; a balança fica desligada aos domingos. '.repeat(12),
     }
     const m = await montar(d)
-    expect(m.paginas).toBe(2)
+    // O verso cheio: as Anotações sozinhas numa 3ª página
+    expect(m.marcas.get('fim:passo-7')?.pagina).toBe(2)
+    expect(m.paginas).toBe(3)
+    expect(m.extras.anotacoes?.paginaNova).toBe(true)
     expect(m.faltando).toEqual([])
     expect(m.extras.etapasAParte).toBeFalsy()
     const paginas = paginasDe(textoDoPdf(m.pdf)).map(corrido)
@@ -1624,7 +1644,9 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     expect(m.extras.avisoPontos).toBeFalsy()
     expect(m.extras.ensaiosNoVerso).toBe(true)
     const t = corrido(textoDoPdf(m.pdf))
-    expect(t).not.toMatch(/na próxima página/)
+    // Sem o aviso das tabelas; a frente acaba com a linha de continuação
+    expect(t).not.toMatch(/Tabelas? (dos pontos )?na próxima página/)
+    expect(t).toContain('Continua na próxima página: passos 5 a 8 e, no fim da folha, Anotações.')
     const pontos = Array.from({ length: 9 }, (_, i) => m.marcas.get(`linha-pontos:${i}`)?.pagina)
     // A marca do fim do título do passo (a do começo fica na página de antes, se ele passou para a seguinte)
     expect(pontos.every((p) => p === m.marcas.get('fim:passo-5')?.pagina)).toBe(true)
@@ -1666,7 +1688,9 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
       for (const d of [e.dados(), { ...e.dados(), numeroCertificado: undefined }]) {
         const m = await montar(d)
         const paginas = paginasDe(textoDoPdf(m.pdf))
-        const ultima = paginas.at(-1)!
+        // A página das assinaturas: a última (ou a de antes, quando as Anotações vão sozinhas para uma página a mais)
+        const ultima = paginas[m.marcas.get('fim:passo-7')!.pagina - 1]
+        expect(m.marcas.get('fim:passo-7')!.pagina, e.nome).toBe(m.extras.anotacoes?.paginaNova ? m.paginas - 1 : m.paginas)
         const linha = ultima.split('\n').find((l) => l.includes('Antes de assinar'))
         expect(linha?.trim(), e.nome).toBe(LEMBRETE_AMBIENTE_FIM)
         const corr = corrido(ultima)
@@ -1816,10 +1840,11 @@ describe.runIf(temPdftotext)('correções da 4ª revisão: páginas sem grandes 
       expect(doc.content.some((x) => /^parte-7-/.test(x.id ?? ''))).toBe(false)
       const m = await montar(e.dados())
       expect(m.paginas).toBeLessThanOrEqual(e.maxPaginas)
-      // O título do passo 7, a carga e as leituras da excentricidade (e as assinaturas) na mesma página: a última
+      // O título do passo 7, a carga e as leituras da excentricidade (e as assinaturas) na mesma página: a última (ou a
+      // de antes, quando as Anotações vão sozinhas para uma página a mais)
       const paginas = paginasDe(textoDoPdf(m.pdf)).map(corrido)
       const comTitulo = paginas.findIndex((p) => p.includes('7 EXCENTRICIDADE'))
-      expect(comTitulo).toBe(paginas.length - 1)
+      expect(comTitulo).toBe(paginas.length - (m.extras.anotacoes?.paginaNova ? 2 : 1))
       const passo7 = paginas[comTitulo].slice(paginas[comTitulo].indexOf('7 EXCENTRICIDADE'))
       expect(passo7).toMatch(/Indicação \((kg|g|unid\.)\)/)
       expect(passo7).toMatch(/Carga/)
@@ -1852,10 +1877,10 @@ describe.runIf(temPdftotext)(
       for (let i = 0; m.marcas.has(`linha-pontos:${i}`); i++) out.push(m.marcas.get(`linha-pontos:${i}`)!.pagina)
       return out
     }
-    // Em 2 páginas; com um ensaio de repetibilidade por intervalo (dois a mais, ≈ 28 mm), o passo 7 (inteiro, com as
-    // assinaturas) vai para a página 3
+    // Os passos em 2 páginas (o verso cheio: as Anotações sozinhas numa 3ª); com um ensaio de repetibilidade por
+    // intervalo (dois a mais, ≈ 28 mm), o passo 7 (inteiro, com as assinaturas) vai para a página 3, com as Anotações
     it.each([
-      { nome: 'multi-intervalo 30/60/80 t, 4 padrões (amostra)', dados: () => folhaRodoviariaMultiIntervalo(), maxPaginas: 2 },
+      { nome: 'multi-intervalo 30/60/80 t, 4 padrões (amostra)', dados: () => folhaRodoviariaMultiIntervalo(), passos: 2 },
       {
         nome: 'multi-intervalo, um ensaio de repetibilidade por intervalo',
         dados: () =>
@@ -1864,7 +1889,7 @@ describe.runIf(temPdftotext)(
             { id: 'r2', carga: 40_000, leituras: [null, null, null] },
             { id: 'r3', carga: 70_000, leituras: [null, null, null] },
           ]),
-        maxPaginas: 3,
+        passos: 3,
       },
       {
         nome: 'faixa única 80 000 × 20 kg, 2 padrões',
@@ -1874,15 +1899,18 @@ describe.runIf(temPdftotext)(
           d.padroes = d.padroes.filter((p) => !['BR-01', 'PP20-01 a 15'].includes(p.identificacao))
           return d
         },
-        maxPaginas: 2,
+        passos: 2,
       },
-    ])('$nome: 11 pontos e 7 etapas em até $maxPaginas páginas, sem página quase vazia', async ({ dados, maxPaginas }) => {
+    ])('$nome: 11 pontos e 7 etapas, os passos em até $passos páginas, sem página quase vazia', async ({ dados, passos }) => {
       const d = dados()
       expect(d.calibracao!.indicacao.pontos).toHaveLength(11)
       expect(d.calibracao!.indicacao.substituicao.etapas).toHaveLength(7)
       const m = await montar(d)
       expect(m.faltando).toEqual([])
-      expect(m.paginas).toBeLessThanOrEqual(maxPaginas)
+      expect(m.marcas.get('fim:passo-7')!.pagina).toBeLessThanOrEqual(passos)
+      // As Anotações por último: no fim da página do passo 8 ou sozinhas na seguinte
+      expect(m.marcas.get('fim:anotacoes')!.pagina).toBe(m.paginas)
+      expect(m.paginas).toBeLessThanOrEqual(m.marcas.get('fim:passo-7')!.pagina + 1)
       // A tabela dos pontos inteira numa página; se ela não ficou na do título do passo 5, a do título avisa (o título e
       // o método no pé dela) ou o título foi junto, e a tabela abre a página com o título de continuação
       const titulo = m.marcas.get('fim:passo-5')!.pagina
@@ -2174,10 +2202,12 @@ describe.runIf(temPdftotext)(
         expect(m.extras.anotacoes?.altura, dados.name).toBeGreaterThanOrEqual(60)
         expect(brancoNoPe(m.pdf, m.paginas).at(-1), `${dados.name}, última`).toBeLessThan(5)
       }
-      // As que já estão cheias no verso (a rodoviária multi-intervalo) não ganham altura lá, e nada passa para outra página
+      // As que já estão cheias no verso (a rodoviária multi-intervalo) não ganham altura lá, e nenhum passo passa para
+      // outra página (na multi-intervalo, só as Anotações, sozinhas numa 3ª)
       for (const dados of [folhaRodoviaria, folhaRodoviariaSemHistorico, () => folhaRodoviariaMultiIntervalo()]) {
         const m = await montar(dados())
-        expect(m.paginas).toBe(2)
+        expect(m.marcas.get('fim:passo-7')?.pagina).toBe(2)
+        expect(m.paginas).toBe(m.extras.anotacoes?.paginaNova ? 3 : 2)
         expect(m.faltando).toEqual([])
       }
       const cheia = await montar(folhaRodoviariaMultiIntervalo())
@@ -2245,7 +2275,10 @@ function caixaDasAnotacoes(d: DadosFolhaCampo, extras: Parameters<typeof definic
   }
 }
 
-/** Amostras sem espaço para as linhas mínimas das Anotações no fim (o verso cheio): a regra manda para uma folha anexa. */
+/**
+ * Amostras sem espaço para as linhas mínimas das Anotações no fim (o verso cheio): o bloco vai sozinho para uma página a
+ * mais, depois do passo 8.
+ */
 const semEspacoNoFim = (nome: string) => /^rodoviária multi-intervalo/.test(nome)
 
 describe.runIf(temPdftotext)(
@@ -2256,7 +2289,10 @@ describe.runIf(temPdftotext)(
       '$nome: a última coisa da folha é o bloco Anotações (a barra e a caixa com linhas pontilhadas até o rodapé)',
       async (e) => {
         const m = await montar(e.dados())
-        expect(m.paginas).toBe(2)
+        // Os passos em 2 páginas; sem espaço no fim do verso, as Anotações sozinhas numa 3ª
+        expect(m.paginas).toBe(semEspacoNoFim(e.nome) ? 3 : 2)
+        expect(m.marcas.get('fim:passo-7')?.pagina).toBe(2)
+        expect(!!m.extras.anotacoes?.paginaNova).toBe(semEspacoNoFim(e.nome))
         expect(m.faltando).toEqual([])
         const paginas = paginasDe(textoDoPdf(m.pdf)).map(corrido)
         const barra = `${TITULO_ANOTACOES.toUpperCase()} — ${DICA_ANOTACOES}`
@@ -2268,40 +2304,48 @@ describe.runIf(temPdftotext)(
           expect(t).toContain('Anote o certo em Anotações (passo 2 ou 3) e avise o cliente.')
           expect(t).toContain('Pesos diferentes dos impressos: em Anotações (no fim da folha), com o nº da linha.')
         }
-        if (semEspacoNoFim(e.nome)) {
-          expect(m.extras.anotacoes).toBeUndefined()
-          expect(t).not.toContain(barra)
-          return
-        }
-        // Depois das assinaturas, no fim da última página, com pelo menos 3 linhas
+        // Depois das assinaturas, no fim da última página (ou sozinhas numa página a mais), com pelo menos 3 linhas
         expect(m.extras.anotacoes!.altura).toBeGreaterThanOrEqual(60)
         expect(m.marcas.get('anotacoes')?.pagina).toBe(m.paginas)
         expect(m.marcas.get('fim:anotacoes')?.pagina).toBe(m.paginas)
         // A caixa acaba logo acima do rodapé (≈ 1,4 mm de respiro), na mesma altura em toda folha
         expect(m.marcas.get('fim:anotacoes')!.topo).toBeGreaterThan(783)
         expect(m.marcas.get('fim:anotacoes')!.topo).toBeLessThan(786)
-        // Linhas de pelo menos ≈ 7 mm (20 pt), repartidas por igual, pontilhadas e cinza (para não brigar com a escrita)
+        // Espaços de escrever de pelo menos ≈ 7 mm (20 pt), repartidos por igual, cada um com a sua linha pontilhada e
+        // cinza (para não brigar com a escrita), um pouco acima do pé dele: a de baixo também é desenhada (3 espaços, 3
+        // linhas), logo acima do fio da caixa
         const c = caixaDasAnotacoes(e.dados(), { extras: m.extras })!
         expect(c.caixa.h).toBe(m.extras.anotacoes!.altura)
-        const n = c.linhas.length + 1
+        const n = c.linhas.length
         expect(n).toBeGreaterThanOrEqual(3)
         const passo = c.caixa.h! / n
         expect(passo).toBeGreaterThanOrEqual(20)
         expect(passo).toBeLessThan(30)
         c.linhas.forEach((l, i) => {
-          expect(l.y1).toBeCloseTo((i + 1) * passo, 6)
+          expect(l.y1).toBeCloseTo((i + 1) * passo - 3.5, 6)
           expect(l.dash).toBeTruthy()
           expect(l.lineColor).toBe('#8C8C8C')
         })
-        // No PDF: só na última página, depois das assinaturas
+        // No PDF: só na última página, depois das assinaturas (na mesma página ou na de antes)
         const ultima = paginas.at(-1)!
         expect(ultima).toContain(barra)
-        expect(ultima.indexOf('8 ASSINATURAS')).toBeLessThan(ultima.indexOf(barra))
-        expect(ultima.indexOf('Hora de término')).toBeLessThan(ultima.indexOf(barra))
+        const comAssinaturas = semEspacoNoFim(e.nome) ? paginas.at(-2)! : ultima
+        expect(comAssinaturas).toContain('8 ASSINATURAS')
+        expect(comAssinaturas).toContain('Hora de término')
+        if (!semEspacoNoFim(e.nome)) {
+          expect(ultima.indexOf('8 ASSINATURAS')).toBeLessThan(ultima.indexOf(barra))
+          expect(ultima.indexOf('Hora de término')).toBeLessThan(ultima.indexOf(barra))
+        }
         for (const p of paginas.slice(0, -1)) expect(p).not.toContain(TITULO_ANOTACOES.toUpperCase())
         // Na definição, o bloco é o último do conteúdo (só a marca do fim depois dele)
-        const conteudo = (definicaoFolhaCampo(e.dados(), { extras: m.extras }) as { content: Array<{ id?: string }> }).content
-        expect(conteudo.slice(-3).map((x) => x.id)).toEqual(['anotacoes', 'fim:anotacoes', 'fim-da-folha'])
+        // (na página a mais, num invólucro com a quebra de página)
+        const conteudo = (
+          definicaoFolhaCampo(e.dados(), { extras: m.extras }) as {
+            content: Array<{ id?: string; stack?: Array<{ id?: string }>; pageBreak?: string }>
+          }
+        ).content
+        expect(conteudo.slice(-3).map((x) => x.id ?? x.stack?.[0]?.id)).toEqual(['anotacoes', 'fim:anotacoes', 'fim-da-folha'])
+        expect(conteudo.at(-3)!.pageBreak).toBe(semEspacoNoFim(e.nome) ? 'before' : undefined)
       },
     )
 
@@ -2320,16 +2364,27 @@ describe.runIf(temPdftotext)(
       }
     })
 
-    it('sem espaço no fim da folha: sem o bloco (a regra do alto manda para uma folha anexa), e a folha não muda', async () => {
+    it('sem espaço no fim da folha: as Anotações sozinhas numa página a mais, depois do passo 8; o resto não muda', async () => {
       // Rodoviária multi-intervalo: o verso cheio com as tabelas, a repetibilidade, a excentricidade e as assinaturas
       const m = await montar(folhaRodoviariaMultiIntervalo())
-      expect(m.paginas).toBe(2)
+      expect(m.paginas).toBe(3)
       expect(m.faltando).toEqual([])
-      expect(m.extras.anotacoes).toBeUndefined()
-      expect(m.marcas.has('anotacoes')).toBe(false)
+      expect(m.extras.anotacoes?.paginaNova).toBe(true)
+      expect(m.marcas.get('anotacoes')?.pagina).toBe(3)
+      expect(m.marcas.get('fim:passo-7')?.pagina).toBe(2)
+      // A página a mais só com o bloco (e o cabeçalho e o rodapé de toda página), a caixa até o pé dela
       const paginas = paginasDe(textoDoPdf(m.pdf)).map(corrido)
-      for (const p of paginas) expect(p).not.toContain('ANOTAÇÕES —')
-      expect(paginas[0]).toContain('sem espaço, numa folha anexa')
+      expect(paginas[2]).toContain('Página 3 de 3')
+      expect(paginas[2]).toContain(`${TITULO_ANOTACOES.toUpperCase()} — ${DICA_ANOTACOES}`)
+      for (const x of TITULOS_PASSOS) expect(paginas[2]).not.toContain(x)
+      expect(m.extras.anotacoes!.altura).toBeGreaterThan(600)
+      // A frente e o verso saem iguais aos da folha sem o bloco (só o nº de páginas muda)
+      const sem = definicaoFolhaCampo(folhaRodoviariaMultiIntervalo(), { extras: { ...m.extras, anotacoes: undefined } })
+      const semAnotacoes = paginasDe(textoDoPdf(await pdfmake().createPdf(sem).getBuffer())).map(corrido)
+      expect(semAnotacoes).toHaveLength(2)
+      for (const i of [0, 1]) expect(paginas[i].replace(/Página (\d) de 3/, 'Página $1 de 2')).toBe(semAnotacoes[i])
+      // O "onde anotar" do alto da página 1 aponta para um bloco que existe
+      expect(paginas[0]).toContain(AVISO_ANOTACOES)
       // A definição sem a medida da montagem não leva o bloco
       expect(caixaDasAnotacoes(folhaPlataforma(), {})).toBeNull()
     })
@@ -2410,7 +2465,7 @@ describe.runIf(temPdftotext)(
         const cabecalho = JSON.stringify(ambiente[0])
         if (d.balanca) expect(cabecalho).toContain('previsto: TH-01')
         else expect(cabecalho).toContain('obrigatória na classe')
-        if (d.balanca?.classe === 'I') expect(cabecalho).toContain('antes do 1º ensaio')
+        if (d.balanca?.classe === 'I') expect(cabecalho).toMatch(/antes[\s\u00a0]do[\s\u00a0]1º[\s\u00a0]ensaio/)
         for (const linha of ambiente.slice(1))
           for (const c of linha.slice(1)) expect(vazia(c) || c.fillColor !== '#FFFFFF', JSON.stringify(c)).toBe(true)
       }
@@ -2525,3 +2580,200 @@ describe.runIf(temPdftotext)(
     })
   },
 )
+
+describe.runIf(temPdftotext)(
+  'rev. 03, Anotações no fim: a linha de continuação, as caixas da repetibilidade em branco e medidas sem quebra',
+  { timeout: 240_000 },
+  () => {
+    const AVISO_CONTINUA = 'Continua na próxima página: passos 5 a 8 e, no fim da folha, Anotações.'
+
+    it.each(EXEMPLOS)(
+      '$nome: com os ensaios no verso, a frente acaba no passo 4 com a linha "Continua na próxima página"; sem eles, nada',
+      async (e) => {
+        const m = await montar(e.dados())
+        const paginas = paginasDe(textoDoPdf(m.pdf)).map(corrido)
+        if (!m.extras.ensaiosNoVerso) {
+          expect(paginas.join(' ')).not.toContain('Continua na próxima página')
+          return
+        }
+        // Na página do passo 4, logo depois dele (a linha Fim do ambiente), e o passo 5 abre a seguinte
+        const aviso = m.marcas.get('fim:continua')!
+        expect(aviso.pagina).toBe(m.marcas.get('fim:passo-4')?.pagina)
+        expect(m.marcas.get('fim:passo-5')?.pagina).toBe(aviso.pagina + 1)
+        const frente = paginas[aviso.pagina - 1]
+        expect(frente).toContain(AVISO_CONTINUA)
+        expect(frente.indexOf('Fim após o passo 7')).toBeLessThan(frente.indexOf(AVISO_CONTINUA))
+        // A última coisa da página (depois dela, só o rodapé) e uma vez só na folha
+        expect(frente.slice(frente.indexOf(AVISO_CONTINUA) + AVISO_CONTINUA.length).trim()).toMatch(/^FOR-CAL-01 rev\. 03/)
+        expect(paginas.join(' ').match(/Continua na próxima página/g)).toHaveLength(1)
+      },
+    )
+
+    it('os ensaios no verso (e a linha de continuação) no balcão multi-intervalo e nas duas em branco; na plataforma, não', async () => {
+      for (const dados of [folhaMultiIntervalo, folhaEmBranco, folhaEmBrancoOitoPadroes])
+        expect((await montar(dados())).extras.ensaiosNoVerso, dados.name).toBe(true)
+      expect((await montar(folhaPlataforma())).extras.ensaiosNoVerso).toBeFalsy()
+    })
+
+    it('folha em branco, repetibilidade: a carga, os pesos e a hora, cada um na sua caixa, com o espaço de escrever embaixo do rótulo', async () => {
+      const pdf = await gerarFolhaCampoPdf(folhaEmBranco())
+      const pb = palavrasDoPdf(pdf)
+      // A carga: uma linha de escrever (≥ 6,5 mm) embaixo do rótulo; os pesos (não precisa ser padrão): duas
+      expect(livreEmbaixo(pdf, pb, ['Carga', 'aplicada', '(unid.)']).mm).toBeGreaterThanOrEqual(6.5)
+      expect(livreEmbaixo(pdf, pb, ['Pesos', '(não', 'precisa']).mm).toBeGreaterThanOrEqual(13)
+      // A hora em linha, no pé da coluna: na altura da última linha das leituras (o zero da 2ª faixa)
+      const pagina = pb.findIndex((ps) => ps.some((w) => w.texto === 'precisa'))
+      const palavras = pb[pagina]
+      const pesos = palavras.find((w) => w.texto === 'precisa')!
+      const zeros = palavras.filter((w) => w.texto === 'Zero' && w.y0 > pesos.y0 - 20 && w.y0 < pesos.y0 + 120)
+      expect(zeros).toHaveLength(2)
+      const ultimo = zeros[1]
+      const hora = palavras.find((w) => w.texto === 'Hora' && w.x1 < ultimo.x0 && w.y0 > pesos.y1)!
+      expect(hora).toBeDefined()
+      expect(hora.y0).toBeGreaterThan(ultimo.y0)
+      expect(hora.y1 - ultimo.y0).toBeLessThan(19)
+      // Na definição: três caixas na coluna da esquerda (a carga em 2 linhas, os pesos em 3, a hora na última)
+      const [tabela] = nosQue((definicaoFolhaCampo(folhaEmBranco()) as { content: unknown }).content, (x) =>
+        JSON.stringify(x.table ?? '').includes('"Zero após retirar"'),
+      ).map((x) => (x.table as { body: Array<Array<Record<string, unknown>>> }).body)
+      expect(tabela.map((l) => l[0].rowSpan ?? (JSON.stringify(l[0]) === '{}' ? 0 : 1))).toEqual([2, 0, 3, 0, 0, 1])
+      expect(JSON.stringify(tabela[5][0])).toContain('"Hora"')
+      expect(tabela[5][0].verticalAlignment).toBe('bottom')
+    })
+
+    it('repetibilidade sem a carga prevista numa faixa só (rascunho sem a carga): a carga, os pesos e a hora numa linha em cima das leituras', async () => {
+      const d = folhaPlataforma()
+      d.calibracao = { ...d.calibracao!, repetibilidade: [{ id: 'r1', carga: 0, leituras: [null, null, null, null, null] }] }
+      const m = await montar(d)
+      expect(m.faltando).toEqual([])
+      const t = corrido(textoDoPdf(m.pdf))
+      const rep = t.slice(t.indexOf('6 REPETIBILIDADE'), t.indexOf('7 EXCENTRICIDADE'))
+      expect(rep).toMatch(/Carga aplicada \(kg\) Pesos ou carga usada Hora ____:____ 1ª 2ª 3ª 4ª 5ª 6ª · opcional Com a carga/)
+      expect(rep.match(/Com a carga/g)).toHaveLength(1)
+    })
+
+    it('medidas, telefone e nº impressos não se partem: nenhuma unidade, parte do telefone ou do nº sozinha numa linha', async () => {
+      const json = (d: DadosFolhaCampo) => JSON.stringify(definicaoFolhaCampo(d))
+      const rod = json(folhaRodoviariaMultiIntervalo())
+      expect(rod).toContain('8 apoios')
+      expect(rod).toContain('24,0 × 3,2 m')
+      expect(rod).toContain('(19) 3526-4400')
+      expect(rod).toContain('nº CQ24-2021-0088')
+      // Entre a capacidade e a divisão, a linha só quebra antes do "×"
+      expect(rod).toContain('80 000 kg × 10/20/50 kg')
+      expect(rod).toContain('200 kg')
+      // O "·" vai com o item seguinte (abre a linha de baixo, nunca fica sozinho no fim dela)
+      expect(rod).toContain('Rodoviária / ferroviária · 8 apoios · 24,0')
+      expect(json(folhaPlataforma())).toContain('Toledo do Brasil 2180 · nº 2180-0041273')
+      expect(json(folhaClasseI())).toContain('prato Ø 80 mm')
+      // No PDF: nenhuma célula do passo 3 com só a unidade, só o número do telefone (sem o DDD) ou só o "nº"
+      for (const dados of [
+        folhaRodoviariaMultiIntervalo,
+        folhaRodoviaria,
+        folhaRodoviariaSemHistorico,
+        folhaPlataforma,
+        folhaClasseI,
+      ]) {
+        const r = spawnSync('pdftotext', ['-layout', '-f', '1', '-l', '1', '-enc', 'UTF-8', '-', '-'], {
+          input: await gerarFolhaCampoPdf(dados()),
+        })
+        const celulas = r.stdout
+          .toString('utf8')
+          .replace(/ /g, ' ')
+          .split('\n')
+          .flatMap((l) => l.trim().split(/\s{2,}/))
+        for (const c of celulas) expect(c, dados.name).not.toMatch(/^(m|kg|g|mg|cm|mm|t|\d{4,5}-\d{4}|nº)$/)
+      }
+    })
+  },
+)
+
+// ---- Passo 7 do tanque e da plataforma com mais de 4 apoios: o desenho comprido ao lado da tabela das posições ----
+
+/**
+ * Balança de piso de faixa única (e = d = 0,5 kg, Min 10 kg, classe III), com o receptor dado, sem histórico: os padrões
+ * da empresa (e o JE2-01 e outros jogos JP, se pedidos), como um rascunho novo.
+ */
+function folhaComprida(max: number, receptor: 'TANQUE' | 'APOIOS', apoios: number, o: { jogos?: number; e2?: boolean } = {}) {
+  const base = folhaMultiIntervalo()
+  const empresa = padroesDaEmpresa()
+  const jp = empresa.find((p) => p.id === 'pad-jp01')!
+  const extras = Array.from({ length: o.jogos ?? 0 }, (_, i) => ({
+    ...jp,
+    id: `pad-jp-x${i}`,
+    identificacao: `JP-${11 + i}`,
+    certificado: `C-${i}/2026`,
+  }))
+  const je2 = exemploClasseI().emissao.padroes.find((p) => p.id === 'pad-je2')!
+  const padroes = [...empresa, ...(o.e2 ? [je2] : []), ...extras]
+  const balanca = {
+    ...base.balanca!,
+    tipo: 'PISO' as const,
+    tipoFaixas: 'UNICA' as const,
+    faixas: [{ max, e: 0.5, d: 0.5 }],
+    min: 10,
+    classe: 'III' as const,
+    receptor,
+    apoios,
+  }
+  const calibracao = {
+    ...calibracaoVazia(undefined, 'III'),
+    clienteId: base.cliente!.id,
+    balancaId: balanca.id,
+    dataCalibracao: '2026-10-22',
+    local: 'CLIENTE' as const,
+    localEndereco: base.calibracao!.localEndereco,
+    padroesIds: padroesSemHistorico(padroes, balanca).map((p) => p.id),
+  }
+  return { ...base, balanca, calibracao, padroes }
+}
+
+describe.runIf(temPdftotext)('passo 7 do tanque e da plataforma com mais de 4 apoios', { timeout: 120_000 }, () => {
+  /** A folha, as linhas das Anotações e quanto o passo 8 começa abaixo da última posição da tabela (pt, pelo texto). */
+  async function medida(d: DadosFolhaCampo, apoios: number) {
+    const m = await montar(d)
+    const pagina = palavrasDoPdf(m.pdf).find((p) => p.some((w) => w.texto === 'ASSINATURAS'))!
+    const i = pagina.findIndex((w, j) => w.texto === 'Apoio' && pagina[j + 1]?.texto === String(apoios))
+    const ultima = pagina[i + 1]
+    const passo8 = pagina.find((w) => w.texto === 'ASSINATURAS')!
+    return {
+      paginas: m.paginas,
+      anotacoes: m.extras.anotacoes,
+      // Da última posição (o texto, no meio da linha) ao título do passo 8: meia linha, o fio e o respiro entre os passos
+      sobra: passo8.y0 - ultima.y1,
+      mesmaPagina: m.marcas.get('passo-8')?.pagina === m.marcas.get('passo-7')?.pagina,
+    }
+  }
+  /** Antes, a coluna do desenho passava da tabela em 82 a 226 pt (a folha sem Anotações ou com 3 páginas). */
+  const LOGO_DEPOIS = 20
+
+  it('tanque de 1 800 kg com 4 apoios e os padrões da empresa: 2 páginas, com as Anotações (3 linhas ou mais)', async () => {
+    const r = await medida(folhaComprida(1800, 'TANQUE', 4), 4)
+    expect(r.paginas).toBe(2)
+    expect(r.anotacoes?.paginaNova).toBeFalsy()
+    expect(Math.floor((r.anotacoes?.altura ?? 0) / 20)).toBeGreaterThanOrEqual(3)
+    expect(r.mesmaPagina).toBe(true)
+    expect(r.sobra).toBeLessThan(LOGO_DEPOIS)
+  })
+
+  it('tanque de 2 000 kg com o JE2-01 e mais 2 jogos JP (a lista longa de pesos): 2 páginas, o passo 8 logo depois', async () => {
+    const r = await medida(folhaComprida(2000, 'TANQUE', 4, { jogos: 2, e2: true }), 4)
+    expect(r.paginas).toBe(2)
+    expect(r.anotacoes).toBeDefined()
+    expect(r.sobra).toBeLessThan(LOGO_DEPOIS)
+  })
+
+  it('plataforma com 6 apoios: 2 páginas com as Anotações; com 8, a carga continua embaixo do desenho', async () => {
+    const seis = await medida(folhaComprida(1800, 'APOIOS', 6), 6)
+    expect(seis.paginas).toBe(2)
+    expect(seis.anotacoes?.paginaNova).toBeFalsy()
+    expect(seis.sobra).toBeLessThan(LOGO_DEPOIS)
+    // Com 8 apoios, a tabela é mais alta que o desenho com a caixa da carga: ela fica embaixo do desenho, na coluna dele
+    const d = folhaComprida(3000, 'APOIOS', 8)
+    const pagina = palavrasDoPdf((await montar(d)).pdf).find((p) => p.some((w) => w.texto === 'ASSINATURAS'))!
+    const carga = pagina.find((w) => w.texto === 'usada')!
+    const posicao = pagina.find((w) => w.texto === 'Posição')!
+    expect(carga.x1).toBeLessThan(posicao.x0)
+    expect(carga.y0).toBeGreaterThan(posicao.y1)
+  })
+})

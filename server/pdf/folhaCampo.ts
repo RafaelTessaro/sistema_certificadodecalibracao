@@ -30,16 +30,19 @@
 // substituição, preenchidos intercalados, ficam na mesma página.
 //
 // Rev. 03, só a medição: 2 páginas (frente e verso de uma folha), também nas rodoviárias e na folha em branco: os
-// passos na ordem (o passo 5 inteiro na frente quando cabe nela; senão, os ensaios no verso: `comEnsaiosNoVerso`), as
-// assinaturas (com o lembrete de preencher a linha Fim do ambiente antes de assinar) e, por último, o bloco Anotações
-// (linhas pontilhadas até o pé da última página, medido na montagem: `comAnotacoes`) para o que for diferente, as
-// observações e as anomalias. Sem QR (o nº da folha basta), sem rubrica no rodapé (a data da calibração e a assinatura
-// ficam só no passo das assinaturas) e sem faixa no alto (a OS está no passo 2). Instruções de uma linha por passo (a
-// curta na barra do título; o POP explica o resto); a chegada e a identificação da balança (passos 2 e 3) num bloco
-// só; o ambiente no início e no fim numa tabela só, no passo 4; a repetibilidade numa faixa horizontal, com o nº de
-// cada leitura numa linha miúda em cima; a excentricidade (com as assinaturas) num bloco só. Rótulos de 7 pt (em caixa
-// baixa, para caberem), dado impresso de 9 pt e linhas de escrever de ≈ 6,5 mm; as de leitura, mais altas (até
-// ≈ 8,8 mm) quando a página tem espaço (`comLinhasFolgadas`), sem tirar as linhas mínimas das Anotações.
+// passos na ordem (o passo 5 inteiro na frente quando cabe nela; senão, os ensaios no verso: `comEnsaiosNoVerso`, e a
+// frente acaba no passo 4 com a linha "Continua na próxima página"), as assinaturas (com o lembrete de preencher a
+// linha Fim do ambiente antes de assinar) e, por último, o bloco Anotações (linhas pontilhadas até o pé da última
+// página, medido na montagem: `comAnotacoes`; sem espaço para as linhas mínimas no fim do verso, sozinho numa página a
+// mais) para o que for diferente, as observações e as anomalias. Sem QR (o nº da folha basta), sem rubrica no rodapé
+// (a data da calibração e a assinatura ficam só no passo das assinaturas) e sem faixa no alto (a OS está no passo 2).
+// Instruções de uma linha por passo (a curta na barra do título; o POP explica o resto); a chegada e a identificação da
+// balança (passos 2 e 3) num bloco só, com as medidas, o telefone e o nº que não se partem na quebra de linha
+// (`medidasSemQuebra`); o ambiente no início e no fim numa tabela só, no passo 4; a repetibilidade numa faixa
+// horizontal, com o nº de cada leitura numa linha miúda em cima; a excentricidade (com as assinaturas) num bloco só.
+// Rótulos de 7 pt (em caixa baixa, para caberem), dado impresso de 9 pt e linhas de escrever de ≈ 6,5 mm; as de
+// leitura, mais altas (até ≈ 8,8 mm) quando a página tem espaço (`comLinhasFolgadas`), sem tirar as linhas mínimas das
+// Anotações.
 //
 // Classe I (só na folha de uma balança classe I): o ΔT pesos − ar na linha do ambiente no início, a umidade e a pressão
 // obrigatórias, 10 leituras na repetibilidade (duas faixas de 6) e, na excentricidade, o zero antes de cada posição
@@ -221,6 +224,28 @@ const semQuebra = (s: string) =>
     .split(' + ')
     .map((p) => p.replace(/ /g, NBSP))
     .join(' + ')
+
+/**
+ * Medidas impressas que não se separam na quebra de linha: o número e a unidade ("80 000 kg", "8 apoios"), as medidas
+ * ("24,0 × 3,2 m", "prato Ø 80 mm", inteiras) e o "nº" e o número; entre a capacidade e a divisão ("80 000 kg × 50 kg"), a
+ * linha só quebra antes do "×".
+ */
+const medidasSemQuebra = (s: string) =>
+  s
+    .replace(/(\d) × (?=\d)/g, `$1${NBSP}×${NBSP}`)
+    .replace(/( ?)([Ø⌀]) (?=\d)/gu, (_, antes: string, o: string) => `${antes ? NBSP : ''}${o}${NBSP}`)
+    .replace(/ × /g, ` ×${NBSP}`)
+    .replace(/(\d) (?=(?:t|kg|g|mg|m|cm|mm|apoios)(?![\p{L}\d]))/gu, `$1${NBSP}`)
+    .replace(/\bnº /g, `nº${NBSP}`)
+
+/** Telefone que não se parte na quebra de linha ("(19) 3526-4400"). */
+const telefoneSemQuebra = (s: string) => (s.length <= 24 ? s.trim().replace(/\s+/g, NBSP) : s)
+
+/**
+ * Separador de itens impressos numa célula: na quebra de linha, o "·" vai com o item seguinte e abre a linha de baixo
+ * (nunca sozinho no fim ou no começo de uma linha).
+ */
+const SEPARADOR = ` ·${NBSP}`
 
 // ---- Peças de layout -----------------------------------------------------------------------------------
 
@@ -646,6 +671,8 @@ type CelulaTabela = {
   span?: number
   /** Linhas ocupadas (padrão 1); as de baixo levam `coberta()` nesta coluna. */
   linhas?: number
+  /** Onde o texto fica na altura da célula (de uma linha só: a de várias linhas fica sempre no alto). */
+  vertical?: 'bottom'
 }
 
 const pre = (no: No, alinhamento?: Alinhamento): CelulaTabela => ({ tipo: 'previsto', no, alinhamento })
@@ -732,6 +759,7 @@ function tabelaLeituras(
         color: T.suave,
         fillColor: '#FFFFFF',
         ...(cel.alinhamento ? { alignment: cel.alinhamento } : {}),
+        ...(cel.vertical ? { verticalAlignment: cel.vertical } : {}),
         ...marcaLinha,
       }
     if (cel.tipo === 'numero')
@@ -1144,9 +1172,12 @@ export interface Extras {
   /**
    * O passo 5 começa numa página nova (na folha de 2 páginas, o verso): o título e o método iam ficar no pé da página e a
    * tabela dos pontos passar inteira para a seguinte. Só quando a folha continua com as mesmas páginas e as Anotações,
-   * no fim, ficam com as linhas mínimas (medido na montagem, `comEnsaiosNoVerso`).
+   * no fim, ficam com as linhas mínimas (medido na montagem, `comEnsaiosNoVerso`). A página de antes acaba no passo 4,
+   * com a linha "Continua na próxima página" (`avisoContinua`), para o espaço que sobra embaixo não parecer o lugar
+   * das anotações; `semAvisoContinua`: sem lugar para ela na página do passo 4.
    */
   ensaiosNoVerso?: boolean
+  semAvisoContinua?: boolean
   /**
    * Blocos inteiros que ganham um respiro a mais em cima: o pdfmake descarta o bloco que cabe no pé da página
    * por uma fração de ponto (arredondamento); empurrado, ele passa inteiro para a página seguinte.
@@ -1161,9 +1192,10 @@ export interface Extras {
   folgaLeitura?: Partial<Record<number, number>>
   /**
    * O bloco Anotações, a última coisa da folha (medido na montagem, `comAnotacoes`): a altura da caixa das linhas
-   * pontilhadas (pt; do fim das assinaturas até o pé da última página).
+   * pontilhadas (pt; do fim das assinaturas até o pé da última página). `paginaNova`: as linhas mínimas não couberam no
+   * fim da última página, e o bloco vai sozinho para uma página a mais, depois do passo 8 (a caixa até o pé dela).
    */
-  anotacoes?: { altura: number }
+  anotacoes?: { altura: number; paginaNova?: boolean }
 }
 
 const SEM_EXTRAS: Extras = { continuacoes: [], cortes: [] }
@@ -1505,7 +1537,8 @@ function gradesCliente(ctx: Contexto): NoObjeto[] {
     ]
   const pj = c.tipo === 'PJ'
   const nome = pj ? c.razaoSocial || c.nome : c.nome
-  const contato = [c.contato, c.telefone || c.celular].filter((x) => !vazio(x)).join(' · ') || '—'
+  const telefone = c.telefone || c.celular
+  const contato = [c.contato, vazio(telefone) ? '' : telefoneSemQuebra(telefone)].filter((x) => !vazio(x)).join(SEPARADOR) || '—'
   const documento = c.documento || '—'
   // Impresso compacto, sem caixas de correção: diferente do real, anota-se em Anotações, no fim da folha. O contato e o
   // documento com a largura do texto (o contato até 230 pt): não quebram de linha à toa
@@ -1576,10 +1609,10 @@ const LARGURAS_BALANCA = [58, 76, 64, 80, 84, '*']
 function gradeBalanca(b: Balanca): NoObjeto {
   const plataforma = [
     [b.plataformaFabricante, b.plataformaModelo].filter((x) => !vazio(x)).join(' '),
-    vazio(b.plataformaSerie) ? '' : `nº ${b.plataformaSerie.trim()}`,
+    vazio(b.plataformaSerie) ? '' : `nº${NBSP}${b.plataformaSerie.trim()}`,
   ]
     .filter(Boolean)
-    .join(' · ')
+    .join(SEPARADOR)
   const faixas = faixasOrdenadas(b.faixas)
   const es = divisaoLegivel(
     faixas.map((f) => f.e),
@@ -1588,12 +1621,12 @@ function gradeBalanca(b: Balanca): NoObjeto {
   const receptor = [
     (RECEPTORES[b.receptor] ?? b.receptor).replace(/ \(.*\)$/, ''),
     (b.receptor === 'APOIOS' || b.receptor === 'RODOVIARIA' || b.receptor === 'TANQUE') && b.apoios > 0
-      ? `${b.apoios} apoios`
+      ? `${b.apoios}${NBSP}apoios`
       : '',
-    b.dimensoes.trim(),
+    medidasSemQuebra(b.dimensoes.trim()),
   ]
     .filter(Boolean)
-    .join(' · ')
+    .join(SEPARADOR)
   const multi = faixas.length > 1
   // Identificação e características metrológicas numa grade só, em três linhas: os rótulos longos ficam nas
   // colunas largas (cada um numa linha), e o que é mais longo (plataforma, portaria) ocupa duas colunas
@@ -1623,13 +1656,13 @@ function gradeBalanca(b: Balanca): NoObjeto {
                 ? 'Max × d (multi-intervalo)'
                 : 'Max × d (múltiplas faixas)'
               : 'Capacidade × divisão',
-            { text: capacidadeTexto(b) || '—', bold: true },
+            { text: medidasSemQuebra(capacidadeTexto(b)) || '—', bold: true },
           ),
-          c('Carga mínima (Min)', b.min ? `${numeroBr(b.min)} ${b.unidade}` : '—'),
+          c('Carga mínima (Min)', b.min ? `${numeroBr(b.min)}${NBSP}${b.unidade}` : '—'),
           c('Classe de exatidão', ROTULO_CLASSE[b.classe]),
           c(
             'Divisão de verificação (e)',
-            es.valores.length ? `${es.valores.map((x) => numeroBr(x)).join('/')} ${es.unidade}` : '—',
+            es.valores.length ? `${es.valores.map((x) => numeroBr(x)).join('/')}${NBSP}${es.unidade}` : '—',
           ),
         ],
         ['*', 96, 110, 120],
@@ -1861,6 +1894,31 @@ function tabelaAmbiente(ctx: Contexto): NoObjeto {
  */
 function passoAmbiente(ctx: Contexto, n: number): No[] {
   return passo(ctx, n, 'Ambiente', E.padroes, null, [tabelaAmbiente(ctx)])
+}
+
+/** Marca da linha "Continua na próxima página" (`avisoContinua`). */
+const ID_CONTINUA = 'continua'
+
+/**
+ * Com os ensaios no verso (`Extras.ensaiosNoVerso`), a página do passo 4 acaba com espaço vazio embaixo: uma linha
+ * discreta diz que a folha continua na próxima página, com os passos 5 a 8 e, no fim, as Anotações (o espaço vazio não
+ * é o lugar de anotar).
+ */
+function avisoContinua(ctx: Contexto): No[] {
+  if (!ctx.extras.ensaiosNoVerso || ctx.extras.semAvisoContinua || ctx.extras.semBlocos) return []
+  return [
+    {
+      ...nota(
+        [
+          { text: 'Continua na próxima página', bold: true, color: T.texto },
+          `: passos ${N.indicacao} a ${N.assinaturas} e, no fim da folha, ${TITULO_ANOTACOES}.`,
+        ],
+        [0, 5, 0, 0],
+      ),
+      id: ID_CONTINUA,
+    },
+    marca(`fim:${ID_CONTINUA}`),
+  ]
 }
 
 // ---- 5. Erro de indicação ------------------------------------------------------------------------------------
@@ -2454,48 +2512,60 @@ function faixasRepetibilidade(ctx: Contexto, total: number, previstas: number, c
   const faixas = total / LEITURAS_POR_FAIXA
   // Cada faixa: a linha dos nº, a da indicação com a carga e a do zero
   const nLinhas = faixas * 3
-  // Sem a carga prevista, a carga, os pesos e a hora para escrever na caixa branca à esquerda (o rótulo de cada um e
-  // o espaço embaixo dele)
-  const rotuloCaixa = (t: string, extra = ''): NoObjeto[] => [
-    { text: t, font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.rotulo },
-    { text: extra, fontSize: FONTE_DICA, color: T.suave },
-  ]
-  const paraEscrever: CelulaTabela = {
+  // Sem a carga prevista (folha em branco), a carga, os pesos e a hora para escrever na coluna da esquerda, cada um na
+  // sua caixa, com o rótulo no alto e o espaço de escrever embaixo dele (≥ 6,5 mm): a carga na linha dos nº e na de
+  // baixo dela, os pesos nas do meio (duas linhas de escrita) e a hora, em linha, na última. Numa faixa só (3 linhas),
+  // as três não cabem: vão numa linha de campos em cima das leituras, como na excentricidade
+  const emCima = !comCarga && faixas === 1
+  const caixaEscrever = (t: string, extra: string, linhas: number): CelulaTabela => ({
     ...dica([
-      ...rotuloCaixa('Carga aplicada', ` (${uc})`),
-      { text: '\n\n', fontSize: 9.6 },
-      ...rotuloCaixa('Pesos', ' (não precisa ser padrão)'),
-      { text: '\n\n', fontSize: 9.6 },
-      ...rotuloCaixa('Hora'),
-      { text: '   ____:____', fontSize: 7.6, color: T.suave },
+      { text: t, font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.rotulo },
+      { text: extra, fontSize: FONTE_DICA, color: T.suave },
     ]),
-    linhas: nLinhas,
+    linhas,
+  })
+  const esquerda = (r: number): CelulaTabela[] => {
+    if (emCima) return []
+    if (comCarga)
+      return [r ? coberta() : { ...pre(celulaCarga(ctx, carga!, 'Carga', comoRepetir(ctx, previstas, carga!))), linhas: nLinhas }]
+    if (r === 0) return [caixaEscrever('Carga aplicada', ` (${uc})`, 2)]
+    if (r === 2) return [caixaEscrever('Pesos', ' (não precisa ser padrão)', nLinhas - 3)]
+    if (r === nLinhas - 1)
+      return [
+        {
+          ...dica([
+            { text: 'Hora', font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.rotulo },
+            { text: '   ____:____', fontSize: 7.6, color: T.suave },
+          ]),
+          vertical: 'bottom',
+        },
+      ]
+    return [coberta()]
   }
   const linhas = Array.from({ length: faixas }, (_, f): CelulaTabela[][] => [
     [
-      f > 0
-        ? coberta()
-        : comCarga
-          ? { ...pre(celulaCarga(ctx, carga!, 'Carga', comoRepetir(ctx, previstas, carga!))), linhas: nLinhas }
-          : paraEscrever,
+      ...esquerda(3 * f),
       rotuloMiudo(''),
       ...Array.from({ length: LEITURAS_POR_FAIXA }, (_, j) => {
         const i = f * LEITURAS_POR_FAIXA + j + 1
         return rotuloMiudo(`${i}ª${quando(i)}`)
       }),
     ],
-    [coberta(), rotuloLinha('Com a carga'), ...Array.from({ length: LEITURAS_POR_FAIXA }, livre)],
-    [coberta(), rotuloLinha('Zero após retirar'), ...Array.from({ length: LEITURAS_POR_FAIXA }, livre)],
+    [...esquerda(3 * f + 1), rotuloLinha('Com a carga'), ...Array.from({ length: LEITURAS_POR_FAIXA }, livre)],
+    [...esquerda(3 * f + 2), rotuloLinha('Zero após retirar'), ...Array.from({ length: LEITURAS_POR_FAIXA }, livre)],
   ]).flat()
   const altura = alturaLeitura(ctx, N.repetibilidade)
-  return tabelaSemCabecalho(
-    [comCarga ? 100 : 112, 80, ...Array.from({ length: LEITURAS_POR_FAIXA }, () => '*')],
+  const tabela = tabelaSemCabecalho(
+    [...(emCima ? [] : [comCarga ? 100 : 112]), 80, ...Array.from({ length: LEITURAS_POR_FAIXA }, () => '*')],
     linhas,
     // Fio mais forte entre as faixas (1ª a 6ª e 7ª a 12ª)
     (i) => i > 0 && i % 3 === 0,
     (i) => (i % 3 === 0 ? 'auto' : altura),
     (i) => i % 3 === 0,
   )
+  return emCima
+    ? { stack: [cargaDoEnsaio(ctx, null, 'Carga aplicada', 'Pesos'), { ...tabela, margin: [0, ENTRE_GRADES, 0, 0] }] }
+    : tabela
 }
 
 /** Como fazer a repetibilidade de um ensaio, embaixo da carga: no centro, uma peça só (classe I), quantas vezes. */
@@ -2520,9 +2590,9 @@ function celulaCarga(ctx: Contexto, c: CargaPlanejada, titulo: string, como?: No
 }
 
 function blocoRepetibilidade(ctx: Contexto, r: PlanoFolha['repetibilidade'][number] | null): No[] {
-  // Em branco (classes II a IIII): 5 bastam, e até 10 (k = 2), em duas faixas: quantas vezes vai no canto das caixas.
-  // Com a carga prevista, ela vai na primeira coluna; sem ela, a carga, os pesos e a hora para escrever, na mesma
-  // coluna
+  // Em branco (classes II a IIII): 5 bastam, e até 10 (k = 2), em duas faixas: quantas vezes vai nos nº em cima das
+  // caixas. Com a carga prevista, ela vai na primeira coluna; sem ela, a carga, os pesos e a hora para escrever, na
+  // mesma coluna, cada um na sua caixa
   const n = r ? r.leituras : LEITURAS_EM_BRANCO
   return [faixasRepetibilidade(ctx, linhasRepetibilidade(n), n, r)]
 }
@@ -2658,7 +2728,12 @@ function passoExcentricidade(ctx: Contexto, n: number, fim: No[] = []): No[] {
     : b
       ? LARGURA_DESENHO + 6
       : 2 * LARGURA_DESENHO_REFERENCIA + 6
-  const larguraDiagrama = receptor === 'RODOVIARIA' ? 196 : comprido ? 168 : LARGURA_DESENHO
+  const comCarga = !!ecc && ecc.carga > 0
+  // Desenho comprido: a coluna da esquerda (o desenho e, com a carga prevista, a caixa dela embaixo) não passa da
+  // tabela das posições (`layoutComprido`): o passo 7 vai inteiro com o 8, e a sobra desceria o fim da folha
+  const { larguraDiagrama, cargaNoDesenho: comCargaNoDesenho } = comprido
+    ? layoutComprido(ctx, receptor, rotulos.length, diagrama, comCarga ? ecc! : null, larguraEsquerda)
+    : { larguraDiagrama: LARGURA_DESENHO, cargaNoDesenho: false }
   const tabela = tabelaLeituras(
     [
       { titulo: 'Nº', largura: 15, alinhamento: 'center' },
@@ -2670,7 +2745,6 @@ function passoExcentricidade(ctx: Contexto, n: number, fim: No[] = []): No[] {
     rotulos.map((r, i): CelulaTabela[] => [nro(String(i + 1)), pre(r), ...(classeI ? [livre()] : []), livre()]),
     { altura: alturaLeitura(ctx, N.excentricidade) },
   )
-  const comCarga = !!ecc && ecc.carga > 0
   // O método numa frase fixa, no começo da instrução; sem carga prevista, a regra da carga vai junto (a caixa da
   // carga fica livre para escrever). Prato e plataforma com a carga prevista (impressa na tabela das posições): a
   // instrução curta, na barra do título
@@ -2710,13 +2784,17 @@ function passoExcentricidade(ctx: Contexto, n: number, fim: No[] = []): No[] {
     : b
       ? { text: 'Desenhe as posições aqui', fontSize: 7, color: T.suave, margin: [0, 30, 0, 30] }
       : desenhosDeReferencia()
-  // Desenho comprido com a carga prevista: a carga e os pesos embaixo do desenho, ao lado da tabela das posições (a
-  // tabela é mais alta que o desenho: o passo não cresce com eles)
-  const cargaNoDesenho = comprido && comCarga ? cargaEmBaixoDoDesenho(ctx, ecc!) : null
+  // Desenho comprido com a carga prevista: a carga e os pesos embaixo do desenho, ao lado da tabela das posições, quando
+  // cabem na altura dela (`layoutComprido`); senão, numa linha embaixo da instrução
+  const cargaNoDesenho = comCargaNoDesenho ? cargaEmBaixoDoDesenho(ctx, ecc!) : null
   const corpo: No = comprido
     ? {
         columns: [
-          { width: larguraEsquerda, margin: [0, 3, 10, 0], stack: [desenho, ...(cargaNoDesenho ? [cargaNoDesenho] : [])] },
+          {
+            width: larguraEsquerda,
+            margin: [0, 3, 10, 0],
+            stack: [desenho, ...(cargaNoDesenho ? [cargaNoDesenho] : [])],
+          },
           { width: '*', stack: [tabela], margin: [0, 3, 0, 0] },
         ],
       }
@@ -2748,6 +2826,80 @@ function passoExcentricidade(ctx: Contexto, n: number, fim: No[] = []): No[] {
   return passo(ctx, n, 'Excentricidade', E.excentricidade, texto, [...cabeca, corpo, ...fim])
 }
 
+/** Altura de uma linha de texto na Inter (pt por pt de letra: o ascendente menos o descendente, sem entrelinha). */
+const LINHA_INTER = 1.21
+/** Altura da tabela das posições sem as linhas (pt): o cabeçalho (uma linha de 7 pt, o respiro e os fios). */
+const CABECALHO_POSICOES = 0.8 + 1.1 + FONTE_ROTULO * 0.95 * LINHA_INTER + 0.8 + 0.9
+/** Cada linha da tabela das posições, além da altura de escrever (pt): o respiro (1,5 + 1,5) e o fio. */
+const ALEM_DA_LINHA = 3.5
+/** Largura mínima do desenho do tanque e da plataforma com mais de 4 apoios (pt), quando ele encolhe para a tabela. */
+const DESENHO_COMPRIDO_MINIMO = 120
+/** Largura da coluna da hora na caixa da carga embaixo do desenho (pt). */
+const COLUNA_HORA_DESENHO = 62
+
+/**
+ * Altura (pt) da caixa da carga embaixo do desenho comprido (`cargaEmBaixoDoDesenho`) numa coluna da largura dada: a
+ * margem de cima, os fios, o respiro, a linha da carga e a lista dos pesos, que quebra entre as peças (" + "). Um
+ * pouco acima da real (a decisão do layout não pode errar para menos).
+ */
+function alturaCargaEmBaixoDoDesenho(ctx: Contexto, c: CargaPlanejada, largura: number): number {
+  const pesos = pesosDaCarga(ctx, c, FONTE_DADO) as NoObjeto
+  const tamanho = Number(pesos.fontSize ?? FONTE_DADO)
+  // A coluna do texto: a largura menos a da hora, o respiro (4 + 4 em cada uma) e os fios
+  const util = largura - COLUNA_HORA_DESENHO - 16 - 2.1
+  const rotuloPesos = larguraTexto('Pesos previstos  ', { fonte: 'InterMedio', tamanho: FONTE_ROTULO })
+  let linhas = 1
+  let ocupado = rotuloPesos
+  for (const [i, peca] of semQuebra(c.pesos || '—')
+    .split(' + ')
+    .entries()) {
+    const w = larguraTexto(`${i ? ' + ' : ''}${peca}`, { tamanho })
+    if (ocupado + w > util && ocupado > 0) {
+      linhas++
+      ocupado = larguraTexto(peca, { tamanho })
+    } else ocupado += w
+  }
+  // "faltam …" (7 pt), numa linha
+  const extras = c.falta > 0 ? 1 : 0
+  const texto = FONTE_DADO * LINHA_INTER + 1.5 + linhas * Math.max(tamanho, FONTE_ROTULO) * LINHA_INTER + extras * 7 * LINHA_INTER
+  const hora = FONTE_ROTULO * 0.95 * LINHA_INTER + 4 + 7.6 * LINHA_INTER
+  return 6 + 0.8 + 1.5 + Math.max(texto, hora) + 1.5 + 0.8 + 1
+}
+
+/**
+ * O desenho comprido (rodoviária, mais de 4 apoios e tanque) ao lado da tabela das posições: a coluna da esquerda não
+ * passa da altura da tabela, que é o passo (o 7 vai inteiro com o 8; a sobra desceria o fim da folha e tiraria as
+ * Anotações, ou abriria uma página a mais). Com a carga prevista, a caixa dela vai embaixo do desenho quando cabe; no
+ * tanque e na plataforma com mais de 4 apoios, o desenho encolhe para ela caber (até `DESENHO_COMPRIDO_MINIMO`); senão,
+ * a carga vai numa linha embaixo da instrução (`cargaDoEnsaio`), e o desenho encolhe para a altura da tabela. A
+ * rodoviária fica com o desenho inteiro (a tabela dela, com 6 posições ou mais, é a mais alta). A altura das linhas é
+ * a de base (sem a folga de `comLinhasFolgadas`, que só aumenta a tabela): a escolha não muda entre as medidas.
+ */
+function layoutComprido(
+  ctx: Contexto,
+  receptor: Balanca['receptor'],
+  posicoes: number,
+  diagrama: { largura: number; altura: number } | null,
+  carga: CargaPlanejada | null,
+  larguraEsquerda: number,
+): { larguraDiagrama: number; cargaNoDesenho: boolean } {
+  const normal = receptor === 'RODOVIARIA' ? 196 : 168
+  if (!diagrama) return { larguraDiagrama: normal, cargaNoDesenho: !!carga }
+  const proporcao = diagrama.altura / diagrama.largura
+  const tabela = CABECALHO_POSICOES + posicoes * (ALTURA_LEITURA + ALEM_DA_LINHA)
+  const encolhe = receptor !== 'RODOVIARIA'
+  // O desenho na altura dada (pt), entre o mínimo e o normal
+  const naAltura = (altura: number) =>
+    encolhe ? Math.max(DESENHO_COMPRIDO_MINIMO, Math.min(normal, Math.floor(altura / proporcao))) : normal
+  const caixa = carga ? alturaCargaEmBaixoDoDesenho(ctx, carga, larguraEsquerda - 10) : 0
+  if (carga) {
+    const largura = naAltura(tabela - caixa)
+    if (largura * proporcao + caixa <= tabela + 1) return { larguraDiagrama: largura, cargaNoDesenho: true }
+    // A rodoviária com a lista longa: a carga em cima; o desenho inteiro
+  }
+  return { larguraDiagrama: naAltura(tabela), cargaNoDesenho: false }
+}
+
 /**
  * A carga prevista da excentricidade e os pesos dela (cinza) e a hora (para escrever), embaixo do desenho comprido
  * (rodoviária, mais de 4 apoios e tanque), na largura dele.
@@ -2755,7 +2907,7 @@ function passoExcentricidade(ctx: Contexto, n: number, fim: No[] = []): No[] {
 function cargaEmBaixoDoDesenho(ctx: Contexto, c: CargaPlanejada): NoObjeto {
   return {
     table: {
-      widths: ['*', 62],
+      widths: ['*', COLUNA_HORA_DESENHO],
       body: [
         [
           {
@@ -2972,7 +3124,10 @@ function blocoAssinaturas(ctx: Contexto, n: number): NoObjeto {
 const ID_ANOTACOES = 'anotacoes'
 /** Distância mínima entre as linhas das anotações (pt): ≈ 7 mm, para a escrita à mão (a caixa as reparte por igual). */
 const ENTRE_LINHAS_ANOTACOES = 20
-/** Menos linhas que isso não vale o bloco: as instruções mandam, então, para uma folha anexa. */
+/**
+ * Linhas mínimas no fim da última página; sem espaço para elas, o bloco vai sozinho para uma página a mais
+ * (`comAnotacoes`).
+ */
 const MIN_LINHAS_ANOTACOES = 3
 /** Respiro em cima do bloco (pt), como entre os passos. */
 const ACIMA_ANOTACOES = 6
@@ -2980,6 +3135,13 @@ const ACIMA_ANOTACOES = 6
 const ALTURA_FIXA_ANOTACOES = ACIMA_ANOTACOES + 9.8 + 0.9 + 1.1 + 0.8
 /** O que fica livre entre o pé do bloco e o rodapé (pt). */
 const RESPIRO_PE_ANOTACOES = 4
+/** Onde a caixa das Anotações acaba (pt, do alto): logo acima do rodapé, na mesma altura em toda folha. */
+const PE_ANOTACOES = A4.altura - MARGEM_BASE - RESPIRO_PE_ANOTACOES
+/**
+ * Quanto a linha pontilhada fica acima do pé do seu espaço (pt): a de baixo não se confunde com o fio da caixa, e cada
+ * espaço de escrever tem a sua linha (com 3 espaços, 3 linhas desenhadas).
+ */
+const RECUO_LINHA_ANOTACOES = 3.5
 
 /** Linhas de escrever de uma caixa de anotações com a altura dada (pt): as de pelo menos ≈ 7 mm que cabem nela. */
 const linhasDasAnotacoes = (altura: number) => Math.floor(altura / ENTRE_LINHAS_ANOTACOES + 1e-6)
@@ -2987,9 +3149,11 @@ const linhasDasAnotacoes = (altura: number) => Math.floor(altura / ENTRE_LINHAS_
 /**
  * O bloco Anotações, a última coisa da folha (depois das assinaturas): o dado impresso diferente, as observações e as
  * anomalias, com o nº do passo, rubrica e data, à mão. Uma barra como a dos passos (sem nº: não é um passo do serviço)
- * e uma caixa até o pé da última página, com as linhas pontilhadas repartidas por igual (≈ 7 mm ou um pouco mais); a
- * altura da caixa é medida na montagem (`Extras.anotacoes`, `comAnotacoes`). Sem medida (ou sem espaço para as linhas
- * mínimas), nada: a regra do alto da página 1 manda, então, para uma folha anexa.
+ * e uma caixa até o pé da última página, repartida por igual em espaços de escrever (≈ 7 mm ou um pouco mais), cada um
+ * com a sua linha pontilhada, um pouco acima do pé dele (`RECUO_LINHA_ANOTACOES`; a de baixo, logo acima do fio da
+ * caixa). A altura da caixa é medida na montagem (`Extras.anotacoes`, `comAnotacoes`); sem espaço para as linhas mínimas
+ * no fim da última página, o bloco abre uma página a mais (`paginaNova`). Sem medida (a definição fora da montagem),
+ * nada.
  */
 function blocoAnotacoes(ctx: Contexto): No[] {
   const altura = ctx.extras.anotacoes?.altura ?? 0
@@ -3039,19 +3203,22 @@ function blocoAnotacoes(ctx: Contexto): No[] {
   const pautas: NoObjeto = {
     canvas: [
       { type: 'rect', x: 0, y: 0, w: LARGURA, h: altura, lineWidth: 0.8, lineColor: T.borda },
-      ...Array.from({ length: linhas - 1 }, (_, i) => ({
+      ...Array.from({ length: linhas }, (_, i) => ({
         type: 'line',
         x1: 5,
-        y1: (i + 1) * h,
+        y1: (i + 1) * h - RECUO_LINHA_ANOTACOES,
         x2: LARGURA - 5,
-        y2: (i + 1) * h,
+        y2: (i + 1) * h - RECUO_LINHA_ANOTACOES,
         lineWidth: 0.7,
         lineColor: T.linha,
         dash: { length: 1.2, space: 2 },
       })),
     ],
   }
-  return [{ ...inteiro([barra, pautas]), id: ID_ANOTACOES, margin: [0, ACIMA_ANOTACOES, 0, 0] }, marca(`fim:${ID_ANOTACOES}`)]
+  const bloco: NoObjeto = { ...inteiro([barra, pautas]), id: ID_ANOTACOES, margin: [0, ACIMA_ANOTACOES, 0, 0] }
+  // Na página a mais, a quebra vai num invólucro: o pdfmake não mede (`pageBreakBefore`) o nó que já a tem, e a montagem
+  // acha o começo do bloco pelo id
+  return [ctx.extras.anotacoes?.paginaNova ? { stack: [bloco], pageBreak: 'before' } : bloco, marca(`fim:${ID_ANOTACOES}`)]
 }
 
 // ---- Cabeçalho e rodapé ------------------------------------------------------------------------------------
@@ -3197,6 +3364,8 @@ export function definicaoFolhaCampo(d: DadosFolhaCampo, o: { extras?: Extras } =
     ...passoPadroes(ctx, N.padroes),
     ...passoIdentificacao(ctx, N.chegada, N.balanca),
     ...passoAmbiente(ctx, N.ambiente),
+    // Com os ensaios no verso, a frente acaba aqui: a linha que diz que a folha continua
+    ...avisoContinua(ctx),
     ...passoIndicacao(ctx, N.indicacao),
     ...passoRepetibilidade(ctx, N.repetibilidade),
     // O passo 8 (assinaturas) no mesmo bloco da última parte do 7
@@ -3420,7 +3589,7 @@ const linhasNoFim = (m: Medida) => linhasDasAnotacoes(alturaDasAnotacoes(m))
 function alturaDasAnotacoes(m: Medida): number {
   const fim = m.marcas.get(ID_FIM)
   if (!fim) return 0
-  return Math.floor((A4.altura - MARGEM_BASE - RESPIRO_PE_ANOTACOES - fim.topo - ALTURA_FIXA_ANOTACOES) * 4) / 4
+  return Math.floor((PE_ANOTACOES - fim.topo - ALTURA_FIXA_ANOTACOES) * 4) / 4
 }
 
 /**
@@ -3434,10 +3603,12 @@ function alturaDasAnotacoes(m: Medida): number {
 async function comEnsaiosNoVerso(d: DadosFolhaCampo, m: Medida): Promise<Medida> {
   const titulo = m.marcas.get(`passo-${N.indicacao}`)
   if (m.extras.semBlocos || m.extras.cortes.length || !titulo || !m.extras.continuacoes.includes(ID_TABELA_PONTOS)) return m
-  const r = await comContinuacoes(
-    d,
-    await medir(d, { ...m.extras, ensaiosNoVerso: true, avisoPontos: false, etapasAParte: false, continuacoes: [] }),
-  )
+  const verso = { ...m.extras, ensaiosNoVerso: true, avisoPontos: false, etapasAParte: false, continuacoes: [] }
+  let r = await comContinuacoes(d, await medir(d, verso))
+  // A linha "Continua na próxima página" fica na página do passo 4 (sem lugar para ela, sai)
+  const aviso = r.marcas.get(`fim:${ID_CONTINUA}`)
+  if (aviso && aviso.pagina !== r.marcas.get(`fim:passo-${N.ambiente}`)?.pagina)
+    r = await comContinuacoes(d, await medir(d, { ...verso, semAvisoContinua: true }))
   const fim = r.marcas.get(`fim:passo-${N.indicacao}`)
   const juntos = !!fim && fim.pagina > titulo.pagina && !r.extras.continuacoes.includes(ID_TABELA_PONTOS)
   if (!juntos || r.paginas !== m.paginas || !continuacoesExatas(r) || r.faltando.length) return m
@@ -3463,7 +3634,7 @@ export async function montar(d: DadosFolhaCampo): Promise<Medida> {
     m = await montarCom(d, { ...SEM_EXTRAS, folgas: [...new Set([...(m.extras.folgas ?? []), ...m.faltando])] })
   if (!m.faltando.length) return comAnotacoes(d, await comLinhasFolgadas(d, m))
   const seguro = await montarCom(d, { ...SEM_EXTRAS, semBlocos: true })
-  if (!seguro.faltando.length) return seguro
+  if (!seguro.faltando.length) return comAnotacoes(d, seguro)
   const passos = [...new Set(seguro.faltando.map((id) => /\d+/.exec(id)?.[0]).filter(Boolean))]
   throw new ErroApi(
     500,
@@ -3491,8 +3662,7 @@ const PREENCHIMENTO_MAXIMO = 0.88
  * Até onde as linhas de leitura mais altas podem encher a última página (pt, do alto): fica o espaço das Anotações com
  * as linhas mínimas (e 1,5 pt de folga para a medida).
  */
-const LIMITE_COM_ANOTACOES =
-  A4.altura - MARGEM_BASE - RESPIRO_PE_ANOTACOES - ALTURA_FIXA_ANOTACOES - MIN_LINHAS_ANOTACOES * ENTRE_LINHAS_ANOTACOES - 1.5
+const LIMITE_COM_ANOTACOES = PE_ANOTACOES - ALTURA_FIXA_ANOTACOES - MIN_LINHAS_ANOTACOES * ENTRE_LINHAS_ANOTACOES - 1.5
 /** O máximo que uma linha de leitura ganha (pt): com o padding e o fio, ≈ 8,8 mm (25 pt). */
 const FOLGA_MAXIMA = 6
 /** Folga de prova (pt): montada com ela, a folha diz quantas linhas de leitura cada página tem. */
@@ -3523,7 +3693,12 @@ function paginasDasLeituras(m: Medida): Partial<Record<number, number>> {
 
 /** Página de cada passo e das linhas de leitura, para conferir que uma montagem não mudou a arrumação da outra. */
 const arrumacao = (m: Medida) =>
-  JSON.stringify([Object.values(N).map((n) => m.marcas.get(`fim:passo-${n}`)?.pagina), paginasDasLeituras(m), m.paginas])
+  JSON.stringify([
+    Object.values(N).map((n) => m.marcas.get(`fim:passo-${n}`)?.pagina),
+    paginasDasLeituras(m),
+    m.paginas,
+    m.marcas.get(`fim:${ID_CONTINUA}`)?.pagina,
+  ])
 
 /**
  * Folha de 2 páginas com espaço sobrando: as linhas de leitura ganham altura (`Extras.folgaLeitura`), sem conteúdo
@@ -3578,19 +3753,32 @@ async function comLinhasFolgadas(d: DadosFolhaCampo, m: Medida): Promise<Medida>
 
 /**
  * O espaço que sobra no fim da folha, depois das assinaturas, vira o bloco Anotações (`blocoAnotacoes`): a caixa vai do
- * fim das assinaturas até o pé da última página (a mesma distância do rodapé em toda folha). Fica assim se a folha não
- * ganhou página (o bloco inteiro na última, nada some e as continuações certas); senão, mais baixa, até o mínimo de
- * linhas (`MIN_LINHAS_ANOTACOES`); sem espaço para elas, como estava (a regra do alto da página 1 manda, então, para
- * uma folha anexa).
+ * fim das assinaturas até o pé da última página (`PE_ANOTACOES`). Fica assim se a folha não ganhou página (o bloco
+ * inteiro na última, nada some e as continuações certas); senão, mais baixa, até o mínimo de linhas
+ * (`MIN_LINHAS_ANOTACOES`). Sem espaço para elas (o verso cheio, como na rodoviária multi-intervalo), o bloco vai
+ * sozinho para uma página a mais, depois do passo 8, com a caixa até o pé dela (a altura medida com uma caixa de prova):
+ * a folha nunca manda o técnico para um bloco que não existe. O resto da folha não muda.
  */
 async function comAnotacoes(d: DadosFolhaCampo, m: Medida): Promise<Medida> {
   const fim = m.marcas.get(ID_FIM)
-  if (m.extras.semBlocos || m.extras.anotacoes || !fim) return m
+  if (m.extras.anotacoes || !fim) return m
+  /** O bloco inteiro na página dada, a folha com as páginas dadas, nada some e as continuações e os cortes certos. */
+  const confere = (r: Medida, paginas: number) =>
+    r.marcas.get(`fim:${ID_ANOTACOES}`)?.pagina === paginas &&
+    r.paginas === paginas &&
+    !r.faltando.length &&
+    continuacoesExatas(r) &&
+    (!r.extras.cortes.length || cortesConferem(r, r.extras.cortes))
   for (let altura = alturaDasAnotacoes(m), i = 0; linhasDasAnotacoes(altura) >= MIN_LINHAS_ANOTACOES && i < 3; altura -= 4, i++) {
     const r = await medir(d, { ...m.extras, anotacoes: { altura } })
-    const bloco = r.marcas.get(`fim:${ID_ANOTACOES}`)
-    const cortes = !r.extras.cortes.length || cortesConferem(r, r.extras.cortes)
-    if (bloco?.pagina === fim.pagina && r.paginas === m.paginas && !r.faltando.length && continuacoesExatas(r) && cortes) return r
+    if (confere(r, m.paginas)) return r
+  }
+  const prova = MIN_LINHAS_ANOTACOES * ENTRE_LINHAS_ANOTACOES
+  const pe = (await medir(d, { ...m.extras, anotacoes: { altura: prova, paginaNova: true } })).marcas.get(`fim:${ID_ANOTACOES}`)
+  if (pe?.pagina !== m.paginas + 1) return m
+  for (let altura = Math.floor((prova + PE_ANOTACOES - pe.topo) * 4) / 4, i = 0; i < 3; altura -= 4, i++) {
+    const r = await medir(d, { ...m.extras, anotacoes: { altura, paginaNova: true } })
+    if (confere(r, m.paginas + 1)) return r
   }
   return m
 }

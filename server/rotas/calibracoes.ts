@@ -26,6 +26,7 @@ import {
   pendenciasDa,
   popDaCalibracao,
   previa,
+  versaoDoPopEmitido,
 } from '../certificados.ts'
 import type { Contexto } from '../contexto.ts'
 import type { criarModuloEmail } from '../email.ts'
@@ -103,7 +104,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       // certificado vai citar, a usada na calibração (`popDaCalibracao`)
       pop: k.emissao
         ? k.emissao.pop
-          ? (repo.versoesPop().find((v) => v.id === k.emissao!.pop!.id) ?? null)
+          ? versaoDoPopEmitido(repo.versoesPop(), k.emissao.pop)
           : null
         : (popDaCalibracao(ctx, k)?.versao ?? null),
     }

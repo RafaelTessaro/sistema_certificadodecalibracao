@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { arDoAmbiente, calcularCalibracao, termicaDoAmbiente } from './calibracao.ts'
 import {
   AMBIENTE_VAZIO,
+  AVISO_SEM_TERMOMETRO_DUAS_ENTRADAS,
   BALANCA_VAZIA,
   balancaIdentificada,
   calibracaoVazia,
@@ -17,8 +18,10 @@ import {
   padraoNaData,
   padroesDaCalibracao,
   pendenciasAmbiente,
+  PENDENCIA_TERMOMETRO_DUAS_ENTRADAS,
   pendenciasEmissao,
   proximaAlemDoPop,
+  semTermometroDuasEntradas,
   versoesAnterioresApos,
 } from './dominio.ts'
 import type { Balanca, CalibracaoInput, ClasseExatidao, EnsaioIndicacao, Padrao } from './tipos.ts'
@@ -169,6 +172,12 @@ describe('pendências da classe I', () => {
     expect(comPontos([[], ['g20'], [], ['g10']])).toEqual([])
     // Registro de antes do cálculo da classe I: as exigências da época
     expect(comPontos([[], ['g100']], { calculoLegado: true })).toEqual([])
+    // Revisão de um certificado emitido na 1.0.2 (sem `regrasDoPop`): exigência nova da 1.0.3, fica como na época (o
+    // cálculo dá o aviso "Correção do certificado ignorada"); a do certificado emitido com as regras do POP, a segue
+    expect(comPontos([[], ['g100']], { substituiId: 'cal-original' })).toEqual([])
+    expect(comPontos([[], ['g100']], { substituiId: 'cal-original', regrasDoPop: true })).toEqual([
+      'Balança classe I: o jogo JP-E2 está sem a incerteza (U) do certificado da peça de 100 g; complete o cadastro do padrão (POP 6.1).',
+    ])
   })
 
   it('empuxo "não considerar" e convecção desligada bloqueiam', () => {
@@ -210,7 +219,11 @@ describe('pendências da classe I', () => {
       k.opcoes = { ...k.opcoes, empuxo: 'MEDIDO', conveccao: 'CALCULAR' }
       return pendenciasEmissao(k, { padroes, hoje: '2026-10-28', temPesos: true, classe: 'I' })
     }
-    const texto = 'Balança classe I com o ΔT pesos − ar medido: escolha nos padrões o termômetro de duas entradas.'
+    // A pendência diz onde cadastrar o termômetro (padrão "Outro") e a alternativa da aclimatação: sem nenhum "Outro"
+    // cadastrado, a etapa não tem cartão para escolher
+    const texto =
+      'Balança classe I com o ΔT pesos − ar medido: escolha nos padrões o termômetro de duas entradas (cadastre-o em Padrões → Novo padrão → Outro, se ainda não estiver cadastrado) ou registre o ΔT pela aclimatação.'
+    expect(PENDENCIA_TERMOMETRO_DUAS_ENTRADAS).toBe(texto)
     expect(comDeltaT([e2, th, br], { deltaTPesos: 0.3 })).toEqual([texto])
     // 0,0 °C também foi medido (com o termômetro)
     expect(comDeltaT([e2, th, br], { deltaTPesos: 0 })).toEqual([texto])
@@ -218,6 +231,17 @@ describe('pendências da classe I', () => {
     // Pela aclimatação (sem o termômetro), ou sem o ΔT: nada
     expect(comDeltaT([e2, th, br], { aclimatacao: { deltaT0: 5, minutos: 120 } })).toEqual([])
     expect(comDeltaT([e2, th, br], {})).toEqual([])
+  })
+
+  it('etapa Padrões (classe I, ΔT medido): o aviso de cadastrar o termômetro de duas entradas, só sem nenhum "Outro" ativo', () => {
+    const td = padrao({ identificacao: 'TD-01', tipo: 'OUTRO' })
+    expect(AVISO_SEM_TERMOMETRO_DUAS_ENTRADAS).toMatch(/Padrões → Novo padrão → Outro/)
+    expect(AVISO_SEM_TERMOMETRO_DUAS_ENTRADAS).toMatch(/aclimatação/)
+    expect(semTermometroDuasEntradas('I', [e2, th, br])).toBe(true)
+    expect(semTermometroDuasEntradas('I', [e2, th, br, { ...td, ativo: false }])).toBe(true)
+    expect(semTermometroDuasEntradas('I', [e2, th, br, td])).toBe(false)
+    // Nas outras classes, o ΔT não é pedido
+    expect(semTermometroDuasEntradas('II', [e2, th, br])).toBe(false)
   })
 
   it('revisão de certificado emitido antes do cálculo da classe I: as exigências da época', () => {

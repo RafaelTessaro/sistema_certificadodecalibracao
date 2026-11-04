@@ -2,6 +2,7 @@ import { Check, Droplets, Gauge, Thermometer, ThermometerSun, TriangleAlert, Wei
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  AVISO_SEM_TERMOMETRO_DUAS_ENTRADAS,
   deltaTMaximo,
   deltaTPesosMaximo,
   type FaixaAmbiente,
@@ -11,6 +12,7 @@ import {
   pendenciasAmbiente,
   pressaoObrigatoria,
   resumoPesos,
+  semTermometroDuasEntradas,
   situacaoValidade,
   TIPOS_PADRAO,
   totalPesos,
@@ -239,6 +241,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
             <GrupoConveccao
               ambiente={amb}
               classeI={balanca.classe === 'I'}
+              semTermometro={semTermometroDuasEntradas(balanca.classe, lista)}
               jogos={selecionados.filter((p) => p.tipo === 'PESOS')}
               aoMudar={(mudar) => alterar((s) => ({ ...s, ambiente: mudar(s.ambiente) }))}
             />
@@ -256,11 +259,14 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
 function GrupoConveccao({
   ambiente,
   classeI,
+  semTermometro,
   jogos,
   aoMudar,
 }: {
   ambiente: CondicoesAmbientais
   classeI: boolean
+  /** Classe I sem nenhum padrão "Outro" ativo: o ΔT medido não tem termômetro para escolher nos padrões. */
+  semTermometro: boolean
   jogos: Padrao[]
   aoMudar: (mudar: (a: CondicoesAmbientais) => CondicoesAmbientais) => void
 }) {
@@ -336,6 +342,17 @@ function GrupoConveccao({
             <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
               <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
               Acima de {limite} °C: aguarde a aclimatação dos pesos (POP 7.4).
+            </p>
+          )}
+          {semTermometro && (
+            <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                {AVISO_SEM_TERMOMETRO_DUAS_ENTRADAS}{' '}
+                <Link to="/padroes?novo=1" target="_blank" className="font-medium underline">
+                  Cadastrar
+                </Link>
+              </span>
             </p>
           )}
         </div>

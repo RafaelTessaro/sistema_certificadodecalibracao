@@ -349,6 +349,20 @@ export function opcoesComoEncontrado(opcoes: OpcoesCalculo, classe: Balanca['cla
   return { ...opcoes, empuxo: 'MEDIDO' }
 }
 
+/**
+ * Os pontos do erro de indicação em ordem de carga: o certificado diz "cargas crescentes" em todos os métodos de
+ * carregamento da calibração (o ponto acrescentado no fim, com carga menor, vai para o lugar dele). Os pontos sem
+ * carga (o zero e a carga esquecida) ficam onde estão: a pendência da carga esquecida cita o nº do ponto na tabela.
+ * Mesma carga, a ordem de antes. Já em ordem, o mesmo array.
+ */
+export function pontosEmOrdemDeCarga<T extends { carga: number }>(pontos: readonly T[]): T[] {
+  const comCarga = pontos.filter((p) => p.carga > 0)
+  const ordenados = [...comCarga].sort((a, b) => a.carga - b.carga)
+  if (ordenados.every((p, i) => p === comCarga[i])) return pontos as T[]
+  let i = 0
+  return pontos.map((p) => (p.carga > 0 ? ordenados[i++] : p))
+}
+
 /** Ver `regrasDoPopComoAviso` e `minimosDoPopComoAviso` em dominio.ts (lá, para `pendenciasEmissao` também usar). */
 export { minimosDoPopComoAviso, regrasDoPopComoAviso }
 
@@ -387,6 +401,7 @@ export function entradaDoCalculo(
 ): EntradaCalculo {
   const ajustadaAntes = momento === 'FINAL' && (k.ajuste?.realizado ?? 'NAO') !== 'NAO'
   const comoAviso = regrasDoPopComoAviso(k, momento)
+  const indicacao = indicacaoParaCalculo(ensaio, padroes, balanca.unidade)
   return {
     instrumento: { unidade: balanca.unidade, classe: balanca.classe, tipoFaixas: balanca.tipoFaixas, faixas: balanca.faixas },
     // O certificado emitido antes do cálculo da classe I (e a revisão dele) calcula como na época
@@ -398,7 +413,12 @@ export function entradaDoCalculo(
       metodo: k.excentricidade.metodo,
       posicoes: k.excentricidade.posicoes,
     },
-    indicacao: indicacaoParaCalculo(ensaio, padroes, balanca.unidade),
+    // A calibração com as regras do POP (os dois ensaios), com os pontos em ordem de carga (o resumo e o certificado
+    // dizem "cargas crescentes"); o registro de antes delas, na ordem da época (o "Decrescente" só existe nele)
+    indicacao:
+      regrasDoPopComoAviso(k) || ensaio.metodo === 'DECRESCENTE'
+        ? indicacao
+        : { ...indicacao, pontos: pontosEmOrdemDeCarga(indicacao.pontos) },
     conformidade: k.conformidade,
     ar: arDoAmbiente(k.ambiente, ajustadaAntes),
     termica: termicaDoAmbiente(k.ambiente),

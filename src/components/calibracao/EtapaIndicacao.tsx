@@ -1,5 +1,6 @@
 import { CircleCheck, CircleX, Hand, History, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
+import { flushSync } from 'react-dom'
 import {
   cargaDasPecas,
   cargaDaEtapa,
@@ -24,13 +25,14 @@ import type { EnsaioIndicacao, MetodoCarregamento, Padrao, PecaCarga, PontoIndic
 import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
+import { confirmar } from '../ui/Feedback'
 import { Field, Select } from '../ui/Form'
 import { Modal } from '../ui/Modal'
 import { Segmented } from '../ui/Misc'
 import { montagemDoPonto, pecasPara, recomporEnsaio } from './cargas'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
-import { type AbaIndicacao, mudarEnsaioDaAba } from './indicacao'
+import { type AbaIndicacao, ensaioEmOrdemDeCarga, mudarEnsaioDaAba, podeRefazerPontos, textoRefazerPontos } from './indicacao'
 import { casasDe, tomLeitura } from './util'
 
 export function EtapaIndicacao(ctx: ContextoEtapa) {
@@ -225,7 +227,12 @@ function TabelaPontos({
     }))
   const mudarCarga = (p: PontoIndicacao, carga: number | null) => mudarPonto(p.id, (x) => ({ ...x, carga: carga ?? 0 }))
   const cargaEtapa = cargaDaEtapa(ensaio, pesos, u)
-  const sugerir = () => {
+  const sugerir = async () => {
+    // Com leituras digitadas, "Refazer pontos" pergunta antes: elas se perdem, e o rascunho grava sozinho
+    const pode = await podeRefazerPontos(ensaio, (n) =>
+      confirmar({ titulo: 'Refazer os pontos?', descricao: textoRefazerPontos(n), confirmar: 'Refazer os pontos', perigo: true }),
+    )
+    if (!pode) return
     // As mesmas cargas da folha de campo sem rascunho (na classe I, as que os pesos escolhidos montam dentro de 6.1)
     const cargas = pontosSugeridos(balanca, pesos)
     setEnsaio((e) => ({
@@ -241,6 +248,19 @@ function TabelaPontos({
       })),
     }))
   }
+  /**
+   * Ao sair do campo da carga, o ponto vai para o lugar dele na ordem das cargas (o "Adicionar ponto" o põe no fim; o
+   * certificado diz "cargas crescentes"). Depois do blur o foco já está no campo seguinte (Tab, Enter), e a troca das
+   * linhas não o tira de lá.
+   */
+  const ordenarPorCarga = () => {
+    if (ensaioEmOrdemDeCarga(ensaio) === ensaio) return
+    setTimeout(() => {
+      const foco = document.activeElement
+      flushSync(() => setEnsaio(ensaioEmOrdemDeCarga))
+      if (foco instanceof HTMLElement && foco !== document.activeElement && foco.isConnected) foco.focus()
+    })
+  }
   const adicionar = () =>
     setPontos((l) => [
       ...l,
@@ -255,7 +275,7 @@ function TabelaPontos({
         descricao="Aplique as cargas com os pesos padrão e anote a indicação de cada ponto. O erro e a incerteza saem na hora."
         acoes={
           <div className="flex gap-2">
-            <Button tamanho="sm" icone={<Wand2 className="h-3.5 w-3.5" />} onClick={sugerir}>
+            <Button tamanho="sm" icone={<Wand2 className="h-3.5 w-3.5" />} onClick={() => void sugerir()}>
               {ensaio.pontos.length ? 'Refazer pontos' : 'Sugerir pontos'}
             </Button>
           </div>
@@ -291,7 +311,7 @@ function TabelaPontos({
             Sugerimos 0, a carga mínima (Min, quando marcada), 25 %, 50 %, 75 % e 100 % da capacidade, mais as cargas onde muda o
             erro máximo admissível da classe.
           </p>
-          <Button variante="primary" icone={<Wand2 className="h-4 w-4" />} onClick={sugerir}>
+          <Button variante="primary" icone={<Wand2 className="h-4 w-4" />} onClick={() => void sugerir()}>
             Sugerir os pontos
           </Button>
         </div>
@@ -334,6 +354,7 @@ function TabelaPontos({
                         className="w-24"
                         valor={p.carga}
                         aoMudar={(v) => mudarCarga(p, v)}
+                        onBlur={ordenarPorCarga}
                         aria-label={`Carga do ponto ${i + 1}`}
                         grade={{ grupo: `${grupo}-carga`, lin: i, col: 0 }}
                       />

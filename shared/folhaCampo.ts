@@ -533,7 +533,12 @@ export function planoDaFolha(
   const usadas = new Map<string, PecaCarga>()
   for (const c of [...pontos, ...repetibilidade, excentricidade, substituicao])
     for (const x of c.pecas) usadas.set(`${x.padraoId}:${x.pesoId}`, x)
-  const validades = validadeDosPadroes(previstos, dataPrevista)
+  // O barômetro ativo fora do plano onde a pressão é opcional (classes III e IIII e sem classe: o rascunho novo não o
+  // marca, `padroesSemHistorico`) segue na linha dos outros: levá-lo e registrar a pressão continua possível
+  const barometrosFora = pressaoObrigatoria(balanca.classe)
+    ? []
+    : padroes.filter((p) => p.ativo && p.tipo === 'BAROMETRO' && !previstos.some((x) => x.id === p.id))
+  const validades = validadeDosPadroes([...previstos, ...barometrosFora], dataPrevista)
   // Um termo-higrômetro basta para o ambiente: o primeiro em dia (sem nenhum em dia, o primeiro)
   const termos = validades.itens.filter((x) => x.padrao.tipo === 'TERMOHIGROMETRO')
   const ambiente = (termos.find((x) => x.situacao !== 'VENCIDO') ?? termos[0])?.padrao
@@ -558,6 +563,11 @@ export function planoDaFolha(
     ).avisos,
   )
   if (!pesos.length) avisos.push('Nenhum jogo de pesos padrão previsto: escolha os pesos antes de sair.')
+  // Classe I: o ΔT pesos − ar do passo 4 é medido com o termômetro de duas entradas (padrão "Outro", POP 6.2)
+  if (balanca.classe === 'I' && !previstos.some((p) => p.tipo === 'OUTRO' && p.ativo))
+    avisos.push(
+      'Nenhum termômetro de duas entradas (padrão Outro) previsto: o ΔT do passo 4 precisa dele. Cadastre-o em Padrões → Novo padrão → Outro e escolha-o nos padrões da calibração antes de sair.',
+    )
 
   return {
     origem: doRascunho ? 'RASCUNHO' : 'SUGESTAO',

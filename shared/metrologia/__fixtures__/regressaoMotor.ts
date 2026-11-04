@@ -154,17 +154,13 @@ export function entradasDeRegressao(quantas = 400): EntradaCalculo[] {
 const CAMPOS_NOVOS = new Set(['uConveccao', 'correcaoEmpuxo', 'ar', 'avisos', 'emaDecrescente', 'foraDoEmaServico'])
 
 /**
- * Pendências novas, de regras que vieram depois (ficam fora da impressão digital): os pesos sem EMA (jogo sem a
- * classe) e sem incerteza (antes um aviso). Elas têm os testes delas; os números não mudam.
+ * O resultado em texto estável: números com 10 algarismos, sem os campos novos e sem os avisos. As pendências entram
+ * todas: as entradas são do registro de antes das regras do POP (sem `regrasDoPop`), em que as pendências novas dos
+ * pesos (sem EMA, sem incerteza) não valem, como na época.
  */
-const PENDENCIAS_NOVAS = [/^Pesos sem EMA conhecido/, /^Pesos sem incerteza conhecida/]
-
-/** O resultado em texto estável: números com 10 algarismos, sem os campos novos, sem os avisos e sem as pendências novas. */
 export function textoEstavel(r: ResultadoCalculo): string {
   return JSON.stringify(r, (chave, valor) => {
     if (CAMPOS_NOVOS.has(chave)) return undefined
-    if (chave === 'pendencias' && Array.isArray(valor))
-      return valor.filter((p: string) => !PENDENCIAS_NOVAS.some((x) => x.test(p)))
     if (typeof valor === 'number') return Number.isFinite(valor) ? Number(valor.toPrecision(10)) : String(valor)
     return valor
   })

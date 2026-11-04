@@ -299,3 +299,98 @@ describe('POP da folha de campo ao voltar uma cópia do banco', () => {
     }
   }, 30_000)
 })
+
+// Voltar uma cópia do banco feita antes de registrar a revisão do POP citada por um certificado emitido depois dela
+// (a atualização: o POP real registrado como manda o LEIA-ME, e a cópia de antes da versão nova): a revisão vai junto
+// com o certificado (o mesmo id e o arquivo), o POP vigente não regride, e a revisão registrada depois na cópia nunca
+// aparece como "o POP da emissão" do certificado.
+describe('POP do certificado ao voltar uma cópia do banco', () => {
+  const restauracoes = (db: ReturnType<typeof abrirBanco>) =>
+    (
+      db.prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' ORDER BY id").all() as Array<{ detalhe: string }>
+    ).map((r) => r.detalhe)
+
+  /** Cópia feita antes da rev. 01 (com arquivo), registrada depois e citada pelo certificado emitido depois. */
+  async function certificadoComRevisaoDepoisDaCopia() {
+    await iniciar()
+    const copia = await t.ctx.backups.copiar('manual')
+    const arquivo = await c.enviarArquivo(ARQUIVOS_TESTE.docx('pop rev 01'), 'POP rev 01.docx', 'pop')
+    const r = await t.chamar('POST', '/api/pop', {
+      cookie: t.cookieAdmin,
+      payload: { codigo: POP_TESTE.codigo, revisao: '01', data: hojeLocalIso(), arquivo: arquivo.sha256 },
+    })
+    expect(r.statusCode, r.body).toBe(201)
+    const v1 = r.json().versao as VersaoPop
+    const k = await c.emitido()
+    expect(k.emissao?.pop).toMatchObject({ id: v1.id, revisao: '01' })
+    return { k, copia, v1 }
+  }
+
+  it('a revisão citada pelo certificado passa para a cópia (o mesmo id e o arquivo) e continua a vigente', async () => {
+    const { k, copia, v1 } = await certificadoComRevisaoDepoisDaCopia()
+    const destino = abrirBanco(copia)
+    try {
+      expect(destino.prepare('SELECT 1 FROM pop_versoes WHERE id = ?').get(v1.id)).toBeUndefined()
+      transplantarRegistros(t.ctx.db, destino)
+      const repo = new Repositorio(destino)
+      expect(repo.versoesPop().find((v) => v.id === v1.id)).toMatchObject({
+        codigo: POP_TESTE.codigo,
+        revisao: '01',
+        arquivo: { sha256: v1.arquivo!.sha256 },
+      })
+      // O POP vigente não volta para o da cópia
+      expect(repo.popVigente()).toMatchObject({ id: v1.id, revisao: '01' })
+      expect(restauracoes(destino)).toContain(
+        `a revisão do POP citada pelo certificado que passou (${POP_TESTE.codigo} rev. 01) continua registrada, como no banco atual`,
+      )
+      // A registrada depois na cópia recebe outro id; o certificado continua com a dele
+      const v2 = repo.registrarPop({ codigo: POP_TESTE.codigo, revisao: '02', data: hojeLocalIso() }, 'Teste')
+      expect(v2.id).toBeGreaterThan(v1.id)
+      expect(repo.obterCalibracao(k.id)?.emissao?.pop).toMatchObject({ id: v1.id, revisao: '01' })
+      // De novo: nada muda
+      const antes = destino.prepare('SELECT COUNT(*) AS n FROM auditoria').get()
+      transplantarRegistros(t.ctx.db, destino)
+      expect(destino.prepare('SELECT COUNT(*) AS n FROM pop_versoes').get()).toEqual({ n: 3 })
+      expect(destino.prepare('SELECT COUNT(*) AS n FROM auditoria').get()).toEqual(antes)
+    } finally {
+      destino.close()
+    }
+  }, 30_000)
+
+  it('o id já é de outra revisão na cópia: a revisão não passa, e o registro de atividades diz qual', async () => {
+    const { k, copia, v1 } = await certificadoComRevisaoDepoisDaCopia()
+    const destino = abrirBanco(copia)
+    try {
+      destino
+        .prepare(
+          `INSERT INTO pop_versoes (id, codigo, revisao, data, arquivo, observacao, criado_em, criado_por)
+           VALUES (?, ?, '05', ?, NULL, '', ?, 'Teste')`,
+        )
+        .run(v1.id, POP_TESTE.codigo, hojeLocalIso(), new Date().toISOString())
+      transplantarRegistros(t.ctx.db, destino)
+      expect(destino.prepare('SELECT revisao FROM pop_versoes WHERE id = ?').get(v1.id)).toEqual({ revisao: '05' })
+      expect(restauracoes(destino)).toContain(
+        `a revisão do POP citada pelo certificado ${k.numero} (${POP_TESTE.codigo} rev. 01) não passou para a cópia (o id dela já é de outra revisão lá): o PDF entregue continua citando-a`,
+      )
+    } finally {
+      destino.close()
+    }
+  }, 30_000)
+
+  it('o detalhe do certificado nunca mostra outra revisão com o mesmo id como "o POP da emissão"', async () => {
+    const { k, v1 } = await certificadoComRevisaoDepoisDaCopia()
+    expect((await detalhe(k)).pop).toMatchObject({ id: v1.id, revisao: '01' })
+    // O id da rev. 01 passa a ser de outra revisão (a cópia voltou sem ela e registrou outra): nenhuma
+    t.ctx.db.prepare("UPDATE pop_versoes SET revisao = '05' WHERE id = ?").run(v1.id)
+    expect((await detalhe(k)).pop).toBeNull()
+    // A mesma revisão (código e nº) registrada com outro id (a cópia que voltou e a registrou de novo): essa
+    const outra = v1.id + 7
+    t.ctx.db
+      .prepare(
+        `INSERT INTO pop_versoes (id, codigo, revisao, data, arquivo, observacao, criado_em, criado_por)
+         VALUES (?, ?, '01', ?, NULL, '', ?, 'Teste')`,
+      )
+      .run(outra, POP_TESTE.codigo, hojeLocalIso(), new Date().toISOString())
+    expect((await detalhe(k)).pop).toMatchObject({ id: outra, revisao: '01' })
+  }, 30_000)
+})

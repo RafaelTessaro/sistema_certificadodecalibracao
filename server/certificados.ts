@@ -96,6 +96,16 @@ const popEmitido = (v: VersaoPop): PopEmitido => ({
 const daVersao = (v: VersaoPop): PopDaCalibracao => ({ versao: v, pop: popEmitido(v), procedimento: textoPop(v) })
 
 /**
+ * A revisão do POP registrada que a emissão congelou (`emissao.pop`): a do mesmo id com o mesmo código e nº (como
+ * `popDaCalibracao` confere) ou, sem ela, a mesma (código e nº) registrada com outro id (a cópia do banco que voltou e
+ * a registrou de novo). Nunca outra revisão que tenha o mesmo id; null = nenhuma.
+ */
+export function versaoDoPopEmitido(versoes: VersaoPop[], pop: Pick<PopEmitido, 'id' | 'codigo' | 'revisao'>): VersaoPop | null {
+  const mesma = (v: VersaoPop) => v.codigo === pop.codigo && v.revisao === pop.revisao
+  return versoes.find((v) => v.id === pop.id && mesma(v)) ?? versoes.find(mesma) ?? null
+}
+
+/**
  * A revisão do POP usada na calibração, a que o certificado cita (ISO/IEC 17025, 7.8.2.1: o método usado), e não a
  * vigente na emissão; null = nenhuma (sem POP registrado: pendência). Nesta ordem:
  * - a impressa na folha de campo da própria calibração (`Repositorio.popDaFolhaDaCalibracao`; numa revisão, a

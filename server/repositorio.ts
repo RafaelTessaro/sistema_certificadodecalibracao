@@ -29,6 +29,7 @@ import {
   normalizarConfig,
   normalizarPadrao,
   numeroDaRevisao,
+  OPCOES_CALCULO_PADRAO,
   textoBusca,
   textoBuscaBalanca,
   textoBuscaCalibracao,
@@ -1313,7 +1314,22 @@ export class Repositorio {
       numero ||= opcoes.numero(sequencia, ano, 0)
       let codigo = opcoes.codigo()
       while (this.db.prepare('SELECT 1 FROM calibracoes WHERE codigo = ?').get(codigo)) codigo = opcoes.codigo()
-      const base: Calibracao = { ...atual, status: 'EMITIDO', ano, sequencia, revisao, numero, dataEmissao: this.hoje() }
+      // As opções completas, como o PUT as grava (`normalizarCalibracao`): o rascunho da 1.0.1 que não foi regravado
+      // ainda não tem a convecção, e o certificado sem ela pareceria emitido antes da classe I (`calculoLegado`). O da
+      // revisão de um certificado de antes dela fica como na época
+      const opcoesEmitidas = calculoLegado(atual)
+        ? atual.opcoes
+        : { ...atual.opcoes, conveccao: atual.opcoes.conveccao ?? OPCOES_CALCULO_PADRAO.conveccao }
+      const base: Calibracao = {
+        ...atual,
+        opcoes: opcoesEmitidas,
+        status: 'EMITIDO',
+        ano,
+        sequencia,
+        revisao,
+        numero,
+        dataEmissao: this.hoje(),
+      }
       const emissao = montar(base, { ano, sequencia, numero, codigo })
       const k: Calibracao = { ...base, emissao, versao: atual.versao + 1, atualizadoEm: em }
       this.gravarCalibracao(k, false)

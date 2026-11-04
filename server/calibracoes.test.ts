@@ -1504,10 +1504,12 @@ describe('balança classe I: o rascunho novo', () => {
     const emitida = await emitir(pronta)
     expect(emitida.statusCode, emitida.body).toBe(200)
     const original = emitida.json().calibracao as Calibracao
-    // Gravado no formato antigo (versão 1.0.x): sem a convecção nas opções, sem o ΔT pesos − ar e a aclimatação
+    // Gravado no formato antigo (versão 1.0.x): sem a convecção nas opções, sem o ΔT pesos − ar e a aclimatação, e a
+    // emissão sem as regras do POP (`regrasDoPop` veio na 1.0.3)
     const { conveccao: _c, ...opcoesAntigas } = original.opcoes
     const { deltaTPesos: _d, aclimatacao: _a, ...ambienteAntigo } = original.ambiente
-    const antigo = { ...original, opcoes: opcoesAntigas, ambiente: ambienteAntigo }
+    const { regrasDoPop: _r, ...emissaoAntiga } = original.emissao!
+    const antigo = { ...original, opcoes: opcoesAntigas, ambiente: ambienteAntigo, emissao: emissaoAntiga }
     t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(antigo), original.id)
     const naEpoca = calcularCalibracao(antigo, b, [e2]).comoEncontrado!
 

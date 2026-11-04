@@ -806,8 +806,9 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       if (nivel === 0 && !massa.temPecas && !ehZero(ponto.carga, ctx) && !ponto.semPadrao) semPadroes.push(rotulo(ponto.carga))
       emaFaltando.push(...massa.emaFaltando)
       correcaoIgnorada.push(...massa.correcaoIgnorada)
-      // Sem incerteza nenhuma (u(δm_c) = 0): o EMA que falta já é a pendência; senão, o certificado sem U
-      if (massa.temPecas && massa.semIncerteza && !massa.emaFaltando.length) semIncerteza.push(rotulo(ponto.carga))
+      // Sem incerteza nenhuma (u(δm_c) = 0): o EMA que falta já é a pendência; senão, o certificado sem U. No registro de
+      // antes das regras, o aviso de antes, em todo ponto assim (o EMA que falta não é pendência)
+      if (massa.temPecas && massa.semIncerteza && (legado || !massa.emaFaltando.length)) semIncerteza.push(rotulo(ponto.carga))
       if (massa.semDeltaT) semDeltaT = true
       if (massa.conveccaoForaDaTabela) conveccaoForaDaTabela = true
       if (massa.conveccaoAcimaEma) conveccaoAcimaEma.push(rotulo(ponto.carga))
@@ -832,10 +833,11 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       } else if (
         nivel === 0 &&
         massa.temPecas &&
-        !massa.emaFaltando.length &&
+        (legado || !massa.emaFaltando.length) &&
         emaInstrumento(ponto.carga, instrumento, 'OIML_INICIAL') !== null
       )
-        // Sem o EMA de alguma peça, mas ele não entra na incerteza (deriva kD·U, empuxo medido ou nenhum)
+        // Sem o EMA de alguma peça, mas ele não entra na incerteza (deriva kD·U, empuxo medido ou nenhum); no registro de
+        // antes das regras, também quando entra (lá, o EMA que falta é só este aviso)
         classeNaoConferida.push(rotulo(ponto.carga))
     }
 
@@ -1109,15 +1111,21 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       'Convecção: diferença de temperatura acima de 20 °C ou peça acima de 50 kg, fora da Tabela F2.1 do cg-18; aguarde a aclimatação e meça de novo.',
     )
   // Pesos sem o EMA da R111 (jogo sem a classe) em que ele entra na incerteza: sem ele, a deriva, o mpe do empuxo e
-  // u(δm_c) pelo nominal somem e a conferência da classe dos pesos (R76 3.7.1) não é feita
+  // u(δm_c) pelo nominal somem e a conferência da classe dos pesos (R76 3.7.1) não é feita. Regras da 1.0.3: no
+  // registro de antes delas (a revisão de um certificado 1.0.1/1.0.2, a mesma visita), as exigências da época: a
+  // classe dos pesos não conferida e os pesos sem incerteza ficam como avisos (abaixo). A saída da pendência (a classe
+  // no cadastro) mudaria os números da revisão
   if (substituicaoLida && cadeia) emaFaltando.push(...cadeia.massa.emaFaltando)
   const pesosSemEma = [...new Set(emaFaltando)]
-  if (pesosSemEma.length)
+  if (!legado && pesosSemEma.length)
     pendencias.push(
       `Pesos sem EMA conhecido (OIML R 111): ${listaE(pesosSemEma)}. O EMA entra na incerteza dos pesos (deriva, empuxo ou valor nominal); confira a classe no cadastro do padrão.`,
     )
-  if (semIncerteza.length)
-    pendencias.push(`Pesos sem incerteza conhecida (classe ou U do certificado) em ${[...new Set(semIncerteza)].join('; ')}.`)
+  const textoSemIncerteza = `Pesos sem incerteza conhecida (classe ou U do certificado) em ${[...new Set(semIncerteza)].join('; ')}.`
+  if (semIncerteza.length) {
+    if (legado) avisos.push({ nivel: 'atencao', mensagem: textoSemIncerteza })
+    else pendencias.push(textoSemIncerteza)
+  }
 
   // ---- Avisos ----
   const lista = (itens: string[]) => [...new Set(itens)].join('; ')

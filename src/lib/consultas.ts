@@ -1,7 +1,8 @@
 // Consultas de CNPJ e CEP feitas pelo servidor (é ele quem acessa a internet).
 
 import type { Tone } from '#shared/tipos.ts'
-import { mascaraDocumento, normalizarCnpj, somenteDigitos } from '#shared/documentos.ts'
+import { CLIENTE_VAZIO } from '#shared/dominio.ts'
+import { cnpjValido, cpfValido, mascaraDocumento, normalizarCnpj, somenteDigitos } from '#shared/documentos.ts'
 import type { Cliente, ClienteInput, TipoCliente } from '#shared/tipos.ts'
 import { api, ErroApi } from './api'
 import { normalizar } from './format'
@@ -175,6 +176,21 @@ export function mesclarConsulta(
     ;(form as Record<string, unknown>)[k] = novo
     aplicados[k] = novo as never
   }
+  // A UF acompanha a cidade (o endereço sai "cidade/UF" no cadastro, na folha e no certificado). Com a cidade da
+  // consulta no formulário, a UF dela, também por cima da que o cadastro novo já traz (SP), que ninguém digitou; com
+  // outra cidade, digitada à mão, a UF que estava com ela
+  const cidade = novos.cidade?.trim()
+  if (cidade && typeof novos.uf === 'string') {
+    if (normalizar(form.cidade) === normalizar(cidade)) {
+      if (novos.uf) {
+        form.uf = novos.uf
+        aplicados.uf = novos.uf
+      }
+    } else if (form.cidade.trim()) {
+      form.uf = atual.uf
+      delete aplicados.uf
+    }
+  }
   return { form, aplicados }
 }
 
@@ -197,6 +213,34 @@ export function mesclarCep<T extends Pick<ClienteInput, 'logradouro' | 'bairro' 
 }
 
 // ---- Cadastro -------------------------------------------------------------------
+
+/**
+ * O formulário ao abrir: o cliente como está ou, no cadastro novo, o tipo pedido e a UF SP (a da empresa; a consulta
+ * do CNPJ ou do CEP a troca pela do endereço: `mesclarConsulta`, `mesclarCep`). Aceita um CNPJ/CPF digitado na busca
+ * de outra tela como "nome inicial".
+ */
+export function formularioInicialCliente(cliente?: Cliente, nomeInicial?: string, tipoInicial?: TipoCliente): ClienteInput {
+  if (cliente) {
+    const { id: _i, versao: _v, criadoEm: _c, atualizadoEm: _a, ...resto } = cliente
+    return { ...CLIENTE_VAZIO, ...resto }
+  }
+  const base: ClienteInput = {
+    ...CLIENTE_VAZIO,
+    tipo: tipoInicial ?? 'PJ',
+    nome: nomeInicial?.trim() ?? '',
+    uf: 'SP',
+  }
+  const digitos = somenteDigitos(base.nome)
+  if (/^[\d./\-\s]+$/.test(base.nome)) {
+    if (cnpjValido(digitos)) return { ...base, tipo: 'PJ', nome: '', documento: mascaraDocumento(digitos, 'PJ') }
+    if (cpfValido(digitos)) return { ...base, tipo: 'PF', nome: '', documento: mascaraDocumento(digitos, 'PF') }
+  }
+  // CNPJ alfanumérico ("12.ABC.345/01DE-35"): só letras, números e pontuação, com vários algarismos (não é um nome)
+  if (/^[\dA-Za-z./\-\s]+$/.test(base.nome) && digitos.length >= 4 && cnpjValido(base.nome)) {
+    return { ...base, tipo: 'PJ', nome: '', documento: mascaraDocumento(base.nome, 'PJ') }
+  }
+  return base
+}
 
 /**
  * Troca o tipo do cliente no formulário, limpando o que deixa de aparecer na tela:
