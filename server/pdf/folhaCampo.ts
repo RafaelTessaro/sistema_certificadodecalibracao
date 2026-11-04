@@ -1844,8 +1844,8 @@ function instrumentosAmbiente(ctx: Contexto): Padrao[] {
  * Ambiente no início e no fim, numa tabela só (os campos da tela "Padrões e ambiente"): uma linha para cada
  * momento, com a hora, a temperatura, a umidade, a pressão e o instrumento usado (o previsto embaixo do título).
  * O fim é medido depois da excentricidade, no mesmo lugar e com o mesmo instrumento: a linha dele fica aqui,
- * embaixo da do início, para comparar. Balança classe I: a diferença de temperatura pesos − ar, na linha do início,
- * medida antes do 1º ensaio (a última medição, a que libera os ensaios). As dicas (o instrumento previsto, quando a
+ * embaixo da do início, para comparar. Balança classe I: a linha do início é medida logo antes do 1º ensaio (não 15 min
+ * após a chegada), com a diferença de temperatura pesos − ar (a última medição, a que libera os ensaios). As dicas (o instrumento previsto, quando a
  * pressão é obrigatória, quando medir o ΔT e o limite dele) vão no cabeçalho, embaixo do título da coluna: as caixas
  * de escrever ficam livres.
  */
@@ -1858,9 +1858,9 @@ function tabelaAmbiente(ctx: Contexto): NoObjeto {
   // couber numa linha, quebra só depois do "·"
   const quandoDeltaT = `${semQuebra('antes do 1º ensaio ·')} ${semQuebra(`até ${numeroBr(ctx.plano?.limiteDeltaTPesos ?? 1)} °C`)}`
   const colunas: Coluna[] = [
-    // O momento e quando, numa linha só ("Início  15 min após chegar"; na classe I, "Início  antes do 1º ensaio");
-    // cada título numa linha (na classe I, com uma coluna a mais, as larguras medidas)
-    { titulo: 'Ambiente', largura: classeI ? 84 : 92 },
+    // O momento e quando, numa linha só ("Início  15 min após chegar"; na classe I, "Início  logo antes do 1º ensaio",
+    // com a coluna mais larga); cada título numa linha (na classe I, com uma coluna a mais, as larguras medidas)
+    { titulo: 'Ambiente', largura: classeI ? 96 : 92 },
     { titulo: 'Hora', largura: classeI ? 36 : 42, alinhamento: 'center' },
     { titulo: `Temperatura${OBRIG}`, unidade: '°C', largura: classeI ? 70 : '*' },
     // Na classe I, a umidade entra na densidade do ar (empuxo, cg-18 A1.1-1): obrigatória
@@ -1886,10 +1886,11 @@ function tabelaAmbiente(ctx: Contexto): NoObjeto {
       { text: titulo, font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.texto },
       { text: `  ${texto}`, fontSize: 6.2 },
     ])
-  // Na classe I, o Início é medido logo antes do 1º ensaio, depois do aquecimento e da aclimatação dos pesos (POP 7.4,
-  // item 6, e 7.5, item 1): sem o termômetro de duas entradas, a hora dele fecha os minutos "Pela aclimatação", contados
-  // da hora de início do passo 2. Nas outras, 15 min após a chegada
-  const quandoInicio = classeI ? 'antes do 1º ensaio' : '15 min após chegar'
+  // Na classe I, o Início é medido logo antes do 1º ensaio, depois do aquecimento e da aclimatação dos pesos, junto com o
+  // ΔT pesos − ar da mesma linha (POP 7.4, item 6, e 7.5, item 1): sem o termômetro de duas entradas, a hora dele fecha
+  // os minutos "Pela aclimatação", contados da hora de início do passo 2 (um pouco menos que o tempo real: conservador).
+  // Nas outras classes e na folha em branco, 15 min após a chegada
+  const quandoInicio = classeI ? 'logo antes do 1º ensaio' : '15 min após chegar'
   return tabelaLeituras(
     colunas,
     [

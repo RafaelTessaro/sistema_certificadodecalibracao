@@ -427,6 +427,28 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     expect(classeII).not.toContain('o plano não usa')
   })
 
+  it('classe I: a linha Início do ambiente é "logo antes do 1º ensaio"; nas outras classes e em branco, "15 min após chegar"', () => {
+    // POP 7.5, item 1: na classe I, o ambiente do início é lido depois do aquecimento e da aclimatação dos pesos, junto
+    // com o ΔT pesos − ar; sem o termômetro de duas entradas, "Pela aclimatação" conta os minutos da hora de início do
+    // passo 2 até a hora desta linha (POP 7.4, item 6). A folha não pede hora de início de ensaio
+    const classeI = jsonDe(folhaClasseI()).replace(/\u00a0/g, ' ')
+    expect(classeI).toContain('{"text":"Início","font":"InterMedio"')
+    expect(classeI).toContain('{"text":"  logo antes do 1º ensaio","fontSize":6.2}')
+    expect(classeI).not.toContain('15 min após chegar')
+    expect(classeI).not.toMatch(/Início do ensaio|hora d[eo] (início d[oe] )?(1º|primeiro) ensaio/i)
+    for (const d of [
+      folhaPlataforma(),
+      folhaMultiIntervalo(),
+      folhaEmBranco(),
+      folhaEmBrancoOitoPadroes(),
+      { ...folhaClasseI(), balanca: { ...folhaClasseI().balanca!, classe: 'II' as const } },
+    ]) {
+      const o = jsonDe(d).replace(/\u00a0/g, ' ')
+      expect(o).toContain('{"text":"  15 min após chegar","fontSize":6.2}')
+      expect(o).not.toContain('antes do 1º ensaio')
+    }
+  })
+
   it('classe I: ΔT pesos − ar só no início, antes do 1º ensaio, com o limite dos pesos; umidade e pressão obrigatórias (sem linha a mais)', () => {
     const t = jsonDe(folhaClasseI()).replace(/\u00a0/g, ' ')
     // Na tabela do ambiente (a folha não cresce): o ΔT pesos − ar, obrigatório, só no início, com o limite dos pesos E2.
@@ -667,7 +689,7 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     for (const p of paginasDe(texto).filter((x) => x.includes('RETORNO AO ZERO'))) expect(p).toContain('ERRO DE INDICAÇÃO')
     // O ambiente no início e no fim numa tabela só (o fim, depois da excentricidade)
     expect(t).toMatch(
-      /4 AMBIENTE NO SISTEMA 3 · Padrões e ambiente Ambiente Hora Temperatura ● .*Início (15 min após chegar|antes do 1º ensaio) .*Fim após o passo 7/,
+      /4 AMBIENTE NO SISTEMA 3 · Padrões e ambiente Ambiente Hora Temperatura ● .*Início (15 min após chegar|logo antes do 1º ensaio) .*Fim após o passo 7/,
     )
     expect(t).toContain('Instrumento usado')
     expect(t).toContain('Técnico que executou — nome e assinatura')
@@ -730,7 +752,7 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain('Carlos Eduardo Lima')
     // Fora da classe I, o ambiente do início é medido 15 min após a chegada (POP 7.5, item 1)
     expect(t).toContain('Início 15 min após chegar')
-    expect(t).not.toContain('Início antes do 1º ensaio')
+    expect(t).not.toContain('logo antes do 1º ensaio')
     // O cliente impresso, compacto (sem "confere" nem caixa para o certo: diferente, em Anotações); o técnico
     // previsto é só uma dica, numa caixa branca, e o nome ao lado da assinatura fica para quem executou escrever
     expect(corrido(paginas[0])).toMatch(/Razão social Contato no cliente CNPJ FRIGORÍFICO VALE DO CORUMBATAÍ LTDA/)
@@ -831,9 +853,11 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     const ambiente = p1.slice(p1.indexOf('4 AMBIENTE'))
     expect(ambiente).toMatch(/Temperatura ● \(°C\) Umidade ● \(%\) Pressão ● \(hPa\) ΔT pesos − ar ● \(°C\) Instrumento usado/)
     // Quando medir o ΔT, o limite e o instrumento previsto no cabeçalho, embaixo do título: as caixas ficam livres
-    // Na classe I, o Início é medido logo antes do 1º ensaio (POP 7.4, item 6, e 7.5, item 1): a hora dele fecha os
-    // minutos de aclimatação dos pesos ("Pela aclimatação"), contados da hora de início do passo 2
-    expect(ambiente).toMatch(/Instrumento usado antes do 1º ensaio · previsto: TH-01, BR-01 até 1 °C Início antes do 1º ensaio/)
+    // Na classe I, o Início é medido logo antes do 1º ensaio, com o ΔT da mesma linha (POP 7.4, item 6, e 7.5, item 1):
+    // a hora dele fecha os minutos de aclimatação dos pesos ("Pela aclimatação"), contados da hora de início do passo 2
+    expect(ambiente).toMatch(
+      /Instrumento usado antes do 1º ensaio · previsto: TH-01, BR-01 até 1 °C Início logo antes do 1º ensaio Fim após o passo 7/,
+    )
     expect(ambiente).not.toContain('15 min após chegar')
     // Repetibilidade: 10 vezes, 12 colunas em duas faixas (as duas últimas opcionais)
     expect(t).toContain('uma peça só, no centro, 10')
@@ -2703,6 +2727,25 @@ describe.runIf(temPdftotext)(
       const [repetibilidade] = tabelas(folhaEmBranco(), 'Carga aplicada')
       expect(JSON.stringify(repetibilidade[0])).toMatch(/"Faixa".*"Carga aplicada".*"1ª".*"2ª".*"3ª"/)
       for (const linha of repetibilidade.slice(1)) for (const c of linha.slice(1)) expect(vazia(c)).toBe(true)
+    })
+
+    it('classe I: "Início  logo antes do 1º ensaio" numa linha só, na coluna do ambiente, sem invadir a da hora', async () => {
+      const m = await montar(folhaClasseI())
+      expect(m.paginas).toBe(2)
+      const palavras = palavrasDoPdf(m.pdf)[0]
+      const j = palavras.findIndex((w, k) =>
+        ['Início', 'logo', 'antes', 'do', '1º', 'ensaio'].every((r, n) => palavras[k + n]?.texto === r),
+      )
+      expect(j).toBeGreaterThanOrEqual(0)
+      const rotulo = palavras.slice(j, j + 6)
+      // Numa linha só: o "ensaio" na mesma altura do "Início" (sem quebrar para a linha de baixo)
+      for (const w of rotulo) expect(Math.abs(w.y1 - rotulo[0].y1)).toBeLessThan(1.5)
+      // E antes do título "Hora" da coluna seguinte (o "Hora" mais perto, em cima da linha)
+      const [hora] = palavras
+        .filter((w) => w.texto === 'Hora' && w.y1 < rotulo[0].y0)
+        .sort((x, y) => y.y1 - x.y1)
+      expect(rotulo[0].y0 - hora.y1).toBeLessThan(40)
+      expect(rotulo[5].x1).toBeLessThan(hora.x0 - 6)
     })
 
     it('classe I: a caixa do ajuste interno de rotina (CAL) antes dos ensaios, com a hora, no alto do passo 5', async () => {
