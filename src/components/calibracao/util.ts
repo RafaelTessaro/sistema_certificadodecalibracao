@@ -1,4 +1,5 @@
 import {
+  comMetodoIndicacaoDaClasse,
   dataIsoValida,
   deltaTMaximo,
   ehRodoviaria,
@@ -59,13 +60,22 @@ export function pedeAjusteInterno(b: Pick<Balanca, 'classe' | 'faixas'>): boolea
 }
 
 /**
- * A classe da balança mudou no meio da calibração ("Corrigir cadastro"): o ensaio de excentricidade ainda sem leituras
- * passa para o método da classe nova (POP 7.10: 1; na classe I, 3). Com leituras, fica como foi feito.
+ * A classe da balança mudou no meio da calibração ("Corrigir cadastro"): os ensaios ainda sem leituras passam para o
+ * método da classe nova, a excentricidade (POP 7.10: 1; na classe I, 3) e o erro de indicação (POP 7.7: "crescente e
+ * decrescente"; na classe I, "crescente com descarga"; `comMetodoIndicacaoDaClasse`). Com leituras, cada um fica como
+ * foi feito. Nada a mudar: o mesmo objeto.
  */
-export function comMetodoDaClasse<T extends Pick<CalibracaoInput, 'excentricidade'>>(f: T, classe: ClasseExatidao): T {
+export function comMetodoDaClasse<T extends Pick<CalibracaoInput, 'excentricidade' | 'indicacao'>>(
+  f: T,
+  classe: ClasseExatidao,
+): T {
   const metodo = metodoExcentricidadePadrao(classe)
-  if (f.excentricidade.metodo === metodo || temLeiturasExcentricidade(f.excentricidade)) return f
-  return { ...f, excentricidade: { ...f.excentricidade, metodo } }
+  const excentricidade =
+    f.excentricidade.metodo === metodo || temLeiturasExcentricidade(f.excentricidade)
+      ? f.excentricidade
+      : { ...f.excentricidade, metodo }
+  const indicacao = comMetodoIndicacaoDaClasse(f.indicacao, classe)
+  return excentricidade === f.excentricidade && indicacao === f.indicacao ? f : { ...f, excentricidade, indicacao }
 }
 
 /**

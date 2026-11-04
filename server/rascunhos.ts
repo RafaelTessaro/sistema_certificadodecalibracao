@@ -76,10 +76,11 @@ export function comPecasDosPadroes<T extends Pick<CalibracaoInput, 'indicacao'>>
 }
 
 /**
- * O plano copiado de uma calibração anterior, conforme o POP para a classe de hoje da balança: a excentricidade pelo
- * método da classe (POP 7.10: 1; na classe I, 3), o erro de indicação com subida (o "Decrescente" de um registro de
- * antes passa para o método da classe, POP 7.7) e as leituras com a divisão normal (o modo de serviço, POP 7.6, é
- * combinado com o cliente a cada visita: copiado, daria uma incerteza menor sem ninguém ver).
+ * O plano copiado de uma calibração anterior (sem as leituras, `semLeituras`), conforme o POP para a classe de hoje da
+ * balança: a excentricidade pelo método da classe (POP 7.10: 1; na classe I, 3), o erro de indicação também (POP 7.7:
+ * "crescente e decrescente"; na classe I, "crescente com descarga"; o "crescente contínuo" ou o "Decrescente" do
+ * certificado anterior não passa para a calibração nova) e as leituras com a divisão normal (o modo de serviço, POP
+ * 7.6, é combinado com o cliente a cada visita: copiado, daria uma incerteza menor sem ninguém ver).
  */
 export function planoConformeAoPop<
   T extends Pick<CalibracaoInput, 'excentricidade' | 'opcoes'> & Partial<Pick<CalibracaoInput, 'indicacao'>>,
@@ -87,7 +88,7 @@ export function planoConformeAoPop<
   return {
     ...k,
     excentricidade: { ...k.excentricidade, metodo: metodoExcentricidadePadrao(classe) },
-    ...(k.indicacao?.metodo === 'DECRESCENTE' ? { indicacao: { ...k.indicacao, metodo: metodoIndicacaoPadrao(classe) } } : {}),
+    ...(k.indicacao ? { indicacao: { ...k.indicacao, metodo: metodoIndicacaoPadrao(classe) } } : {}),
     opcoes: { ...k.opcoes, divisaoTeste: 0 },
   }
 }

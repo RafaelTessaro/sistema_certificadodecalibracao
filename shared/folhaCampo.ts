@@ -18,7 +18,6 @@ import {
   converterMassa,
   deltaTPesosMaximo,
   ehRodoviaria,
-  METODOS_CARREGAMENTO,
   metodoExcentricidadePadrao,
   metodoIndicacaoPadrao,
   numeroBr,
@@ -65,9 +64,11 @@ import type {
  * ambiente), sem ajuste e reparo, sem "como encontrado" e "depois do ajuste", sem a faixa do EMA e sem o encerramento
  * (a conformidade e a próxima calibração ficam só no sistema; o diferente, as observações e as anomalias vão no bloco
  * Anotações, no fim da folha, depois das assinaturas, ou numa folha anexa); os rótulos das tabelas de escrever numa
- * linha de cabeçalho própria (nenhum dentro das caixas); o método de carregamento sem o "Decrescente"; o ΔT pesos − ar
- * e o ajuste interno de rotina (CAL) antes dos ensaios só na balança classe I (a folha em branco é das classes II a
- * IIII); a excentricidade com o método numa frase fixa; o lembrete do ambiente do fim antes das assinaturas; 8 passos.
+ * linha de cabeçalho própria (nenhum dentro das caixas); o método de carregamento numa linha fixa, o da classe (POP
+ * 7.7), sem opções de marcar; o ΔT pesos − ar e o ajuste interno de rotina (CAL) antes dos ensaios só na balança classe
+ * I (a folha em branco é das classes II a IIII); a excentricidade com o método numa frase fixa; a hora só na chegada,
+ * no ambiente, no término e no ajuste interno da classe I (os ensaios não têm hora, e a repetibilidade não tem o zero
+ * depois de retirar a carga); o lembrete do ambiente do fim antes das assinaturas; 8 passos.
  * O procedimento de referência é o POP configurado no sistema (sai no rodapé, ver `referenciaDoFormulario`);
  * `referencia` é o guia técnico (metadados do PDF).
  */
@@ -165,12 +166,13 @@ export interface PlanoFolha {
   /** Maior capacidade (Max), na unidade da balança. */
   max: number
   /**
-   * Como as cargas vão ser aplicadas (o ensaio final, "depois do ajuste" quando há ajuste). Com cargas de
-   * substituição (as do rascunho ou as sugeridas) e o ensaio ainda sem leituras, "crescente contínuo": para
-   * descer ou descarregar, seria preciso tirar o material de substituição (o caminhão ou o lastro).
+   * Como as cargas vão ser aplicadas (o ensaio final, "depois do ajuste" quando há ajuste): fixo pela classe (POP 7.7,
+   * `metodoIndicacaoPadrao`), "crescente e decrescente" nas classes II a IIII e sem classe e "crescente com descarga" na
+   * classe I, também com cargas de substituição. Só o ensaio que já tem leituras (medido antes desta regra) fica com o
+   * método dele, mesmo fora do POP: é o que foi feito.
    */
   metodo: MetodoCarregamento
-  /** O do ensaio "como encontrado" (no sistema, cada aba do erro de indicação tem o seu): o mesmo, sem ajuste previsto. */
+  /** O do ensaio "como encontrado" (no sistema, cada aba do erro de indicação tem o seu), pela mesma regra. */
   metodoComoEncontrado: MetodoCarregamento
   pontos: PontoPlanejado[]
   /** Conformidade pedida pelo cliente, ou null. */
@@ -362,17 +364,14 @@ export function planoDaFolha(
   })
   const semFechar = pontos.filter((p) => p.falta > 0)
   const maiorNivel = Math.max(0, ...pontos.map((p) => p.nivelSubstituicao))
-  // Com substituição (a do rascunho ou a sugerida), as cargas só sobem: descer de um ponto para o de baixo,
-  // ou descarregar entre um e outro, pediria tirar o material de substituição (e refazer as etapas). Num
-  // ensaio ainda sem leituras, a folha prevê o "crescente contínuo": no lugar do "crescente e decrescente"
-  // (o padrão de um rascunho novo) e também do método do último certificado, com aviso (o sistema ainda está
-  // com o outro). Com leituras, fica o método do ensaio: é o que foi feito
-  const metodoDe = (m: MetodoCarregamento, e: EnsaioIndicacao | null | undefined): MetodoCarregamento =>
-    maiorNivel > 0 && !temLeituras(e) ? 'CONTINUO' : m
-  const metodoRascunho = ensaio?.metodo ?? metodoIndicacaoPadrao(balanca.classe)
-  const metodo = metodoDe(metodoRascunho, ensaio)
-  const comoEncontrado = calibracao?.comoEncontrado ?? ensaio
-  const metodoComoEncontrado = metodoDe(comoEncontrado?.metodo ?? metodoRascunho, comoEncontrado)
+  // O método de carregamento é fixo pela classe (POP 7.7, `metodoIndicacaoPadrao`): "crescente e decrescente" nas
+  // classes II a IIII e sem classe; "crescente com descarga" na classe I. O do rascunho sem leituras não conta (o
+  // sistema o acerta pela classe); o ensaio que já tem leituras, medido com outro método antes desta regra, fica com
+  // o dele: é o que foi feito
+  const metodoDe = (e: EnsaioIndicacao | null | undefined): MetodoCarregamento =>
+    e && temLeituras(e) ? e.metodo : metodoIndicacaoPadrao(balanca.classe)
+  const metodo = metodoDe(ensaio)
+  const metodoComoEncontrado = metodoDe(calibracao?.comoEncontrado ?? ensaio)
   if (subSugerida && maiorNivel > 0)
     avisos.push(
       `Os pesos previstos não chegam às cargas acima de ${numeroBr(cargaEtapa)} ${u}: a folha sugere ${maiorNivel === 1 ? 'uma etapa' : `até ${maiorNivel} etapas`} de substituição de ${numeroBr(cargaEtapa)} ${u}; combine o material (caminhão, lastro) com o cliente.`,
@@ -421,20 +420,6 @@ export function planoDaFolha(
   // Min marcada fica entre as cargas (as sugeridas já a têm); nas do rascunho, o aviso para incluí-la
   if (balanca.min > 0 && balanca.min < max && !pontos.some((p) => Math.abs(p.carga - balanca.min) <= TOL * max))
     avisos.push(`Min (${numeroBr(balanca.min)} ${u}) não está entre as cargas do erro de indicação: inclua-a no sistema.`)
-  // O "como encontrado" do rascunho (quando há) também: cada aba do sistema tem o seu método
-  const rotuloMetodo = (m: MetodoCarregamento) => `“${METODOS_CARREGAMENTO[m].label}”`
-  const antesMudou = !!calibracao?.comoEncontrado && metodoComoEncontrado !== calibracao.comoEncontrado.metodo
-  const finalMudou = metodo !== metodoRascunho
-  const noSistema =
-    antesMudou && finalMudou
-      ? `no sistema, o “como encontrado” está ${rotuloMetodo(calibracao!.comoEncontrado!.metodo)} e o ensaio final, ${rotuloMetodo(metodoRascunho)}`
-      : antesMudou
-        ? `no sistema, o “como encontrado” está ${rotuloMetodo(calibracao!.comoEncontrado!.metodo)}`
-        : `no sistema está ${rotuloMetodo(metodoRascunho)}`
-  if (doRascunho && (antesMudou || finalMudou))
-    avisos.push(
-      `Com cargas de substituição, as cargas só sobem: a folha prevê ${rotuloMetodo('CONTINUO')} (${noSistema}); acerte no sistema.`,
-    )
 
   // ---- Repetibilidade (sugerida: um ensaio por intervalo ou faixa de d diferente; na classe I, 10 leituras)
   const minimoPara = (carga: number) =>

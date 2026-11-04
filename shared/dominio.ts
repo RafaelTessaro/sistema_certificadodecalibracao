@@ -348,8 +348,9 @@ export const METODOS_CARREGAMENTO: Record<MetodoCarregamento, { label: string; d
 }
 
 /**
- * Métodos de carregamento para escolher no erro de indicação: sem o "Decrescente", que não tem a subida (POP 7.7: a
+ * Métodos de carregamento de antes do método fixo pela classe: sem o "Decrescente", que não tem a subida (POP 7.7: a
  * subida é obrigatória), a não ser o que o ensaio já tem (`atual`, o de um registro de antes, só para conferência).
+ * A tela da calibração não oferece mais a escolha: o método é o da classe (`metodoIndicacaoPadrao`).
  */
 export function metodosCarregamentoParaEscolher(atual?: MetodoCarregamento | null): MetodoCarregamento[] {
   return (Object.keys(METODOS_CARREGAMENTO) as MetodoCarregamento[]).filter((m) => m !== 'DECRESCENTE' || m === atual)
@@ -1491,6 +1492,37 @@ export const metodoExcentricidadeForaDoPop = (metodo: MetodoExcentricidade, clas
 /** O ensaio de excentricidade já tem alguma leitura (da posição ou do zero/centro antes)? */
 export const temLeiturasExcentricidade = (e: Pick<EnsaioExcentricidade, 'posicoes'>): boolean =>
   e.posicoes.some((p) => p.leitura !== null || p.referencia !== null)
+
+/**
+ * Como as cargas do erro de indicação são aplicadas é fixo pela classe (POP 7.7: "crescente e decrescente" nas classes
+ * II, III, IIII e sem classe; "crescente com descarga" na classe I; `metodoIndicacaoPadrao`). Outro método só no ensaio
+ * medido antes dessa regra (o "crescente contínuo" que a tela deixava escolher, o "Decrescente" de um registro de antes)
+ * ou numa balança que trocou de classe depois de ensaiada: `true`.
+ */
+export const metodoIndicacaoForaDoPop = (metodo: MetodoCarregamento, classe: ClasseExatidao | null | undefined): boolean =>
+  metodo !== metodoIndicacaoPadrao(classe)
+
+/**
+ * O erro de indicação já tem leitura de alguma carga (a subida ou a descida de um ponto com carga, ou uma etapa de
+ * substituição)? O zero e o retorno ao zero não contam: são os mesmos em todo método (os pontos sugeridos já vêm com o
+ * zero lido). Uma leitura na coluna que o método esconde também conta: ela existe.
+ */
+export const temLeiturasDeCarga = (e: Pick<EnsaioIndicacao, 'pontos' | 'substituicao'>): boolean =>
+  e.pontos.some((p) => p.carga > 0 && (p.crescente !== null || p.decrescente !== null)) ||
+  e.substituicao.etapas.some((x) => x.leituraPadroes !== null || x.leituraSubstituicao !== null)
+
+/**
+ * O erro de indicação com o método da classe (`metodoIndicacaoPadrao`) enquanto não tem leitura de carga
+ * (`temLeiturasDeCarga`): o rascunho com outro método, ainda sem leituras, e a classe da balança trocada antes das
+ * leituras. Com leituras, fica o método com que foi medido. Já com o método da classe, o mesmo ensaio (nada a gravar).
+ */
+export function comMetodoIndicacaoDaClasse<T extends Pick<EnsaioIndicacao, 'metodo' | 'pontos' | 'substituicao'>>(
+  e: T,
+  classe: ClasseExatidao | null | undefined,
+): T {
+  const metodo = metodoIndicacaoPadrao(classe)
+  return e.metodo === metodo || temLeiturasDeCarga(e) ? e : { ...e, metodo }
+}
 
 /**
  * O ensaio "como encontrado" tem alguma leitura? A tela de antes criava um vazio ao escolher um ajuste; vazio, ele

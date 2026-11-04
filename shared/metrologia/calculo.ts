@@ -736,6 +736,13 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   const cargasAcimaDeMax: Array<{ ensaio: 'indicacao' | 'repetibilidade' | 'excentricidade'; carga: number }> = []
   /** Pontos lidos sem a leitura de subida (a subida é obrigatória, POP 7.7). */
   const semSubida: string[] = []
+  /**
+   * "Crescente e decrescente": pontos com carga lidos na subida e sem a descida (POP 7.7). A maior carga lida sai depois
+   * (`semDescida` filtrado): é onde a subida vira descida, uma leitura só (POP, Figura 3). O zero também não entra: a
+   * descida dele é o retorno ao zero, que tem a pendência dele. Com substituição, as cargas só sobem (descer pediria
+   * tirar o material).
+   */
+  const semDescida: number[] = []
   const uMenorQueD: string[] = []
   /** U < d com s = 0 de poucas leituras (ou sem repetibilidade): aí o resultado é suspeito, não só leituras iguais. */
   let uMenorQueDPoucasLeituras = false
@@ -784,6 +791,8 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       maiorCargaLida = Math.max(maiorCargaLida, ponto.carga)
       if (!ehZero(ponto.carga, ctx)) cargaLida = true
       if (sobe === null && metodo !== 'DECRESCENTE') semSubida.push(rotulo(ponto.carga))
+      if (metodo === 'CRESCENTE_DECRESCENTE' && !sub.ativa && sobe !== null && desce === null && !ehZero(ponto.carga, ctx))
+        semDescida.push(ponto.carga)
       // A leitura contra a carga feita: a digitada, quando os pesos não a somam (essa diferença já é pendência). A
       // decrescente, pelo e da faixa em que foi lida (múltiplas faixas, descida sem descarregar)
       const cargaFeita = ponto.cargaDigitada ?? ponto.carga
@@ -1013,6 +1022,8 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     const alcancadas = faixasAlcancadas(instrumento, cargaLida ? maiorCargaLida : 0).length
     return `Repetibilidade: ${cargasRep.length} ${cargasRep.length === 1 ? 'ensaio' : 'ensaios'} para ${alcancadas} ${nome}s; falta ${onde}. O POP (7.9) pede um ensaio em cada ${nome} de d diferente.`
   }
+  // "Crescente e decrescente" sem a descida de um ponto (a maior carga lida é a virada, com uma leitura só)
+  const cargasSemDescida = [...new Set(semDescida.filter((c) => !(Math.abs(c - maiorCargaLida) <= ctx.tol)).map(rotulo))]
   // Só o zero lido não é ensaio de carga: pendência também na calibração já medida antes das regras
   if (!legado && pontosLidos > 0 && !cargaLida)
     pendencias.push('Erro de indicação: registre as leituras das cargas acima de zero (POP 7.7).')
@@ -1025,6 +1036,8 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       pendencias.push('Erro de indicação: a subida é obrigatória; troque o método “Decrescente” (POP 7.7).')
     else if (semSubida.length)
       pendencias.push(`Erro de indicação: falta a leitura de subida em ${listaE([...new Set(semSubida)])} (POP 7.7).`)
+    if (cargasSemDescida.length)
+      pendencias.push(`Erro de indicação: falta a leitura de descida em ${listaE(cargasSemDescida)} (POP 7.7).`)
     // Ensaio copiado e não feito (sem leituras): o aviso mais abaixo
     for (const r of repetibilidade) {
       const minimo = leiturasMinimasRepetibilidade(r.carga, ctx)
@@ -1172,6 +1185,12 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     avisos.push({
       nivel: 'atencao',
       mensagem: `Erro de indicação com ${pontosLidos} ponto(s); o mínimo é 5, contando o zero (cg-18 §5.2).`,
+    })
+  // A descida que falta: na calibração nova, a pendência (mais acima); medida antes das regras, só o aviso
+  if (minimosComoAviso && cargasSemDescida.length)
+    avisos.push({
+      nivel: 'atencao',
+      mensagem: `Erro de indicação “crescente e decrescente” sem a leitura de descida em ${listaE(cargasSemDescida)}.`,
     })
   // Faixa parcial (POP 7.7: acordada com o cliente e declarada no certificado). Só o zero lido é pendência, não faixa
   if (pontosLidos > 0 && (legado || cargaLida) && maiorCargaLida < 0.9 * max * (1 - TOL))

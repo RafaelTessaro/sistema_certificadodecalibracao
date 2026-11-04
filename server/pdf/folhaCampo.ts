@@ -56,7 +56,7 @@ import {
   enderecoCliente,
   formatarDataBr,
   METODOS_CARREGAMENTO,
-  metodosCarregamentoParaEscolher,
+  metodoIndicacaoPadrao,
   numeroBr,
   pressaoObrigatoria,
   RECEPTORES,
@@ -1345,6 +1345,9 @@ function introducao(): No[] {
  */
 const LINHAS_PADROES_INTEIRA = 20
 
+/** Linhas para escrever os padrões quando a folha não lista nenhum (nenhum padrão cadastrado ou previsto). */
+const LINHAS_PADROES_PARA_ESCREVER = 3
+
 /**
  * Larguras da tabela dos padrões (a descrição fica com o resto). Com o plano, a coluna das peças é larga (a
  * lista impressa: "10 kg + 5 kg + 2 × 2 kg + 1 kg + 500 g…" quebra menos); sem ele, as peças são escritas à
@@ -1428,7 +1431,11 @@ function passoPadroes(ctx: Contexto, n: number): No[] {
     pre({ text: p.certificado || '—' }),
     pre(validade(p, situacao), 'right'),
   ])
-  linhas.push([livre(), livre(), livre(), livre(), livre(), livre(), livre()])
+  // A lista impressa é a dos padrões cadastrados (outro levado vai em Anotações): sem linha em branco no fim. Sem
+  // nenhum padrão na lista, as linhas para escrever
+  const paraEscrever = !previstos.length
+  if (paraEscrever)
+    for (let i = 0; i < LINHAS_PADROES_PARA_ESCREVER; i++) linhas.push(Array.from({ length: 7 }, () => livre()))
   const longa = linhas.length > LINHAS_PADROES_INTEIRA
   const tabela = tabelaLeituras(
     [
@@ -1441,9 +1448,9 @@ function passoPadroes(ctx: Contexto, n: number): No[] {
       { titulo: 'Próx. calibração', largura: col.proxima, alinhamento: 'right' },
     ],
     linhas,
-    // Com o plano, as linhas do sistema baixas (só se marca com X); a em branco, para escrever outro padrão, com
-    // ≈ 6,5 mm. Sem o plano (folha em branco), as peças usadas de cada jogo são escritas na linha: todas com ≈ 6,5 mm
-    { altura: plano ? 10.6 : ALTURA_LEITURA, alturaUltima: ALTURA_LEITURA },
+    // Com o plano, as linhas do sistema baixas (só se marca com X). Sem o plano (folha em branco), as peças usadas de
+    // cada jogo são escritas na linha, e as linhas para escrever (sem nenhum padrão na lista), o padrão inteiro: ≈ 6,5 mm
+    { altura: plano && !paraEscrever ? 10.6 : ALTURA_LEITURA },
   )
   const outrosTexto: No[] = outros.length
     ? [
@@ -1454,7 +1461,7 @@ function passoPadroes(ctx: Contexto, n: number): No[] {
             { text: p.padrao.identificacao || p.padrao.descricao || '—', bold: true },
             ...(p.situacao === 'VENCIDO' ? [' (vencido)'] : []),
           ]),
-          '. Levou algum? Anote na linha em branco.',
+          `. Levou algum? Anote ${ONDE_ANOTAR}.`,
         ]),
       ]
     : []
@@ -1480,7 +1487,9 @@ function passoPadroes(ctx: Contexto, n: number): No[] {
     : []
   const texto: No = plano
     ? `Separe os padrões e as peças previstas (${plano.origem === 'RASCUNHO' ? 'pontos, cargas e posições planejados no sistema' : 'pontos, cargas e posições sugeridos pelo sistema'}) e marque “levado”; no cliente, “usado”.`
-    : 'Em branco: marque os padrões levados e, no cliente, os usados.'
+    : paraEscrever
+      ? 'Em branco: escreva os padrões levados e, no cliente, marque os usados.'
+      : 'Em branco: marque os padrões levados e, no cliente, os usados.'
   const titulo = 'Antes de sair: padrões'
   // Muitos padrões (folha em branco): a tabela se divide entre as páginas, com o cabeçalho de novo
   if (longa)
@@ -1931,12 +1940,25 @@ const INSTRUCAO_METODO: Record<MetodoCarregamento, string> = {
 }
 
 /**
- * Métodos que a folha oferece, na ordem da tela: os que o sistema oferece (sem o "Decrescente", que não sobe as cargas;
- * ele só sai quando o rascunho já está com ele, um registro de antes).
+ * Método de carregamento da folha: o do plano (fixo pela classe, POP 7.7; ou o do ensaio que já tem leituras, medido
+ * antes desta regra) ou, na folha em branco (classes II a IIII), o "crescente e decrescente".
  */
-function metodosNaFolha(ctx: Contexto): MetodoCarregamento[] {
-  const usaDecrescente = ctx.k?.indicacao?.metodo === 'DECRESCENTE' || ctx.plano?.metodo === 'DECRESCENTE'
-  return metodosCarregamentoParaEscolher(usaDecrescente ? 'DECRESCENTE' : null)
+const metodoDaFolha = (ctx: Contexto): MetodoCarregamento => ctx.plano?.metodo ?? metodoIndicacaoPadrao(null)
+
+/** Rótulo da linha fixa do método no passo 5 (`linhaMetodo`). */
+export const ROTULO_METODO_FOLHA = 'Como aplicar as cargas'
+
+/**
+ * De onde vem o método da linha fixa (em letra miúda, depois do nome): o POP (7.7), pela classe; na folha em branco, o
+ * das classes II a IIII (a classe I tem a folha da balança cadastrada); fora do POP, só o de um ensaio que já tem
+ * leituras no sistema (medido antes desta regra), com o do POP para comparar.
+ */
+export function origemDoMetodoNaFolha(metodo: MetodoCarregamento, b: Balanca | null): string {
+  if (!b) return 'pelo POP (7.7), nas classes II a IIII'
+  const pop = metodoIndicacaoPadrao(b.classe)
+  return metodo === pop
+    ? 'pelo POP (7.7), nesta classe'
+    : `o do ensaio já começado no sistema (pelo POP, nesta classe: ${METODOS_CARREGAMENTO[pop].label})`
 }
 
 /**
@@ -1947,12 +1969,12 @@ function metodosNaFolha(ctx: Contexto): MetodoCarregamento[] {
 export const AJUSTE_INTERNO_CLASSE_I = 'Ajuste interno (CAL) feito antes dos ensaios'
 
 /**
- * Como as cargas foram aplicadas (o campo da tela do erro de indicação, com o mesmo rótulo e as mesmas opções:
- * `metodosNaFolha`), com o previsto no sistema marcado, e, ao lado, a hora do início do ensaio. Fica com o título do passo (sozinha no alto de uma
- * página, a hora pareceria a da chegada). Classe I: em cima, numa linha, a caixa do ajuste interno de rotina (CAL)
- * feito antes dos ensaios, com a dica de onde ele é digitado, e a hora dele ao lado.
+ * O método de carregamento numa linha fixa, impressa (sem opções de marcar: o sistema o põe pela classe, POP 7.7, como
+ * o da excentricidade): o nome, como na tela, e de onde ele vem (`origemDoMetodoNaFolha`). Fica com o título do passo.
+ * Classe I: em cima, numa linha, a caixa do ajuste interno de rotina (CAL) feito antes dos ensaios, com a dica de onde
+ * ele é digitado, e a hora dele ao lado (o POP, 7.6, pede o registro com a hora).
  */
-function opcoesMetodo(ctx: Contexto): NoObjeto {
+function linhaMetodo(ctx: Contexto): NoObjeto {
   const ajusteInterno: Celula[][] =
     ctx.b?.classe === 'I'
       ? [
@@ -1964,32 +1986,25 @@ function opcoesMetodo(ctx: Contexto): NoObjeto {
           ],
         ]
       : []
-  return grade(
-    [
-      ...ajusteInterno,
-      [
-        marcar(
-          'Como as cargas foram aplicadas',
-          metodosNaFolha(ctx).map((m) => ({ rotulo: METODOS_CARREGAMENTO[m].label, prevista: m === ctx.plano?.metodo })),
-          { tamanho: 7.2, espaco: 8 },
-        ),
-        escrever('Início do ensaio', { formato: '____:____' }),
-      ],
-    ],
-    ['*', 92],
-    [0, 0, 0, 3],
-  )
+  const metodo = metodoDaFolha(ctx)
+  const linha = previstoEmLinha(ROTULO_METODO_FOLHA, [
+    { text: METODOS_CARREGAMENTO[metodo].label, bold: true },
+    { text: `  ${origemDoMetodoNaFolha(metodo, ctx.b)}`, fontSize: FONTE_DICA, color: T.suave },
+  ])
+  // Impressa, compacta (só se lê)
+  return ajusteInterno.length
+    ? grade([...ajusteInterno, [{ ...linha, span: 2 }]], ['*', 92], [0, 0, 0, 3])
+    : grade([[linha]], ['*'], [0, 0, 0, 3])
 }
 
 /**
- * Colunas ↑ e ↓ que o método previsto usa (como na tela: ↓ só em "crescente e decrescente"; só ↓ no
- * decrescente). A folha imprime sempre as duas, porque o método pode mudar no local: a que o método
- * previsto não usa sai mais estreita.
+ * Colunas ↑ e ↓ que o método usa (como na tela: ↓ só em "crescente e decrescente"; só ↓ no decrescente, de um ensaio
+ * de antes). O método é fixo (`metodoDaFolha`): a coluna que ele não usa não sai.
  */
-function colunasIndicacao(metodo: MetodoCarregamento | null) {
+function colunasIndicacao(metodo: MetodoCarregamento) {
   return {
     sobe: metodo !== 'DECRESCENTE',
-    desce: metodo === null || metodo === 'CRESCENTE_DECRESCENTE' || metodo === 'DECRESCENTE',
+    desce: metodo === 'CRESCENTE_DECRESCENTE' || metodo === 'DECRESCENTE',
   }
 }
 
@@ -2058,11 +2073,10 @@ function tabelaPontos(ctx: Contexto, reserva: number): TabelaPontos {
   const comSub = comSubstituicao(ctx)
   const sub = plano?.substituicao
   const subPrevista = !!sub && (sub.ativa || sub.sugerida)
-  // A coluna que o método previsto não usa sai mais estreita (o método pode mudar no local); as leituras, largas
-  // para a escrita à mão. Com as substituições (mais uma coluna), um pouco mais estreitas
-  const { sobe, desce } = colunasIndicacao(plano ? plano.metodo : null)
+  // Só as colunas que o método usa (ele é fixo: `metodoDaFolha`); as leituras, largas para a escrita à mão. Com as
+  // substituições (mais uma coluna), um pouco mais estreitas
+  const { sobe, desce } = colunasIndicacao(metodoDaFolha(ctx))
   const larga = comSub ? 92 : 100
-  const estreita = comSub ? 64 : 70
   const colunas: Coluna[] = [
     { titulo: 'Nº', largura: 13, alinhamento: 'center' },
     { titulo: 'Carga', unidade: u, largura: comSub ? 46 : 50, alinhamento: 'right' },
@@ -2078,9 +2092,11 @@ function tabelaPontos(ctx: Contexto, reserva: number): TabelaPontos {
       : []),
     { titulo: comSub ? 'Pesos padrão por cima' : 'Pesos padrão', largura: '*' },
     // Em branco, a unidade só na coluna da carga: o cabeçalho das leituras numa linha
-    { titulo: 'Indicação ↑', unidade: ctx.u || undefined, largura: sobe ? larga : estreita },
-    { titulo: 'Indicação ↓', unidade: ctx.u || undefined, largura: desce ? larga : estreita },
+    ...(sobe ? [{ titulo: 'Indicação ↑', unidade: ctx.u || undefined, largura: larga }] : []),
+    ...(desce ? [{ titulo: 'Indicação ↓', unidade: ctx.u || undefined, largura: larga }] : []),
   ]
+  const leituras = (sobe ? 1 : 0) + (desce ? 1 : 0)
+  const paraLer = () => Array.from({ length: leituras }, () => livre())
   // Largura útil da coluna dos pesos (a que fica com o resto): a página menos as outras colunas, os respiros e os fios
   const fixas = colunas.reduce((soma, c) => soma + (typeof c.largura === 'number' ? c.largura : 0), 0)
   const fios = 2 * 0.8 + 0.5 * Math.max(0, colunas.length - 1)
@@ -2094,7 +2110,7 @@ function tabelaPontos(ctx: Contexto, reserva: number): TabelaPontos {
     const carga: No = { text: cargaTexto(p.carga, p.d), bold: true }
     const cel: CelulaTabela[] = [nro(String(i + 1)), pre(carga, 'right')]
     if (comSub) cel.push(subPrevista ? pre(p.nivelSubstituicao > 0 ? `${p.nivelSubstituicao}` : '—', 'center') : livre())
-    cel.push(pre(pesos), livre(), livre())
+    cel.push(pre(pesos), ...paraLer())
     linhas.push(cel)
   }
   const inicio = linhas.length
@@ -2106,7 +2122,7 @@ function tabelaPontos(ctx: Contexto, reserva: number): TabelaPontos {
     cel.push(zeroEmBranco ? pre({ text: '0', bold: true }, 'right') : livre())
     if (comSub) cel.push(livre())
     cel.push(zeroEmBranco ? pre({ text: 'sem carga (zero)', color: T.suave, fontSize: 7.6 }) : livre())
-    cel.push(livre(), livre())
+    cel.push(...paraLer())
     linhas.push(cel)
   }
   // No fim, o rótulo à esquerda (nas colunas da carga e dos pesos) e a escrita à direita, nas leituras
@@ -2119,7 +2135,7 @@ function tabelaPontos(ctx: Contexto, reserva: number): TabelaPontos {
       ],
       antesDasLeituras,
     ),
-    { ...livre(), span: 2 },
+    { ...livre(), span: leituras },
   ])
   return { colunas, linhas }
 }
@@ -2231,9 +2247,7 @@ function notaEtapas(margem: number[] = [0, 0, 0, 4], titulo = false, depois = fa
             },
           ]
         : []),
-      `${titulo ? 'em' : 'Em'} cada etapa, anote a indicação com os pesos padrão na plataforma; troque-os pela carga de substituição (caminhão, lastro) até a mesma indicação e anote de novo. `,
-      { text: 'Só crescente', bold: true },
-      ': para descer, seria preciso tirar o material.',
+      `${titulo ? 'em' : 'Em'} cada etapa, anote a indicação com os pesos padrão na plataforma; troque-os pela carga de substituição (caminhão, lastro) até a mesma indicação e anote de novo.`,
     ],
     margem,
   )
@@ -2242,21 +2256,16 @@ function notaEtapas(margem: number[] = [0, 0, 0, 4], titulo = false, depois = fa
 function passoIndicacao(ctx: Contexto, n: number): No[] {
   const { plano } = ctx
   const comSub = comSubstituicao(ctx)
-  // Com as substituições na folha (rodoviária): para descer, seria preciso tirar o material
-  const soCrescente: No[] = comSub ? [' Com cargas de substituição: ', { text: 'só crescente', bold: true }, '.'] : []
-  // O método previsto vai marcado (PREVISTO) nas opções logo abaixo
+  // Como aplicar, pelo método fixo (o nome dele vai na linha logo abaixo, `linhaMetodo`)
+  const como: NoObjeto = { text: INSTRUCAO_METODO[metodoDaFolha(ctx)], bold: true }
   const texto: No = plano
-    ? [
-        'Zere vazia e aplique as cargas na ordem da tabela (',
-        { text: INSTRUCAO_METODO[plano.metodo], bold: true },
-        '); anote a indicação estável.',
-        ...soCrescente,
-      ]
+    ? ['Zere vazia e aplique as cargas na ordem da tabela (', como, '); anote a indicação estável.']
     : [
         'Cargas: ',
         { text: '0, Min (se marcada), 25, 50, 75 e 100 % de Max', bold: true },
-        ' e em 500e e 2000e (classe III). Zere, aplique e anote a indicação.',
-        ...soCrescente,
+        ' e em 500e e 2000e (classe III). Zere vazia, ',
+        como,
+        '; anote a indicação.',
       ]
   const t = tabelaPontos(ctx, reservaDosPontos(ctx))
   const total = t.linhas.length
@@ -2283,7 +2292,7 @@ function passoIndicacao(ctx: Contexto, n: number): No[] {
         ]
       : []),
   ]
-  // O que se preenche (ou se lê) antes das tabelas fica com o título: o método e a hora do início e, com as
+  // O que se lê antes das tabelas fica com o título: o método (e, na classe I, o ajuste interno) e, com as
   // etapas juntas, como fazê-las. Quando as tabelas passam para a página seguinte, um aviso no pé desta diz onde
   // elas estão (medido na montagem)
   const avisoPontos: No[] = ctx.extras.avisoPontos
@@ -2302,7 +2311,7 @@ function passoIndicacao(ctx: Contexto, n: number): No[] {
   // A nota da tabela (pesos diferentes: em Anotações, no fim da folha) vem antes dela, com o método: a tabela, que pode
   // passar para a página seguinte, fica só com as linhas
   const cabeca: No[] = [
-    opcoesMetodo(ctx),
+    linhaMetodo(ctx),
     ...notaPontos(ctx),
     ...(junto || aParte ? [notaEtapas([0, 0, 0, 4], true, aParte)] : []),
     ...avisoPontos,
@@ -2483,10 +2492,14 @@ const LEITURAS_EM_BRANCO = 10
 const linhasRepetibilidade = (leituras: number) =>
   Math.max(LEITURAS_POR_FAIXA, Math.ceil(leituras / LEITURAS_POR_FAIXA) * LEITURAS_POR_FAIXA)
 
+/** Rótulo da linha das leituras da repetibilidade, à esquerda das caixas ("Indicação (kg)"), como na excentricidade. */
+const ROTULO_LEITURAS_REPETIBILIDADE = 'Indicação'
+
 /**
- * As leituras numa faixa horizontal: as colunas são as leituras, e as linhas, a indicação com a carga e o zero
- * depois de retirá-la (≈ 6 mm cada), com o nº de cada leitura numa linha miúda em cima delas (as caixas de escrever
- * ficam livres). Com mais de 6 leituras, mais uma faixa (7ª a 12ª), com os nº dela em cima.
+ * As leituras numa faixa horizontal: as colunas são as leituras, e a linha, a indicação com a carga (≈ 6 mm), com o nº
+ * de cada leitura numa linha miúda em cima (as caixas de escrever ficam livres). Sem o zero depois de retirar a carga:
+ * zera-se antes de cada vez, e o zero que não volta vai em Anotações (a instrução do passo diz). Com mais de 6 leituras,
+ * mais uma faixa (7ª a 12ª), com os nº dela em cima.
  */
 function faixasRepetibilidade(ctx: Contexto, total: number, previstas: number, carga: CargaPlanejada | null): NoObjeto {
   const uc = unidadeColuna(ctx)
