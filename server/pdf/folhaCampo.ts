@@ -3492,12 +3492,7 @@ const PREENCHIMENTO_MAXIMO = 0.88
  * as linhas mínimas (e 1,5 pt de folga para a medida).
  */
 const LIMITE_COM_ANOTACOES =
-  A4.altura -
-  MARGEM_BASE -
-  RESPIRO_PE_ANOTACOES -
-  ALTURA_FIXA_ANOTACOES -
-  MIN_LINHAS_ANOTACOES * ENTRE_LINHAS_ANOTACOES -
-  1.5
+  A4.altura - MARGEM_BASE - RESPIRO_PE_ANOTACOES - ALTURA_FIXA_ANOTACOES - MIN_LINHAS_ANOTACOES * ENTRE_LINHAS_ANOTACOES - 1.5
 /** O máximo que uma linha de leitura ganha (pt): com o padding e o fio, ≈ 8,8 mm (25 pt). */
 const FOLGA_MAXIMA = 6
 /** Folga de prova (pt): montada com ela, a folha diz quantas linhas de leitura cada página tem. */
@@ -3528,11 +3523,7 @@ function paginasDasLeituras(m: Medida): Partial<Record<number, number>> {
 
 /** Página de cada passo e das linhas de leitura, para conferir que uma montagem não mudou a arrumação da outra. */
 const arrumacao = (m: Medida) =>
-  JSON.stringify([
-    Object.values(N).map((n) => m.marcas.get(`fim:passo-${n}`)?.pagina),
-    paginasDasLeituras(m),
-    m.paginas,
-  ])
+  JSON.stringify([Object.values(N).map((n) => m.marcas.get(`fim:passo-${n}`)?.pagina), paginasDasLeituras(m), m.paginas])
 
 /**
  * Folha de 2 páginas com espaço sobrando: as linhas de leitura ganham altura (`Extras.folgaLeitura`), sem conteúdo
@@ -3550,9 +3541,7 @@ async function comLinhasFolgadas(d: DadosFolhaCampo, m: Medida): Promise<Medida>
   const antes = arrumacao(m)
   const base = finsDasPaginas(m)
   const preenchimento = MARGEM_TOPO + PREENCHIMENTO_MAXIMO * ALTURA_UTIL
-  const limites = base.map((_, i) =>
-    i === m.paginas - 1 ? Math.min(preenchimento, LIMITE_COM_ANOTACOES) : preenchimento,
-  )
+  const limites = base.map((_, i) => (i === m.paginas - 1 ? Math.min(preenchimento, LIMITE_COM_ANOTACOES) : preenchimento))
   const passosDas = (ps: number[]) => PASSOS_COM_LEITURA.filter((n) => ps.includes(paginas[n]!))
   const comEspaco = base.flatMap((x, i) => (limites[i] - x >= 1 && passosDas([i + 1]).length ? [i + 1] : []))
   // Quanto cada página cresce por ponto de folga, medido com a folga de prova nos passos das páginas dadas
@@ -3572,9 +3561,7 @@ async function comLinhasFolgadas(d: DadosFolhaCampo, m: Medida): Promise<Medida>
     if (comEspaco.length === 1) return m
     else for (const p of comEspaco) await medirCrescimento([p])
   const folgaDaPagina = base.map((x, i) =>
-    crescimento[i] > 0
-      ? Math.max(0, Math.min(FOLGA_MAXIMA, Math.floor(((limites[i] - x) / crescimento[i]) * 4) / 4))
-      : 0,
+    crescimento[i] > 0 ? Math.max(0, Math.min(FOLGA_MAXIMA, Math.floor(((limites[i] - x) / crescimento[i]) * 4) / 4)) : 0,
   )
   for (const fracao of [1, 0.5]) {
     const folgaLeitura = Object.fromEntries(
@@ -3603,8 +3590,7 @@ async function comAnotacoes(d: DadosFolhaCampo, m: Medida): Promise<Medida> {
     const r = await medir(d, { ...m.extras, anotacoes: { altura } })
     const bloco = r.marcas.get(`fim:${ID_ANOTACOES}`)
     const cortes = !r.extras.cortes.length || cortesConferem(r, r.extras.cortes)
-    if (bloco?.pagina === fim.pagina && r.paginas === m.paginas && !r.faltando.length && continuacoesExatas(r) && cortes)
-      return r
+    if (bloco?.pagina === fim.pagina && r.paginas === m.paginas && !r.faltando.length && continuacoesExatas(r) && cortes) return r
   }
   return m
 }

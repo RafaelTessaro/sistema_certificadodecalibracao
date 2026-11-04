@@ -61,11 +61,12 @@ import type {
  * Rev. 01: folha enxuta (dado impresso diferente vai no verso, sem caixas de correção). Rev. 02: compacta, em 2
  * páginas (frente e verso) nas balanças cadastradas: chegada e balança num bloco, ambiente do início e do fim numa
  * tabela, repetibilidade na horizontal, escritório ao lado das observações. Rev. 03: só a medição: sem QR, sem
- * rubrica no rodapé e só a OS na faixa do alto; sem a verificação antes de calibrar (o passo 4 é só o ambiente),
- * sem ajuste e reparo, sem "como encontrado" e "depois do ajuste", sem a faixa do EMA e sem o encerramento (a
- * conformidade e a próxima calibração ficam só no sistema; o diferente, as observações e as anomalias vão no bloco
- * Anotações, no pé da frente, embaixo do passo 4, ou numa folha anexa: o verso são os ensaios); o ΔT pesos − ar e o
- * ajuste interno de rotina (CAL) antes dos ensaios só na balança classe I (a folha em branco é das classes II a
+ * rubrica no rodapé e sem faixa no alto (a OS fica no passo 2); sem a verificação antes de calibrar (o passo 4 é só o
+ * ambiente), sem ajuste e reparo, sem "como encontrado" e "depois do ajuste", sem a faixa do EMA e sem o encerramento
+ * (a conformidade e a próxima calibração ficam só no sistema; o diferente, as observações e as anomalias vão no bloco
+ * Anotações, no fim da folha, depois das assinaturas, ou numa folha anexa); os rótulos das tabelas de escrever numa
+ * linha de cabeçalho própria (nenhum dentro das caixas); o método de carregamento sem o "Decrescente"; o ΔT pesos − ar
+ * e o ajuste interno de rotina (CAL) antes dos ensaios só na balança classe I (a folha em branco é das classes II a
  * IIII); a excentricidade com o método numa frase fixa; o lembrete do ambiente do fim antes das assinaturas; 8 passos.
  * O procedimento de referência é o POP configurado no sistema (sai no rodapé, ver `referenciaDoFormulario`);
  * `referencia` é o guia técnico (metadados do PDF).

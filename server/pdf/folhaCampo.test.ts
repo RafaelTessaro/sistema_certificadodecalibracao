@@ -2,7 +2,7 @@
 // geração é determinística e, com o pdftotext (poppler-utils), o conteúdo de cada página: cabeçalho de
 // identificação (com o nº do certificado reservado, quando há), rótulos iguais aos da tela do assistente,
 // plano de cargas, o POP no rodapé, o tamanho da folha (rev. 03, só a medição: 8 passos, dado impresso diferente,
-// observações e anomalias no bloco Anotações, no pé da frente) e o que NÃO pode aparecer (aprovado/reprovado, validade — fora a nota da etiqueta —,
+// observações e anomalias no bloco Anotações, no fim da folha) e o que NÃO pode aparecer (aprovado/reprovado, validade — fora a nota da etiqueta —,
 // caixas de "confere", e o que saiu na rev. 03: QR, rubrica, verificação antes de calibrar, ajuste e reparo,
 // "como encontrado" e "depois do ajuste", faixa do EMA, encerramento).
 
@@ -281,21 +281,28 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     }
   })
 
-  it('faixa do alto de toda página: só a OS (sem o cliente e a balança); sem OS, a linha para escrever', () => {
-    type Doc = { header: (p: number, t: number) => unknown }
+  it('sem faixa no alto das páginas: a OS uma vez só, no passo 2 (impressa do rascunho ou o campo para escrever)', () => {
+    type Doc = { header: (p: number, t: number) => unknown; content: unknown }
     const cab = (d: DadosFolhaCampo, p: number) => JSON.stringify((definicaoFolhaCampo(d) as Doc).header(p, 2))
-    for (const p of [1, 2]) {
-      const t = cab(folhaPlataforma(), p)
-      expect(t).toContain('"text":"OS"')
-      expect(t).toContain('"OS-2026-0512"')
-      expect(t).not.toMatch(/"(CLIENTE|BALANÇA)"/)
-      expect(t).not.toContain('Frigorífico Vale do Corumbataí')
-      expect(t).not.toContain('nº de série')
+    for (const dados of [folhaPlataforma, folhaEmBranco, folhaClasseI])
+      for (const p of [1, 2]) {
+        const t = cab(dados(), p)
+        expect(t, dados.name).not.toMatch(/"OS"|OS-2026|"border":\[false,false,false,true\]/)
+        expect(t, dados.name).not.toMatch(/"(CLIENTE|BALANÇA)"/)
+        expect(t, dados.name).not.toContain('Frigorífico Vale do Corumbataí')
+        expect(t, dados.name).not.toContain('nº de série')
+      }
+    // A OS impressa (cinza) na linha da chegada, ao lado do técnico; sem OS no rascunho, o campo para escrever
+    const comOs = jsonDe(folhaPlataforma())
+    expect(comOs.split('OS-2026-0512')).toHaveLength(2)
+    expect(comOs).toMatch(/"text":"Nº da OS".{0,200}"text":"OS-2026-0512","bold":true/)
+    const semOs = folhaPlataforma()
+    semOs.calibracao = { ...semOs.calibracao!, ordemServico: '' }
+    for (const d of [semOs, folhaEmBranco()]) {
+      const json = jsonDe(d)
+      expect(json.split('"Nº da OS"')).toHaveLength(2)
+      expect(json).not.toContain('OS-2026')
     }
-    const branco = cab(folhaEmBranco(), 1)
-    expect(branco).toContain('"text":"OS"')
-    expect(branco).toContain('"border":[false,false,false,true]')
-    expect(branco).not.toMatch(/"(CLIENTE|BALANÇA)"/)
   })
 
   it('caixas de marcar sempre brancas: o previsto vai no rótulo (negrito e PREVISTO), nunca na caixa', () => {
@@ -333,20 +340,20 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     expect(m.faltando).toEqual([])
   })
 
-  it('sem "confere" nem caixas de correção ou de observações: o diferente e as observações vão em Anotações, no pé da frente (uma linha no alto da página 1)', () => {
-    // A folha é impressa frente e verso, e os ensaios ocupam o verso: as Anotações ficam na frente, embaixo do passo 4
-    expect(ONDE_ANOTAR).toBe('em Anotações (frente)')
+  it('sem "confere" nem caixas de correção ou de observações: o diferente e as observações vão em Anotações, no fim da folha (uma linha no alto da página 1)', () => {
+    // As Anotações são a última coisa da folha, depois das assinaturas
+    expect(ONDE_ANOTAR).toBe('em Anotações (no fim da folha)')
     expect(TITULO_ANOTACOES).toBe('Anotações')
     expect(DICA_ANOTACOES).toBe('dado impresso diferente, observações e anomalias, com o nº do passo, rubrica e data')
     expect(AVISO_ANOTACOES).toBe(
-      'Dado impresso diferente ou observação? Anote em Anotações (frente), com o nº do passo, rubrica e data; sem espaço, numa folha anexa.',
+      'Dado impresso diferente ou observação? Anote em Anotações (no fim da folha), com o nº do passo, rubrica e data; sem espaço, numa folha anexa.',
     )
     for (const e of EXEMPLOS) {
       const json = jsonDe(e.dados())
       expect(json, e.nome).not.toMatch(/"confere"|escreva o certo/)
       expect(json, e.nome).toContain(AVISO_ANOTACOES)
-      // Nenhuma instrução manda anotar "no verso" (o verso são os ensaios) nem num "espaço livre" (agora é o bloco)
-      expect(json, e.nome).not.toMatch(/no verso|espaço livre/)
+      // Nenhuma instrução manda anotar na frente ou no verso (as Anotações estão no fim) nem num "espaço livre"
+      expect(json, e.nome).not.toMatch(/no verso|na frente|\(frente\)|espaço livre/)
     }
   })
 
@@ -563,7 +570,10 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
 })
 
 describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000 }, () => {
-  /** Em toda página: título, nº da folha, "Página i de N", código do formulário e a OS (sem rubrica no rodapé). */
+  /**
+   * Em toda página: título, nº da folha, "Página i de N" e código do formulário (sem rubrica no rodapé e sem faixa da OS
+   * no alto); a OS uma vez só, no passo 2, na página 1 (impressa, ou o campo para escrever).
+   */
   function conferirPaginas(texto: string, numero: string, os: string) {
     const paginas = paginasDe(texto)
     expect(paginas.length).toBe(2)
@@ -580,10 +590,14 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
       // Folha solta ou digitalizada sozinha: quem imprimiu e quando; a data e a assinatura só no passo 8
       expect(t).toMatch(/Impressa em \d\d\/\d\d\/\d{4}, às \d\d:\d\d por /)
       expect(t).not.toMatch(/RUBRICA|DATA ___/)
-      // A faixa do alto: só a OS
-      expect(t).toMatch(new RegExp(`Página ${i + 1} de ${paginas.length} OS ${os}`))
+      // Sem a faixa do alto (a OS só no passo 2)
+      expect(t).not.toMatch(new RegExp(`Página ${i + 1} de ${paginas.length} OS\\b`))
       expect(t).not.toMatch(/\bCLIENTE [A-Z][a-z]|BALANÇA nº de série/)
     })
+    const t = corrido(texto)
+    expect(t.match(/Nº da OS/g)).toHaveLength(1)
+    expect(corrido(paginas[0])).toContain(os ? `Nº da OS ${os}` : 'Nº da OS')
+    if (os) expect(t.split(os)).toHaveLength(2)
     return paginas
   }
 
@@ -620,11 +634,14 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     // (em duas linhas, que o pdftotext intercala com as colunas vizinhas)
     expect(t).toContain('quem acompanhou;')
     expect(t).toContain('ciente das condições, não dos resultados')
-    // Dado impresso diferente e observações: em Anotações, no pé da frente (sem caixas de "confere", de correção nem de
-    // observações)
-    expect(corrido(paginasDe(texto)[0])).toContain(AVISO_ANOTACOES)
-    expect(corrido(paginasDe(texto)[0])).toContain(`${TITULO_ANOTACOES.toUpperCase()} — ${DICA_ANOTACOES}`)
-    expect(corrido(paginasDe(texto)[1])).not.toContain(TITULO_ANOTACOES.toUpperCase())
+    // Dado impresso diferente e observações: em Anotações, no fim da folha, depois das assinaturas (sem caixas de
+    // "confere", de correção nem de observações)
+    const paginas = paginasDe(texto).map(corrido)
+    const barra = `${TITULO_ANOTACOES.toUpperCase()} — ${DICA_ANOTACOES}`
+    expect(paginas[0]).toContain(AVISO_ANOTACOES)
+    expect(paginas.at(-1)).toContain(barra)
+    expect(paginas.at(-1)!.indexOf('Técnico que executou — nome e assinatura')).toBeLessThan(paginas.at(-1)!.indexOf(barra))
+    for (const p of paginas.slice(0, -1)) expect(p).not.toContain(TITULO_ANOTACOES.toUpperCase())
     expect(t).not.toMatch(/\bconfere\b/)
     // Nada de aprovação ou "validade" numa folha de campo (fora a nota da etiqueta: a validade fica em branco);
     // o nº do certificado só como reservado, nunca como o título de um certificado
@@ -633,15 +650,16 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t.replace(AVISO_ETIQUETA, '')).not.toMatch(/validade/i)
   }
 
-  it('plataforma 300 kg: cadastro para conferir, pontos e pesos do último certificado; os ensaios no verso', async () => {
+  it('plataforma 300 kg: cadastro para conferir, pontos e pesos do último certificado; o passo 5 inteiro na frente', async () => {
     const e = EXEMPLOS[0]
     const texto = textoDoPdf(await pdfDe(e))
     const paginas = conferirPaginas(texto, 'FC-2026-00042', 'OS-2026-0512')
-    // Duas páginas (frente e verso): na frente, os passos 1 a 4; no verso, os ensaios e as assinaturas
+    // Duas páginas (frente e verso): na frente, os passos 1 a 5 (o erro de indicação cabe inteiro nela, com a tabela);
+    // no verso, a repetibilidade, a excentricidade, as assinaturas e as Anotações
     expect(paginas).toHaveLength(2)
-    expect(corrido(paginas[0])).toContain('4 AMBIENTE')
-    expect(corrido(paginas[0])).not.toContain('ERRO DE INDICAÇÃO')
-    expect(corrido(paginas[1])).toMatch(/OS OS-2026-0512 5 ERRO DE INDICAÇÃO NO SISTEMA/)
+    expect(corrido(paginas[0])).toMatch(/4 AMBIENTE .*5 ERRO DE INDICAÇÃO NO SISTEMA .*RETORNO AO ZERO/)
+    expect(corrido(paginas[1])).toMatch(/Página 2 de 2 6 REPETIBILIDADE NO SISTEMA/)
+    expect(texto).not.toMatch(/\(CONTINUAÇÃO\)|na próxima página/)
     conferirComum(texto)
     const t = corrido(texto)
     expect(t).toContain('FRIGORÍFICO VALE DO CORUMBATAÍ LTDA')
@@ -655,19 +673,19 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     const assinaturas = ultima.slice(ultima.indexOf('ASSINATURAS'), ultima.indexOf(FORMULARIO_FOLHA_CAMPO.codigo))
     expect(assinaturas).toContain('Técnico que executou — nome e assinatura')
     expect(assinaturas).not.toContain('Carlos')
-    // Como o POP (10) pede: a correção e o dado a mais, com rubrica e data (ISO/IEC 17025, 7.5.2), em Anotações, no pé
-    // da frente (o verso são os ensaios)
+    // Como o POP (10) pede: a correção e o dado a mais, com rubrica e data (ISO/IEC 17025, 7.5.2), em Anotações, no fim
+    // da folha
     expect(t).toContain(
-      'Dado impresso diferente ou observação? Anote em Anotações (frente), com o nº do passo, rubrica e data; sem espaço, numa folha anexa.',
+      'Dado impresso diferente ou observação? Anote em Anotações (no fim da folha), com o nº do passo, rubrica e data; sem espaço, numa folha anexa.',
     )
     expect(t).toContain('Errou: um risco só sobre o valor errado (continua legível), o certo ao lado, rubrica e data.')
     expect(t).toContain('Diferente? Anote o certo em Anotações (passo 2 ou 3) e avise o cliente.')
     expect(t).toContain('Marque com X')
     expect(t).toMatch(/no cliente\s+PREVISTO/)
-    // Troca de pesos: em Anotações (frente), com o nº da linha e as peças usadas (a nota em cima da tabela de pontos
-    // diz)
+    // Troca de pesos: em Anotações (no fim da folha), com o nº da linha e as peças usadas (a nota em cima da tabela de
+    // pontos diz)
     expect(t).not.toContain('PESOS DIFERENTES DO PREVISTO')
-    expect(t).toContain('Pesos diferentes dos impressos: em Anotações (frente), com o nº da linha.')
+    expect(t).toContain('Pesos diferentes dos impressos: em Anotações (no fim da folha), com o nº da linha.')
     // Antes de assinar (no verso), o lembrete curto do ambiente do fim, que fica na frente (passo 4)
     expect(corrido(paginas[1])).toContain(LEMBRETE_AMBIENTE_FIM)
     expect(LEMBRETE_AMBIENTE_FIM).toBe('Antes de assinar: preencha a linha Fim do passo 4.')
@@ -692,6 +710,9 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).not.toContain('Portaria Inmetro 157/2022')
     expect(t).toMatch(/Nº Carga \(kg\) Pesos padrão Indicação ↑ \(kg\) Indicação ↓ \(kg\) 1 0,00 sem carga \(zero\)/)
     expect(t).toMatch(/Crescente e decrescente\s+PREVISTO/)
+    // Os métodos que o sistema oferece, sem o "Decrescente" (o rascunho não está com ele)
+    expect(t).toMatch(/Crescente e decrescente PREVISTO Crescente com descarga Crescente contínuo/)
+    expect(t).not.toMatch(/\bDecrescente\b/)
     // Repetibilidade com 150 kg (5 leituras previstas, mínimo 3) e excentricidade com 100 kg em 5 posições,
     // as cargas nas casas de d, na célula da carga, ao lado das leituras
     const rep = t.slice(t.indexOf('6 REPETIBILIDADE'), t.indexOf('7 EXCENTRICIDADE'))
@@ -737,7 +758,8 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     const p1 = corrido(paginas[0])
     const ambiente = p1.slice(p1.indexOf('4 AMBIENTE'))
     expect(ambiente).toMatch(/Temperatura ● \(°C\) Umidade ● \(%\) Pressão ● \(hPa\) ΔT pesos − ar ● \(°C\) Instrumento usado/)
-    expect(ambiente).toMatch(/Início 15 min após chegar .*antes do 1º ensaio · .*até 1 °C/)
+    // Quando medir o ΔT, o limite e o instrumento previsto no cabeçalho, embaixo do título: as caixas ficam livres
+    expect(ambiente).toMatch(/Instrumento usado antes do 1º ensaio · previsto: TH-01, BR-01 até 1 °C Início 15 min após chegar/)
     // Repetibilidade: 10 vezes, 12 colunas em duas faixas (as duas últimas opcionais)
     expect(t).toContain('uma peça só, no centro, 10')
     expect(t).toContain('10ª 11ª · opcional 12ª · opcional')
@@ -1001,10 +1023,11 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain('Dimensões do prato (sai no certificado)')
     expect(t).not.toMatch(/Nº de apoios: _/)
     expect(t).toContain('cadastre a balança antes')
-    // A unidade vai escrita com cada valor das faixas (como na plaqueta), sem caixas de marcar à parte; Min ao lado
+    // A unidade vai escrita com cada valor das faixas (como na plaqueta), sem caixas de marcar à parte; Min ao lado. Os
+    // nomes das colunas numa linha de cabeçalho, em cima das três faixas (a Faixa 1 fica inteira para escrever)
     expect(t).not.toContain('Unidade mg g kg t')
     expect(t).toMatch(
-      /Faixa 1 Capacidade \(Max\) com a Divisão de verificação \(e\) com a Divisão \(d\) com a unidade Carga mínima \(Min\) com a unidade unidade unidade Faixa 2 Faixa 3/,
+      /Capacidade \(Max\) Divisão de verificação \(e\) Divisão \(d\) Carga mínima \(Min\) com a unidade com a unidade com a unidade com a unidade Faixa 1 Faixa 2 Faixa 3/,
     )
     // Classes II a IIII: a classe I usa a folha da balança cadastrada (a linha ao lado das opções diz isso)
     expect(t).toMatch(
@@ -1040,7 +1063,7 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain(
       '7 EXCENTRICIDADE NO SISTEMA 5 · Excentricidade Zere vazia e desloque a carga pelas posições (carga: no mínimo 1/3 de Max até 500 kg, 1/5 de Max até 3 t e 1/10 de Max acima), na ordem do desenho; escreva a posição de cada coluna (mais de 4 apoios ou tanque: uma por apoio). Frente: indicador (se remoto, o de acesso).',
     )
-    expect(t).toMatch(/Posição escreva 1 2 3 .*Indicação \(unid\.\) .*Posição escreva 4 5 6 .*Indicação \(unid\.\)/)
+    expect(t).toMatch(/Posição escreva .*Indicação \(unid\.\) .*Posição escreva .*Indicação \(unid\.\)/)
     expect(t).not.toContain('Zero antes')
     expect(t).not.toContain('Frente esquerda')
     expect(t).toMatch(/retangular .*redondo/)
@@ -1150,7 +1173,7 @@ describe.runIf(temPdftotext)(
       expect(corrido(textoDoPdf(await gerarFolhaCampoPdf(futura)))).toContain('TH-01: calibração vencida em 21/10/2026.')
     })
 
-    it('identificação no alto da página só com a OS: nomes longos não passam da margem nem se repetem em toda página', async () => {
+    it('sem identificação no alto da página (a OS só no passo 2): nomes longos não passam da margem nem se repetem em toda página', async () => {
       const d = folhaPlataforma()
       d.cliente = { ...d.cliente!, nome: 'Cooperativa dos Produtores de Cana-de-Açúcar do Vale do Corumbataí' }
       d.balanca = { ...d.balanca!, numeroSerie: 'SN-2019-0004471-BR-XT', identificacao: 'Balança de expedição nº 3 — doca sul' }
@@ -1158,10 +1181,12 @@ describe.runIf(temPdftotext)(
       const paginas = paginasDe(textoDoPdf(pdf))
       for (const p of paginas) {
         const t = corrido(p)
-        expect(t).toMatch(/Página \d de \d OS OS-2026-0512 /)
+        expect(t).not.toMatch(/Página \d de \d OS /)
         expect(t).not.toContain('· TAG')
         expect(t).not.toContain('Cooperativa dos Produtores')
       }
+      expect(corrido(paginas[0])).toContain('Nº da OS OS-2026-0512')
+      for (const p of paginas.slice(1)) expect(p).not.toContain('OS-2026-0512')
       // O nº de série e a TAG só na identificação da balança (passo 3, na frente); no verso, nada deles
       expect(paginas[0]).toContain('SN-2019-')
       expect(paginas[0]).toContain('doca sul')
