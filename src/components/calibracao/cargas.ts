@@ -1,6 +1,6 @@
 // Montagem automática das cargas com os pesos escolhidos (pontos do erro de indicação e da substituição).
 
-import { cargaDaEtapa, montarCarga, montarPonto } from '#shared/calibracao.ts'
+import { cargaDaEtapa, montarCarga, montarPonto, pecasSemPadrao } from '#shared/calibracao.ts'
 import type { Balanca, CalibracaoInput, EnsaioIndicacao, Padrao, PecaCarga, PontoIndicacao } from '#shared/tipos.ts'
 
 const iguais = (a: PecaCarga[], b: PecaCarga[]) =>
@@ -10,7 +10,7 @@ const iguais = (a: PecaCarga[], b: PecaCarga[]) =>
 /**
  * Pesos por cima de um ponto, como o cálculo soma a carga dele: com substituição, nível × carga da etapa
  * por baixo e os pesos só no resto (a folha de campo usa a mesma conta). `diferenca` ≠ 0: as etapas e os
- * pesos não dão a carga do ponto (> 0 passa, < 0 falta).
+ * pesos não dão a carga do ponto (> 0 passa, < 0 falta). Os pesos pela classe da balança (POP 6.1).
  */
 export function montagemDoPonto(
   p: Pick<PontoIndicacao, 'carga' | 'nivelSubstituicao'>,
@@ -19,18 +19,22 @@ export function montagemDoPonto(
   padroes: Padrao[],
 ) {
   const etapa = cargaDaEtapa(ensaio, padroes, balanca.unidade)
-  return montarPonto(p.carga, ensaio.substituicao.ativa ? p.nivelSubstituicao : 0, etapa, balanca.unidade, padroes)
+  return montarPonto(p.carga, ensaio.substituicao.ativa ? p.nivelSubstituicao : 0, etapa, balanca.unidade, padroes, balanca)
 }
 
-/** Refaz as peças dos pontos automáticos (as escolhidas à mão ficam). */
+/**
+ * Refaz as peças dos pontos automáticos. As escolhidas à mão ficam, menos as de um jogo que saiu dos padrões escolhidos
+ * (ou com uma peça tirada do cadastro do jogo): esse ponto volta a ser automático, com os pesos que sobraram.
+ */
 export function recomporEnsaio(e: EnsaioIndicacao, balanca: Balanca, padroes: Padrao[]): EnsaioIndicacao {
   let mudou = false
   const pontos = e.pontos.map((p) => {
-    if (p.pecasManuais) return p
+    const foraDosPadroes = p.pecasManuais && !!pecasSemPadrao(p.pecas, padroes)
+    if (p.pecasManuais && !foraDosPadroes) return p
     const { pecas } = montagemDoPonto(p, e, balanca, padroes)
-    if (iguais(pecas, p.pecas)) return p
+    if (!foraDosPadroes && iguais(pecas, p.pecas)) return p
     mudou = true
-    return { ...p, pecas }
+    return { ...p, pecas, pecasManuais: false }
   })
   return mudou ? { ...e, pontos } : e
 }
@@ -43,5 +47,6 @@ export function recomporCargas(f: CalibracaoInput, balanca: Balanca, padroes: Pa
   return { ...f, indicacao, comoEncontrado }
 }
 
-/** Peças para uma carga, com o que faltou (quando os pesos escolhidos não somam a carga). */
-export const pecasPara = (carga: number, balanca: Balanca, padroes: Padrao[]) => montarCarga(carga, balanca.unidade, padroes)
+/** Peças para uma carga (pela classe dos pesos), com o que faltou (quando os pesos escolhidos não somam a carga). */
+export const pecasPara = (carga: number, balanca: Balanca, padroes: Padrao[]) =>
+  montarCarga(carga, balanca.unidade, padroes, balanca)

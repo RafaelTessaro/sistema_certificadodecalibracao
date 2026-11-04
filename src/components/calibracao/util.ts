@@ -1,6 +1,7 @@
-import { deltaTMaximo, ehRodoviaria } from '#shared/dominio.ts'
-import { casasDecimais } from '#shared/metrologia/index.ts'
-import type { Balanca, ClasseExatidao } from '#shared/tipos.ts'
+import { deltaTMaximo, ehRodoviaria, metodoExcentricidadePadrao, temLeiturasExcentricidade } from '#shared/dominio.ts'
+import { casasDecimais, leituraImplausivel } from '#shared/metrologia/index.ts'
+import type { ResultadoPonto } from '#shared/metrologia/tipos.ts'
+import type { Balanca, CalibracaoInput, ClasseExatidao, PontoIndicacao } from '#shared/tipos.ts'
 
 /** Maior capacidade da balança. */
 export const maxDe = (b: Pick<Balanca, 'faixas'>) => Math.max(0, ...b.faixas.map((f) => f.max))
@@ -40,4 +41,45 @@ export function proximosEnsaiosRepetibilidade<T extends { carga: number }>(
   if (!atuais.length) return sugeridos
   const falta = sugeridos.find((s) => !atuais.some((a) => Math.abs(a.carga - s.carga) <= 1e-9 * Math.max(1, s.carga)))
   return [falta ?? sugeridos.at(-1)!]
+}
+
+/**
+ * O cliente faz o ajuste interno (CAL) antes dos ensaios, se a balança tiver (POP 7.11): sempre na classe I e quando
+ * d é menor que 1/100 000 de Max.
+ */
+export function pedeAjusteInterno(b: Pick<Balanca, 'classe' | 'faixas'>): boolean {
+  return b.classe === 'I' || menorD(b) < maxDe(b) / 100_000
+}
+
+/**
+ * A classe da balança mudou no meio da calibração ("Corrigir cadastro"): o ensaio de excentricidade ainda sem leituras
+ * passa para o método da classe nova (POP 7.10: 1; na classe I, 3). Com leituras, fica como foi feito.
+ */
+export function comMetodoDaClasse<T extends Pick<CalibracaoInput, 'excentricidade'>>(f: T, classe: ClasseExatidao): T {
+  const metodo = metodoExcentricidadePadrao(classe)
+  if (f.excentricidade.metodo === metodo || temLeiturasExcentricidade(f.excentricidade)) return f
+  return { ...f, excentricidade: { ...f.excentricidade, metodo } }
+}
+
+/**
+ * A etapa Repetibilidade está feita: algum ensaio com 2 leituras ou mais e nenhum ensaio com carga e sem leitura (o
+ * copiado do último certificado, ou o da carga sugerida, que ficou para trás: registre as leituras ou remova-o).
+ */
+export const repetibilidadeCompleta = (ensaios: ReadonlyArray<{ carga: number; n: number }>) =>
+  ensaios.some((r) => r.n >= 2) && ensaios.every((r) => r.n > 0 || !(r.carga > 0))
+
+/**
+ * Cor do campo da leitura: fora do esperado para a carga (provável erro de digitação: vírgula esquecida, outra unidade;
+ * a mesma regra da pendência do cálculo, `leituraImplausivel`), erro; fora do EMA, atenção.
+ */
+export function tomLeitura(
+  p: Pick<PontoIndicacao, 'carga' | 'crescente' | 'decrescente'>,
+  r: ResultadoPonto | undefined,
+  lado: 'crescente' | 'decrescente',
+  balanca: Pick<Balanca, 'tipoFaixas' | 'faixas'>,
+): 'normal' | 'erro' | 'atencao' {
+  // A carga digitada (a do cálculo é a soma dos pesos; quando não fecham, a diferença já é pendência)
+  if (leituraImplausivel(p[lado], p.carga, balanca)) return 'erro'
+  if (r?.[lado] && r.conformidade === 'NAO_CONFORME') return 'atencao'
+  return 'normal'
 }

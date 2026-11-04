@@ -28,7 +28,13 @@ import type { Contexto } from '../contexto.ts'
 import type { criarModuloEmail } from '../email.ts'
 import { conferirAnexos, destinatarios, LIMITES_EMAIL } from '../email.ts'
 import { ErroApi } from '../erros.ts'
-import { naUnidadeAtual as naUnidadeAtualDe, rascunhoInicial, semLeituras } from '../rascunhos.ts'
+import {
+  comPecasDosPadroes,
+  naUnidadeAtual as naUnidadeAtualDe,
+  planoConformeAoPop,
+  rascunhoInicial,
+  semLeituras,
+} from '../rascunhos.ts'
 import { registrarNumeros } from './numeros.ts'
 
 type ComId = FastifyRequest<{ Params: { id: string } }>
@@ -159,7 +165,10 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     return reply.code(201).send({ calibracao: k })
   })
 
-  /** Calibrar de novo a mesma balança: mesmos pontos e padrões, sem as leituras. */
+  /**
+   * Calibrar de novo a mesma balança: mesmos pontos e padrões, sem as leituras, com o método da excentricidade da
+   * classe e sem o modo de serviço (`planoConformeAoPop`); sem ajuste, reparo nem "como encontrado".
+   */
   app.post('/api/calibracoes/:id/recalibrar', async (req: ComId, reply) => {
     const u = autor(req)
     const anterior = obter(req.params.id)
@@ -169,19 +178,25 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     const balanca = repo.obterBalanca(anterior.balancaId)
     const clienteId = balanca?.clienteId || anterior.clienteId
     const cliente = repo.obterCliente(clienteId)
-    const ativos = new Set(repo.listarPadroes().map((p) => p.id))
+    const ativos = repo.listarPadroes()
+    const padroesIds = anterior.padroesIds.filter((id) => ativos.some((p) => p.id === id))
     const entrada = naUnidadeAtual(anterior)
+    // Só com as peças dos padrões que continuam (o jogo desativado depois do certificado sai dos pontos)
+    const plano = comPecasDosPadroes(
+      planoConformeAoPop({ ...semLeituras(entrada), opcoes: entrada.opcoes }, balanca?.classe),
+      ativos.filter((p) => padroesIds.includes(p.id)),
+    )
     const k = repo.criarCalibracao(
       {
         ...calibracaoVazia(entrada.opcoes),
-        ...semLeituras(entrada),
+        ...plano,
         clienteId,
         balancaId: anterior.balancaId,
         local: anterior.local,
         localEndereco: cliente ? enderecoCliente(cliente) : anterior.localEndereco,
-        padroesIds: anterior.padroesIds.filter((id) => ativos.has(id)),
+        padroesIds,
         // Na classe I, com as opções da classe (a balança pode ter mudado de classe depois do certificado)
-        opcoes: opcoesDaClasse(entrada.opcoes, balanca?.classe),
+        opcoes: opcoesDaClasse(plano.opcoes, balanca?.classe),
         conformidade: entrada.conformidade,
         dataCalibracao: hoje,
         proximaCalibracao: config.mesesProximaPadrao ? somarMeses(hoje, config.mesesProximaPadrao) : '',

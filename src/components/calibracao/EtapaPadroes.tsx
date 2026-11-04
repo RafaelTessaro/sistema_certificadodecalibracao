@@ -47,6 +47,9 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
   const densidadeAr = calc?.resultado.ar ?? null
   const pesos = padroes.filter((p) => p.tipo === 'PESOS')
   const instrumentos = padroes.filter((p) => p.tipo !== 'PESOS')
+  // POP 6.2: o termo-higrômetro em todas as calibrações (a temperatura e a umidade saem no certificado com ele)
+  const semTermoHigrometro =
+    (amb.temperaturaInicial !== null || amb.temperaturaFinal !== null) && !selecionados.some((p) => p.tipo === 'TERMOHIGROMETRO')
 
   return (
     <div className="flex flex-col gap-6">
@@ -192,6 +195,14 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
               Densidade do ar:{' '}
               <span className="tnum font-medium text-ink-2">{formatarNumero(densidadeAr.densidade, 3)} kg/m³</span> (cg-18,
               A1.1-1)
+            </p>
+          )}
+          {semTermoHigrometro && (
+            <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              {instrumentos.some((p) => p.tipo === 'TERMOHIGROMETRO')
+                ? 'Escolha acima o termo-higrômetro usado (POP 6.2): ele sai no certificado com a temperatura e a umidade.'
+                : 'Cadastre em Padrões o termo-higrômetro usado e escolha-o aqui (POP 6.2).'}
             </p>
           )}
           {deltaT !== null && deltaT > limiteDeltaT && (

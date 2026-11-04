@@ -9,11 +9,23 @@ import {
   montarPonto,
   opcoesComoEncontrado,
   pecaParaCalculo,
+  pesosAtendemNaCarga,
+  pontosSugeridos,
+  regrasDoPopComoAviso,
   termicaDoAmbiente,
 } from './calibracao.ts'
-import { AMBIENTE_VAZIO, BALANCA_VAZIA, calibracaoVazia, OPCOES_CALCULO_PADRAO, opcoesDaClasse, PADRAO_VAZIO } from './dominio.ts'
+import {
+  AMBIENTE_VAZIO,
+  BALANCA_VAZIA,
+  calibracaoVazia,
+  metodosCarregamentoParaEscolher,
+  OPCOES_CALCULO_PADRAO,
+  opcoesDaClasse,
+  PADRAO_VAZIO,
+  padroesSemHistorico,
+} from './dominio.ts'
 import { calcular } from './metrologia/index.ts'
-import type { Balanca, CalibracaoInput, EnsaioIndicacao, Padrao } from './tipos.ts'
+import type { Balanca, CalibracaoInput, EnsaioIndicacao, Padrao, PontoIndicacao } from './tipos.ts'
 
 const pesos: Padrao = {
   ...PADRAO_VAZIO,
@@ -153,7 +165,8 @@ describe('calcularCalibracao', () => {
     })
     const calcular = (metodo: EnsaioIndicacao['metodo']) =>
       calcularCalibracao({ ...calibracaoVazia(), indicacao: indicacao(metodo) }, prix, [jogo]).resultado
-    const foraDaCarga = (r: ReturnType<typeof calcular>) => r.avisos.some((a) => /mais de 10 % fora da carga/.test(a.mensagem))
+    // Calibração nova: a leitura fora do esperado é pendência (POP 7.8)
+    const foraDaCarga = (r: ReturnType<typeof calcular>) => r.pendencias.some((p) => /fora do esperado/.test(p))
 
     const continuo = calcular('CONTINUO')
     expect(foraDaCarga(continuo)).toBe(false)
@@ -167,8 +180,11 @@ describe('calcularCalibracao', () => {
     expect(
       entradaDoCalculo({ ...calibracaoVazia(), indicacao: indicacao('DECRESCENTE') }, prix, [jogo]).indicacao.pontos[0].crescente,
     ).toBeNull()
-    // Com as duas colunas, o 0 da descida volta a valer (e é avisado)
+    // Com as duas colunas, o 0 da descida volta a valer (e é pendência)
     expect(foraDaCarga(calcular('CRESCENTE_DECRESCENTE'))).toBe(true)
+    expect(calcular('CRESCENTE_DECRESCENTE').pendencias).toContain(
+      'Erro de indicação, ponto de 1,00 kg: leitura 0,00 fora do esperado; confira a digitação.',
+    )
   })
 
   it('"como encontrado": a incerteza usa o retorno ao zero desse ensaio (com substituição), não o do ensaio final', () => {
@@ -214,6 +230,8 @@ const jogoE2: Padrao = {
   pesos: [
     { id: 'p200', marca: '200', nominal: 200, correcao: 0.1, incerteza: 0.1, k: 2 },
     { id: 'p100', marca: '100', nominal: 100, correcao: -0.1, incerteza: 0.05, k: 2 },
+    { id: 'p50', marca: '50', nominal: 50, correcao: 0.02, incerteza: 0.03, k: 2 },
+    { id: 'p20', marca: '20', nominal: 20, correcao: 0.01, incerteza: 0.025, k: 2 },
   ],
 }
 const analitica: Balanca = {
@@ -243,6 +261,22 @@ function calibracaoClasseI(extra: Partial<CalibracaoInput> = {}): CalibracaoInpu
         decrescente: null,
         nivelSubstituicao: 0,
       },
+      // Os 5 pontos do POP (7.7), contando o zero
+      ...(
+        [
+          ['p20', 20, 20.0001],
+          ['p50', 50, 50.0001],
+          ['p100', 100, 100.0001],
+        ] as const
+      ).map(([peso, carga, leitura]) => ({
+        id: peso,
+        carga,
+        pecas: [{ padraoId: 'e2', pesoId: peso, quantidade: 1 }],
+        pecasManuais: false,
+        crescente: leitura,
+        decrescente: null,
+        nivelSubstituicao: 0,
+      })),
     ],
   }
   return {
@@ -405,5 +439,339 @@ describe('classe I: ligação com o motor', () => {
     expect(comAmbiente.resultado.pontos).toEqual(antes.resultado.pontos)
     expect(comAmbiente.comoEncontrado!.pontos).toEqual(antes.comoEncontrado!.pontos)
     expect(comAmbiente.resultado.pendencias).toEqual(antes.resultado.pendencias)
+  })
+})
+
+// ---- Peças dos pontos: jogo fora dos padrões, peça tirada do cadastro, pesos que não fecham a carga --------
+
+/** Jogo de pesos (nominais em g), pelo certificado com U de 16 mg/kg. */
+const jogoDe = (id: string, identificacao: string, nominais: number[], extra: Partial<Padrao> = {}): Padrao => ({
+  ...PADRAO_VAZIO,
+  id,
+  versao: 1,
+  identificacao,
+  descricao: '',
+  criadoEm: '',
+  atualizadoEm: '',
+  pesos: nominais.map((g, i) => ({
+    id: `${id}-${i}`,
+    marca: String(i + 1),
+    nominal: g,
+    correcao: 0,
+    incerteza: g * 0.016,
+    k: 2,
+  })),
+  ...extra,
+})
+const balanca30: Balanca = {
+  ...BALANCA_VAZIA,
+  id: 'b30',
+  versao: 1,
+  tipo: 'BALCAO',
+  classe: 'III',
+  faixas: [{ max: 30, e: 0.01, d: 0.01 }],
+  criadoEm: '',
+  atualizadoEm: '',
+}
+const ref = (padraoId: string, i: number) => ({ padraoId, pesoId: `${padraoId}-${i}`, quantidade: 1 })
+const pontoDe = (
+  id: string,
+  carga: number,
+  pecas: PontoIndicacao['pecas'],
+  leitura: number | null,
+  extra: Partial<PontoIndicacao> = {},
+): PontoIndicacao => ({
+  id,
+  carga,
+  pecas,
+  pecasManuais: true,
+  crescente: leitura,
+  decrescente: leitura,
+  nivelSubstituicao: 0,
+  ...extra,
+})
+/** As pendências sem as dos mínimos do POP (pontos, subida e repetibilidade), testados à parte. */
+const semMinimosDoPop = (pendencias: string[]) => pendencias.filter((p) => !/^(Erro de indicação: |Repetibilidade)/.test(p))
+
+function calibracaoDe(pontos: PontoIndicacao[], indicacao: Partial<EnsaioIndicacao> = {}): CalibracaoInput {
+  return {
+    ...calibracaoVazia(),
+    repetibilidade: [{ id: 'r', carga: 15, leituras: [15, 15, 15.01, 15, 15] }],
+    excentricidade: { aplicavel: false, motivo: 'Não se aplica', carga: 0, metodo: 1, posicoes: [] },
+    indicacao: {
+      metodo: 'CRESCENTE_DECRESCENTE',
+      retornoZero: 0,
+      substituicao: { ativa: false, pecas: [], etapas: [] },
+      pontos,
+      ...indicacao,
+    },
+  }
+}
+
+describe('peças de um jogo fora dos padrões escolhidos (ou tiradas do cadastro do jogo)', () => {
+  const A = jogoDe('a', 'JP-A', [10_000, 10_000, 10_000])
+  const B = jogoDe('b', 'JP-B', [5000])
+  const pontos = [
+    pontoDe('z', 0, [], 0),
+    pontoDe('p10', 10, [ref('a', 0)], 10),
+    pontoDe('p20', 20, [ref('a', 0), ref('a', 1)], 20.01),
+    pontoDe('p25', 25, [ref('a', 0), ref('a', 1), ref('b', 0)], 25.01),
+    pontoDe('p30', 30, [ref('a', 0), ref('a', 1), ref('a', 2)], 30.01),
+  ]
+  const foraDosPadroes = (carga: string) =>
+    `Erro de indicação, ponto de ${carga} kg: pesos de um jogo que não está entre os padrões escolhidos; escolha os pesos do ponto de novo.`
+
+  it('com os dois jogos escolhidos, nada muda', () => {
+    const { resultado } = calcularCalibracao(calibracaoDe(pontos), balanca30, [A, B])
+    expect(resultado.pendencias).toEqual([])
+    expect(resultado.pontos.map((p) => p.texto.carga)).toEqual(['0,00', '10,00', '20,00', '25,00', '30,00'])
+  })
+
+  it('jogo desmarcado: a carga fica a digitada, o ponto não é calculado e cada um vira pendência', () => {
+    const k = calibracaoDe(pontos)
+    expect(entradaDoCalculo(k, balanca30, [B]).indicacao.pontos.map((p) => p.carga)).toEqual([0, 10, 20, 25, 30])
+    const { resultado } = calcularCalibracao(k, balanca30, [B])
+    expect(resultado.pendencias).toEqual(['10,00', '20,00', '25,00', '30,00'].map(foraDosPadroes))
+    // Sem erro de 10 kg (a leitura toda) no certificado nem na tela: o ponto fica sem cálculo
+    expect(resultado.pontos.slice(1).every((p) => p.crescente === null && p.decrescente === null)).toBe(true)
+    expect(resultado.pontos.map((p) => p.texto.carga)).toEqual(['0,00', '10,00', '20,00', '25,00', '30,00'])
+    // Nem "carga sem padrões" (o motivo já é a pendência) nem "faixa parcial" (a carga é a digitada)
+    const avisos = resultado.avisos.map((a) => a.mensagem).join('\n')
+    expect(avisos).not.toMatch(/Carga sem padrões|faixa parcial|fora da carga/)
+  })
+
+  it('peça tirada do cadastro do jogo: pendência com o nome do jogo', () => {
+    const semUma = { ...A, pesos: A.pesos.filter((w) => w.id !== 'a-2') }
+    const { resultado } = calcularCalibracao(calibracaoDe(pontos), balanca30, [semUma, B])
+    expect(resultado.pendencias).toEqual([
+      'Erro de indicação, ponto de 30,00 kg: peça tirada do cadastro do jogo JP-A; escolha os pesos do ponto de novo.',
+    ])
+    expect(resultado.pontos[4].crescente).toBeNull()
+    expect(resultado.pontos[3].crescente?.erro).toBeCloseTo(0.01, 9)
+  })
+
+  it('ponto sem leitura não acusa; o "como encontrado" acusa igual', () => {
+    const semLeitura = pontos.map((p) => (p.id === 'p10' ? p : { ...p, crescente: null, decrescente: null }))
+    const k = calibracaoDe(semLeitura)
+    expect(semMinimosDoPop(calcularCalibracao(k, balanca30, [B]).resultado.pendencias)).toEqual([foraDosPadroes('10,00')])
+    const ajustada = { ...calibracaoDe(pontos), ajuste: { realizado: 'INTERNO' as const, descricao: '' } }
+    ajustada.comoEncontrado = structuredClone(ajustada.indicacao)
+    expect(calcularCalibracao(ajustada, balanca30, [B]).comoEncontrado?.pendencias).toContain(foraDosPadroes('30,00'))
+  })
+
+  it('substituição com os pesos da etapa fora dos padrões: os pontos com etapas viram pendência', () => {
+    const k = calibracaoDe([pontoDe('z', 0, [], 0), pontoDe('s', 15, [ref('b', 0)], 15.01, { nivelSubstituicao: 1 })], {
+      metodo: 'CONTINUO',
+      substituicao: { ativa: true, pecas: [ref('a', 0)], etapas: [{ leituraPadroes: 10, leituraSubstituicao: 10.02 }] },
+    })
+    expect(semMinimosDoPop(calcularCalibracao(k, balanca30, [A, B]).resultado.pendencias)).toEqual([])
+    expect(semMinimosDoPop(calcularCalibracao(k, balanca30, [B]).resultado.pendencias)).toEqual([
+      'Erro de indicação, ponto de 15,00 kg: etapas de substituição com pesos de um jogo que não está entre os padrões escolhidos; escolha os pesos da etapa de novo.',
+    ])
+  })
+})
+
+describe('pesos que não fecham a carga do ponto', () => {
+  const J = jogoDe('j', 'JP-J', [20_000, 5000, 2000, 1000])
+  const automatico = (carga: number, leitura: number | null = carga) =>
+    pontoDe(`p${carga}`, carga, carga ? montarCarga(carga, 'kg', [J]).pecas : [], leitura, { pecasManuais: false })
+
+  it('peças automáticas: o que falta vira pendência (o ponto continua calculado pelo valor dos pesos)', () => {
+    const k = calibracaoDe([0, 5, 8, 20, 30].map((c) => automatico(c)))
+    const { resultado } = calcularCalibracao(k, balanca30, [J])
+    expect(resultado.pendencias).toEqual([
+      'Erro de indicação, ponto de 30,00 kg: os pesos somam 28,00 kg; faltam 2,00 kg. Escolha nos padrões o jogo que completa a carga ou acerte os pesos do ponto.',
+    ])
+    expect(resultado.pontos[4].referencia).toBe(28)
+    // Sem leitura no ponto, nada a acusar
+    const semLeitura = calibracaoDe([0, 5, 8, 20].map((c) => automatico(c)).concat(automatico(30, null)))
+    expect(semMinimosDoPop(calcularCalibracao(semLeitura, balanca30, [J]).resultado.pendencias)).toEqual([])
+  })
+
+  it('peças à mão que passam da carga, e a coluna escondida pelo método não acusa', () => {
+    const k = calibracaoDe([automatico(0), pontoDe('p5', 5, [ref('j', 0)], 5), automatico(20)])
+    expect(semMinimosDoPop(calcularCalibracao(k, balanca30, [J]).resultado.pendencias)).toEqual([
+      'Erro de indicação, ponto de 5,00 kg: os pesos somam 20,00 kg; passam 15,00 kg. Acerte os pesos do ponto.',
+    ])
+    // Só a subida digitada, mas o método é "só descendo": a leitura não conta, nem a pendência
+    const soSubida = calibracaoDe([automatico(0), pontoDe('p5', 5, [ref('j', 0)], 5, { decrescente: null })], {
+      metodo: 'DECRESCENTE',
+    })
+    expect(calcularCalibracao(soSubida, balanca30, [J]).resultado.pendencias.join('\n')).not.toMatch(/somam/)
+  })
+
+  it('com substituição: as etapas e os pesos por cima somam mais ou menos que a carga', () => {
+    const substituicao = { ativa: true, pecas: [ref('j', 0)], etapas: [{ leituraPadroes: 20, leituraSubstituicao: 20.02 }] }
+    const k = calibracaoDe(
+      [
+        automatico(0),
+        pontoDe('a', 30, [ref('j', 1), ref('j', 2), ref('j', 3)], 30.02, { nivelSubstituicao: 1 }),
+        pontoDe('b', 25, [ref('j', 1)], 25.02, { nivelSubstituicao: 1 }),
+      ],
+      { metodo: 'CONTINUO', substituicao },
+    )
+    expect(semMinimosDoPop(calcularCalibracao(k, balanca30, [J]).resultado.pendencias)).toEqual([
+      'Erro de indicação, ponto de 30,00 kg: as etapas de substituição e os pesos somam 28,00 kg; faltam 2,00 kg. Escolha nos padrões o jogo que completa a carga ou acerte os pesos do ponto.',
+    ])
+    const passa = calibracaoDe([automatico(0), pontoDe('c', 15, [], 15.02, { nivelSubstituicao: 1 })], {
+      metodo: 'CONTINUO',
+      substituicao,
+    })
+    expect(semMinimosDoPop(calcularCalibracao(passa, balanca30, [J]).resultado.pendencias)).toEqual([
+      'Erro de indicação, ponto de 15,00 kg: as etapas de substituição somam 20,00 kg; passam 5,00 kg. Acerte os pesos ou o nível de substituição do ponto.',
+    ])
+  })
+})
+
+// ---- Montagem das cargas pela classe dos pesos (POP 6.1; R76 3.7.1) ------------------------------------
+
+describe('montagem das cargas pela classe dos pesos', () => {
+  const finos = [1000, 500, 200, 200, 100, 50, 20, 20, 10, 5, 2, 2, 1, 0.5, 0.2, 0.2, 0.1, 0.05, 0.02, 0.02, 0.01]
+  const m1 = jogoDe('m1', 'JP-M1', [20_000, 20_000, 10_000, 5000, 2000, 2000, 1000, 500, 200, 200, 100, 50, 20, 20, 10], {
+    classe: 'M1',
+  })
+  const f1 = jogoDe('f1', 'JP-F1', finos, { classe: 'F1' })
+  const e2 = jogoDe('e2', 'JP-E2', finos, { classe: 'E2' })
+  // Marte AD3300: classe II, 3200 g, e = 0,1 g
+  const marte: Balanca = {
+    ...BALANCA_VAZIA,
+    id: 'marte',
+    versao: 1,
+    tipo: 'BALCAO',
+    unidade: 'g',
+    classe: 'II',
+    faixas: [{ max: 3200, e: 0.1, d: 0.01 }],
+    criadoEm: '',
+    atualizadoEm: '',
+  }
+  const jogos = (m: { pecas: PontoIndicacao['pecas'] }) => [...new Set(m.pecas.map((x) => x.padraoId))].sort()
+
+  it('classe II com E2, F1 e M1: 2000 g sai de 1 kg E2 + 1 kg F1, não da peça M1 de 2 kg (qualquer ordem dos jogos)', () => {
+    for (const padroes of [
+      [m1, f1, e2],
+      [e2, f1, m1],
+    ]) {
+      const m = montarCarga(2000, 'g', padroes, marte)
+      expect(m.falta).toBe(0)
+      expect(jogos(m)).toEqual(['e2', 'f1'])
+      expect(pesosAtendemNaCarga(2000, m.pecas, marte, padroes)).toBe(true)
+      for (const carga of [2400, 3200]) {
+        const x = montarCarga(carga, 'g', padroes, marte)
+        expect(x.falta, `${carga} g`).toBe(0)
+        expect(jogos(x), `${carga} g`).not.toContain('m1')
+        expect(pesosAtendemNaCarga(carga, x.pecas, marte, padroes), `${carga} g`).toBe(true)
+      }
+    }
+    // Em empate de nominal, a peça do jogo de classe melhor
+    expect(montarCarga(1000, 'g', [m1, f1, e2], marte).pecas).toEqual([ref('e2', 0)])
+  })
+
+  it('sem outra saída, a peça de classe pior entra (a carga fecha)', () => {
+    const m = montarCarga(3200, 'g', [m1, e2], marte)
+    expect(m.falta).toBe(0)
+    expect(jogos(m)).toContain('m1')
+  })
+
+  it('classe III de 50 kg: continua com o M1', () => {
+    const plataforma: Balanca = { ...balanca30, faixas: [{ max: 50, e: 0.01, d: 0.01 }] }
+    const m = montarCarga(50, 'kg', [e2, f1, m1], plataforma)
+    expect(m.falta).toBe(0)
+    expect(jogos(m)).toEqual(['m1'])
+  })
+
+  it('pontos sugeridos e cálculo: sem o aviso "Classe dos pesos insuficiente"', () => {
+    const padroes = [m1, f1, e2]
+    const cargas = pontosSugeridos(marte, padroes)
+    expect(cargas.at(-1)).toBe(3200)
+    const k = calibracaoDe(
+      cargas.map((c) => pontoDe(`p${c}`, c, c ? montarCarga(c, 'g', padroes, marte).pecas : [], c, { pecasManuais: false })),
+    )
+    k.repetibilidade = [{ id: 'r', carga: 1600, leituras: [1600, 1600.01, 1600, 1600, 1600.01] }]
+    const { resultado } = calcularCalibracao(k, marte, padroes)
+    expect(resultado.pendencias).toEqual([])
+    expect(resultado.avisos.map((a) => a.mensagem).join('\n')).not.toMatch(/Classe dos pesos insuficiente/)
+  })
+
+  it('rascunho sem histórico: fora da classe I, sem o jogo de classe pior que a mínima quando os outros fecham Max', () => {
+    const th: Padrao = { ...jogoDe('th', 'TH-01', []), tipo: 'TERMOHIGROMETRO', classe: '' }
+    const td: Padrao = { ...jogoDe('td', 'TD-01', []), tipo: 'OUTRO', classe: '' }
+    const todos = [m1, f1, e2, th, td]
+    const ids = (b: Parameters<typeof padroesSemHistorico>[1]) => padroesSemHistorico(todos, b).map((p) => p.identificacao)
+    // Classe II 3200 g / 0,1 g: a mínima é F2; E2 e F1 fecham os 3200 g
+    expect(ids(marte)).toEqual(['JP-F1', 'JP-E2', 'TH-01'])
+    // Só a classe (sem a balança): como antes
+    expect(ids('II')).toEqual(['JP-M1', 'JP-F1', 'JP-E2', 'TH-01'])
+    // Classe III de 30 kg / 10 g (mínima M2): o M1 serve
+    expect(ids(balanca30)).toEqual(['JP-M1', 'JP-F1', 'JP-E2', 'TH-01'])
+    // Classe II de 6 kg: sem o M1, E2 e F1 não fecham Max; o M1 fica
+    expect(ids({ ...marte, faixas: [{ max: 6000, e: 0.1, d: 0.01 }] })).toEqual(['JP-M1', 'JP-F1', 'JP-E2', 'TH-01'])
+  })
+})
+
+describe('jogo sem a classe R111 (EMA desconhecido)', () => {
+  const k = () =>
+    calibracaoDe(
+      [0, 10, 20, 30]
+        .map((c) => pontoDe(`p${c}`, c, c ? montarCarga(c, 'kg', [semClasse]).pecas : [], c))
+        .concat(
+          // O 5º ponto do POP (7.7), sem pesos (só o aviso "carga sem padrões")
+          pontoDe('p25', 25, [], 25),
+        ),
+    )
+  const semClasse = jogoDe('x', 'JP-X', [20_000, 10_000], { classe: '' })
+  const pendencia =
+    'Pesos sem EMA conhecido (OIML R 111): o jogo JP-X está sem a classe. O EMA entra na incerteza dos pesos (deriva, empuxo ou valor nominal); confira a classe no cadastro do padrão.'
+
+  it('pelo certificado, pelo nominal ou pelo certificado sem U: pendência; com a classe, nada', () => {
+    expect(calcularCalibracao(k(), balanca30, [semClasse]).resultado.pendencias).toEqual([pendencia])
+    expect(calcularCalibracao(k(), balanca30, [{ ...semClasse, uso: 'NOMINAL' }]).resultado.pendencias).toEqual([pendencia])
+    const semU = { ...semClasse, pesos: semClasse.pesos.map((w) => ({ ...w, incerteza: 0 })) }
+    expect(calcularCalibracao(k(), balanca30, [semU]).resultado.pendencias).toEqual([pendencia])
+    expect(calcularCalibracao(k(), balanca30, [{ ...semClasse, classe: 'M1' }]).resultado.pendencias).toEqual([])
+  })
+})
+
+// ---- Mínimos do POP: pendência na calibração nova; aviso na revisão, no registro de antes e no "como encontrado" ----
+
+describe('mínimos do POP na calibração nova (e o registro de antes)', () => {
+  const J = jogoDe('j', 'JP-J', [20_000, 10_000, 5000, 2000, 1000])
+  const quatro = () =>
+    calibracaoDe(
+      [0, 5, 20, 30].map((c) => pontoDe(`p${c}`, c, c ? montarCarga(c, 'kg', [J]).pecas : [], c, { pecasManuais: false })),
+    )
+  const POUCOS = 'Erro de indicação: 4 pontos lidos; o POP pede no mínimo 5, contando o zero (7.7).'
+
+  it('calibração nova: menos de 5 pontos é pendência; revisão, registro de antes e "como encontrado": aviso', () => {
+    expect(calcularCalibracao(quatro(), balanca30, [J]).resultado.pendencias).toEqual([POUCOS])
+    expect(entradaDoCalculo(quatro(), balanca30, [J]).regrasDoPop).toBe(true)
+    // Revisão de um certificado emitido (a mesma visita, que pode ser de antes destas regras)
+    const revisao = { ...quatro(), substituiId: 'k-original' }
+    expect(calcularCalibracao(revisao, balanca30, [J]).resultado.pendencias).toEqual([])
+    expect(
+      calcularCalibracao(revisao, balanca30, [J])
+        .resultado.avisos.map((a) => a.mensagem)
+        .join('\n'),
+    ).toMatch(/Erro de indicação com 4 ponto\(s\); o mínimo é 5/)
+    // Registro de antes do cálculo da classe I
+    expect(calcularCalibracao({ ...quatro(), calculoLegado: true }, balanca30, [J]).resultado.pendencias).toEqual([])
+    // "Como encontrado" (registro anterior): nunca pendência pelos mínimos
+    const ajustada = {
+      ...calibracaoDe(
+        quatro().indicacao.pontos.concat(pontoDe('p10', 10, montarCarga(10, 'kg', [J]).pecas, 10, { pecasManuais: false })),
+      ),
+      ajuste: { realizado: 'INTERNO' as const, descricao: '' },
+    }
+    ajustada.comoEncontrado = quatro().indicacao
+    const r = calcularCalibracao(ajustada, balanca30, [J])
+    expect(r.resultado.pendencias).toEqual([])
+    expect(r.comoEncontrado?.pendencias).toEqual([])
+    expect(regrasDoPopComoAviso(quatro())).toBe(false)
+    expect(regrasDoPopComoAviso(quatro(), 'COMO_ENCONTRADO')).toBe(true)
+  })
+
+  it('o método "Decrescente" só aparece na escolha quando o ensaio já o tem (registro de antes)', () => {
+    expect(metodosCarregamentoParaEscolher('CRESCENTE_DECRESCENTE')).toEqual(['CRESCENTE_DECRESCENTE', 'DESCONTINUO', 'CONTINUO'])
+    expect(metodosCarregamentoParaEscolher()).not.toContain('DECRESCENTE')
+    expect(metodosCarregamentoParaEscolher('DECRESCENTE')).toContain('DECRESCENTE')
   })
 })

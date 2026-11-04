@@ -167,9 +167,10 @@ describe('pendências da classe I (bloqueiam a emissão)', () => {
     const f2 = calcular(entrada([[200, [peca(200, 0.003, { classe: 'F2', incerteza: 0.001 })], 200.0003]], {}, { termica: null }))
     expect(f2.pendencias).toEqual([])
     expect(orc(f2).uConveccao).toBe(0)
-    // Peça de classe desconhecida entra (conservador)
+    // Peça de classe desconhecida entra (conservador); com U, para a pendência ser só a da convecção
     expect(
-      calcular(entrada([[200, [peca(200, 0.0003, { classe: '' })], 200.0003]], {}, { termica: null })).pendencias,
+      calcular(entrada([[200, [peca(200, 0.0003, { classe: '', incerteza: 0.0001 })], 200.0003]], {}, { termica: null }))
+        .pendencias,
     ).toHaveLength(1)
   })
 
@@ -212,11 +213,12 @@ describe('pendências da classe I (bloqueiam a emissão)', () => {
     })
 
     it('vários jogos numa frase; peça sem jogo pelo valor nominal; ponto sem leitura não conta', () => {
+      // Pelo certificado com U (sem U, a peça também seria pendência: u(δm_c) = 0)
       const r = calcular(
         entrada([
-          [100, [peca(100, 0.00016, { jogo: 'JP-B', densidade: 0 })], 100.0002],
+          [100, [peca(100, 0.00016, { jogo: 'JP-B', densidade: 0, incerteza: 0.00005 })], 100.0002],
           [200, [{ ...P200, jogo: 'JP-A', densidade: 0 }], 200.0003],
-          [220, [peca(220, 0.0003, { densidade: 0 })], 220.0003],
+          [220, [peca(220, 0.0003, { densidade: 0, incerteza: 0.0001 })], 220.0003],
         ]),
       )
       expect(r.pendencias).toEqual([
@@ -243,14 +245,14 @@ describe('pendências da classe I (bloqueiam a emissão)', () => {
           ...base.indicacao,
           substituicao: {
             ativa: true,
-            pecas: [peca(100, 0.00016, { jogo: 'JP-S', densidade: 7.95 })],
+            pecas: [peca(100, 0.00016, { jogo: 'JP-S', densidade: 7.95, incerteza: 0.00005 })],
             etapas: [{ leituraPadroes: 100.0001, leituraSubstituicao: 100.0002 }],
           },
           pontos: [
             {
               ...base.indicacao.pontos[0],
               carga: 200,
-              pecas: [peca(100, 0.00016, { jogo: 'JP-E2' })],
+              pecas: [peca(100, 0.00016, { jogo: 'JP-E2', incerteza: 0.00005 })],
               nivelSubstituicao: 1,
               crescente: lido ? 200.0003 : null,
             },

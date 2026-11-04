@@ -227,9 +227,20 @@ export async function cenarioCalibracao(t: AppComLogin) {
         metodo: 'CRESCENTE_DECRESCENTE',
         retornoZero: 0,
         substituicao: { ativa: false, pecas: [], etapas: [] },
+        // Os 5 pontos do POP (7.7), contando o zero
         pontos: [
+          { id: 'z', carga: 0, pecas: [], pecasManuais: false, crescente: 0, decrescente: 0, nivelSubstituicao: 0 },
           { id: 'a', carga: 5, pecas: [peca('p5')], pecasManuais: true, crescente: 5, decrescente: 5, nivelSubstituicao: 0 },
           { id: 'b', carga: 10, pecas: [peca('p10a')], pecasManuais: true, crescente: 10, decrescente: 10, nivelSubstituicao: 0 },
+          {
+            id: 'd',
+            carga: 20,
+            pecas: [peca('p10a'), peca('p10b')],
+            pecasManuais: true,
+            crescente: 20,
+            decrescente: 20.01,
+            nivelSubstituicao: 0,
+          },
           {
             id: 'c',
             carga: 30,

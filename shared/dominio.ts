@@ -5,6 +5,7 @@ import { normalizarArquivoAnexo } from './arquivos.ts'
 import { cnpjValido, cpfValido, mascaraCep, mascaraCnpj, mascaraCpf, normalizarCnpj, somenteDigitos } from './documentos.ts'
 import { novoId } from './id.ts'
 import { DENSIDADE_PESOS_KG_M3, densidadePesosPlausivel } from './metrologia/ar.ts'
+import { classeMinimaPesos, montarCarga as montarCargaNominal } from './metrologia/pesos.ts'
 import type {
   AjusteRealizado,
   ArquivoAnexo,
@@ -164,6 +165,12 @@ export function textoBusca(...partes: Array<string | undefined | null>): string 
 export const UFS = 'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' ')
 export const TIPOS_CLIENTE: TipoCliente[] = ['PJ', 'PF']
 
+/**
+ * Tipos que a empresa não calibra (POP 2.1: rodoviárias e ferroviárias). Saem da lista do cadastro novo; a balança
+ * já cadastrada com um deles continua com ele (e com as cargas de substituição, as posições etc.).
+ */
+export const TIPOS_FORA_DO_POP: readonly TipoBalanca[] = ['RODOVIARIA', 'FERROVIARIA']
+
 export const TIPOS_BALANCA: Record<TipoBalanca, string> = {
   COMPUTADORA: 'Computadora (preço)',
   ETIQUETADORA: 'Com impressora de etiquetas',
@@ -193,6 +200,22 @@ export const RECEPTORES: Record<Receptor, string> = {
   TANQUE: 'Tanque, silo ou tremonha',
 }
 export const LISTA_RECEPTORES = Object.keys(RECEPTORES) as Receptor[]
+
+/**
+ * Tipos de balança para escolher no cadastro: sem os que o POP não cobre (`TIPOS_FORA_DO_POP`), a não ser o que a
+ * balança já tem (`atual`, o tipo gravado; ausente no cadastro novo).
+ */
+export function tiposBalancaParaEscolher(atual?: TipoBalanca | null): TipoBalanca[] {
+  return LISTA_TIPOS_BALANCA.filter((t) => !TIPOS_FORA_DO_POP.includes(t) || t === atual)
+}
+
+/**
+ * Receptores para escolher no cadastro: o da carga rolante (rodoviária/ferroviária) só na balança que já o tem
+ * (`atual`, o receptor gravado).
+ */
+export function receptoresParaEscolher(atual?: Receptor | null): Receptor[] {
+  return LISTA_RECEPTORES.filter((r) => r !== 'RODOVIARIA' || r === atual)
+}
 
 /** Receptor mais comum para cada tipo de balança (sugestão ao cadastrar). */
 export const RECEPTOR_DO_TIPO: Record<TipoBalanca, Receptor> = {
@@ -264,6 +287,16 @@ export const AJUSTES: Record<AjusteRealizado, string> = {
   EXTERNO: 'Ajuste externo, com peso',
 }
 
+/**
+ * O que a etapa "Balança e ajuste" oferece numa calibração (POP 7.8): a calibração não inclui ajuste; só o ajuste
+ * interno (função CAL) que o cliente faz antes dos ensaios, a rotina das analíticas e da classe I (POP 7.6 e 7.11).
+ * O ajuste externo e as leituras "como encontrado" só existem nos registros de antes (`registroAnterior`).
+ */
+export const AJUSTES_DA_CALIBRACAO: ReadonlyArray<{ valor: Exclude<AjusteRealizado, 'EXTERNO'>; label: string }> = [
+  { valor: 'NAO', label: 'Não houve ajuste' },
+  { valor: 'INTERNO', label: 'Ajuste interno (CAL) antes dos ensaios' },
+]
+
 export const METODOS_CARREGAMENTO: Record<MetodoCarregamento, { label: string; descricao: string }> = {
   CRESCENTE_DECRESCENTE: {
     label: 'Crescente e decrescente',
@@ -272,6 +305,14 @@ export const METODOS_CARREGAMENTO: Record<MetodoCarregamento, { label: string; d
   DESCONTINUO: { label: 'Crescente com descarga', descricao: 'Descarrega entre um ponto e outro.' },
   CONTINUO: { label: 'Crescente contínuo', descricao: 'Sobe sem descarregar. Comum em rodoviárias.' },
   DECRESCENTE: { label: 'Decrescente', descricao: 'Parte de Max e vai descarregando (tremonhas, silos).' },
+}
+
+/**
+ * Métodos de carregamento para escolher no erro de indicação: sem o "Decrescente", que não tem a subida (POP 7.7: a
+ * subida é obrigatória), a não ser o que o ensaio já tem (`atual`, o de um registro de antes, só para conferência).
+ */
+export function metodosCarregamentoParaEscolher(atual?: MetodoCarregamento | null): MetodoCarregamento[] {
+  return (Object.keys(METODOS_CARREGAMENTO) as MetodoCarregamento[]).filter((m) => m !== 'DECRESCENTE' || m === atual)
 }
 
 export const METODOS_EXCENTRICIDADE: Record<MetodoExcentricidade, string> = {
@@ -1229,6 +1270,88 @@ export const metodoExcentricidadePadrao = (classe: ClasseExatidao | null | undef
 export const metodoIndicacaoPadrao = (classe: ClasseExatidao | null | undefined): MetodoCarregamento =>
   classe === 'I' ? 'DESCONTINUO' : 'CRESCENTE_DECRESCENTE'
 
+/**
+ * O método da excentricidade é fixo pela classe (POP 7.10: 1 nas classes II, III, IIII e sem classe; 3 na classe I).
+ * Outro método só num registro de antes (ou numa balança que trocou de classe depois de ensaiada): `true`.
+ */
+export const metodoExcentricidadeForaDoPop = (metodo: MetodoExcentricidade, classe: ClasseExatidao | null | undefined): boolean =>
+  metodo !== metodoExcentricidadePadrao(classe)
+
+/** O ensaio de excentricidade já tem alguma leitura (da posição ou do zero/centro antes)? */
+export const temLeiturasExcentricidade = (e: Pick<EnsaioExcentricidade, 'posicoes'>): boolean =>
+  e.posicoes.some((p) => p.leitura !== null || p.referencia !== null)
+
+/**
+ * O ensaio "como encontrado" tem alguma leitura? A tela de antes criava um vazio ao escolher um ajuste; vazio, ele
+ * não entra no cálculo nem no certificado.
+ */
+export function temLeiturasComoEncontrado(e: EnsaioIndicacao | null | undefined): boolean {
+  return (
+    !!e &&
+    (e.retornoZero !== null ||
+      e.pontos.some((p) => p.crescente !== null || p.decrescente !== null) ||
+      e.substituicao.etapas.some((x) => x.leituraPadroes !== null || x.leituraSubstituicao !== null))
+  )
+}
+
+/** Itens da verificação preliminar como a tela os resume (o certificado tem os dele). */
+export const ROTULOS_PRELIMINAR: Record<Exclude<keyof CalibracaoInput['preliminar'], 'zeroAutomatico'>, string> = {
+  identificavel: 'balança identificada',
+  limpa: 'limpa',
+  nivelada: 'nivelada',
+  aquecida: 'ligada e aquecida',
+  preCarga: 'pré-carga aplicada',
+}
+
+/**
+ * Dados de um registro de antes do POP de calibração (rascunho ou revisão de certificado gravados por uma versão
+ * anterior): o ajuste externo, as leituras "como encontrado", o reparo e a verificação preliminar com item "não".
+ * A calibração nova não os registra (POP 7 e 7.8: sem ajuste nem reparo durante a calibração; as verificações
+ * preliminares não são registradas); no registro antigo eles ficam como estão, só para conferência, e saem no
+ * certificado como antes.
+ */
+export interface RegistroAnterior {
+  /** Ajuste externo, com peso. */
+  ajusteExterno: boolean
+  /** Leituras "como encontrado" (com ajuste). */
+  comoEncontrado: boolean
+  reparo: boolean
+  /** Itens da verificação preliminar "não" (`ROTULOS_PRELIMINAR`); vazio = nenhum. */
+  preliminar: string[]
+}
+
+/** O que a calibração tem de antes do POP (`RegistroAnterior`); null = nada. */
+export function registroAnterior(
+  k: Pick<CalibracaoInput, 'ajuste' | 'comoEncontrado' | 'reparo' | 'preliminar'>,
+): RegistroAnterior | null {
+  const r: RegistroAnterior = {
+    ajusteExterno: k.ajuste.realizado === 'EXTERNO',
+    comoEncontrado: k.ajuste.realizado !== 'NAO' && temLeiturasComoEncontrado(k.comoEncontrado),
+    reparo: k.reparo.houve,
+    preliminar: (Object.keys(ROTULOS_PRELIMINAR) as Array<keyof typeof ROTULOS_PRELIMINAR>)
+      .filter((c) => k.preliminar[c] === 'NAO')
+      .map((c) => ROTULOS_PRELIMINAR[c]),
+  }
+  return r.ajusteExterno || r.comoEncontrado || r.reparo || r.preliminar.length ? r : null
+}
+
+/**
+ * A calibração sem os dados de antes do POP (`registroAnterior`), como uma calibração nova: sem o ajuste externo
+ * (o interno continua), sem o "como encontrado", sem o reparo e com a verificação preliminar padrão.
+ */
+export function semRegistroAnterior<T extends Pick<CalibracaoInput, 'ajuste' | 'comoEncontrado' | 'reparo' | 'preliminar'>>(
+  k: T,
+): T {
+  const vazia = calibracaoVazia()
+  return {
+    ...k,
+    ajuste: k.ajuste.realizado === 'EXTERNO' ? { ...vazia.ajuste } : k.ajuste,
+    comoEncontrado: null,
+    reparo: { ...vazia.reparo },
+    preliminar: { ...vazia.preliminar, zeroAutomatico: k.preliminar.zeroAutomatico },
+  }
+}
+
 export const INDICACAO_VAZIA: EnsaioIndicacao = {
   metodo: 'CRESCENTE_DECRESCENTE',
   pontos: [],
@@ -1522,20 +1645,45 @@ export const pressaoObrigatoria = (classe: ClasseExatidao | null | undefined): b
 /** Classes de pesos aceitas na balança classe I (OIML R 111-1, 1.3.1). */
 export const CLASSES_PESO_CLASSE_I: readonly ClassePeso[] = ['E1', 'E2', 'F1']
 
+/** Balança para a escolha dos padrões de um rascunho sem histórico (a classe e as faixas). */
+export type BalancaDosPadroes = Pick<Balanca, 'classe' | 'unidade' | 'tipoFaixas' | 'faixas'>
+
 /**
  * Padrões de um rascunho sem calibração anterior da balança (e da folha de campo sem rascunho): os ativos, menos os
  * do tipo "Outro". Na classe I, só os jogos E1, E2 e F1, e os "Outro" entram: o termômetro de duas entradas do
- * ΔT pesos − ar é cadastrado assim (POP 6.2).
+ * ΔT pesos − ar é cadastrado assim (POP 6.2). Com a balança (não só a classe), nas outras classes ficam de fora os
+ * jogos de classe pior que a mínima para ela (`classeMinimaPesos`, POP 6.1), quando os outros jogos ainda montam Max;
+ * se não montam, todos ficam (a montagem e o cálculo avisam).
  */
 export function padroesSemHistorico<P extends Pick<Padrao, 'ativo' | 'tipo' | 'classe'>>(
   padroes: P[],
-  classe: ClasseExatidao | null | undefined,
+  balanca: ClasseExatidao | BalancaDosPadroes | null | undefined,
 ): P[] {
-  return padroes.filter(
+  const b = balanca && typeof balanca === 'object' ? balanca : null
+  const classe = b ? b.classe : (balanca as ClasseExatidao | null | undefined)
+  const escolhidos = padroes.filter(
     (p) =>
       p.ativo &&
       (classe === 'I' ? p.tipo !== 'PESOS' || CLASSES_PESO_CLASSE_I.includes(p.classe as ClassePeso) : p.tipo !== 'OUTRO'),
   )
+  const minima = b && classe !== 'I' ? classeMinimaPesos(b) : null
+  if (!minima) return escolhidos
+  const limite = CLASSES_PESO.indexOf(minima)
+  const pior = (p: P) => p.tipo === 'PESOS' && !!p.classe && CLASSES_PESO.indexOf(p.classe as ClassePeso) > limite
+  if (!escolhidos.some(pior)) return escolhidos
+  const outros = escolhidos.filter((p) => !pior(p))
+  // Os outros jogos de pesos montam Max (pelos nominais, como a montagem automática)?
+  const max = Math.max(0, ...b!.faixas.map((f) => f.max))
+  const pecas = outros.flatMap((p) =>
+    p.tipo === 'PESOS'
+      ? ((p as Partial<Pick<Padrao, 'pesos'>>).pesos ?? []).map((w, i) => ({
+          chave: `${i}`,
+          nominal: converterMassa(w.nominal, 'g', b!.unidade),
+          quantidade: 1,
+        }))
+      : [],
+  )
+  return max > 0 && montarCargaNominal(max, pecas).completa ? outros : escolhidos
 }
 
 /**

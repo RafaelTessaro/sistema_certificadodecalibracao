@@ -22,14 +22,15 @@ import {
   divisaoLegivel,
   FINALIDADES,
   LIMITES,
-  LISTA_TIPOS_BALANCA,
   massaNaUnidadeLegivel,
   normalizarBalanca,
   numeroBr,
   parteSeparada,
   RECEPTOR_DO_TIPO,
   RECEPTORES,
+  receptoresParaEscolher,
   TIPOS_BALANCA,
+  tiposBalancaParaEscolher,
   UNIDADES,
 } from '#shared/dominio.ts'
 import { classeMinimaPesos, posicoesExcentricidade } from '#shared/metrologia/index.ts'
@@ -459,7 +460,8 @@ function FormularioBalanca({
               onChange={(e) => mudarTipo(e.target.value as TipoBalanca)}
               autoFocus={fixo || !!balanca}
             >
-              {LISTA_TIPOS_BALANCA.map((t) => (
+              {/* Sem rodoviária e ferroviária no cadastro novo (POP 2.1); a balança cadastrada continua com o tipo dela */}
+              {tiposBalancaParaEscolher(balanca?.tipo).map((t) => (
                 <option key={t} value={t}>
                   {TIPOS_BALANCA[t]}
                 </option>
@@ -836,7 +838,7 @@ function FormularioBalanca({
               value={f.receptor}
               onChange={(e) => setF((s) => comReceptor(s, e.target.value as Receptor))}
             >
-              {(Object.keys(RECEPTORES) as Receptor[]).map((r) => (
+              {receptoresParaEscolher(balanca?.receptor).map((r) => (
                 <option key={r} value={r}>
                   {RECEPTORES[r]}
                 </option>

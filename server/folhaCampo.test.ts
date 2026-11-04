@@ -185,6 +185,7 @@ describe('folha de campo de uma calibração', { timeout: 30_000 }, () => {
         retornoZero: 0,
         substituicao: { ativa: false, pecas: [], etapas: [] },
         pontos: [
+          ponto('z', 0, [], 0),
           ponto('a', 5, ['p5'], 5),
           ponto('b', 10, ['p10a'], 10),
           ponto('c', 20, ['p10a', 'p10b'], 20.01),
@@ -223,7 +224,17 @@ describe('folha de campo de uma calibração', { timeout: 30_000 }, () => {
 
   it('certificado emitido sem folha: 409, sem reservar nº (não vira registro da calibração)', async () => {
     const k = await rascunho()
-    const peca = { padraoId: pesos.id, pesoId: 'p10a', quantidade: 1 }
+    const peca = (pesoId: string) => ({ padraoId: pesos.id, pesoId, quantidade: 1 })
+    // Os 5 pontos do POP (7.7), contando o zero
+    const ponto = (id: string, carga: number, pecas: string[]) => ({
+      id,
+      carga,
+      pecas: pecas.map(peca),
+      pecasManuais: true,
+      crescente: carga,
+      decrescente: null,
+      nivelSubstituicao: 0,
+    })
     const dados: CalibracaoInput = {
       ...k,
       ambiente: { temperaturaInicial: 22, temperaturaFinal: 22.4, umidadeInicial: 50, umidadeFinal: 52, pressao: null },
@@ -234,7 +245,11 @@ describe('folha de campo de uma calibração', { timeout: 30_000 }, () => {
         retornoZero: 0,
         substituicao: { ativa: false, pecas: [], etapas: [] },
         pontos: [
-          { id: 'a', carga: 10, pecas: [peca], pecasManuais: true, crescente: 10, decrescente: null, nivelSubstituicao: 0 },
+          ponto('z', 0, []),
+          ponto('e', 5, ['p5']),
+          ponto('a', 10, ['p10a']),
+          ponto('b', 20, ['p10a', 'p10b']),
+          ponto('c', 30, ['p10a', 'p10b', 'p10c']),
         ],
       },
     }
@@ -445,7 +460,14 @@ async function emitir(k: Calibracao): Promise<Calibracao> {
       metodo: 'CRESCENTE_DECRESCENTE',
       retornoZero: 0,
       substituicao: { ativa: false, pecas: [], etapas: [] },
-      pontos: [ponto('a', 10, ['p10a'], 10), ponto('b', 30, ['p10a', 'p10b', 'p10c'], 30.01)],
+      // Os 5 pontos do POP (7.7), contando o zero
+      pontos: [
+        ponto('z', 0, [], 0),
+        ponto('e', 5, ['p5'], 5),
+        ponto('a', 10, ['p10a'], 10),
+        ponto('c', 20, ['p10a', 'p10b'], 20),
+        ponto('b', 30, ['p10a', 'p10b', 'p10c'], 30.01),
+      ],
     },
   }
   const salvo = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {

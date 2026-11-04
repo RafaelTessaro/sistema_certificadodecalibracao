@@ -2,12 +2,13 @@
 // converte os pesos padrão para a unidade da balança e monta a entrada do cálculo.
 // Usado no navegador (cálculo ao vivo) e no servidor (emissão e PDF).
 
-import { calculoLegado, massaLegivel } from './dominio.ts'
+import { calculoLegado, CLASSES_PESO, massaLegivel } from './dominio.ts'
 import { calcular, emaInstrumento, emaPeso, sugerirPontos } from './metrologia/index.ts'
 import type { ArCalculo, EntradaCalculo, PecaCalculo, ResultadoCalculo, TermicaCalculo } from './metrologia/tipos.ts'
 import type {
   Balanca,
   CalibracaoInput,
+  ClassePeso,
   CondicoesAmbientais,
   EnsaioIndicacao,
   OpcoesCalculo,
@@ -56,6 +57,33 @@ export function pecasParaCalculo(pecas: PecaCarga[], padroes: Padrao[], unidade:
   return out
 }
 
+/**
+ * Por que alguma peça de uma carga não entra no cálculo: o jogo dela não está entre os padrões escolhidos (desmarcado
+ * depois de escolher as peças à mão, ou fora do rascunho copiado) ou a peça foi tirada do cadastro do jogo. '' quando
+ * todas entram. `pecasParaCalculo` e `cargaDasPecas` só ignoram essas peças: sem este motivo, o ponto sairia com a
+ * carga das que sobraram (0, com todas fora) e o erro igual à leitura inteira.
+ */
+export function pecasSemPadrao(pecas: PecaCarga[], padroes: Padrao[]): string {
+  const porId = new Map(padroes.map((p) => [p.id, p]))
+  let foraDosEscolhidos = false
+  const tiradas: string[] = []
+  for (const r of pecas) {
+    const padrao = porId.get(r.padraoId)
+    if (!padrao) foraDosEscolhidos = true
+    else if (!padrao.pesos.some((w) => w.id === r.pesoId) && !tiradas.includes(padrao.identificacao))
+      tiradas.push(padrao.identificacao)
+  }
+  const motivos: string[] = []
+  if (foraDosEscolhidos) motivos.push('pesos de um jogo que não está entre os padrões escolhidos')
+  if (tiradas.length)
+    motivos.push(
+      tiradas.length > 1
+        ? `peças tiradas do cadastro dos jogos ${tiradas.slice(0, -1).join(', ')} e ${tiradas.at(-1)}`
+        : `peça tirada do cadastro do jogo ${tiradas[0]}`,
+    )
+  return motivos.join(' e ')
+}
+
 /** Soma dos nominais das peças, na unidade da balança. */
 export function cargaDasPecas(pecas: PecaCarga[], padroes: Padrao[], unidade: Unidade): number {
   return deGramas(
@@ -64,20 +92,19 @@ export function cargaDasPecas(pecas: PecaCarga[], padroes: Padrao[], unidade: Un
   )
 }
 
-/**
- * Monta uma carga com os pesos dos padrões escolhidos: do maior para o menor, sem repetir peça.
- * `falta` > 0 quando os pesos não somam a carga pedida (na unidade da balança).
- */
-export function montarCarga(
-  carga: number,
-  unidade: Unidade,
-  padroes: Padrao[],
-): { pecas: PecaCarga[]; falta: number; total: number } {
-  const alvoG = carga * GRAMAS[unidade]
-  const disponiveis = padroes
-    .filter((p) => p.tipo === 'PESOS' && p.ativo)
-    .flatMap((p) => p.pesos.map((peso) => ({ padraoId: p.id, peso })))
-    .sort((a, b) => b.peso.nominal - a.peso.nominal)
+/** Posição da classe R111 do jogo, da melhor (E1 = 0) para a pior; sem classe, depois de todas. */
+const ordemClasse = (classe: ClassePeso | '') => {
+  const i = CLASSES_PESO.indexOf(classe as ClassePeso)
+  return i < 0 ? CLASSES_PESO.length : i
+}
+
+type Montagem = { pecas: PecaCarga[]; falta: number; total: number }
+
+/** Gulosa: do maior nominal para o menor (no empate, a peça do jogo de classe melhor), sem repetir peça. */
+function montarGulosa(alvoG: number, unidade: Unidade, jogos: Padrao[]): Montagem {
+  const disponiveis = jogos
+    .flatMap((p) => p.pesos.map((peso) => ({ padraoId: p.id, peso, ordem: ordemClasse(p.classe) })))
+    .sort((a, b) => b.peso.nominal - a.peso.nominal || a.ordem - b.ordem)
   const pecas: PecaCarga[] = []
   let restante = alvoG
   const tolerancia = Math.max(alvoG * 1e-9, 1e-9)
@@ -90,6 +117,36 @@ export function montarCarga(
   }
   const falta = restante > tolerancia ? deGramas(restante, unidade) : 0
   return { pecas, falta, total: deGramas(alvoG - Math.max(restante, 0), unidade) }
+}
+
+/**
+ * Monta uma carga com os pesos dos padrões escolhidos: do maior para o menor, sem repetir peça (no empate de nominal,
+ * a peça do jogo de classe melhor). `falta` > 0 quando os pesos não somam a carga pedida (na unidade da balança).
+ *
+ * Com a balança (na mesma unidade), a montagem respeita a classe dos pesos (POP 6.1; R76 3.7.1): quando as peças não
+ * atendem (`pesosAtendemNaCarga`), tenta de novo sem os jogos de classe pior, um nível por vez, e fica com a primeira
+ * montagem completa que atende. Peça de classe pior só entra quando não há outra saída: sem nenhuma montagem completa
+ * que atenda, a completa de menor Σ EMA.
+ */
+export function montarCarga(carga: number, unidade: Unidade, padroes: Padrao[], balanca?: Balanca): Montagem {
+  const alvoG = carga * GRAMAS[unidade]
+  const jogos = padroes.filter((p) => p.tipo === 'PESOS' && p.ativo)
+  const primeira = montarGulosa(alvoG, unidade, jogos)
+  if (!balanca || primeira.falta > 0 || pesosAtendemNaCarga(carga, primeira.pecas, balanca, padroes) !== false) return primeira
+  const somaEma = (m: Montagem) => pecasParaCalculo(m.pecas, padroes, unidade).reduce((s, p) => s + p.ema * p.quantidade, 0)
+  let melhor = primeira
+  const niveis = [...new Set(jogos.map((p) => ordemClasse(p.classe)))].sort((a, b) => b - a)
+  for (const pior of niveis.slice(0, -1)) {
+    const m = montarGulosa(
+      alvoG,
+      unidade,
+      jogos.filter((p) => ordemClasse(p.classe) < pior),
+    )
+    if (m.falta > 0) continue
+    if (pesosAtendemNaCarga(carga, m.pecas, balanca, padroes) !== false) return m
+    if (somaEma(m) < somaEma(melhor)) melhor = m
+  }
+  return melhor
 }
 
 /**
@@ -116,7 +173,7 @@ export function pesosAtendemNaCarga(carga: number, pecas: PecaCarga[], balanca: 
  */
 export function pontosSugeridos(balanca: Balanca, padroes: Padrao[]): number[] {
   return sugerirPontos(balanca, (carga) => {
-    const m = montarCarga(carga, balanca.unidade, padroes)
+    const m = montarCarga(carga, balanca.unidade, padroes, balanca)
     return m.falta > 0 ? null : pesosAtendemNaCarga(carga, m.pecas, balanca, padroes)
   })
 }
@@ -130,7 +187,7 @@ export function cargaDaEtapa(ensaio: Pick<EnsaioIndicacao, 'substituicao'>, padr
  * Pesos por cima de um ponto do erro de indicação. Com substituição (nível > 0), as etapas por baixo já
  * somam nível × carga da etapa e os pesos só completam o resto (é assim que o cálculo soma a carga do
  * ponto); sem, os pesos fazem a carga inteira. `diferenca`: (etapas + pesos) − carga, na unidade da
- * balança: > 0 passa da carga (nível alto demais), < 0 falta.
+ * balança: > 0 passa da carga (nível alto demais), < 0 falta. Com a balança, os pesos pela classe (ver `montarCarga`).
  */
 export function montarPonto(
   carga: number,
@@ -138,11 +195,13 @@ export function montarPonto(
   cargaEtapa: number,
   unidade: Unidade,
   padroes: Padrao[],
+  balanca?: Balanca,
 ): { pecas: PecaCarga[]; diferenca: number } {
   if (!(carga > 0)) return { pecas: [], diferenca: 0 }
   const etapas = nivel > 0 && cargaEtapa > 0 ? nivel * cargaEtapa : 0
   const resto = Math.max(0, Number((carga - etapas).toPrecision(12)))
-  const m = resto > 0 ? montarCarga(resto, unidade, padroes) : { pecas: [], total: 0 }
+  // Só os pesos por cima das etapas: a conferência da classe vale para a carga deles (como no cálculo, só sem etapas)
+  const m = resto > 0 ? montarCarga(resto, unidade, padroes, etapas > 0 ? undefined : balanca) : { pecas: [], total: 0 }
   return { pecas: m.pecas, diferenca: diferencaDoPonto(carga, etapas, m.total) }
 }
 
@@ -183,20 +242,37 @@ export function leiturasDoMetodo(
 
 function indicacaoParaCalculo(ensaio: EnsaioIndicacao, padroes: Padrao[], unidade: Unidade): EntradaCalculo['indicacao'] {
   const etapa = cargaDaEtapa(ensaio, padroes, unidade)
+  const etapaSemPadrao = ensaio.substituicao.ativa ? pecasSemPadrao(ensaio.substituicao.pecas, padroes) : ''
   return {
     metodo: ensaio.metodo,
     retornoZero: ensaio.retornoZero,
     pontos: ensaio.pontos.map((p) => {
       const nivel = ensaio.substituicao.ativa ? p.nivelSubstituicao : 0
+      const leituras = leiturasDoMetodo(p, ensaio.metodo)
+      // Peças (do ponto ou das etapas por baixo) fora dos padrões: a carga digitada, sem cálculo, e o motivo (pendência)
+      const semPadrao = pecasSemPadrao(p.pecas, padroes)
+      const motivo = semPadrao
+        ? `${semPadrao}; escolha os pesos do ponto de novo`
+        : nivel > 0 && etapaSemPadrao
+          ? `etapas de substituição com ${etapaSemPadrao}; escolha os pesos da etapa de novo`
+          : ''
+      if (motivo) return { id: p.id, carga: p.carga, pecas: [], ...leituras, nivelSubstituicao: nivel, semPadrao: motivo }
       const pesos = p.pecas.length ? cargaDasPecas(p.pecas, padroes, unidade) : 0
+      const etapas = nivel > 0 && etapa > 0 ? nivel * etapa : 0
       // Carga nominal do ponto: com substituição, as etapas (nível × carga dos pesos da etapa) mais os pesos por cima
-      const carga = nivel > 0 && etapa > 0 ? Number((nivel * etapa + pesos).toPrecision(12)) : p.pecas.length ? pesos : p.carga
+      const carga = etapas > 0 ? Number((etapas + pesos).toPrecision(12)) : p.pecas.length ? pesos : p.carga
+      // Etapas e pesos que não somam a carga digitada (pesos que não fecham, peças à mão de outra carga, nível
+      // alto demais): o certificado reporta o valor dos pesos, e a diferença vira pendência. Substituição sem os pesos
+      // da etapa já é pendência do motor
+      const semEtapa = nivel > 0 && !(etapa > 0)
+      const diferenca = !semEtapa && (p.pecas.length || etapas > 0) ? diferencaDoPonto(p.carga, etapas, pesos) : 0
       return {
         id: p.id,
         carga,
         pecas: pecasParaCalculo(p.pecas, padroes, unidade),
-        ...leiturasDoMetodo(p, ensaio.metodo),
+        ...leituras,
         nivelSubstituicao: nivel,
+        ...(diferenca !== 0 ? { cargaDigitada: p.carga } : {}),
       }
     }),
     substituicao: {
@@ -247,12 +323,25 @@ export function opcoesComoEncontrado(opcoes: OpcoesCalculo, classe: Balanca['cla
 }
 
 /**
+ * Os mínimos do POP (pontos, subida, leituras e ensaios da repetibilidade) e as leituras fora do esperado ficam só como
+ * avisos (sem `EntradaCalculo.regrasDoPop`)? Sim na revisão de um certificado emitido (é a mesma visita: as leituras não podem
+ * ser refeitas, e o original pode ser de antes dessas regras), no registro de antes da classe I (`calculoLegado`) e no
+ * "como encontrado" (registro anterior, antes do ajuste). Na calibração nova, são pendências.
+ */
+export function regrasDoPopComoAviso(
+  k: Pick<CalibracaoInput, 'opcoes'> & Partial<Pick<CalibracaoInput, 'calculoLegado' | 'substituiId'>> & { emissao?: unknown },
+  momento: 'FINAL' | 'COMO_ENCONTRADO' = 'FINAL',
+): boolean {
+  return momento === 'COMO_ENCONTRADO' || !!k.substituiId || calculoLegado(k)
+}
+
+/**
  * Entrada do motor de cálculo a partir da calibração gravada. `momento`: o ensaio final (logo após o ajuste,
  * quando houve) ou o "como encontrado" (sempre sem ajuste logo antes).
  */
 export function entradaDoCalculo(
   k: Pick<CalibracaoInput, 'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade'> &
-    Partial<Pick<CalibracaoInput, 'ambiente' | 'ajuste' | 'calculoLegado'>> & { emissao?: unknown },
+    Partial<Pick<CalibracaoInput, 'ambiente' | 'ajuste' | 'calculoLegado' | 'substituiId'>> & { emissao?: unknown },
   balanca: Pick<Balanca, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>,
   padroes: Padrao[],
   ensaio: EnsaioIndicacao = k.indicacao,
@@ -274,6 +363,7 @@ export function entradaDoCalculo(
     conformidade: k.conformidade,
     ar: arDoAmbiente(k.ambiente, ajustadaAntes),
     termica: termicaDoAmbiente(k.ambiente),
+    ...(regrasDoPopComoAviso(k, momento) ? {} : { regrasDoPop: true }),
   }
 }
 
@@ -283,7 +373,7 @@ export function calcularCalibracao(
     CalibracaoInput,
     'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade' | 'comoEncontrado' | 'ajuste'
   > &
-    Partial<Pick<CalibracaoInput, 'ambiente' | 'calculoLegado'>> & { emissao?: unknown },
+    Partial<Pick<CalibracaoInput, 'ambiente' | 'calculoLegado' | 'substituiId'>> & { emissao?: unknown },
   balanca: Pick<Balanca, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>,
   padroes: Padrao[],
 ): { resultado: ResultadoCalculo; comoEncontrado: ResultadoCalculo | null } {

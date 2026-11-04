@@ -109,7 +109,9 @@ async function calibracaoPronta(cookie = t.cookieAdmin): Promise<Calibracao> {
       metodo: 'CRESCENTE_DECRESCENTE',
       retornoZero: 0,
       substituicao: { ativa: false, pecas: [], etapas: [] },
+      // Os 5 pontos do POP (7.7), contando o zero
       pontos: [
+        { id: 'z', carga: 0, pecas: [], pecasManuais: false, crescente: 0, decrescente: 0, nivelSubstituicao: 0 },
         { id: 'a', carga: 5, pecas: [peca('p5')], pecasManuais: true, crescente: 5, decrescente: 5, nivelSubstituicao: 0 },
         {
           id: 'b',
@@ -390,13 +392,13 @@ describe('revisão e cancelamento', () => {
       padroesIds: [pesos.id],
       substituiId: '',
     })
-    expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual([5, 10, 20, 30])
+    expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
     expect(nova.indicacao.pontos.every((p) => p.crescente === null && p.decrescente === null)).toBe(true)
     expect(nova.repetibilidade.flatMap((r) => r.leituras).every((l) => l === null)).toBe(true)
     // Uma calibração nova da mesma balança também já vem com os pontos da última emitida
     const { calibracao: outra } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
     expect(outra.clienteId).toBe(cliente.id)
-    expect(outra.indicacao.pontos.map((p) => p.carga)).toEqual([5, 10, 20, 30])
+    expect(outra.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
   })
 })
 
@@ -418,6 +420,7 @@ describe('troca da unidade da indicação da balança', () => {
     expect(k.excentricidade.carga).toBe(10000)
     expect(k.excentricidade.posicoes.map((p) => p.leitura)).toEqual([10000, 10000, 10010, 10000, 10000])
     expect(k.indicacao.pontos.map((p) => [p.carga, p.crescente, p.decrescente])).toEqual([
+      [0, 0, 0],
       [5000, 5000, 5000],
       [10000, 10000, 10010],
       [20000, 20010, 20010],
@@ -425,7 +428,7 @@ describe('troca da unidade da indicação da balança', () => {
     ])
     expect(k.indicacao.retornoZero).toBe(0)
     // Os pesos padrão continuam os mesmos
-    expect(k.indicacao.pontos[3].pecas).toEqual(aberta.indicacao.pontos[3].pecas)
+    expect(k.indicacao.pontos[4].pecas).toEqual(aberta.indicacao.pontos[4].pecas)
     const salvar = await t.chamar('PUT', `/api/calibracoes/${aberta.id}`, {
       cookie: t.cookieAdmin,
       payload: { ...aberta, versao: aberta.versao },
@@ -451,7 +454,7 @@ describe('troca da unidade da indicação da balança', () => {
       repetibilidade: k.repetibilidade.map((x) => x.carga),
       excentricidade: k.excentricidade.carga,
     })
-    const emG = { indicacao: [5000, 10000, 20000, 30000], repetibilidade: [15000], excentricidade: 10000 }
+    const emG = { indicacao: [0, 5000, 10000, 20000, 30000], repetibilidade: [15000], excentricidade: 10000 }
 
     // Nova calibração (aproveita os pontos da última emitida)
     const { calibracao: nova } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
@@ -470,6 +473,7 @@ describe('troca da unidade da indicação da balança', () => {
     })) as { calibracao: Calibracao }
     expect(cargas(rev)).toEqual(emG)
     expect(rev.indicacao.pontos.map((p) => [p.crescente, p.decrescente])).toEqual([
+      [0, 0],
       [5000, 5000],
       [10000, 10010],
       [20010, 20010],
@@ -709,7 +713,14 @@ describe('balança classe I: o rascunho novo', () => {
     const ensaio = (antes: boolean) => ({
       ...k.indicacao,
       retornoZero: 0,
-      pontos: [p('z', 0, 0), p('c', 100, antes ? 100.0004 : 100.0001, 'g100'), p('m', 200, antes ? 200.0007 : 200.0002, 'g200')],
+      // Os 5 pontos do POP (7.7), contando o zero
+      pontos: [
+        p('z', 0, 0),
+        p('c', 100, antes ? 100.0004 : 100.0001, 'g100'),
+        p('m', 200, antes ? 200.0007 : 200.0002, 'g200'),
+        p('a', 20, 20.0001, 'g20'),
+        p('b', 50, 50.0001, 'g50'),
+      ],
     })
     const dados = {
       ...k,
@@ -755,6 +766,8 @@ describe('balança classe I: o rascunho novo', () => {
         pesos: [
           { id: 'g200', marca: '', nominal: 200, correcao: 0.1, incerteza: 0.1, k: 2 },
           { id: 'g100', marca: '', nominal: 100, correcao: -0.05, incerteza: 0.05, k: 2 },
+          { id: 'g50', marca: '', nominal: 50, correcao: 0.02, incerteza: 0.03, k: 2 },
+          { id: 'g20', marca: '', nominal: 20, correcao: 0.01, incerteza: 0.025, k: 2 },
         ],
       })
     ).padrao as Padrao
@@ -890,5 +903,164 @@ describe('balança classe I: o rascunho novo', () => {
     expect(semDeltaT.json().pendencias).toContain(
       'Convecção: registre a diferença de temperatura entre os pesos e o ar antes do 1º ensaio, ou a aclimatação dos pesos (etapa Padrões e ambiente).',
     )
+  })
+})
+
+// ---- Peças dos pontos fora dos padrões, pesos que não fecham a carga, e o plano copiado ---------------------
+
+describe('peças dos pontos e a carga digitada (bloqueiam a emissão)', () => {
+  const pendenciasDe = async (k: Calibracao) =>
+    (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().pendencias as string[]
+  const salvar = async (k: Calibracao, mudar: (k: Calibracao) => Partial<Calibracao>) => {
+    const r = await t.chamar('PUT', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin, payload: { ...k, ...mudar(k) } })
+    expect(r.statusCode, r.body).toBe(200)
+    return r.json() as { calibracao: Calibracao; pendencias: string[] }
+  }
+  async function jogo2() {
+    return (
+      await criar('/api/padroes', {
+        ...PADRAO_VAZIO,
+        identificacao: 'JP-02',
+        descricao: 'Jogo de pesos M1 que entrou no lugar do JP-01',
+        classe: 'M1',
+        certificado: 'LAB-0789/2026',
+        laboratorio: 'Laboratório de Massa Exemplo',
+        acreditacao: 'CAL 0123',
+        dataCalibracao: '2026-01-10',
+        validade: '2099-01-10',
+        pesos: [
+          { id: 'q10a', marca: 'A', nominal: 10000, correcao: 0, incerteza: 160, k: 2 },
+          { id: 'q10b', marca: 'B', nominal: 10000, correcao: 0, incerteza: 160, k: 2 },
+          { id: 'q10c', marca: 'C', nominal: 10000, correcao: 0, incerteza: 160, k: 2 },
+          { id: 'q5', marca: '', nominal: 5000, correcao: 0, incerteza: 80, k: 2 },
+        ],
+      })
+    ).padrao as Padrao
+  }
+
+  it('jogo desmarcado com as peças à mão nos pontos: pendência em cada ponto e a emissão recusada', async () => {
+    const k = await calibracaoPronta()
+    const outro = await jogo2()
+    const { calibracao, pendencias } = await salvar(k, (x) => ({ padroesIds: [outro.id], versao: x.versao }))
+    expect(pendencias).toContain(
+      'Erro de indicação, ponto de 5,00 kg: pesos de um jogo que não está entre os padrões escolhidos; escolha os pesos do ponto de novo.',
+    )
+    expect(pendencias.filter((p) => p.includes('não está entre os padrões escolhidos'))).toHaveLength(4)
+    const r = await emitir(calibracao)
+    expect(r.statusCode).toBe(409)
+  })
+
+  it('peça tirada do cadastro do jogo: o rascunho com ela fica com pendência', async () => {
+    const k = await calibracaoPronta()
+    const atual = (await t.chamar('GET', `/api/padroes`, { cookie: t.cookieAdmin }))
+      .json()
+      .padroes.find((p: Padrao) => p.id === pesos.id) as Padrao
+    const r = await t.chamar('PUT', `/api/padroes/${pesos.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...atual, pesos: atual.pesos.filter((w) => w.id !== 'p10c'), versao: atual.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(await pendenciasDe(k)).toContain(
+      'Erro de indicação, ponto de 30,00 kg: peça tirada do cadastro do jogo JP-01; escolha os pesos do ponto de novo.',
+    )
+    expect((await emitir(k)).statusCode).toBe(409)
+  })
+
+  it('pesos que não fecham a carga do ponto: a pendência com o que falta, e a emissão recusada', async () => {
+    const k = await calibracaoPronta()
+    const { calibracao, pendencias } = await salvar(k, (x) => ({
+      versao: x.versao,
+      indicacao: {
+        ...x.indicacao,
+        pontos: x.indicacao.pontos.map((p) =>
+          p.id === 'd' ? { ...p, pecas: [peca('p10a'), peca('p10b')], pecasManuais: false } : p,
+        ),
+      },
+    }))
+    expect(pendencias).toEqual([
+      'Erro de indicação, ponto de 30,00 kg: os pesos somam 20,00 kg; faltam 10,00 kg. Escolha nos padrões o jogo que completa a carga ou acerte os pesos do ponto.',
+    ])
+    expect((await emitir(calibracao)).statusCode).toBe(409)
+    // A revisão também fica parada
+    const revisao = await t.chamar('POST', `/api/calibracoes/${k.id}/situacao`, {
+      cookie: t.cookieAdmin,
+      payload: { status: 'REVISAO', versao: calibracao.versao },
+    })
+    expect(revisao.statusCode).toBe(409)
+  })
+
+  it('rascunho novo e "calibrar de novo" depois de desativar o jogo: os pontos voltam sem as peças dele, automáticos', async () => {
+    const emitida: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const atual = (await t.chamar('GET', `/api/padroes`, { cookie: t.cookieAdmin }))
+      .json()
+      .padroes.find((p: Padrao) => p.id === pesos.id) as Padrao
+    const r = await t.chamar('PUT', `/api/padroes/${pesos.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...atual, ativo: false, versao: atual.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    const semPecas = (k: Calibracao) => {
+      expect(k.padroesIds).toEqual([])
+      expect(k.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
+      expect(k.indicacao.pontos.every((p) => p.pecas.length === 0 && !p.pecasManuais)).toBe(true)
+    }
+    const { calibracao: nova } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
+    semPecas(nova)
+    const { calibracao: denovo } = (await criar(`/api/calibracoes/${emitida.id}/recalibrar`, {})) as {
+      calibracao: Calibracao
+    }
+    semPecas(denovo)
+  })
+})
+
+describe('rascunho sem histórico: jogos pela classe da balança (POP 6.1)', () => {
+  it('classe II de 3200 g / 0,1 g: o jogo M1 fica de fora quando E2 e F1 montam Max; classe III: entra', async () => {
+    const finos = [1000, 500, 200, 200, 100].map((nominal, i) => ({
+      marca: '',
+      nominal,
+      correcao: 0,
+      incerteza: 1,
+      k: 2,
+      id: `f${i}`,
+    }))
+    const jogo = async (identificacao: string, classe: Padrao['classe']) =>
+      (
+        await criar('/api/padroes', {
+          ...PADRAO_VAZIO,
+          identificacao,
+          descricao: `Jogo ${classe}`,
+          classe,
+          certificado: `LAB-${identificacao}`,
+          laboratorio: 'Laboratório de Massa Exemplo',
+          acreditacao: 'CAL 0123',
+          dataCalibracao: '2026-01-10',
+          validade: '2099-01-10',
+          pesos: finos,
+        })
+      ).padrao as Padrao
+    const e2 = await jogo('JP-E2', 'E2')
+    const f1 = await jogo('JP-F1', 'F1')
+    const marte = (
+      await criar('/api/balancas', {
+        ...BALANCA_VAZIA,
+        clienteId: cliente.id,
+        tipo: 'BALCAO',
+        fabricante: 'Marte',
+        modelo: 'AD3300',
+        numeroSerie: 'M-1',
+        unidade: 'g',
+        classe: 'II',
+        faixas: [{ max: 3200, e: 0.1, d: 0.01 }],
+      })
+    ).balanca as Balanca
+    const { calibracao: k } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: marte.id })) as {
+      calibracao: Calibracao
+    }
+    expect([...k.padroesIds].sort()).toEqual([e2.id, f1.id].sort())
+    // A balança de 30 kg (classe III, mínima M2): o M1 (do beforeEach) entra
+    const { calibracao: iii } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: balanca.id })) as {
+      calibracao: Calibracao
+    }
+    expect(iii.padroesIds).toContain(pesos.id)
   })
 })

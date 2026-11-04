@@ -354,7 +354,7 @@ export function folhaClasseI(): DadosFolhaCampo {
     dataCalibracao: '2026-10-26',
     local: 'CLIENTE',
     localEndereco: d.calibracao.localEndereco,
-    padroesIds: padroesSemHistorico(d.emissao.padroes, d.emissao.balanca.classe).map((p) => p.id),
+    padroesIds: padroesSemHistorico(d.emissao.padroes, d.emissao.balanca).map((p) => p.id),
   }
   return {
     numero: 'FC-2026-00048',

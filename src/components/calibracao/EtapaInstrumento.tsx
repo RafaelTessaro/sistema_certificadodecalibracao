@@ -1,46 +1,40 @@
-import { ClipboardCheck, Pencil, Scale, SlidersHorizontal, Wrench } from 'lucide-react'
-import { Fragment } from 'react'
+import { History, Pencil, Scale, SlidersHorizontal } from 'lucide-react'
+import { Fragment, type ReactNode } from 'react'
 import {
   AJUSTES,
+  AJUSTES_DA_CALIBRACAO,
   capacidadeTexto,
   divisaoLegivel,
   FINALIDADES,
   numeroBr,
   parteSeparada,
   RECEPTORES,
+  registroAnterior,
   ROTULO_CLASSE,
+  semRegistroAnterior,
   TIPOS_BALANCA,
-  verificacoesAntesDeCalibrar,
 } from '#shared/dominio.ts'
-import type { AjusteRealizado, CalibracaoInput, Verificacao } from '#shared/tipos.ts'
-import { cn } from '../../lib/cn'
+import type { CalibracaoInput } from '#shared/tipos.ts'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
+import { confirmar } from '../ui/Feedback'
 import { Field, Input } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
 import type { ContextoEtapa } from './contexto'
 import { Info } from './EtapaIdentificacao'
+import { pedeAjusteInterno } from './util'
 
 export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: ContextoEtapa) {
-  const prel = f.preliminar
-  const setPrel = (k: keyof CalibracaoInput['preliminar'], v: string) =>
-    alterar((s) => ({ ...s, preliminar: { ...s.preliminar, [k]: v } }))
-  const setAjuste = (realizado: AjusteRealizado) =>
+  // Ajuste externo, "como encontrado", reparo e verificação preliminar "não": só nos registros de antes do POP
+  const anterior = registroAnterior(f)
+  const ajusteAnterior = !!anterior && (anterior.ajusteExterno || anterior.comoEncontrado)
+  const setAjuste = (realizado: 'NAO' | 'INTERNO') =>
     alterar((s) => ({
       ...s,
-      ajuste: { ...s.ajuste, realizado },
-      // Com ajuste, o ensaio "como encontrado" usa os mesmos pontos do erro de indicação (sem leituras)
-      comoEncontrado:
-        realizado === 'NAO'
-          ? null
-          : (s.comoEncontrado ?? {
-              ...s.indicacao,
-              retornoZero: null,
-              pontos: s.indicacao.pontos.map((p) => ({ ...p, crescente: null, decrescente: null })),
-            }),
+      ajuste: { realizado, descricao: realizado === 'NAO' ? '' : s.ajuste.descricao },
+      // Sem "como encontrado" (POP 7.8); o vazio que a tela de antes criava ao escolher um ajuste sai junto
+      comoEncontrado: null,
     }))
-  const setReparo = (k: keyof CalibracaoInput['reparo'], v: string | boolean) =>
-    alterar((s) => ({ ...s, reparo: { ...s.reparo, [k]: v } }))
   // e na unidade mais legível, como na plaqueta (0,005 kg → 5 g)
   const e = divisaoLegivel(
     balanca.faixas.map((x) => x.e),
@@ -104,126 +98,143 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
 
       <Card>
         <CardHeader
-          icone={<ClipboardCheck className="h-4 w-4" />}
-          titulo="Verificação antes de calibrar"
-          descricao="Condições da balança no início (EURAMET cg-18, 4.1.3)"
-        />
-        <ul className="divide-y divide-line border-t border-line">
-          {verificacoesAntesDeCalibrar(balanca.classe).map((v) => (
-            <li key={v.chave} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-sm text-ink-2">{v.texto}</span>
-              <Segmented
-                tamanho="sm"
-                valor={prel[v.chave]}
-                aoMudar={(x: Verificacao) => setPrel(v.chave, x)}
-                opcoes={[
-                  { valor: 'SIM', label: 'Sim' },
-                  { valor: 'NAO', label: 'Não' },
-                  { valor: 'NA', label: 'N/A' },
-                ]}
-              />
-            </li>
-          ))}
-          <li className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-sm text-ink-2">Zero automático / rastreamento de zero</span>
-            <Segmented
-              tamanho="sm"
-              valor={prel.zeroAutomatico}
-              aoMudar={(x) => setPrel('zeroAutomatico', x)}
-              opcoes={[
-                { valor: 'LIGADO', label: 'Ligado' },
-                { valor: 'DESLIGADO', label: 'Desligado' },
-                { valor: 'NAO_POSSUI', label: 'Não possui' },
-              ]}
-            />
-          </li>
-        </ul>
-        {Object.values(prel).includes('NAO') && (
-          <p className="mx-5 my-4 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
-            Algum item não foi atendido. Registre o que aconteceu nas observações do certificado (etapa “Conclusão”).
-          </p>
-        )}
-      </Card>
-
-      <Card>
-        <CardHeader
           icone={<SlidersHorizontal className="h-4 w-4" />}
           titulo="Ajuste"
-          descricao="Se a balança foi ajustada, o certificado mostra os resultados antes e depois do ajuste"
+          descricao="A calibração não inclui ajuste. Só conta o ajuste interno (CAL) feito antes dos ensaios."
         />
         <div className="flex flex-col gap-4 px-5 pb-5">
-          <Segmented
-            valor={f.ajuste.realizado}
-            aoMudar={setAjuste}
-            opcoes={(Object.keys(AJUSTES) as AjusteRealizado[]).map((a) => ({ valor: a, label: AJUSTES[a] }))}
-          />
-          {f.ajuste.realizado !== 'NAO' && (
+          {ajusteAnterior ? (
+            <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[13px] text-ink-2">
+              <b className="font-medium text-ink">{rotuloAjuste(f.ajuste.realizado)}</b>, como foi registrado antes. Veja o cartão
+              “Registro de versão anterior”.
+            </p>
+          ) : (
             <>
-              <Field
-                label="Como foi o ajuste"
-                htmlFor="k-ajuste"
-                hint={
-                  f.ajuste.realizado === 'EXTERNO'
-                    ? 'Informe o peso usado. Ex.: “Ajuste de span com peso padrão de 20 kg”.'
-                    : undefined
-                }
-              >
-                <Input
-                  id="k-ajuste"
-                  value={f.ajuste.descricao}
-                  onChange={(e) => alterar((s) => ({ ...s, ajuste: { ...s.ajuste, descricao: e.target.value } }))}
-                  placeholder={
-                    f.ajuste.realizado === 'EXTERNO' ? 'Ajuste de span com peso de 20 kg' : 'Ajuste interno pelo menu da balança'
-                  }
-                />
-              </Field>
-              <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[13px] text-ink-2">
-                Na etapa <b className="font-medium text-ink">Erro de indicação</b> aparece a aba{' '}
-                <b className="font-medium text-ink">Antes do ajuste</b>, para as leituras “como encontrado”. É recomendado: o
-                cliente usa esses valores para avaliar as pesagens feitas antes.
-              </p>
+              <Segmented
+                valor={f.ajuste.realizado === 'INTERNO' ? 'INTERNO' : 'NAO'}
+                aoMudar={setAjuste}
+                opcoes={AJUSTES_DA_CALIBRACAO.map((a) => ({ valor: a.valor, label: a.label }))}
+              />
+              {f.ajuste.realizado === 'NAO' && pedeAjusteInterno(balanca) && (
+                <p className="rounded-xl bg-info-soft px-3.5 py-2.5 text-[13px] text-info">
+                  {balanca.classe === 'I' ? 'Classe I' : 'Divisão menor que Max/100 000'}: o cliente faz o ajuste interno (CAL)
+                  antes dos ensaios, se a balança tiver (POP 7.11). Se fez, marque acima.
+                </p>
+              )}
+              {f.ajuste.realizado === 'INTERNO' && (
+                <>
+                  <Field label="Observação (opcional)" htmlFor="k-ajuste" hint="Sai no certificado, entre parênteses.">
+                    <Input
+                      id="k-ajuste"
+                      value={f.ajuste.descricao}
+                      onChange={(ev) => alterar((s) => ({ ...s, ajuste: { ...s.ajuste, descricao: ev.target.value } }))}
+                      placeholder="Ex.: função CAL feita pelo cliente"
+                    />
+                  </Field>
+                  <p className="rounded-xl bg-surface-2 px-3.5 py-2.5 text-[13px] text-ink-2">
+                    O certificado informa o ajuste interno feito antes da calibração; os resultados são os de depois dele.
+                  </p>
+                </>
+              )}
             </>
           )}
         </div>
       </Card>
 
-      <Card>
-        <CardHeader
-          icone={<Wrench className="h-4 w-4" />}
-          titulo="Reparo ou manutenção"
-          descricao="Houve intervenção da oficina (selos rompidos)? Fica registrado no certificado com a OS."
-          acoes={
-            <label className="flex cursor-pointer items-center gap-2 text-[13px] font-medium text-ink-2">
-              <input
-                type="checkbox"
-                checked={f.reparo.houve}
-                onChange={(e) => setReparo('houve', e.target.checked)}
-                className="h-4 w-4 accent-[var(--brand)]"
+      {anterior && <RegistroDeAntes f={f} alterar={alterar} />}
+    </div>
+  )
+}
+
+/** Rótulo do ajuste: o da etapa (`AJUSTES_DA_CALIBRACAO`) ou, no externo, o de antes. */
+const rotuloAjuste = (a: CalibracaoInput['ajuste']['realizado']) =>
+  AJUSTES_DA_CALIBRACAO.find((x) => x.valor === a)?.label ?? AJUSTES[a]
+
+/**
+ * Registro de antes do POP (`registroAnterior`): o ajuste externo, o "como encontrado", o reparo e a verificação
+ * preliminar com item "não" ficam só para conferência e saem no certificado como antes. "Tirar do registro" deixa
+ * a calibração como uma nova (`semRegistroAnterior`).
+ */
+export function RegistroDeAntes({ f, alterar }: Pick<ContextoEtapa, 'f' | 'alterar'>) {
+  const r = registroAnterior(f)
+  if (!r) return null
+  const pontos = f.comoEncontrado?.pontos.filter((p) => p.crescente !== null || p.decrescente !== null).length ?? 0
+  const rep = f.reparo
+  const tirar = async () => {
+    const ok = await confirmar({
+      titulo: 'Tirar os dados da versão anterior?',
+      descricao:
+        'Saem desta calibração e do certificado: o ajuste externo, as leituras “como encontrado”, o reparo e os itens não atendidos da verificação preliminar. O ajuste interno, se marcado, continua.',
+      confirmar: 'Tirar do registro',
+      perigo: true,
+    })
+    if (ok) alterar((s: CalibracaoInput) => semRegistroAnterior(s))
+  }
+  return (
+    <Card>
+      <CardHeader
+        icone={<History className="h-4 w-4" />}
+        titulo="Registro de versão anterior"
+        descricao="Gravado antes do POP atual: fica só para conferência e sai no certificado como antes."
+      />
+      <ul className="divide-y divide-line border-t border-line text-sm">
+        {r.ajusteExterno && (
+          <li className="flex flex-col gap-2 px-5 py-3">
+            <ItemAnterior rotulo="Ajuste">{AJUSTES.EXTERNO}</ItemAnterior>
+            {/* O texto do ajuste externo é pedido para emitir: continua editável */}
+            <Field label="Como foi o ajuste" htmlFor="k-ajuste-anterior">
+              <Input
+                id="k-ajuste-anterior"
+                value={f.ajuste.descricao}
+                onChange={(ev) => alterar((s) => ({ ...s, ajuste: { ...s.ajuste, descricao: ev.target.value } }))}
               />
-              Houve reparo
-            </label>
-          }
-        />
-        <div className={cn('grid grid-cols-1 gap-4 px-5 pb-5 sm:grid-cols-2', !f.reparo.houve && 'hidden')}>
-          <Field label="Serviço realizado" htmlFor="k-rep" className="sm:col-span-2">
-            <Input
-              id="k-rep"
-              value={f.reparo.descricao}
-              onChange={(e) => setReparo('descricao', e.target.value)}
-              placeholder="Ex.: troca da célula de carga"
-            />
-          </Field>
-          <Field label="Marca de reparo nº" htmlFor="k-marca">
-            <Input id="k-marca" value={f.reparo.marcaReparo} onChange={(e) => setReparo('marcaReparo', e.target.value)} />
-          </Field>
-          <Field label="Selos retirados" htmlFor="k-selos-r">
-            <Input id="k-selos-r" value={f.reparo.selosRetirados} onChange={(e) => setReparo('selosRetirados', e.target.value)} />
-          </Field>
-          <Field label="Selos colocados" htmlFor="k-selos-c" className="sm:col-span-2">
-            <Input id="k-selos-c" value={f.reparo.selosColocados} onChange={(e) => setReparo('selosColocados', e.target.value)} />
-          </Field>
-        </div>
-      </Card>
+            </Field>
+          </li>
+        )}
+        {r.comoEncontrado && (
+          <li className="px-5 py-3">
+            <ItemAnterior rotulo="“Como encontrado”">
+              Leituras antes do ajuste em {pontos} {pontos === 1 ? 'ponto' : 'pontos'}: na etapa Erro de indicação, aba “Antes do
+              ajuste”.
+            </ItemAnterior>
+          </li>
+        )}
+        {r.reparo && (
+          <li className="px-5 py-3">
+            <ItemAnterior rotulo="Reparo">
+              {[
+                rep.descricao.trim() || 'Houve reparo',
+                rep.marcaReparo.trim() && `marca de reparo nº ${rep.marcaReparo.trim()}`,
+                rep.selosRetirados.trim() && `selos retirados: ${rep.selosRetirados.trim()}`,
+                rep.selosColocados.trim() && `selos colocados: ${rep.selosColocados.trim()}`,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </ItemAnterior>
+          </li>
+        )}
+        {r.preliminar.length > 0 && (
+          <li className="px-5 py-3">
+            <ItemAnterior rotulo="Verificação preliminar">Não atendido: {r.preliminar.join(', ')}.</ItemAnterior>
+          </li>
+        )}
+      </ul>
+      {/* A ação no rodapé do cartão: no celular, o título e a descrição ficam com a largura toda */}
+      <div className="flex flex-col gap-2 border-t border-line px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-muted">Para seguir o POP nesta calibração, tire estes dados do registro.</p>
+        <Button tamanho="sm" className="self-start sm:self-auto" onClick={() => void tirar()}>
+          Tirar do registro
+        </Button>
+      </div>
+    </Card>
+  )
+}
+
+function ItemAnterior({ rotulo, children }: { rotulo: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-3">
+      <span className="shrink-0 text-xs font-medium text-muted sm:w-40 sm:pt-0.5">{rotulo}</span>
+      <span className="min-w-0 break-words text-ink-2">{children}</span>
     </div>
   )
 }

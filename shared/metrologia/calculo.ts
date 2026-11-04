@@ -35,6 +35,7 @@ import {
 import type {
   Aviso,
   EntradaCalculo,
+  InstrumentoCalculo,
   Orcamento,
   PecaCalculo,
   PontoCalculo,
@@ -73,6 +74,11 @@ interface Massa {
   somaEma: number
   /** Todas as peças com EMA conhecido (classe R111 informada). */
   emaConhecido: boolean
+  /**
+   * Peças sem EMA (jogo sem a classe R111, ou nominal sem EMA na classe) em que o EMA entra na incerteza: uso pelo
+   * nominal, deriva pelo EMA ou empuxo estimado (5c/5d/5e). Um texto por jogo ou peça, para a pendência.
+   */
+  emaFaltando: string[]
   /** Alguma peça sem incerteza (pelo nominal sem classe, ou pelo certificado sem U). */
   semIncerteza: boolean
   /** Convecção: falta o ΔT pesos − ar (nem medido, nem pela aclimatação). */
@@ -115,6 +121,11 @@ interface Contexto {
   ar: { rhoA: number; uRhoA: number } | null
   /** ΔT pesos − ar (K) a usar para uma peça de `kg` quilos; null = não informado. */
   deltaTPeca: ((kg: number) => number) | null
+  /**
+   * Múltiplas faixas com descida sem descarregar (crescente e decrescente, ou só decrescente): a maior carga aplicada,
+   * cuja faixa vale para as leituras decrescentes; null nos demais casos (cada leitura na faixa da carga).
+   */
+  cargaDescida: number | null
 }
 
 const lida = (v: number | null | undefined): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
@@ -124,6 +135,24 @@ const listaE = (itens: string[]) =>
   itens.length > 1 ? `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}` : (itens[0] ?? '')
 
 const naoExcede = (valor: number, limite: number) => valor <= limite + TOL * Math.max(Math.abs(limite), Math.abs(valor))
+
+/**
+ * Leitura fora do esperado para a carga, provável erro de digitação (vírgula esquecida, outra unidade): mais longe da
+ * carga que 10 % dela ou, na carga pequena, que 2 e (lá só o arredondamento em d já passa de 10 %). O e é o da faixa
+ * ou do intervalo da carga (sem e, o d). Carga zero (ou sem leitura) nunca é. A tela usa a mesma regra para pintar o
+ * campo, e o cálculo a transforma em pendência na calibração nova (`EntradaCalculo.regrasDoPop`).
+ */
+export function leituraImplausivel(
+  leitura: number | null | undefined,
+  carga: number,
+  instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'>,
+): boolean {
+  const l = lida(leitura)
+  if (l === null || !(carga > 0)) return false
+  const faixa = instrumento.faixas.length ? faixaDoValor(carga, instrumento) : null
+  const e = faixa ? (faixa.e > 0 ? faixa.e : faixa.d > 0 ? faixa.d : 0) : 0
+  return !naoExcede(Math.abs(l - carga), Math.max(0.1 * carga, 2 * e))
+}
 
 // ---- Repetibilidade (cg-18 6.1) ----------------------------------------------------------------
 
@@ -149,7 +178,7 @@ function resumirRepetibilidade(ensaio: EntradaCalculo['repetibilidade'][number])
  * (o de maior carga ≤ L e o de menor carga ≥ L); abaixo ou acima de todos, o mais próximo; com um ensaio só,
  * ele vale para toda a faixa. Empate em s: o de menos graus de liberdade (conservador).
  */
-function repetibilidadeNaCarga(carga: number, ctx: Contexto): { s: number; nu: number } | null {
+function repetibilidadeNaCarga(carga: number, ctx: Contexto): { s: number; nu: number; carga: number } | null {
   const ensaios = ctx.repeticoes
   if (!ensaios.length) return null
   const { tol } = ctx
@@ -166,7 +195,13 @@ function repetibilidadeNaCarga(carga: number, ctx: Contexto): { s: number; nu: n
   }
   let escolhido = candidatos[0]
   for (const r of candidatos) if (r.s > escolhido.s || (r.s === escolhido.s && r.nu < escolhido.nu)) escolhido = r
-  return { s: escolhido.s, nu: escolhido.nu }
+  return { s: escolhido.s, nu: escolhido.nu, carga: escolhido.carga }
+}
+
+/** Leituras mínimas de um ensaio de repetibilidade (POP 7.9, Tabela 4): 10 na classe I; 5, ou 3 com carga ≥ 100 kg. */
+function leiturasMinimasRepetibilidade(carga: number, ctx: Contexto): number {
+  if (ctx.entrada.instrumento.classe === 'I') return 10
+  return converterMassa(carga, ctx.entrada.instrumento.unidade, 'kg') >= 100 * (1 - TOL) ? 3 : 5
 }
 
 // ---- Excentricidade (cg-18 6.3 e 7.1.1.4) --------------------------------------------------------
@@ -258,6 +293,10 @@ function componentesMassa(pecas: readonly PecaCalculo[], ctx: Contexto): Massa {
   let conveccaoAcimaEma = false
   const semDensidade: string[] = []
   const densidadeImplausivel: Massa['densidadeImplausivel'] = []
+  const emaFaltando: string[] = []
+  // O empuxo estimado usa o mpe relativo (Σ EMA / Σ nominal); o MEDIDO sem t, UR ou p já é pendência
+  const empuxoEstimado = opcoes.empuxo === 'AJUSTADO' || opcoes.empuxo === 'NAO_AJUSTADO' || opcoes.empuxo === 'DELTA_T'
+  const nomePeca = (p: PecaCalculo) => `peça de ${formatarNumero(p.nominal, casasDecimais(p.nominal))} ${unidade}`
   for (const p of pecas) {
     const q = p.quantidade
     if (!(q > 0)) continue
@@ -270,14 +309,27 @@ function componentesMassa(pecas: readonly PecaCalculo[], ctx: Contexto): Massa {
     const deriva = opcoes.deriva === 'KD' && p.incerteza > 0 ? opcoes.kD * p.incerteza : p.ema
     uDeriva += (deriva / RAIZ3) * q
     somaEma += p.ema * q
-    if (!(p.ema > 0)) emaConhecido = false
+    if (!(p.ema > 0)) {
+      emaConhecido = false
+      // Sem o EMA, a deriva (pelo EMA, ou kD·U sem U), u(δm_c) pelo nominal e o mpe do empuxo estimado somem
+      const usaEma = !p.usarCertificado || opcoes.deriva !== 'KD' || !(p.incerteza > 0) || empuxoEstimado
+      const jogo = p.jogo?.trim()
+      if (usaEma)
+        emaFaltando.push(
+          p.classe
+            ? `a ${nomePeca(p)}${jogo ? ` do jogo ${jogo}` : ''} não tem EMA na classe ${p.classe}`
+            : jogo
+              ? `o jogo ${jogo} está sem a classe`
+              : `a ${nomePeca(p)} está sem a classe`,
+        )
+    }
     // Empuxo pela densidade do ar medida sem ρ ou u(ρ), ou com ρ fora da faixa dos pesos: a pendência bloqueia a
     // emissão (em qualquer ensaio, também no "como encontrado"); a tela calcula com ρc e a u(ρ) conservadora, sem
     // a correção absurda de um 7,95
     const temRho = (p.densidade ?? 0) > 0
     const plausivel = temRho && densidadePesosPlausivel(p.densidade!)
     if (opcoes.empuxo === 'MEDIDO') {
-      const jogo = p.jogo?.trim() || `peça de ${formatarNumero(p.nominal, casasDecimais(p.nominal))} ${unidade}`
+      const jogo = p.jogo?.trim() || nomePeca(p)
       if (!temRho || !((p.uDensidade ?? 0) > 0)) semDensidade.push(jogo)
       else if (!plausivel) densidadeImplausivel.push({ jogo, densidade: p.densidade! })
     }
@@ -322,6 +374,7 @@ function componentesMassa(pecas: readonly PecaCalculo[], ctx: Contexto): Massa {
     u: Math.sqrt(uMassa ** 2 + uDeriva ** 2 + uEmpuxo ** 2 + uConveccao ** 2),
     somaEma,
     emaConhecido,
+    emaFaltando: [...new Set(emaFaltando)],
     semIncerteza,
     semDeltaT,
     conveccaoForaDaTabela,
@@ -333,20 +386,31 @@ function componentesMassa(pecas: readonly PecaCalculo[], ctx: Contexto): Massa {
 
 // ---- Indicação e orçamento (cg-18 7.1.1, 7.1.3, 7.2, 7.3) -----------------------------------------
 
-/** d da indicação: divisão de teste; multi-intervalo pelo intervalo da indicação; múltiplas faixas pela menor que comporta a carga. */
-function divisaoNaCarga(indicacao: number, carga: number, ctx: Contexto): number {
+/**
+ * d da indicação: divisão de teste; multi-intervalo pelo intervalo da indicação; múltiplas faixas pela menor que
+ * comporta `cargaFaixa` (a carga; na descida sem descarregar, a maior carga aplicada: ver `cargaDaFaixaDescida`).
+ */
+function divisaoNaCarga(indicacao: number, carga: number, ctx: Contexto, cargaFaixa = carga): number {
   if (ctx.opcoes.divisaoTeste > 0) return ctx.opcoes.divisaoTeste
   const instrumento = ctx.entrada.instrumento
-  return faixaDoValor(instrumento.tipoFaixas === 'MULTI_INTERVALO' ? indicacao : carga, instrumento).d
+  return faixaDoValor(instrumento.tipoFaixas === 'MULTI_INTERVALO' ? indicacao : cargaFaixa, instrumento).d
 }
 
 const ehZero = (carga: number, ctx: Contexto) => Math.abs(carga) <= ctx.tol
 
+/**
+ * Carga que decide a faixa de uma leitura decrescente. Na balança de múltiplas faixas, a troca para a faixa menor
+ * só acontece com o receptor vazio (OIML R76-1 4.10): na descida sem descarregar, a leitura continua na faixa da maior
+ * carga aplicada. O zero (receptor vazio) e os demais casos: a própria carga.
+ */
+const cargaDaFaixaDescida = (carga: number, ctx: Contexto) =>
+  ctx.cargaDescida !== null && !ehZero(carga, ctx) ? Math.max(carga, ctx.cargaDescida) : carga
+
 /** u(I) = √(d0²/12 + d_I²/12 + s² + (u_rel,ecc·I)² + u²hist + u²tempo); no ponto zero só d0 e s (e a histerese da média). */
-function incertezaIndicacao(indicacao: number, carga: number, ctx: Contexto, uHist = 0) {
+function incertezaIndicacao(indicacao: number, carga: number, ctx: Contexto, uHist = 0, cargaFaixa = carga) {
   const zero = ehZero(carga, ctx)
   const repetibilidade = repetibilidadeNaCarga(carga, ctx)
-  const uDigL = zero ? 0 : divisaoNaCarga(indicacao, carga, ctx) / RAIZ12
+  const uDigL = zero ? 0 : divisaoNaCarga(indicacao, carga, ctx, cargaFaixa) / RAIZ12
   const uRep = repetibilidade?.s ?? 0
   const uEcc = zero ? 0 : Math.abs(indicacao) * ctx.uRelEcc
   const uTempo = zero ? 0 : Math.abs(indicacao) * ctx.uRelTempo
@@ -359,8 +423,8 @@ function incertezaIndicacao(indicacao: number, carga: number, ctx: Contexto, uHi
  * u²(E) = u²(I) + u²(L_T), u²(L_T) = [s·u(m_refCheia) + u(m_ref,k)]² + 2·Σ u²(I_j) (7.1.2-15b, 7.1.3-1c).
  * ν_eff = u⁴(E)/(u_rep⁴/ν) só com a repetibilidade direta (convenção do H3); k pelo método escolhido.
  */
-function orcamento(indicacao: number, ref: Referencia, ctx: Contexto, uHist = 0): Orcamento {
-  const ind = incertezaIndicacao(indicacao, ref.carga, ctx, uHist)
+function orcamento(indicacao: number, ref: Referencia, ctx: Contexto, uHist = 0, cargaFaixa = ref.carga): Orcamento {
+  const ind = incertezaIndicacao(indicacao, ref.carga, ctx, uHist, cargaFaixa)
   const uReferencia = ref.massa.u
   let u2Referencia = uReferencia ** 2
   let uSubstituicao = 0
@@ -452,6 +516,32 @@ function referenciaPonto(
   }
 }
 
+/**
+ * Alguma leitura (erro de indicação, repetibilidade ou excentricidade) não é múltipla da divisão com que foi lida
+ * (o d do intervalo, ou o da divisão de teste)? Então o d cadastrado parece errado (a balança indica mais fino).
+ */
+function leiturasForaDaDivisao(entrada: EntradaCalculo, ctx: Contexto): boolean {
+  const fora = (leitura: number | null | undefined, carga: number, cargaFaixa = carga) => {
+    const l = lida(leitura)
+    if (l === null) return false
+    const d = ehZero(carga, ctx) && ehZero(l, ctx) ? ctx.d0 : divisaoNaCarga(l, carga, ctx, cargaFaixa)
+    if (!(d > 0)) return false
+    const n = l / d
+    // Só o ruído do binário (4,998 / 0,002 = 2499,0000000000005)
+    return Math.abs(n - Math.round(n)) > 1e-9 * Math.max(1, Math.abs(n))
+  }
+  const exc = entrada.excentricidade
+  return (
+    entrada.indicacao.pontos.some(
+      (p) => fora(p.crescente, p.carga) || fora(p.decrescente, p.carga, cargaDaFaixaDescida(p.carga, ctx)),
+    ) ||
+    entrada.repetibilidade.some((r) => r.leituras.some((l) => fora(l, r.carga))) ||
+    // Referência: o zero antes de cada posição (método 3) ou a leitura no centro logo antes (método 4)
+    (exc.aplicavel &&
+      exc.posicoes.some((p) => fora(p.leitura, exc.carga) || fora(p.referencia, exc.metodo === 4 ? exc.carga : 0)))
+  )
+}
+
 // ---- Cálculo completo ----------------------------------------------------------------------------
 
 /**
@@ -463,6 +553,8 @@ function referenciaPonto(
 export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   const { instrumento, opcoes, conformidade } = entrada
   const unidade = instrumento.unidade
+  /** Registro de antes das regras do POP: os mínimos e as leituras fora do esperado ficam só como avisos. */
+  const legado = entrada.regrasDoPop !== true
   const avisos: Aviso[] = []
   const pendencias: string[] = []
   const repetibilidade = entrada.repetibilidade.map(resumirRepetibilidade)
@@ -514,6 +606,15 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
 
   const max = faixas[faixas.length - 1].max
   const sub = entrada.indicacao.substituicao
+  const metodo = entrada.indicacao.metodo
+  const desceSemDescarregar =
+    instrumento.tipoFaixas === 'MULTIPLAS_FAIXAS' &&
+    faixas.length > 1 &&
+    !(opcoes.divisaoTeste > 0) &&
+    (metodo === 'CRESCENTE_DECRESCENTE' || metodo === 'DECRESCENTE')
+  const cargasAplicadas = entrada.indicacao.pontos
+    .filter((p) => lida(p.crescente) !== null || lida(p.decrescente) !== null)
+    .map((p) => p.carga)
   const ctx: Contexto = {
     entrada,
     opcoes,
@@ -526,26 +627,34 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     tol: TOL * Math.max(Math.abs(max), Number.MIN_VALUE),
     ar: opcoes.empuxo === 'MEDIDO' && ar ? { rhoA: ar.densidade, uRhoA: ar.incerteza } : null,
     deltaTPeca,
+    cargaDescida: desceSemDescarregar && cargasAplicadas.length ? Math.max(...cargasAplicadas) : null,
   }
 
   /** Carga nas casas de d (ou mais, se o valor tiver); `rotulo` acrescenta a unidade (para os avisos). */
   const textoCarga = (carga: number) =>
     formatarNumero(carga, Math.max(casasDecimais(divisaoNaCarga(carga, carga, ctx)), casasDecimais(carga)))
   const rotulo = (carga: number) => `${textoCarga(carga)} ${unidade}`
-  const leituraTexto = (leitura: number | null, carga: number) =>
+  const leituraTexto = (leitura: number | null, carga: number, cargaFaixa = carga) =>
     leitura === null
       ? ''
-      : formatarNumero(leitura, Math.max(casasDecimais(divisaoNaCarga(leitura, carga, ctx)), casasDecimais(leitura)))
-  const implausivel = (leitura: number | null, carga: number) =>
-    leitura !== null && carga > 0 && Math.abs(leitura - carga) > 0.1 * carga
+      : formatarNumero(leitura, Math.max(casasDecimais(divisaoNaCarga(leitura, carga, ctx, cargaFaixa)), casasDecimais(leitura)))
+  const implausivel = (leitura: number | null, carga: number) => leituraImplausivel(leitura, carga, instrumento)
 
   const cadeia = prepararSubstituicao(ctx)
   const porMedia = opcoes.histerese === 'MEDIA'
   const semPadroes: string[] = []
   const semIncerteza: string[] = []
+  const emaFaltando: string[] = []
   const classeInsuficiente: string[] = []
-  const leiturasImplausiveis: string[] = []
+  /** Pontos em que a classe dos pesos não pôde ser conferida (sem EMA), sem a pendência do EMA. */
+  const classeNaoConferida: string[] = []
+  /** Leituras fora do esperado: o texto do aviso (registro anterior) e o da pendência (calibração nova). */
+  const leiturasImplausiveis: Array<{ aviso: string; pendencia: string }> = []
+  /** Pontos lidos sem a leitura de subida (a subida é obrigatória, POP 7.7). */
+  const semSubida: string[] = []
   const uMenorQueD: string[] = []
+  /** U < d com s = 0 de poucas leituras (ou sem repetibilidade): aí o resultado é suspeito, não só leituras iguais. */
+  let uMenorQueDPoucasLeituras = false
   const conveccaoAcimaEma: string[] = []
   const semDensidade: string[] = []
   const densidadeImplausivel = new Map<string, number>()
@@ -561,21 +670,35 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   let maiorU = 0
   let pontosLidos = 0
   let maiorCargaLida = -Infinity
+  /** Algum ponto com carga acima de zero lido (só o zero lido não é ensaio de erro de indicação). */
+  let cargaLida = false
 
   const pontos = entrada.indicacao.pontos.map((ponto): ResultadoPonto => {
     const nivel = cadeia ? Math.max(0, Math.floor(ponto.nivelSubstituicao || 0)) : 0
     const massa = componentesMassa(ponto.pecas, ctx)
-    const ref = referenciaPonto(ponto, nivel, massa, cadeia)
+    // Peças fora dos padrões escolhidos: sem a referência (a carga é a digitada), o motivo vira a pendência
+    const ref = ponto.semPadrao ? ponto.semPadrao : referenciaPonto(ponto, nivel, massa, cadeia)
     const sobe = lida(ponto.crescente)
     const desce = lida(ponto.decrescente)
     const temLeitura = sobe !== null || desce !== null
+    const faixaDesce = cargaDaFaixaDescida(ponto.carga, ctx)
     if (temLeitura) {
       pontosLidos++
       maiorCargaLida = Math.max(maiorCargaLida, ponto.carga)
+      if (!ehZero(ponto.carga, ctx)) cargaLida = true
+      if (sobe === null && metodo !== 'DECRESCENTE') semSubida.push(rotulo(ponto.carga))
+      // A leitura contra a carga feita: a digitada, quando os pesos não a somam (essa diferença já é pendência)
+      const cargaFeita = ponto.cargaDigitada ?? ponto.carga
       for (const l of [sobe, desce])
-        if (implausivel(l, ponto.carga)) leiturasImplausiveis.push(`${leituraTexto(l, ponto.carga)} em ${rotulo(ponto.carga)}`)
-      if (nivel === 0 && !massa.temPecas && !ehZero(ponto.carga, ctx)) semPadroes.push(rotulo(ponto.carga))
-      if (massa.temPecas && massa.semIncerteza) semIncerteza.push(rotulo(ponto.carga))
+        if (implausivel(l, cargaFeita))
+          leiturasImplausiveis.push({
+            aviso: `${leituraTexto(l, cargaFeita)} em ${rotulo(cargaFeita)}`,
+            pendencia: `Erro de indicação, ponto de ${rotulo(cargaFeita)}: leitura ${leituraTexto(l, cargaFeita)} fora do esperado; confira a digitação.`,
+          })
+      if (nivel === 0 && !massa.temPecas && !ehZero(ponto.carga, ctx) && !ponto.semPadrao) semPadroes.push(rotulo(ponto.carga))
+      emaFaltando.push(...massa.emaFaltando)
+      // Sem incerteza nenhuma (u(δm_c) = 0): o EMA que falta já é a pendência; senão, o certificado sem U
+      if (massa.temPecas && massa.semIncerteza && !massa.emaFaltando.length) semIncerteza.push(rotulo(ponto.carga))
       if (massa.semDeltaT) semDeltaT = true
       if (massa.conveccaoForaDaTabela) conveccaoForaDaTabela = true
       if (massa.conveccaoAcimaEma) conveccaoAcimaEma.push(rotulo(ponto.carga))
@@ -597,48 +720,104 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
             if (pelaIncerteza) algumPelaIncerteza = true
           }
         }
-      }
+      } else if (
+        nivel === 0 &&
+        massa.temPecas &&
+        !massa.emaFaltando.length &&
+        emaInstrumento(ponto.carga, instrumento, 'OIML_INICIAL') !== null
+      )
+        // Sem o EMA de alguma peça, mas ele não entra na incerteza (deriva kD·U, empuxo medido ou nenhum)
+        classeNaoConferida.push(rotulo(ponto.carga))
     }
 
     let crescente: Orcamento | null = null
     let decrescente: Orcamento | null = null
     let mediaOrc: Orcamento | null = null
+    // Média de uma leitura em cada faixa: o d maior (conservador)
+    const faixaMedia =
+      desce !== null &&
+      (sobe === null || divisaoNaCarga(desce, ponto.carga, ctx, faixaDesce) > divisaoNaCarga(sobe, ponto.carga, ctx))
+        ? faixaDesce
+        : ponto.carga
     if (typeof ref === 'string') {
       if (temLeitura) pendencias.push(`Erro de indicação, ponto de ${rotulo(ponto.carga)}: ${ref}.`)
     } else {
       if (sobe !== null) crescente = orcamento(sobe, ref, ctx)
-      if (desce !== null) decrescente = orcamento(desce, ref, ctx)
+      if (desce !== null) decrescente = orcamento(desce, ref, ctx, 0, faixaDesce)
       if (porMedia && temLeitura) {
         const ambas = sobe !== null && desce !== null
         const indicacao = ambas
           ? limparRuido((sobe + desce) / 2, Math.max(Math.abs(sobe), Math.abs(desce)))
           : (sobe ?? desce ?? 0)
-        mediaOrc = orcamento(indicacao, ref, ctx, ambas ? Math.abs(desce - sobe) / RAIZ12 : 0)
+        mediaOrc = orcamento(indicacao, ref, ctx, ambas ? Math.abs(desce - sobe) / RAIZ12 : 0, faixaMedia)
       }
     }
+    // Etapas e pesos que não somam a carga digitada: o ponto é calculado pelo valor dos pesos, mas não é a carga feita
+    if (temLeitura && ponto.cargaDigitada !== undefined) {
+      const dif = limparRuido(ponto.carga - ponto.cargaDigitada, Math.max(Math.abs(ponto.carga), Math.abs(ponto.cargaDigitada)))
+      const quem =
+        nivel > 0
+          ? ponto.pecas.length
+            ? 'as etapas de substituição e os pesos somam'
+            : 'as etapas de substituição somam'
+          : 'os pesos somam'
+      pendencias.push(
+        `Erro de indicação, ponto de ${rotulo(ponto.cargaDigitada)}: ${quem} ${rotulo(ponto.carga)}; ${
+          dif < 0
+            ? `faltam ${rotulo(-dif)}. Escolha nos padrões o jogo que completa a carga ou acerte os pesos do ponto.`
+            : `passam ${rotulo(dif)}. Acerte os pesos${nivel > 0 ? ' ou o nível de substituição' : ''} do ponto.`
+        }`,
+      )
+    }
 
-    // Orçamento reportado (o de maior U na opção SEPARADO; a média na opção MEDIA)
-    const reportados = (porMedia ? [mediaOrc] : [crescente, decrescente]).filter((o): o is Orcamento => o !== null)
-    const principal = reportados.reduce<Orcamento | null>((a, o) => (!a || o.U > a.U ? o : a), null)
-    for (const o of reportados) {
+    // Orçamento reportado (o de maior U na opção SEPARADO; a média na opção MEDIA), com a carga que decide a faixa
+    const reportados = (
+      porMedia
+        ? [{ o: mediaOrc, faixa: faixaMedia, desce: sobe === null }]
+        : [
+            { o: crescente, faixa: ponto.carga, desce: false },
+            { o: decrescente, faixa: faixaDesce, desce: true },
+          ]
+    ).filter((x): x is { o: Orcamento; faixa: number; desce: boolean } => x.o !== null)
+    const principal = reportados.reduce<Orcamento | null>((a, { o }) => (!a || o.U > a.U ? o : a), null)
+    for (const { o, faixa } of reportados) {
       maiorU = Math.max(maiorU, o.U)
-      const d = ehZero(ponto.carga, ctx) ? d0 : divisaoNaCarga(o.indicacao, ponto.carga, ctx)
-      if (o.U < d * (1 - TOL)) uMenorQueD.push(rotulo(ponto.carga))
+      const d = ehZero(ponto.carga, ctx) ? d0 : divisaoNaCarga(o.indicacao, ponto.carga, ctx, faixa)
+      if (o.U < d * (1 - TOL)) {
+        uMenorQueD.push(rotulo(ponto.carga))
+        const rep = repetibilidadeNaCarga(ponto.carga, ctx)
+        if (!rep || (rep.s === 0 && rep.nu + 1 < leiturasMinimasRepetibilidade(rep.carga, ctx))) uMenorQueDPoucasLeituras = true
+      }
     }
     const arredondado = principal ? arredondarResultado(principal.erro, principal.U) : null
     const erroTexto = (o: Orcamento | null) => (o && principal ? arredondarResultado(o.erro, principal.U).erro : '')
 
-    // Conformidade com os valores como reportados (E na casa de U, U com 2 algarismos)
+    // Conformidade com os valores como reportados (E na casa de U, U com 2 algarismos). Múltiplas faixas: a leitura
+    // decrescente pelo EMA da faixa em que foi lida (como balança de faixa única com essa faixa); a média, pelo da
+    // subida (o menor)
     let ema: number | null = null
+    let emaDecrescente: number | null = null
     let situacao: SituacaoConformidade | null = null
     if (conformidade.solicitada) {
-      ema = emaInstrumento(ponto.carga, instrumento, conformidade.criterio, conformidade.toleranciaCliente)
+      const emaSobe = emaInstrumento(ponto.carga, instrumento, conformidade.criterio, conformidade.toleranciaCliente)
+      const emaDesce =
+        faixaDesce === ponto.carga
+          ? emaSobe
+          : emaInstrumento(
+              ponto.carga,
+              { ...instrumento, tipoFaixas: 'UNICA', faixas: [faixaDoValor(faixaDesce, instrumento)] },
+              conformidade.criterio,
+              conformidade.toleranciaCliente,
+            )
+      const emaDe = (desceu: boolean) => (desceu ? emaDesce : emaSobe)
+      ema = emaDe(reportados.length > 0 && reportados.every((x) => x.desce))
+      if (!porMedia && crescente && decrescente && emaDesce !== null && emaDesce !== emaSobe) emaDecrescente = emaDesce
       if (ema === null && principal) semEma = true
       if (ema !== null && principal && arredondado) {
-        const limite = ema
-        const atende = reportados.every((o) => {
+        const atende = reportados.every(({ o, desce: desceu }) => {
+          const limite = emaDe(desceu)
           const e = Math.abs(arredondarResultado(o.erro, principal.U).valorErro)
-          return naoExcede(conformidade.regra === 'BANDA_GUARDA' ? e + arredondado.valorU : e, limite)
+          return limite !== null && naoExcede(conformidade.regra === 'BANDA_GUARDA' ? e + arredondado.valorU : e, limite)
         })
         situacao = atende ? 'CONFORME' : 'NAO_CONFORME'
       }
@@ -653,12 +832,13 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       decrescente,
       media: mediaOrc,
       ema,
+      ...(emaDecrescente !== null ? { emaDecrescente } : {}),
       conformidade: situacao,
       texto: {
         carga: textoCarga(ponto.carga),
         referencia: formatarNumero(referencia, arredondado ? arredondado.casas : casasDecimais(referencia)),
         crescente: leituraTexto(sobe, ponto.carga),
-        decrescente: leituraTexto(desce, ponto.carga),
+        decrescente: leituraTexto(desce, ponto.carga, faixaDesce),
         erroCrescente: erroTexto(crescente),
         erroDecrescente: erroTexto(decrescente),
         erroMedio: erroTexto(mediaOrc),
@@ -666,15 +846,57 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
         k: principal ? formatarNumero(principal.k, 2) : '',
         nuEff: principal ? (principal.nuEff === Infinity ? '∞' : formatarNumero(Math.floor(principal.nuEff), 0)) : '',
         ema: ema !== null ? formatarNumero(ema, casasDecimais(ema)) : '',
+        ...(emaDecrescente !== null ? { emaDecrescente: formatarNumero(emaDecrescente, casasDecimais(emaDecrescente)) } : {}),
       },
     }
   })
 
   // ---- Pendências ----
   if (!pontosLidos) pendencias.unshift('Erro de indicação: nenhuma leitura registrada.')
-  if (!ctx.repeticoes.length) pendencias.unshift('Repetibilidade: registre pelo menos 2 leituras (o mínimo recomendado é 5).')
+  if (!ctx.repeticoes.length)
+    pendencias.unshift(
+      legado
+        ? 'Repetibilidade: registre pelo menos 2 leituras (o mínimo recomendado é 5).'
+        : `Repetibilidade: registre as leituras do ensaio (no mínimo ${instrumento.classe === 'I' ? '10' : '5; 3 com carga ≥ 100 kg'}; POP, Tabela 4).`,
+    )
   if (entrada.excentricidade.aplicavel && !exc.valida)
     pendencias.push('Excentricidade: registre as leituras das posições (ou marque o ensaio como não aplicável).')
+  // Mínimos do POP (7.7 e 7.9, Tabela 4) na calibração nova; no registro anterior, avisos (mais abaixo)
+  const cargasRep = ctx.repeticoes.map((r) => r.carga).filter((c) => c > 0)
+  const semEnsaio = cargasRep.length ? faixasSemRepetibilidade(instrumento, cargasRep) : []
+  const textoSemEnsaio = () => {
+    const { onde, nome } = ondeFaltaRepetibilidade(
+      instrumento.tipoFaixas,
+      semEnsaio.map((f) => `até ${rotulo(f.max)} (d = ${rotulo(f.d)})`),
+    )
+    return `Repetibilidade: ${cargasRep.length} ${cargasRep.length === 1 ? 'ensaio' : 'ensaios'} para ${faixas.length} ${nome}s; falta ${onde}. O POP (7.9) pede um ensaio em cada ${nome} de d diferente.`
+  }
+  if (!legado) {
+    if (pontosLidos > 0 && !cargaLida) pendencias.push('Erro de indicação: registre as leituras das cargas acima de zero (POP 7.7).')
+    else if (pontosLidos > 0 && pontosLidos < 5)
+      pendencias.push(
+        `Erro de indicação: ${pontosLidos} ${pontosLidos === 1 ? 'ponto lido' : 'pontos lidos'}; o POP pede no mínimo 5, contando o zero (7.7).`,
+      )
+    if (metodo === 'DECRESCENTE')
+      pendencias.push('Erro de indicação: a subida é obrigatória; troque o método “Decrescente” (POP 7.7).')
+    else if (semSubida.length)
+      pendencias.push(`Erro de indicação: falta a leitura de subida em ${listaE([...new Set(semSubida)])} (POP 7.7).`)
+    // Ensaio copiado e não feito (sem leituras): o aviso mais abaixo
+    for (const r of repetibilidade) {
+      const minimo = leiturasMinimasRepetibilidade(r.carga, ctx)
+      if (r.n > 0 && r.n < minimo)
+        pendencias.push(
+          `Repetibilidade a ${rotulo(r.carga)}: ${r.n} ${r.n === 1 ? 'leitura' : 'leituras'}; ${
+            instrumento.classe === 'I'
+              ? 'na classe I o mínimo é 10 (POP, Tabela 4).'
+              : minimo === 3
+                ? 'o mínimo é 3 com carga ≥ 100 kg (POP, Tabela 4).'
+                : 'o mínimo é 5 (POP, Tabela 4; 3 só com carga ≥ 100 kg).'
+          }`,
+        )
+    }
+    if (semEnsaio.length) pendencias.push(textoSemEnsaio())
+  }
   if (conformidade.solicitada && semEma)
     pendencias.push(
       conformidade.criterio === 'CLIENTE'
@@ -704,36 +926,45 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     pendencias.push(
       'Convecção: diferença de temperatura acima de 20 °C ou peça acima de 50 kg, fora da Tabela F2.1 do cg-18; aguarde a aclimatação e meça de novo.',
     )
+  // Pesos sem o EMA da R111 (jogo sem a classe) em que ele entra na incerteza: sem ele, a deriva, o mpe do empuxo e
+  // u(δm_c) pelo nominal somem e a conferência da classe dos pesos (R76 3.7.1) não é feita
+  if (substituicaoLida && cadeia) emaFaltando.push(...cadeia.massa.emaFaltando)
+  const pesosSemEma = [...new Set(emaFaltando)]
+  if (pesosSemEma.length)
+    pendencias.push(
+      `Pesos sem EMA conhecido (OIML R 111): ${listaE(pesosSemEma)}. O EMA entra na incerteza dos pesos (deriva, empuxo ou valor nominal); confira a classe no cadastro do padrão.`,
+    )
+  if (semIncerteza.length)
+    pendencias.push(`Pesos sem incerteza conhecida (classe ou U do certificado) em ${[...new Set(semIncerteza)].join('; ')}.`)
 
   // ---- Avisos ----
   const lista = (itens: string[]) => [...new Set(itens)].join('; ')
   for (const r of repetibilidade) {
-    if (!r.n) continue
+    // Ensaio copiado (rascunho novo, "recalibrar", carga sugerida) e não feito: não conta no "um por intervalo"
+    if (!r.n) {
+      if (r.carga > 0 && ctx.repeticoes.length)
+        avisos.push({
+          nivel: 'atencao',
+          mensagem: `Repetibilidade a ${rotulo(r.carga)}: sem leituras; registre as leituras ou remova o ensaio.`,
+        })
+      continue
+    }
     const minimo = converterMassa(r.carga, unidade, 'kg') >= 100 * (1 - TOL) ? 3 : 5
-    if (r.n < minimo)
+    if (legado && r.n < minimo)
       avisos.push({
         nivel: 'atencao',
         mensagem: `Repetibilidade a ${rotulo(r.carga)}: ${r.n} leitura(s); o mínimo é ${minimo}${minimo === 3 ? ' (carga ≥ 100 kg)' : ' (3 só com carga ≥ 100 kg)'}.`,
       })
   }
   // Multi-intervalo e múltiplas faixas: um ensaio em cada intervalo (ou faixa) de d diferente (o rascunho novo
-  // e o "recalibrar" copiam os ensaios do último certificado, que podia ter um só)
-  const cargasRep = entrada.repetibilidade.map((r) => r.carga).filter((c) => c > 0)
-  const semEnsaio = cargasRep.length ? faixasSemRepetibilidade(instrumento, cargasRep) : []
-  if (semEnsaio.length) {
-    const { onde, nome } = ondeFaltaRepetibilidade(
-      instrumento.tipoFaixas,
-      semEnsaio.map((f) => `até ${rotulo(f.max)} (d = ${rotulo(f.d)})`),
-    )
-    avisos.push({
-      nivel: 'atencao',
-      mensagem: `Repetibilidade: ${cargasRep.length} ${cargasRep.length === 1 ? 'ensaio' : 'ensaios'} para ${faixas.length} ${nome}s; falta ${onde}. O POP (7.9) pede um ensaio em cada ${nome} de d diferente.`,
-    })
-  }
+  // e o "recalibrar" copiam os ensaios do último certificado, que podia ter um só). Só os ensaios feitos (n ≥ 2, os
+  // que entram na incerteza): os copiados vêm sem as leituras
+  if (legado && semEnsaio.length) avisos.push({ nivel: 'atencao', mensagem: textoSemEnsaio() })
   const classeI = instrumento.classe === 'I'
   if (ctx.repeticoes.some((r) => r.n < 10)) {
-    // Na classe I o POP pede 10 leituras (Tabela 4): o aviso de atenção substitui o informativo
-    if (classeI)
+    // Na classe I o POP pede 10 leituras (Tabela 4): o aviso de atenção substitui o informativo (na calibração nova, a
+    // pendência)
+    if (classeI && legado)
       avisos.push({ nivel: 'atencao', mensagem: 'Balança classe I: faça 10 leituras na repetibilidade (POP, Tabela 4).' })
     if (opcoes.metodoK === 'K2')
       avisos.push({
@@ -747,12 +978,13 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
         mensagem: 'Repetibilidade com menos de 10 leituras: o k calculado pelos graus de liberdade efetivos sai maior que 2.',
       })
   }
-  if (pontosLidos > 0 && pontosLidos < 5)
+  if (legado && pontosLidos > 0 && pontosLidos < 5)
     avisos.push({
       nivel: 'atencao',
       mensagem: `Erro de indicação com ${pontosLidos} ponto(s); o mínimo é 5, contando o zero (cg-18 §5.2).`,
     })
-  if (pontosLidos > 0 && maiorCargaLida < 0.9 * max * (1 - TOL))
+  // Faixa parcial (POP 7.7: acordada com o cliente e declarada no certificado). Só o zero lido é pendência, não faixa
+  if (pontosLidos > 0 && (legado || cargaLida) && maiorCargaLida < 0.9 * max * (1 - TOL))
     avisos.push({
       nivel: 'atencao',
       mensagem: `A maior carga ensaiada (${rotulo(maiorCargaLida)}) é menor que 90 % de Max (${rotulo(max)}): calibração em faixa parcial, que precisa constar no certificado.`,
@@ -779,26 +1011,35 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     if (entrada.excentricidade.metodo === 1 || entrada.excentricidade.metodo === 3)
       for (const p of entrada.excentricidade.posicoes)
         if (implausivel(lida(p.leitura), lEcc))
-          leiturasImplausiveis.push(`${leituraTexto(p.leitura, lEcc)} na excentricidade (${p.rotulo})`)
+          leiturasImplausiveis.push({
+            aviso: `${leituraTexto(p.leitura, lEcc)} na excentricidade (${p.rotulo})`,
+            pendencia: `Excentricidade (${p.rotulo}): leitura ${leituraTexto(p.leitura, lEcc)} fora do esperado com ${rotulo(lEcc)}; confira a digitação.`,
+          })
   }
   for (const r of entrada.repetibilidade)
     for (const l of r.leituras)
       if (implausivel(lida(l), r.carga))
-        leiturasImplausiveis.push(`${leituraTexto(l, r.carga)} na repetibilidade a ${rotulo(r.carga)}`)
-  if (leiturasImplausiveis.length)
+        leiturasImplausiveis.push({
+          aviso: `${leituraTexto(l, r.carga)} na repetibilidade a ${rotulo(r.carga)}`,
+          pendencia: `Repetibilidade a ${rotulo(r.carga)}: leitura ${leituraTexto(l, r.carga)} fora do esperado; confira a digitação.`,
+        })
+  // Calibração nova: cada leitura é uma pendência (a balança que não pesa certo não é calibrada, POP 7.8); no registro
+  // anterior, o aviso de antes
+  if (legado && leiturasImplausiveis.length)
     avisos.push({
       nivel: 'erro',
-      mensagem: `Leitura(s) mais de 10 % fora da carga, provável erro de digitação: ${lista(leiturasImplausiveis)}.`,
+      mensagem: `Leitura(s) mais de 10 % fora da carga, provável erro de digitação: ${lista(leiturasImplausiveis.map((x) => x.aviso))}.`,
     })
+  else if (!legado) pendencias.push(...new Set(leiturasImplausiveis.map((x) => x.pendencia)))
   if (semPadroes.length)
     avisos.push({
       nivel: 'atencao',
       mensagem: `Carga sem padrões em ${lista(semPadroes)}: a referência é a carga digitada, sem a incerteza dos pesos.`,
     })
-  if (semIncerteza.length)
+  if (classeNaoConferida.length)
     avisos.push({
       nivel: 'atencao',
-      mensagem: `Pesos sem incerteza conhecida (classe ou U do certificado) em ${lista(semIncerteza)}.`,
+      mensagem: `Classe dos pesos não conferida em ${lista(classeNaoConferida)}: pesos sem a classe OIML R 111 (R76 3.7.1).`,
     })
   if (classeInsuficiente.length)
     avisos.push({
@@ -845,11 +1086,21 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
         mensagem: `Cargas de substituição com ${rotulo(cadeia.massa.nominal)} de pesos padrão em cada etapa: para Max de ${rotulo(max)}, o mínimo é ${formatarNumero(converterMassa(minimo, 'kg', unidade), 0)} ${unidade} (regra da empresa).`,
       })
   }
+  // U < d: normal quando as leituras se repetem exatamente (s = 0 de verdade: u fica só com a resolução, d/√6). Suspeito
+  // quando o s = 0 vem de poucas leituras (ou falta a repetibilidade) ou quando a divisão parece errada (leitura que não
+  // é múltipla do d cadastrado)
   if (uMenorQueD.length)
-    avisos.push({
-      nivel: 'info',
-      mensagem: `U menor que a divisão em ${lista(uMenorQueD)}: resultado suspeito; confira a repetibilidade (s = 0?) e a divisão.`,
-    })
+    avisos.push(
+      uMenorQueDPoucasLeituras || leiturasForaDaDivisao(entrada, ctx)
+        ? {
+            nivel: 'atencao',
+            mensagem: `U menor que a divisão em ${lista(uMenorQueD)}: resultado suspeito; confira a repetibilidade (s = 0?) e a divisão.`,
+          }
+        : {
+            nivel: 'info',
+            mensagem: `U menor que a divisão em ${lista(uMenorQueD)}: normal quando as leituras se repetem exatamente; confira se a divisão (d) está certa.`,
+          },
+    )
   if (opcoes.divisaoTeste > 0)
     avisos.push({
       nivel: 'info',

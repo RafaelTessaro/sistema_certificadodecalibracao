@@ -3,17 +3,20 @@
 // criar a calibração (POST /api/calibracoes) e na folha de campo de uma balança sem rascunho, que assim
 // sai com o mesmo plano que o rascunho teria.
 
+import { pecasSemPadrao } from '#shared/calibracao.ts'
 import {
   calibracaoEmOutraUnidade,
   calibracaoVazia,
   enderecoCliente,
   hojeLocalIso,
+  metodoExcentricidadePadrao,
+  metodoIndicacaoPadrao,
   normalizarOpcoes,
   opcoesDaClasse,
   padroesSemHistorico,
   somarMeses,
 } from '#shared/dominio.ts'
-import type { Calibracao, CalibracaoInput } from '#shared/tipos.ts'
+import type { Calibracao, CalibracaoInput, ClasseExatidao, EnsaioIndicacao, Padrao } from '#shared/tipos.ts'
 import type { Contexto } from './contexto.ts'
 
 /** Só os dados de entrada (o que a tela edita) de uma calibração gravada. */
@@ -57,6 +60,40 @@ export function semLeituras(k: CalibracaoInput): Pick<CalibracaoInput, 'repetibi
 }
 
 /**
+ * O plano copiado só com as peças dos padrões que entram (`padroes`: os ativos da lista do rascunho novo). O ponto com
+ * peças de um jogo que ficou de fora (desativado depois do certificado) ou tiradas do cadastro do jogo volta sem peças e
+ * automático: a tela e a folha de campo montam de novo com os pesos escolhidos. As etapas de substituição com essas
+ * peças voltam sem pesos (o técnico informa a carga de novo). Sem isso, o cálculo ficaria com a carga das que sobraram.
+ */
+export function comPecasDosPadroes<T extends Pick<CalibracaoInput, 'indicacao'>>(k: T, padroes: Padrao[]): T {
+  const ensaio = (e: EnsaioIndicacao): EnsaioIndicacao => {
+    const pontos = e.pontos.map((p) => (pecasSemPadrao(p.pecas, padroes) ? { ...p, pecas: [], pecasManuais: false } : p))
+    const substituicao = pecasSemPadrao(e.substituicao.pecas, padroes) ? { ...e.substituicao, pecas: [] } : e.substituicao
+    return pontos.every((p, i) => p === e.pontos[i]) && substituicao === e.substituicao ? e : { ...e, pontos, substituicao }
+  }
+  const indicacao = ensaio(k.indicacao)
+  return indicacao === k.indicacao ? k : { ...k, indicacao }
+}
+
+/**
+ * O plano copiado de uma calibração anterior, conforme o POP para a classe de hoje da balança: a excentricidade pelo
+ * método da classe (POP 7.10: 1; na classe I, 3), o erro de indicação com subida (o "Decrescente" de um registro de
+ * antes passa para o método da classe, POP 7.7) e as leituras com a divisão normal (o modo de serviço, POP 7.6, é
+ * combinado com o cliente a cada visita: copiado, daria uma incerteza menor sem ninguém ver).
+ */
+export function planoConformeAoPop<T extends Pick<CalibracaoInput, 'excentricidade' | 'opcoes'> & Partial<Pick<CalibracaoInput, 'indicacao'>>>(
+  k: T,
+  classe: ClasseExatidao | null | undefined,
+): T {
+  return {
+    ...k,
+    excentricidade: { ...k.excentricidade, metodo: metodoExcentricidadePadrao(classe) },
+    ...(k.indicacao?.metodo === 'DECRESCENTE' ? { indicacao: { ...k.indicacao, metodo: metodoIndicacaoPadrao(classe) } } : {}),
+    opcoes: { ...k.opcoes, divisaoTeste: 0 },
+  }
+}
+
+/**
  * Os dados de entrada de uma calibração, com as cargas e leituras na unidade atual da balança, para
  * servirem de base a outra (nova calibração, calibrar de novo, revisão). O certificado emitido guarda os
  * números na unidade da balança no dia da emissão (a da cópia congelada); se o cadastro mudou de unidade
@@ -73,8 +110,9 @@ export function naUnidadeAtual(ctx: Contexto, k: Calibracao): CalibracaoInput {
 /**
  * Rascunho novo: `pedido` traz o que a tela informou (cliente, balança, OS, data…). Sem histórico da
  * balança, os ensaios ficam vazios (a tela e a folha de campo sugerem os pontos), com os métodos da classe, e os
- * padrões são os de `padroesSemHistorico`. Na classe I, as opções do cálculo saem as da classe (empuxo pela
- * densidade do ar medida e convecção; `opcoesDaClasse`).
+ * padrões são os de `padroesSemHistorico`. Com histórico, o plano da última calibração emitida, conforme o POP
+ * (`planoConformeAoPop`). Na classe I, as opções do cálculo saem as da classe (empuxo pela densidade do ar medida e
+ * convecção; `opcoesDaClasse`). Sem ajuste, reparo nem "como encontrado" (POP 7.8).
  */
 export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, tecnicoId: string): CalibracaoInput {
   const { repo } = ctx
@@ -91,12 +129,21 @@ export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, 
   const ativos = repo.listarPadroes()
   const hoje = hojeLocalIso(repo.agora())
   const data = typeof pedido.dataCalibracao === 'string' && pedido.dataCalibracao ? pedido.dataCalibracao : hoje
+  // Sem histórico, os da classe da balança (fora da classe I, sem o jogo de classe pior que a mínima para ela)
   const padroesIds = ultima
     ? ultima.padroesIds.filter((id) => ativos.some((p) => p.id === id))
-    : padroesSemHistorico(ativos, balanca?.classe).map((p) => p.id)
+    : padroesSemHistorico(ativos, balanca ?? null).map((p) => p.id)
+  // Da última calibração, o plano (sem as leituras), com o método da excentricidade da classe e sem o modo de serviço,
+  // e só com as peças dos padrões que continuam
+  const historico = ultima
+    ? comPecasDosPadroes(
+        planoConformeAoPop({ ...semLeituras(ultima), opcoes: ultima.opcoes }, balanca?.classe),
+        ativos.filter((p) => padroesIds.includes(p.id)),
+      )
+    : undefined
   return {
     ...base,
-    ...(ultima ? { ...semLeituras(ultima), opcoes: ultima.opcoes, conformidade: ultima.conformidade } : {}),
+    ...(historico ? { ...historico, conformidade: ultima!.conformidade } : {}),
     ...pedido,
     clienteId,
     balancaId,
@@ -111,7 +158,7 @@ export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, 
     padroesIds,
     // As opções pedidas (quando vêm), as da última calibração ou as padrão; na classe I, com as da classe
     opcoes: opcoesDaClasse(
-      pedido.opcoes ? normalizarOpcoes(pedido.opcoes, base.opcoes) : (ultima?.opcoes ?? base.opcoes),
+      pedido.opcoes ? normalizarOpcoes(pedido.opcoes, base.opcoes) : (historico?.opcoes ?? base.opcoes),
       balanca?.classe,
     ),
     // O lembrete conta da data da calibração (que pode ser a de uma visita marcada)

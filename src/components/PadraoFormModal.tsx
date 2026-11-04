@@ -646,7 +646,15 @@ function FormularioPadrao({
               label="Classe (OIML R111)"
               htmlFor={`${ids}-classe`}
               className="sm:col-span-2"
-              hint="M1 é a comum para balanças comerciais; F1 ou F2 para as de precisão."
+              hint={
+                f.classe ? (
+                  'M1 é a comum para balanças comerciais; F1 ou F2 para as de precisão.'
+                ) : (
+                  <span className="text-warning">
+                    Sem a classe, o sistema não tem o EMA dos pesos: a calibração com este jogo fica com pendência.
+                  </span>
+                )
+              }
             >
               <Select id={`${ids}-classe`} value={f.classe} onChange={(e) => set('classe', e.target.value as ClassePeso | '')}>
                 <option value="">Não informada</option>

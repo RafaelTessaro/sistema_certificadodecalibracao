@@ -674,3 +674,39 @@ describe('AVISO_ETIQUETA', () => {
     expect(AVISO_ETIQUETA.length).toBeLessThanOrEqual(150)
   })
 })
+
+describe('planoDaFolha: classe dos pesos fora da classe I (POP 6.1)', () => {
+  const finos = [1000, 500, 200, 200, 100, 50, 20, 20, 10, 5, 2, 2, 1]
+  const jogo = (id: string, classe: Padrao['classe'], nominais: number[]): Padrao => ({
+    ...folhaEmBranco().padroes.find((p) => p.tipo === 'PESOS')!,
+    id,
+    identificacao: id.toUpperCase(),
+    classe,
+    ativo: true,
+    pesos: nominais.map((g, i) => ({ id: `${id}-${i}`, marca: '', nominal: g, correcao: 0, incerteza: g * 0.016, k: 2 })),
+  })
+  const m1 = jogo('jp-m1', 'M1', [20_000, 10_000, 5000, 2000, 2000, 1000, 500, 200, 200, 100])
+  const f1 = jogo('jp-f1', 'F1', finos)
+  const e2 = jogo('jp-e2', 'E2', finos)
+  // Marte AD3300: classe II, 3200 g, e = 0,1 g
+  const marte = { ...folhaClasseI().balanca!, classe: 'II' as const, faixas: [{ max: 3200, e: 0.1, d: 0.01 }] }
+
+  it('sem rascunho: sem o jogo M1 (pior que a mínima, F2), e as cargas só com E2 e F1', () => {
+    const p = planoDaFolha(null, marte, [m1, f1, e2], '2026-11-03')
+    expect(p.padroes.map((x) => x.padrao.identificacao)).not.toContain('JP-M1')
+    expect(p.pontos.find((x) => x.carga === 2000)?.pesos).toBe('2 × 1 kg')
+    expect(p.avisos.join('\n')).not.toMatch(/6\.1 do POP/)
+  })
+
+  it('só o jogo M1 escolhido: a folha avisa as cargas fora de 6.1, sem pedir E1', () => {
+    const k = {
+      ...folhaClasseI().calibracao!,
+      padroesIds: [m1.id],
+      indicacao: { ...folhaClasseI().calibracao!.indicacao, pontos: [] },
+    }
+    const p = planoDaFolha(k, marte, [m1, f1, e2], '2026-11-03')
+    const aviso = p.avisos.find((a) => a.includes('6.1 do POP'))
+    expect(aviso).toMatch(/^Os pesos previstos não atendem a 6\.1 do POP nas cargas de .*2000 g/)
+    expect(aviso).toMatch(/Leve pesos de classe melhor ou mude a carga no sistema\.$/)
+  })
+})

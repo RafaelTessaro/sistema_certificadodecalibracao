@@ -6,20 +6,21 @@
 // Ordem do serviço: padrões (antes de sair) → chegada → identificação → ambiente no início → erro de
 // indicação → repetibilidade → excentricidade → ambiente no fim → assinaturas e etiqueta. A folha só registra
 // a calibração da balança como ela está: balança que não pesa certo não é calibrada (a manutenção e o ajuste
-// são feitos antes, à parte), por isso não há ajuste nem reparo, nem "como encontrado" e "depois do ajuste".
+// são feitos antes, à parte), por isso não há ajuste nem reparo, nem "como encontrado" e "depois do ajuste" (na
+// classe I, só o ajuste interno de rotina, antes dos ensaios, que o certificado declara).
 // A declaração de conformidade, a próxima calibração e os demais acordos são preenchidos só no sistema.
 //
 // Convenção visual: fundo cinza = veio do sistema (impresso, compacto); caixa branca = escrever no local
 // (só o que é medido lá); caixas de marcar sempre brancas (marca-se com X o que foi feito), com a opção
 // prevista no sistema em negrito e a etiqueta PREVISTO. Dado impresso diferente do real não tem caixa de
-// correção: o técnico anota o certo no espaço livre da frente (ou numa folha anexa), com o nº do passo, rubrica e
-// data, e as observações também (uma linha no alto da página 1 diz isso, como o POP, item 10). Com balança (e, de
-// preferência, rascunho), a folha sai pré-preenchida pelo plano (shared/folhaCampo.ts); sem balança, sai "em
-// branco", para uma balança ainda não cadastrada das classes II a IIII (a classe I usa a folha da balança
-// cadastrada: o ΔT pesos − ar e o zero antes de cada posição só saem nela). Toda página leva o nº da folha, o nº
-// do certificado reservado (quando há) e a OS: uma folha solta ou digitalizada sozinha continua identificável. O
-// nº do certificado vai também na etiqueta de calibração (a nota sai no passo das assinaturas). Determinística
-// como o certificado.
+// correção: o técnico anota o certo no bloco Anotações, no pé da frente (ou numa folha anexa), com o nº do passo,
+// rubrica e data, e as observações e anomalias também (uma linha no alto da página 1 diz isso, como o POP, item 10).
+// Com balança (e, de preferência, rascunho), a folha sai pré-preenchida pelo plano (shared/folhaCampo.ts); sem
+// balança, sai "em branco", para uma balança ainda não cadastrada das classes II a IIII (a classe I usa a folha da
+// balança cadastrada: o ΔT pesos − ar, o ajuste interno antes dos ensaios e o zero antes de cada posição só saem
+// nela). Toda página leva o nº da folha, o nº do certificado reservado (quando há) e a OS: uma folha solta ou
+// digitalizada sozinha continua identificável. O nº do certificado vai também na etiqueta de calibração (a nota sai
+// no passo das assinaturas). Determinística como o certificado.
 //
 // Paginação medida (`montar`): a parte de um passo que passa para a página seguinte repete o título do
 // passo com "(continuação)"; a tabela de pontos vai sempre inteira (só a que não cabe numa página se divide,
@@ -28,8 +29,9 @@
 // substituição, preenchidos intercalados, ficam na mesma página.
 //
 // Rev. 03, só a medição: 2 páginas (frente e verso de uma folha), também nas rodoviárias e na folha em branco: na
-// frente, os passos 1 a 4 e, embaixo deles, o espaço livre para o que for diferente e as observações; no verso, os
-// ensaios e as assinaturas (com o lembrete de medir o ambiente do fim, na frente, antes de assinar). Sem
+// frente, os passos 1 a 4 e, embaixo deles, o bloco Anotações (linhas pontilhadas até o pé da página, medido na
+// montagem: `comAnotacoes`) para o que for diferente, as observações e as anomalias; no verso, os ensaios e as
+// assinaturas (com o lembrete de preencher a linha Fim do ambiente, na frente, antes de assinar). Sem
 // QR (o nº da folha basta), sem rubrica no rodapé (a data da calibração e a assinatura ficam só no passo das
 // assinaturas) e, na faixa do alto, só a OS. Instruções de uma linha por passo (a curta na barra do título; o POP
 // explica o resto); a chegada e a identificação da balança (passos 2 e 3) num bloco só; o ambiente no início e no fim
@@ -37,9 +39,10 @@
 // assinaturas) num bloco só. Rótulos de 7 pt (em caixa baixa, para caberem), dado impresso de 9 pt e linhas de
 // escrever de ≈ 6,5 mm; as de leitura, mais altas (até ≈ 8,8 mm) quando a página tem espaço (`comLinhasFolgadas`).
 //
-// Classe I: os campos dela entram nas linhas que já existem: o ΔT pesos − ar na linha do ambiente no início (só na
-// folha de uma balança classe I), a umidade e a pressão obrigatórias, 10 leituras na repetibilidade (duas faixas de
-// 6) e, na excentricidade, o zero antes de cada posição (método 3).
+// Classe I (só na folha de uma balança classe I): o ΔT pesos − ar na linha do ambiente no início, a umidade e a pressão
+// obrigatórias, 10 leituras na repetibilidade (duas faixas de 6) e, na excentricidade, o zero antes de cada posição
+// (método 3), nas linhas que já existem; e uma linha a mais no alto do passo 5, o ajuste interno (CAL) de rotina feito
+// antes dos ensaios (uma caixa de marcar e a hora: não é reparo nem ajuste durante a calibração).
 
 import {
   capacidadeTexto,
@@ -178,21 +181,27 @@ const ALTURA_FORMATO = 9
 const LADO_CAIXA = 10
 
 /**
- * Onde se anota o que é diferente do impresso, o que não coube e as observações: a folha é impressa frente e verso
- * (os ensaios ocupam o verso), e a frente tem espaço livre embaixo do passo 4. Sem caixa de correção nem de
- * observações (campo novo); sem espaço, numa folha anexa.
+ * Onde se anota o que é diferente do impresso, o que não coube, as observações e as anomalias: a folha é impressa
+ * frente e verso (os ensaios ocupam o verso), e o pé da frente, embaixo do passo 4, é o bloco Anotações (linhas
+ * pontilhadas, `blocoAnotacoes`). Sem caixa de correção nem de observações (campo novo); sem espaço, numa folha anexa.
  */
-export const ONDE_ANOTAR = 'no espaço livre da frente'
+export const ONDE_ANOTAR = 'em Anotações (frente)'
+
+/** Nome do bloco das anotações, no pé da frente (as instruções dizem "em Anotações"). */
+export const TITULO_ANOTACOES = 'Anotações'
+/** O que vai nas anotações, na barra do título do bloco, depois do nome. */
+export const DICA_ANOTACOES = 'dado impresso diferente, observações e anomalias, com o nº do passo, rubrica e data'
 
 /**
- * A folha em branco é das classes II a IIII: sem o ΔT pesos − ar e sem o zero antes de cada posição (método 3), que
- * só saem na folha de uma balança classe I cadastrada (ao lado da classe, no passo 3).
+ * A folha em branco é das classes II a IIII: sem o ΔT pesos − ar, sem o ajuste interno antes dos ensaios e sem o zero
+ * antes de cada posição (método 3), que só saem na folha de uma balança classe I cadastrada (ao lado da classe, no
+ * passo 3).
  */
-export const AVISO_CLASSE_I_EM_BRANCO = 'Classe I: não use a folha em branco; cadastre a balança e imprima a folha dela.'
+export const AVISO_CLASSE_I_EM_BRANCO = 'Classe I: cadastre a balança e imprima a folha dela'
 const CLASSE_I = 'Classe I: '
 
 /** A regra de onde anotar (no alto da página 1), com o nº do passo, rubrica e data (POP, item 10). */
-export const AVISO_ANOTACOES = `Dado impresso diferente ou observação? Anote ${ONDE_ANOTAR} (ou numa folha anexa), com o nº do passo, rubrica e data.`
+export const AVISO_ANOTACOES = `Dado impresso diferente ou observação? Anote ${ONDE_ANOTAR}, com o nº do passo, rubrica e data; sem espaço, numa folha anexa.`
 
 const MENOS = '−'
 const num = (v: number, casas: number) => formatarNumero(v, casas).replace(/^-/, MENOS)
@@ -309,7 +318,7 @@ interface Celula {
 
 /**
  * Valor que veio do sistema (fundo cinza), compacto: o rótulo e o valor. Sem caixa de correção: diferente do
- * real, o técnico anota o certo no espaço livre da frente (`AVISO_ANOTACOES`).
+ * real, o técnico anota o certo em Anotações, no pé da frente (`AVISO_ANOTACOES`).
  */
 function previsto(titulo: string, valor: No, o: { span?: number } = {}): Celula {
   return {
@@ -1134,9 +1143,16 @@ export interface Extras {
   /**
    * Folha de frente e verso com espaço sobrando: o que as linhas de leitura ganham de altura (pt), na frente (o
    * ambiente) e no verso (os ensaios), até `FOLGA_MAXIMA` e sem passar de `PREENCHIMENTO_MAXIMO` da altura útil
-   * (medido na montagem, `comLinhasFolgadas`). O espaço livre vira escrita mais folgada, nunca conteúdo novo.
+   * (medido na montagem, `comLinhasFolgadas`). O espaço que sobra vira escrita mais folgada; o que ainda sobra na frente,
+   * as Anotações (`anotacoes`).
    */
   folgaLeitura?: { frente: number; verso: number }
+  /**
+   * O bloco Anotações no pé da frente (medido na montagem, `comAnotacoes`): a altura da caixa das linhas pontilhadas
+   * (pt; até o pé da página 1) e depois de que ele vem: do passo 4 (os ensaios no verso) ou, nas rodoviárias em que o
+   * título do passo 5 fica no pé da frente e as tabelas vão para o verso, do título dele.
+   */
+  anotacoes?: { altura: number; depois: 'ambiente' | 'indicacao' }
 }
 
 const SEM_EXTRAS: Extras = { continuacoes: [], cortes: [] }
@@ -1438,7 +1454,7 @@ function passoPadroes(ctx: Contexto, n: number): No[] {
 // ---- 2 e 3. Chegada ao cliente e identificação da balança (um bloco só) --------------------------------------
 
 /**
- * Cliente e local (passo 2): impressos do cadastro, para conferir (diferente, no espaço livre da frente), ou em caixas para
+ * Cliente e local (passo 2): impressos do cadastro, para conferir (diferente, em Anotações), ou em caixas para
  * escrever (folha em branco). A OS impressa não se repete: está na faixa do alto de toda página.
  */
 function gradesCliente(ctx: Contexto): NoObjeto[] {
@@ -1478,7 +1494,7 @@ function gradesCliente(ctx: Contexto): NoObjeto[] {
   const nome = pj ? c.razaoSocial || c.nome : c.nome
   const contato = [c.contato, c.telefone || c.celular].filter((x) => !vazio(x)).join(' · ') || '—'
   const documento = c.documento || '—'
-  // Impresso compacto, sem caixas de correção: diferente do real, anota-se no espaço livre da frente. O contato e o
+  // Impresso compacto, sem caixas de correção: diferente do real, anota-se em Anotações (frente). O contato e o
   // documento com a largura do texto (o contato até 230 pt): não quebram de linha à toa
   const largura = (t: string, min: number, max: number) =>
     Math.min(max, Math.max(min, Math.ceil(larguraTexto(t, { tamanho: FONTE_DADO })) + 2))
@@ -1542,7 +1558,7 @@ function dataPrevista(ctx: Contexto): string {
 /** Colunas da grade da balança: cada rótulo numa linha só (medidos na letra dos rótulos). */
 const LARGURAS_BALANCA = [58, 76, 64, 80, 84, '*']
 
-/** Identificação da balança (passo 3), impressa do cadastro para conferir com a plaqueta (diferente, no espaço livre). */
+/** Identificação da balança (passo 3), impressa do cadastro para conferir com a plaqueta (diferente, em Anotações). */
 function gradeBalanca(b: Balanca): NoObjeto {
   const plataforma = [
     [b.plataformaFabricante, b.plataformaModelo].filter((x) => !vazio(x)).join(' '),
@@ -1649,11 +1665,12 @@ function gradeBalancaEmBranco(): NoObjeto[] {
     ],
   }
   // Características metrológicas: as opções em linha (≈ 6 mm cada). Sem a classe I: a folha em branco não tem o ΔT
-  // pesos − ar nem o zero antes de cada posição (método 3), que só saem na folha de uma balança classe I cadastrada;
-  // a linha ao lado das classes diz isso, em duas linhas miúdas (a caixa não cresce), numa coluna da largura delas
+  // pesos − ar, o ajuste interno antes dos ensaios nem o zero antes de cada posição (método 3), que só saem na folha de
+  // uma balança classe I cadastrada; a linha ao lado das classes diz isso, em duas linhas miúdas (a caixa não cresce),
+  // numa coluna da largura delas, quebrando depois de "balança"
   const avisoClasseI = [
     { text: CLASSE_I, bold: true },
-    { text: AVISO_CLASSE_I_EM_BRANCO.slice(CLASSE_I.length).replace('; ', ';\n') },
+    { text: AVISO_CLASSE_I_EM_BRANCO.slice(CLASSE_I.length).replace('balança e ', 'balança\ne ') },
   ].map((x): NoObjeto => ({ ...x, fontSize: FONTE_DICA, lineHeight: 0.95, color: T.texto }))
   const metrologia: NoObjeto = {
     stack: [
@@ -1708,8 +1725,8 @@ function passoIdentificacao(ctx: Contexto, n: number, nBalanca: number): No[] {
     ? [
         'Confira o cliente, o endereço e a plaqueta do ',
         { text: 'indicador', bold: true },
-        // O passo 2 e o 3 estão na frente: "no espaço livre" basta (a regra do alto diz onde fica)
-        ` (o mostrador). Diferente? Anote o certo no espaço livre (passo ${n} ou ${nBalanca}) e avise o cliente.`,
+        // O passo 2 e o 3 estão na frente, como as Anotações: "em Anotações" basta (a regra do alto diz onde ficam)
+        ` (o mostrador). Diferente? Anote o certo em ${TITULO_ANOTACOES} (passo ${n} ou ${nBalanca}) e avise o cliente.`,
       ]
     : [
         'Preencha o cliente como sai no certificado e copie a plaqueta do ',
@@ -1824,11 +1841,99 @@ function tabelaAmbiente(ctx: Contexto): NoObjeto {
 
 /**
  * O passo 4 é só o ambiente, sem instrução (a tabela diz quando medir): a balança chega em condição de uso (a que não
- * pesa certo não é calibrada; a manutenção é feita antes, à parte), e o que for diferente vai no espaço livre embaixo
+ * pesa certo não é calibrada; a manutenção é feita antes, à parte), e o que for diferente vai em Anotações, embaixo
  * dele.
  */
 function passoAmbiente(ctx: Contexto, n: number): No[] {
   return passo(ctx, n, 'Ambiente', E.padroes, null, [tabelaAmbiente(ctx)])
+}
+
+// ---- Anotações (pé da frente) ----------------------------------------------------------------------------------
+
+/** Id do bloco Anotações (a montagem acha onde ele acabou pela marca `fim:anotacoes`). */
+const ID_ANOTACOES = 'anotacoes'
+/** Distância mínima entre as linhas das anotações (pt): ≈ 7 mm, para a escrita à mão (a caixa as reparte por igual). */
+const ENTRE_LINHAS_ANOTACOES = 20
+/** Menos linhas que isso não vale o bloco: as instruções mandam, então, para uma folha anexa. */
+const MIN_LINHAS_ANOTACOES = 2
+/** Respiro em cima do bloco (pt), como entre os passos. */
+const ACIMA_ANOTACOES = 6
+/** Altura do bloco sem a caixa das linhas (pt): o respiro de cima, a barra do título (9,8 + o fio), o respiro embaixo dela e o fio. */
+const ALTURA_FIXA_ANOTACOES = ACIMA_ANOTACOES + 9.8 + 0.9 + 1.1 + 0.8
+/** O que fica livre entre o pé do bloco e o rodapé (pt). */
+const RESPIRO_PE_ANOTACOES = 4
+
+/** Linhas de escrever de uma caixa de anotações com a altura dada (pt): as de pelo menos ≈ 7 mm que cabem nela. */
+const linhasDasAnotacoes = (altura: number) => Math.floor(altura / ENTRE_LINHAS_ANOTACOES + 1e-6)
+
+/**
+ * O bloco Anotações, no pé da frente (a folha é impressa frente e verso e os ensaios ocupam o verso): o dado impresso
+ * diferente, as observações e as anomalias, com o nº do passo, rubrica e data, à mão. Uma barra como a dos passos
+ * (sem nº: não é um passo do serviço) e uma caixa até o pé da página, com as linhas pontilhadas repartidas por igual
+ * (≈ 7 mm ou um pouco mais); a altura da caixa é medida na montagem (`Extras.anotacoes`, `comAnotacoes`). Sem medida
+ * (ou sem espaço), nada.
+ */
+function blocoAnotacoes(ctx: Contexto): No[] {
+  const altura = ctx.extras.anotacoes?.altura ?? 0
+  const linhas = linhasDasAnotacoes(altura)
+  if (linhas < 1) return []
+  const h = altura / linhas
+  const barra: NoObjeto = {
+    table: {
+      widths: ['*'],
+      body: [
+        [
+          {
+            text: [
+              { text: TITULO_ANOTACOES.toUpperCase() },
+              {
+                text: ` — ${DICA_ANOTACOES}`,
+                font: 'Inter',
+                bold: false,
+                fontSize: FONTE_INSTRUCAO,
+                characterSpacing: 0,
+                color: T.instrucao,
+              },
+            ],
+            font: 'InterMedio',
+            bold: true,
+            fontSize: 8.2,
+            characterSpacing: 0.35,
+            color: T.texto,
+            margin: [0, 1.1, 0, 0],
+          },
+        ],
+      ],
+      heights: [9.8],
+    },
+    layout: {
+      hLineWidth: (i: number) => (i === 1 ? 0.9 : 0),
+      hLineColor: () => T.texto,
+      vLineWidth: () => 0,
+      paddingLeft: () => 0,
+      paddingRight: () => 0,
+      paddingTop: () => 0,
+      paddingBottom: () => 0,
+    },
+    margin: [0, 0, 0, 1.1],
+  }
+  // A caixa com o fio das tabelas e, dentro dela, as linhas pontilhadas (cinza, para não brigar com a escrita)
+  const pautas: NoObjeto = {
+    canvas: [
+      { type: 'rect', x: 0, y: 0, w: LARGURA, h: altura, lineWidth: 0.8, lineColor: T.borda },
+      ...Array.from({ length: linhas - 1 }, (_, i) => ({
+        type: 'line',
+        x1: 5,
+        y1: (i + 1) * h,
+        x2: LARGURA - 5,
+        y2: (i + 1) * h,
+        lineWidth: 0.7,
+        lineColor: T.linha,
+        dash: { length: 1.2, space: 2 },
+      })),
+    ],
+  }
+  return [{ ...inteiro([barra, pautas]), id: ID_ANOTACOES, margin: [0, ACIMA_ANOTACOES, 0, 0] }, marca(`fim:${ID_ANOTACOES}`)]
 }
 
 // ---- 5. Erro de indicação ------------------------------------------------------------------------------------
@@ -1843,17 +1948,37 @@ const INSTRUCAO_METODO: Record<MetodoCarregamento, string> = {
 const ORDEM_METODOS: MetodoCarregamento[] = ['CRESCENTE_DECRESCENTE', 'DESCONTINUO', 'CONTINUO', 'DECRESCENTE']
 
 /**
+ * Classe I: o ajuste interno de rotina da balança analítica (CAL), feito antes dos ensaios, que o certificado declara.
+ * Não é reparo nem ajuste durante a calibração (a balança que não pesa certo não é calibrada). Só na folha de uma
+ * balança classe I (a em branco é das classes II a IIII).
+ */
+export const AJUSTE_INTERNO_CLASSE_I = 'Ajuste interno (CAL) feito antes dos ensaios'
+
+/**
  * Como as cargas foram aplicadas (o campo da tela do erro de indicação, com o mesmo rótulo), com o previsto no
  * sistema marcado, e, ao lado, a hora do início do ensaio. Fica com o título do passo (sozinha no alto de uma
- * página, a hora pareceria a da chegada).
+ * página, a hora pareceria a da chegada). Classe I: em cima, numa linha, a caixa do ajuste interno de rotina (CAL)
+ * feito antes dos ensaios, com a dica de onde ele é digitado, e a hora dele ao lado.
  */
-function opcoesMetodo(plano: PlanoFolha | null): NoObjeto {
+function opcoesMetodo(ctx: Contexto): NoObjeto {
+  const ajusteInterno: Celula[][] =
+    ctx.b?.classe === 'I'
+      ? [
+          [
+            marcarEmLinha('Classe I', [{ rotulo: AJUSTE_INTERNO_CLASSE_I }], {
+              depois: [{ text: `rotina das analíticas, não é reparo · no sistema: ${E.balanca}`, fontSize: FONTE_DICA }],
+            }),
+            campo('Hora', { formato: '____:____' }),
+          ],
+        ]
+      : []
   return grade(
     [
+      ...ajusteInterno,
       [
         marcar(
           'Como as cargas foram aplicadas',
-          ORDEM_METODOS.map((m) => ({ rotulo: METODOS_CARREGAMENTO[m].label, prevista: m === plano?.metodo })),
+          ORDEM_METODOS.map((m) => ({ rotulo: METODOS_CARREGAMENTO[m].label, prevista: m === ctx.plano?.metodo })),
           { tamanho: 7.2, espaco: 8 },
         ),
         escrever('Início do ensaio', { formato: '____:____' }),
@@ -1911,7 +2036,7 @@ const TAMANHOS_PESOS = [9, 8.6, 8.2, 7.8, 7.4]
 
 /**
  * Linhas da tabela de pontos na folha em branco: o zero e mais 8 (0, Min, 25, 50, 75 e 100 % de Max e, na classe III,
- * 500e e 2000e; multi-intervalo com mais cargas: no espaço livre da frente).
+ * 500e e 2000e; multi-intervalo com mais cargas: em Anotações, na frente).
  */
 const LINHAS_PONTOS_EM_BRANCO = 9
 
@@ -1930,7 +2055,7 @@ interface TabelaPontos {
 /**
  * Tabela dos pontos de carga (pré-preenchida pelo plano, ou em branco): a carga, os pesos e as leituras ↑ e ↓, e
  * linhas de reserva. No fim, na própria tabela (nada fica solto no alto de outra página): o retorno ao zero. Peças
- * trocadas em relação às impressas (um 10 kg de outro jogo…) vão no espaço livre da frente (a nota em cima da tabela
+ * trocadas em relação às impressas (um 10 kg de outro jogo…) vão em Anotações, na frente (a nota em cima da tabela
  * diz isso). Na
  * folha em branco, os pesos de cada ponto são escritos na tabela.
  */
@@ -2009,7 +2134,7 @@ function tabelaPontos(ctx: Contexto, reserva: number): TabelaPontos {
 }
 
 /**
- * Nota em cima dos pontos: pesos diferentes dos impressos vão no espaço livre da frente, com o nº da linha; no multi-intervalo e nas
+ * Nota em cima dos pontos: pesos diferentes dos impressos vão em Anotações (frente), com o nº da linha; no multi-intervalo e nas
  * múltiplas faixas, a divisão de cada faixa (a carga sai nas casas da divisão dela).
  */
 function notaPontos(ctx: Contexto): No[] {
@@ -2042,7 +2167,7 @@ const LINHAS_TABELA_INTEIRA = 22
 
 /**
  * Linhas de reserva (ponto a mais, carga diferente): duas; uma quando a tabela já é longa (7 pontos); nenhuma
- * com 8 ou mais (com Min, a tabela ganha uma linha: o ponto a mais vai no espaço livre da frente, como todo dado a mais).
+ * com 8 ou mais (com Min, a tabela ganha uma linha: o ponto a mais vai em Anotações, na frente, como todo dado a mais).
  */
 const reservaDosPontos = (ctx: Contexto) => {
   const n = ctx.plano?.pontos.length ?? 0
@@ -2182,10 +2307,10 @@ function passoIndicacao(ctx: Contexto, n: number): No[] {
         ),
       ]
     : []
-  // A nota da tabela (pesos diferentes: no espaço livre da frente) vem antes dela, com o método: a tabela, que pode
+  // A nota da tabela (pesos diferentes: em Anotações, na frente) vem antes dela, com o método: a tabela, que pode
   // passar para a página seguinte, fica só com as linhas
   const cabeca: No[] = [
-    opcoesMetodo(plano),
+    opcoesMetodo(ctx),
     ...notaPontos(ctx),
     ...(junto || aParte ? [notaEtapas([0, 0, 0, 4], true, aParte)] : []),
     ...avisoPontos,
@@ -2242,7 +2367,7 @@ function passoIndicacao(ctx: Contexto, n: number): No[] {
 
 /**
  * Etapas de substituição para escrever, sem a substituição no plano: numa rodoviária sem pesos previstos, 4 (uma
- * rodoviária de 40 t com 10 t de pesos; mais etapas, no espaço livre da frente); numa rodoviária cujos pesos previstos chegam a
+ * rodoviária de 40 t com 10 t de pesos; mais etapas, em Anotações, na frente); numa rodoviária cujos pesos previstos chegam a
  * todas as cargas, só a reserva. A folha em branco não leva as substituições (ver `comSubstituicao`).
  */
 const ETAPAS_SUBSTITUICAO_EM_BRANCO = 4
@@ -2253,7 +2378,7 @@ const ETAPAS_MAIS_BAIXAS = 2
 /**
  * Etapas das cargas de substituição (rodoviárias): a indicação com os pesos e com a substituição. Com a
  * substituição no plano (ou sugerida pela folha), as etapas que os pontos usam, com a carga de cada uma (uma etapa a
- * mais vai no espaço livre da frente, como todo dado a mais); sem ela, as linhas e a carga de cada etapa para escrever.
+ * mais vai em Anotações, na frente, como todo dado a mais); sem ela, as linhas e a carga de cada etapa para escrever.
  */
 function tabelaSubstituicao(ctx: Contexto, o: { semNota?: boolean } = {}): No {
   const { plano, u } = ctx
@@ -2297,7 +2422,7 @@ function tabelaSubstituicao(ctx: Contexto, o: { semNota?: boolean } = {}): No {
 
 /**
  * Carga e pesos previstos de um ensaio (repetibilidade, excentricidade), impressos numa faixa de uma linha, e a
- * hora ao lado (≈ 6 mm, para escrever); outros pesos ou outra carga vão no espaço livre da frente. Sem carga prevista, os campos
+ * hora ao lado (≈ 6 mm, para escrever); outros pesos ou outra carga vão em Anotações, na frente. Sem carga prevista, os campos
  * em linha para escrever.
  */
 function cargaDoEnsaio(ctx: Contexto, c: CargaPlanejada | null, rotuloCarga: string, rotuloPesos: string): NoObjeto {
@@ -2358,8 +2483,8 @@ const LEITURAS_POR_FAIXA = 6
 const LEITURAS_EM_BRANCO = 10
 
 /**
- * Leituras da repetibilidade: 6 (as previstas e uma a mais; com 10 leituras, k = 2, e as que não couberem vão no
- * espaço livre da frente) ou, com mais leituras previstas (a classe I, com 10), o múltiplo de 6 que as cabe (duas faixas).
+ * Leituras da repetibilidade: 6 (as previstas e uma a mais; com 10 leituras, k = 2, e as que não couberem vão em
+ * Anotações, na frente) ou, com mais leituras previstas (a classe I, com 10), o múltiplo de 6 que as cabe (duas faixas).
  */
 const linhasRepetibilidade = (leituras: number) =>
   Math.max(LEITURAS_POR_FAIXA, Math.ceil(leituras / LEITURAS_POR_FAIXA) * LEITURAS_POR_FAIXA)
@@ -2743,7 +2868,7 @@ function posicoesNaHorizontal(ctx: Contexto, rotulos: string[], carga: CargaPlan
   )
 }
 
-/** Posições da excentricidade na folha em branco: 6 (os 5 do prato e até 6 apoios; mais apoios: no espaço livre), 3 por faixa. */
+/** Posições da excentricidade na folha em branco: 6 (os 5 do prato e até 6 apoios; mais apoios: em Anotações), 3 por faixa. */
 const LINHAS_EXCENTRICIDADE_EM_BRANCO = 6
 const POSICOES_POR_FAIXA = 3
 
@@ -2797,15 +2922,16 @@ function desenhosDeReferencia(): No {
 const ID_FIM = 'fim-da-folha'
 
 /**
- * Lembrete do ambiente do fim, logo acima das assinaturas: a temperatura do fim é obrigatória para emitir, e a linha
- * Fim fica na frente (passo 4), enquanto o serviço termina no verso.
+ * Lembrete do ambiente do fim, na barra da nota do passo 8, logo acima das assinaturas: a temperatura do fim é
+ * obrigatória para emitir, e a linha Fim fica na frente (passo 4), enquanto o serviço termina no verso.
  */
-export const LEMBRETE_AMBIENTE_FIM = `Antes de assinar: meça o ambiente e anote na linha Fim do passo ${N.ambiente} (na frente).`
+export const LEMBRETE_AMBIENTE_FIM = `Antes de assinar: preencha a linha Fim do passo ${N.ambiente}.`
 
 /**
- * Nota do passo 8, embaixo do título: com o nº reservado (no título), a da etiqueta de calibração (o técnico copia o
- * nº do certificado na etiqueta que cola na balança, no fim do serviço; a validade fica para o cliente), numa linha;
- * sempre, em negrito, o lembrete do ambiente do fim (`LEMBRETE_AMBIENTE_FIM`), numa linha logo acima das assinaturas.
+ * Nota do passo 8 (a barra embaixo do título): com o nº reservado (no título), a da etiqueta de calibração (o técnico
+ * copia o nº do certificado na etiqueta que cola na balança, no fim do serviço; a validade fica para o cliente), numa
+ * linha; sempre, em negrito, o lembrete curto do ambiente do fim (`LEMBRETE_AMBIENTE_FIM`), numa linha logo acima das
+ * assinaturas.
  */
 function notaAssinaturas(ctx: Contexto): NoObjeto {
   const lembrete: NoObjeto = { text: LEMBRETE_AMBIENTE_FIM, bold: true }
@@ -3049,12 +3175,22 @@ function rodape(ctx: Contexto) {
 /** Definição do documento do pdfmake (exportada para os testes). */
 export function definicaoFolhaCampo(d: DadosFolhaCampo, o: { extras?: Extras } = {}): NoObjeto {
   const ctx = contexto(d, o.extras)
+  // As Anotações no pé da frente: depois do passo 4 ou, na rodoviária com o título do passo 5 no pé da frente, depois
+  // dele (antes das tabelas, que vão para o verso)
+  const anotacoes = blocoAnotacoes(ctx)
+  const onde = ctx.extras.anotacoes?.depois
+  const indicacao = passoIndicacao(ctx, N.indicacao)
+  if (onde === 'indicacao') {
+    const i = indicacao.findIndex((x) => (x as NoObjeto | null)?.id === `fim:passo-${N.indicacao}`)
+    if (i >= 0) indicacao.splice(i + 1, 0, ...anotacoes)
+  }
   const conteudo: No[] = [
     ...introducao(),
     ...passoPadroes(ctx, N.padroes),
     ...passoIdentificacao(ctx, N.chegada, N.balanca),
     ...passoAmbiente(ctx, N.ambiente),
-    ...passoIndicacao(ctx, N.indicacao),
+    ...(onde === 'ambiente' ? anotacoes : []),
+    ...indicacao,
     ...passoRepetibilidade(ctx, N.repetibilidade),
     // O passo 8 (assinaturas) no mesmo bloco da última parte do 7
     ...passoExcentricidade(ctx, N.excentricidade, [blocoAssinaturas(ctx, N.assinaturas)]),
@@ -3293,7 +3429,7 @@ export async function montar(d: DadosFolhaCampo): Promise<Medida> {
   // Um bloco que cabia no pé da página por uma fração de ponto sumiu: empurrado, ele passa para a seguinte
   for (let i = 0; i < 3 && m.faltando.length; i++)
     m = await montarCom(d, { ...SEM_EXTRAS, folgas: [...new Set([...(m.extras.folgas ?? []), ...m.faltando])] })
-  if (!m.faltando.length) return comLinhasFolgadas(d, m)
+  if (!m.faltando.length) return comAnotacoes(d, await comLinhasFolgadas(d, m))
   const seguro = await montarCom(d, { ...SEM_EXTRAS, semBlocos: true })
   if (!seguro.faltando.length) return seguro
   const passos = [...new Set(seguro.faltando.map((id) => /\d+/.exec(id)?.[0]).filter(Boolean))]
@@ -3362,6 +3498,46 @@ async function comLinhasFolgadas(d: DadosFolhaCampo, m: Medida): Promise<Medida>
     const fins = finsDaFrenteEVerso(r)
     const cabem = !!fins && fins.every((x, i) => x <= Math.max(limite, base[i]) + 1)
     if (r.paginas === 2 && !r.faltando.length && continuacoesExatas(r) && cabem) return r
+  }
+  return m
+}
+
+/**
+ * Onde o bloco Anotações entra, no pé da frente, e onde acaba (pt, do alto) o que vem antes dele: depois do passo 4,
+ * quando o passo 5 começa no verso (os ensaios no verso); ou depois do título do passo 5, quando ele fica no pé da
+ * frente e as tabelas dele vão inteiras para o verso (rodoviária). Noutra arrumação, nenhum.
+ */
+function ondeAnotar(m: Medida): { depois: 'ambiente' | 'indicacao'; topo: number } | null {
+  const ambiente = m.marcas.get(`fim:passo-${N.ambiente}`)
+  const indicacao = m.marcas.get(`fim:passo-${N.indicacao}`)
+  if (ambiente?.pagina !== 1 || !indicacao) return null
+  if (indicacao.pagina === 2) return { depois: 'ambiente', topo: ambiente.topo }
+  if (indicacao.pagina === 1 && m.extras.continuacoes.includes(ID_TABELA_PONTOS))
+    return { depois: 'indicacao', topo: indicacao.topo }
+  return null
+}
+
+/**
+ * O espaço que sobra no pé da frente vira o bloco Anotações (`blocoAnotacoes`): a caixa vai do fim do que vem antes
+ * dele até o rodapé (a mesma distância dele em toda folha). Fica assim se só a frente mudou (o mesmo nº de páginas, o
+ * bloco inteiro na página 1, o fim da folha no mesmo lugar, nada some e as continuações certas); senão, mais baixa,
+ * até o mínimo de linhas (`MIN_LINHAS_ANOTACOES`); sem espaço, como estava (as instruções mandam, então, para uma
+ * folha anexa).
+ */
+async function comAnotacoes(d: DadosFolhaCampo, m: Medida): Promise<Medida> {
+  if (m.extras.semBlocos || m.extras.anotacoes) return m
+  const onde = ondeAnotar(m)
+  if (!onde) return m
+  const livre = Math.floor((A4.altura - MARGEM_BASE - RESPIRO_PE_ANOTACOES - onde.topo - ALTURA_FIXA_ANOTACOES) * 4) / 4
+  const fim = m.marcas.get(ID_FIM)
+  for (let altura = livre, i = 0; linhasDasAnotacoes(altura) >= MIN_LINHAS_ANOTACOES && i < 3; altura -= 4, i++) {
+    const r = await medir(d, { ...m.extras, anotacoes: { altura, depois: onde.depois } })
+    const bloco = r.marcas.get(`fim:${ID_ANOTACOES}`)
+    const fimIgual =
+      r.marcas.get(ID_FIM)?.pagina === fim?.pagina && Math.abs((r.marcas.get(ID_FIM)?.topo ?? 0) - (fim?.topo ?? 0)) < 0.01
+    const cortes = !r.extras.cortes.length || cortesConferem(r, r.extras.cortes)
+    if (bloco?.pagina === 1 && r.paginas === m.paginas && fimIgual && !r.faltando.length && continuacoesExatas(r) && cortes)
+      return r
   }
   return m
 }

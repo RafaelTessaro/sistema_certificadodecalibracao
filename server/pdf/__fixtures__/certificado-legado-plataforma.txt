@@ -1,0 +1,243 @@
+                                                                                                                        CERTIFICADO DE CALIBRAÇÃO Nº
+             BALANÇAS.COM                                                                                                  CC-2026-00123
+             FABIO DE GODOY LIMA LTDA
+                                                                                                                POP: POP-CAL-01 rev. 00 · Página 1 de 3
+
+
+
+
+1 DADOS DA CALIBRAÇÃO
+
+CERTIFICADO Nº                       DATA DA CALIBRAÇÃO                    DATA DE EMISSÃO                         ORDEM DE SERVIÇO
+CC-2026-00123                        13/10/2026                            14/10/2026                              OS-2026-0456
+LOCAL DA CALIBRAÇÃO
+Nas instalações do cliente — Avenida Brasil, 2450 – Jardim Paulista – Rio Claro/SP (expedição)
+TEMPERATURA (INÍCIO → FIM)           UMIDADE RELATIVA (INÍCIO → FIM)       PRESSÃO ATMOSFÉRICA                     MONITORAMENTO AMBIENTAL
+22,4 °C → 23,1 °C                    58 % → 56 %                           —                                       TH-01
+MÉTODO — PROCEDIMENTO (POP)
+POP-CAL-01 rev. 00 — Calibração por comparação direta com pesos padrão, conforme o EURAMET Calibration Guide No. 18
+(versão 4.0, 2015): repetibilidade, excentricidade e erro de indicação; incerteza de medição conforme o JCGM 100:2008.
+
+2 CLIENTE
+
+RAZÃO SOCIAL                                                                                                       CNPJ
+FRIGORÍFICO VALE DO CORUMBATAÍ LTDA                                                                                11.444.777/0001-61
+ENDEREÇO                                                                   CONTATO
+Avenida Brasil, 2450 – Jardim Paulista – Rio Claro/SP – CEP                Juliana Prado (Qualidade) · (19) 3524-1100 ·
+13505-200                                                                  qualidade@valecorumbatai.com.br
+
+3 INSTRUMENTO CALIBRADO
+
+INSTRUMENTO                                                                FABRICANTE                              MODELO
+Balança plataforma                                                         Toledo do Brasil                        9091
+Nº DE SÉRIE                          IDENTIFICAÇÃO / TAG (*)               ANO DE FABRICAÇÃO                       UNIDADE
+9091-118832                          BAL-EXP-07                            2019                                    kg
+PLATAFORMA
+Toledo do Brasil 2180 · nº de série 2180-0041273
+CARACTERÍSTICAS METROLÓGICAS, CONFORME A MARCAÇÃO DO INSTRUMENTO
+CAPACIDADE (MAX)         CARGA MÍNIMA (MIN)       DIVISÃO (D)         DIVISÃO DE VERIFICAÇÃO (E)           N = MAX/E           CLASSE DE EXATIDÃO
+300 kg                   1 kg                     50 g                50 g                                 6000                III (média)
+PORTARIA DE APROVAÇÃO DE MODELO                                            RECEPTOR DE CARGA
+Portaria Inmetro/Dimel nº 0236/2009                                        Retangular / quadrado (até 4 apoios) · 100 × 100 cm
+LOCAL DE INSTALAÇÃO (*)                                                    FINALIDADE DE USO (*)
+Expedição — doca 2                                                         Processo / produção
+
+     Ajuste: antes da calibração foi realizado ajuste externo, com peso padrão (ajuste de span com 200 kg de pesos padrão, após a
+     troca da célula de carga). Resultados antes do ajuste em 5.4 (“como encontrado”) e depois dele em 5.3 (“como deixado”). O
+     ajuste não faz parte da calibração.
+
+
+     Reparo: o instrumento passou por reparo/manutenção (troca da célula de carga e da caixa de junção) registrado(a) na Ordem de
+     Serviço nº OS-2026-0456, com afixação da marca de reparo nº MR-SP 004512 e das marcas de selagem nº 0457712 e 0457713
+     (retiradas: 118832-A e 118832-B). Os serviços de reparo e manutenção não fazem parte da calibração; para o uso sujeito ao
+     controle metrológico legal, é obrigatória a verificação após reparo pelo órgão metrológico (IPEM-SP).
+
+
+4     PADRÕES UTILIZADOS
+
+Os resultados desta calibração são metrologicamente rastreáveis ao Sistema Internacional de Unidades (SI) por meio dos padrões
+abaixo, calibrados por laboratório(s) acreditado(s) pela Cgcre/Inmetro para as respectivas calibrações.
+
+    Identificação    Descrição                                    Classe   Certificado nº       Calibrado por                                  Próxima
+                                                                                                                                             calibração
+
+    PP20-01 a 15     Pesos padrão de 20 kg                         M1      CAL-12345/2026       Laboratório Metrológico Paulista         10/03/2028
+                     15 × 20 kg · ferro fundido                                                 Ltda.
+                                                                                                Acreditação Cgcre CAL 0383
+
+
+
+
+FABIO DE GODOY LIMA LTDA · CNPJ 12.403.843/0001-18
+Rua 13, nº 650, entre as Avenidas 9 e 11 – Boa Morte – Rio Claro/SP – CEP 13500-120           Este certificado somente pode ser reproduzido na íntegra.
+(19) 3023-9050 · recepcao@balancass.com · balancass.com                                     A reprodução parcial requer autorização prévia, por escrito.
+                                                                                                                                     CERTIFICADO DE CALIBRAÇÃO Nº
+                 BALANÇAS.COM                                                                                                             CC-2026-00123
+                 FABIO DE GODOY LIMA LTDA
+                                                                                                                             POP: POP-CAL-01 rev. 00 · Página 2 de 3
+
+
+
+    Identificação         Descrição                                      Classe      Certificado nº        Calibrado por                                         Próxima
+                                                                                                                                                               calibração
+
+    JP-01                 Jogo de pesos padrão 1 g a 10 kg                    M1     CAL-12346/2026        Laboratório Metrológico Paulista                  10/03/2028
+                          17 peças · aço inoxidável                                                        Ltda.
+                                                                                                           Acreditação Cgcre CAL 0383
+
+    TH-01                 Termo-higrômetro digital                            —      T-4410/2026           Visomes Comercial Metrológica                      20/01/2027
+                          Incoterm 7666.02.0.00 · nº de série                                              Acreditação Cgcre CAL 0102
+                          210455
+
+
+5     RESULTADOS
+
+
+5.1 Repetibilidade
+Mesma carga, aplicada repetidas vezes no centro do receptor.
+
+                  Carga   Indicações                                                                       Medições                      Média            Desvio-padrão s
+                   (kg)   (kg)                                                                                   (n)                      (kg)                       (kg)
+
+                150,00    150,00       150,05    150,00     150,00           150,05                                  5               150,020                          0,027
+
+5.2 Excentricidade
+Carga de ensaio: 100,00 kg · método: zera e desloca a carga pelas posições.
+
+     Nº     Posição                                                                   Indicação            Desvio ΔI
+                                                                                            (kg)                (kg)
+                                                                                                                                          3                      4
+     1      Centro                                                                     100,00              referência
+                                                                                                                                                      1
+     2      Frente esquerda                                                            100,05                 +0,05
+     3      Trás esquerda                                                              100,00                  0,00                       2                       5
+
+     4      Trás direita                                                                 99,95                −0,05
+                                                                                                                                                    FRENTE
+     5      Frente direita                                                             100,05                 +0,05
+                                                                                                                                         Posições vistas de cima
+Maior desvio: |ΔI|máx = 0,05 kg, na posição 2
+
+5.3 Erro de indicação — como deixado (após o ajuste)
+Carregamento: cargas crescentes até a maior carga e depois decrescentes, sem descarregar entre os pontos.
+
+                Carga     Indicação ↑            Erro ↑    Indicação ↓                 Erro ↓                 U          k    νeff             EMA           Situação
+                 (kg)             (kg)              (kg)           (kg)                   (kg)              (kg)                              (±kg)
+
+            0,000               0,00             0,000                0,00            0,000              0,078     2,52        6              ±0,1           Conforme
+
+            1,000               1,00             0,000                1,00            0,000              0,079     2,32        9              ±0,1           Conforme
+
+           10,000              10,00             0,000            10,00               0,000              0,079     2,32        9              ±0,1           Conforme
+
+           50,000              50,00             0,000            50,05              +0,050              0,080     2,28 10                    ±0,2           Conforme
+
+          100,000            100,00              0,000          100,05               +0,050              0,082     2,21 13                    ±0,2           Conforme
+
+          150,000            150,05             +0,050          150,05               +0,050              0,087     2,14 19                    ±0,2           Conforme
+
+          200,000            200,05             +0,050          200,05               +0,050              0,095     2,09 29                    ±0,2           Conforme
+
+           300,00            300,05              +0,05          300,05                +0,05               0,11     2,04 70                    ±0,2           Conforme
+
+Retorno ao zero: após a retirada da carga, o instrumento indicou 0,00 kg.
+
+
+    Erro (kg)                                                                Carga crescente          Carga decrescente              Incerteza ±U            Limite ±EMA
+
+            0,4
+
+            0,2
+
+            0,0
+
+           −0,2
+
+          −0,4
+                    0                    50                     100                      150                   200                         250                     300
+                                                                                                                                                              Carga (kg)
+Erro de indicação em função da carga — como deixado. Barras: incerteza expandida U; tracejado: limites ±EMA.
+
+
+FABIO DE GODOY LIMA LTDA · CNPJ 12.403.843/0001-18
+Rua 13, nº 650, entre as Avenidas 9 e 11 – Boa Morte – Rio Claro/SP – CEP 13500-120                     Este certificado somente pode ser reproduzido na íntegra.
+(19) 3023-9050 · recepcao@balancass.com · balancass.com                                               A reprodução parcial requer autorização prévia, por escrito.
+                                                                                                                        CERTIFICADO DE CALIBRAÇÃO Nº
+            BALANÇAS.COM                                                                                                     CC-2026-00123
+            FABIO DE GODOY LIMA LTDA
+                                                                                                                  POP: POP-CAL-01 rev. 00 · Página 3 de 3
+
+
+
+
+5.4 Erro de indicação — como encontrado (antes do ajuste)
+Carregamento: cargas crescentes, sem descarregar entre os pontos.
+
+                 Carga                Indicação                     Erro                       U       k   νeff                  EMA       Situação
+                  (kg)                      (kg)                    (kg)                     (kg)                               (±kg)
+
+                0,000                     0,00                    0,000                   0,078     2,52    6                   ±0,1      Conforme
+
+               50,000                    50,10                   +0,100                   0,080     2,28 10                     ±0,2      Conforme
+
+             100,000                   100,20                    +0,200                   0,082     2,21 13                     ±0,2    Não conforme
+
+             200,000                   200,40                    +0,400                   0,095     2,09 29                     ±0,2    Não conforme
+
+               300,00                  300,65                     +0,65                     0,11    2,04 70                     ±0,2    Não conforme
+
+Carga: valor convencional dos pesos padrão. Erro = indicação − carga. U: incerteza expandida; k: fator de abrangência; νeff: graus de liberdade
+efetivos. ↑ / ↓: carga crescente / decrescente. EMA: erro máximo admissível do critério de conformidade. s: desvio-padrão experimental (n − 1 graus de
+liberdade). ΔI: indicação na posição − indicação na posição 1.
+
+
+6   DECLARAÇÃO DE CONFORMIDADE
+
+Solicitada pelo cliente: os erros de indicação “como deixado” (5.3) foram comparados, em cada ponto e sentido de carregamento, com
+o erro máximo admissível (EMA) do critério, segundo a regra de decisão. Esta declaração não constitui verificação metrológica legal.
+CRITÉRIO                                                                     REGRA DE DECISÃO
+Portaria Inmetro 157/2022 — em serviço                                       Banda de guarda (|E| + U ≤ EMA)
+Erros máximos admissíveis em serviço (dobro dos da verificação); classe      Faixa de guarda w = U; risco de aceitação indevida ≤ 2,5 % (ILAC-
+III, e = 50 g.                                                               G8:09/2019).
+
+
+    CONFORME                Resultado: conforme em todos os pontos calibrados.
+
+
+7   OBSERVAÇÕES
+
+    Balança utilizada na expedição para conferência de cargas paletizadas.
+
+    Informações com (*) fornecidas pelo cliente, sob sua responsabilidade; podem influenciar a interpretação dos resultados.
+    Data da próxima calibração informada a pedido do cliente: 13/10/2027.
+
+
+8   DECLARAÇÕES
+
+1. A incerteza expandida de medição relatada (U) é declarada como a incerteza padrão de medição multiplicada pelo fator de abrangência k, o qual,
+    para uma distribuição t com νeff graus de liberdade efetivos, corresponde a uma probabilidade de abrangência de aproximadamente 95 %.
+2. Os resultados referem-se exclusivamente ao instrumento calibrado, nas condições existentes no momento da calibração; a incerteza declarada
+    não inclui efeitos de longo prazo (deriva), de transporte ou de reinstalação.
+3. A FABIO DE GODOY LIMA LTDA não é acreditada pela Coordenação-Geral de Acreditação do Inmetro (Cgcre). Esta calibração não foi realizada
+    sob acreditação e este certificado não está abrangido pelos acordos de reconhecimento mútuo dos quais a Cgcre é signatária.
+4. Esta calibração não isenta o instrumento do controle metrológico legal: este certificado não substitui a verificação inicial, periódica ou após reparo
+    realizada pelo Inmetro ou por órgão da RBMLQ-I (IPEM-SP), obrigatória nas finalidades previstas no art. 1º, § 1º, da Portaria Inmetro nº 157/2022,
+    nem atesta a conformidade do instrumento ao Regulamento Técnico Metrológico.
+
+
+EXECUTADO POR                                                                       AUTORIZADO POR
+
+
+
+
+Carlos Eduardo Lima                                                                 Fábio de Godoy Lima
+Técnico em metrologia · CFT 12345678901                                             Responsável técnico · CREA-SP 5062345678
+Rio Claro/SP, emitido em 14/10/2026, às 10:42 (horário de Brasília).                      — Fim do Certificado de Calibração nº CC-2026-00123 —
+
+
+
+
+FABIO DE GODOY LIMA LTDA · CNPJ 12.403.843/0001-18
+Rua 13, nº 650, entre as Avenidas 9 e 11 – Boa Morte – Rio Claro/SP – CEP 13500-120             Este certificado somente pode ser reproduzido na íntegra.
+(19) 3023-9050 · recepcao@balancass.com · balancass.com                                       A reprodução parcial requer autorização prévia, por escrito.
+

@@ -210,7 +210,12 @@ describe('densidade dos jogos no empuxo pela densidade do ar medida (pendência 
       uso: 'CERTIFICADO',
       densidade: 7950,
       incertezaDensidade: 70,
-      pesos: [{ id: 'p200', marca: '', nominal: 200, correcao: 0.1, incerteza: 0.1, k: 2 }],
+      pesos: [
+        { id: 'p200', marca: '', nominal: 200, correcao: 0.1, incerteza: 0.1, k: 2 },
+        { id: 'p100', marca: '', nominal: 100, correcao: -0.1, incerteza: 0.05, k: 2 },
+        { id: 'p50', marca: '', nominal: 50, correcao: 0.02, incerteza: 0.03, k: 2 },
+        { id: 'p20', marca: '', nominal: 20, correcao: 0.01, incerteza: 0.025, k: 2 },
+      ],
       ...x,
     })
   const balanca: Balanca = {
@@ -239,6 +244,20 @@ describe('densidade dos jogos no empuxo pela densidade do ar medida (pendência 
         decrescente: null,
         nivelSubstituicao: 0,
       },
+      // Os 5 pontos do POP (7.7), contando o zero
+      ...([
+        ['p20', 20, 20.0001],
+        ['p50', 50, 50.0001],
+        ['p100', 100, 100.0001],
+      ] as const).map(([peso, carga, leitura]) => ({
+        id: peso,
+        carga,
+        pecas: [{ padraoId: 'JP-E2', pesoId: peso, quantidade: 1 }],
+        pecasManuais: false,
+        crescente: leitura,
+        decrescente: null,
+        nivelSubstituicao: 0,
+      })),
     ],
   })
   /** `pendenciasEmissao` + as do cálculo (o "como encontrado" com o prefixo), como `pendenciasDa` no servidor. */

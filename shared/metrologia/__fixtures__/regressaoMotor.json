@@ -401,5 +401,22 @@
     "1b90219888ba43",
     "052ac8b112233a",
     "04ebbc8d608b6c"
-  ]
+  ],
+  "faixaDescida": {
+    "motivo": "Múltiplas faixas com descida sem descarregar: a leitura decrescente na faixa da maior carga aplicada (OIML R76-1 4.10), com o d e o EMA dela. Só estas entradas mudaram.",
+    "impressoes": {
+      "41": "1fd1e9d89f5dbe",
+      "66": "0f946f52b95ba9",
+      "70": "056542c28e69fd",
+      "158": "1708edc118ff26",
+      "250": "144cd319ad433c",
+      "257": "1da703d96ab76a",
+      "285": "1d60600fa83dc1",
+      "297": "126bebc4b565ac",
+      "315": "029deae7fb1510",
+      "340": "044a8ff1752c87",
+      "358": "04e5747c2cbd30",
+      "388": "076bc52bad49dc"
+    }
+  }
 }

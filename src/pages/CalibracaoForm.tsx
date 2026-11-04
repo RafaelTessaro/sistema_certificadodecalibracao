@@ -47,6 +47,7 @@ import { EtapaPadroes } from '../components/calibracao/EtapaPadroes'
 import { EtapaRepetibilidade } from '../components/calibracao/EtapaRepetibilidade'
 import { EtapaRevisao } from '../components/calibracao/EtapaRevisao'
 import { PainelResultados } from '../components/calibracao/PainelResultados'
+import { comMetodoDaClasse, repetibilidadeCompleta } from '../components/calibracao/util'
 import { ClienteFormModal } from '../components/ClienteFormModal'
 import { BotaoPop } from '../components/BotaoPop'
 import { type EscolhaFolha, FolhaCampoModal } from '../components/FolhaCampoModal'
@@ -872,7 +873,10 @@ function EditorCalibracao({ id }: { id: string }) {
         aberto={editandoBalanca}
         aoFechar={() => setEditandoBalanca(false)}
         balanca={balanca}
-        aoSalvar={(b) => setDados((d) => (d ? { ...d, balanca: b } : d))}
+        aoSalvar={(b) => {
+          setDados((d) => (d ? { ...d, balanca: b } : d))
+          if (b.classe !== balanca.classe) alterar((s) => comMetodoDaClasse(s, b.classe))
+        }}
       />
       <Modal
         aberto={!!previa}
@@ -921,7 +925,7 @@ function etapaCompleta(e: IdEtapa, { f, calc, selecionados }: ContextoEtapa): bo
       )
     }
     case 'repetibilidade':
-      return !!calc?.resultado.repetibilidade.some((r) => r.n >= 2)
+      return repetibilidadeCompleta(calc?.resultado.repetibilidade ?? [])
     case 'excentricidade':
       return !f.excentricidade.aplicavel
         ? !!f.excentricidade.motivo.trim()

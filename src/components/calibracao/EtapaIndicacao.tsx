@@ -1,7 +1,20 @@
-import { CircleCheck, CircleX, Hand, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
+import { CircleCheck, CircleX, Hand, History, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
-import { cargaDasPecas, cargaDaEtapa, descreverPecas, diferencaDoPonto, pontosSugeridos } from '#shared/calibracao.ts'
-import { ehRodoviaria, massaLegivel, METODOS_CARREGAMENTO } from '#shared/dominio.ts'
+import {
+  cargaDasPecas,
+  cargaDaEtapa,
+  descreverPecas,
+  diferencaDoPonto,
+  pecasSemPadrao,
+  pontosSugeridos,
+} from '#shared/calibracao.ts'
+import {
+  ehRodoviaria,
+  massaLegivel,
+  METODOS_CARREGAMENTO,
+  metodosCarregamentoParaEscolher,
+  registroAnterior,
+} from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
 import { formatarNumero } from '#shared/metrologia/index.ts'
 import type { ResultadoCalculo, ResultadoPonto } from '#shared/metrologia/tipos.ts'
@@ -16,11 +29,12 @@ import { montagemDoPonto, pecasPara, recomporEnsaio } from './cargas'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
 import { type AbaIndicacao, mudarEnsaioDaAba } from './indicacao'
-import { casasDe } from './util'
+import { casasDe, tomLeitura } from './util'
 
 export function EtapaIndicacao(ctx: ContextoEtapa) {
   const { f } = ctx
-  const temAntes = f.ajuste.realizado !== 'NAO' && !!f.comoEncontrado
+  // "Como encontrado" só num registro de antes do POP (a calibração não inclui ajuste, POP 7.8): só para conferência
+  const temAntes = !!registroAnterior(f)?.comoEncontrado
   const [aba, setAba] = useState<AbaIndicacao>('depois')
   const abaAtual: AbaIndicacao = temAntes ? aba : 'depois'
 
@@ -36,8 +50,65 @@ export function EtapaIndicacao(ctx: ContextoEtapa) {
           ]}
         />
       )}
-      <PainelDaAba key={abaAtual} ctx={ctx} aba={abaAtual} />
+      {abaAtual === 'antes' ? <ComoEncontradoAnterior ctx={ctx} /> : <PainelDaAba key={abaAtual} ctx={ctx} aba={abaAtual} />}
     </div>
+  )
+}
+
+/**
+ * O "como encontrado" de um registro de antes do POP, só para conferência (sai no certificado como antes): as
+ * leituras e os resultados, sem edição. Para tirá-lo, "Tirar do registro" na etapa Balança e ajuste.
+ */
+export function ComoEncontradoAnterior({ ctx }: { ctx: ContextoEtapa }) {
+  const { f, balanca, calc } = ctx
+  const ensaio = f.comoEncontrado
+  if (!ensaio) return null
+  const u = balanca.unidade
+  const porId = new Map((calc?.comoEncontrado?.pontos ?? []).map((p) => [p.id, p]))
+  const decrescente = ensaio.metodo === 'CRESCENTE_DECRESCENTE' || ensaio.metodo === 'DECRESCENTE'
+  const texto = (v: number | null) => (v === null ? '—' : formatarNumero(v, Math.max(casasDe(balanca), 0)))
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader
+        icone={<History className="h-4 w-4" />}
+        titulo="Erro de indicação antes do ajuste"
+        descricao="Registro de versão anterior: só para conferência; sai no certificado como antes. Para tirá-lo, use a etapa Balança e ajuste."
+      />
+      <p className="px-5 pb-3 text-[13px] text-muted">
+        {METODOS_CARREGAMENTO[ensaio.metodo].label}
+        {ensaio.substituicao.ativa ? ' · com cargas de substituição' : ''}
+        {ensaio.retornoZero !== null ? ` · retorno ao zero: ${texto(ensaio.retornoZero)} ${u}` : ''}
+      </p>
+      <div className="scroll-fino overflow-x-auto border-t border-line">
+        <table className="w-full min-w-[520px] text-sm">
+          <thead>
+            <tr className="bg-surface-2/70 text-left text-xs font-medium whitespace-nowrap text-muted">
+              <th className="px-3 py-2.5 pl-5">Carga ({u})</th>
+              <th className="px-3 py-2.5 text-right">Indicação ↑</th>
+              {decrescente && <th className="px-3 py-2.5 text-right">Indicação ↓</th>}
+              <th className="px-3 py-2.5 text-right">Erro</th>
+              <th className="px-3 py-2.5 pr-5 text-right">U</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ensaio.pontos.map((p) => {
+              const r = porId.get(p.id)
+              return (
+                <tr key={p.id} className="tnum border-t border-line">
+                  <td className="px-3 py-2 pl-5 text-ink">{r?.texto.carga || texto(p.carga)}</td>
+                  <td className="px-3 py-2 text-right text-ink-2">{texto(p.crescente)}</td>
+                  {decrescente && <td className="px-3 py-2 text-right text-ink-2">{texto(p.decrescente)}</td>}
+                  <td className="px-3 py-2 text-right text-ink">
+                    {r ? [r.texto.erroCrescente, r.texto.erroDecrescente].filter(Boolean).join(' / ') || '—' : '—'}
+                  </td>
+                  <td className="px-3 py-2 pr-5 text-right text-ink-2">{r?.texto.U || '—'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   )
 }
 
@@ -181,7 +252,7 @@ function TabelaPontos({
             value={ensaio.metodo}
             onChange={(e) => setEnsaio((x) => ({ ...x, metodo: e.target.value as MetodoCarregamento }))}
           >
-            {(Object.keys(METODOS_CARREGAMENTO) as MetodoCarregamento[]).map((m) => (
+            {metodosCarregamentoParaEscolher(ensaio.metodo).map((m) => (
               <option key={m} value={m}>
                 {METODOS_CARREGAMENTO[m].label}
               </option>
@@ -228,13 +299,15 @@ function TabelaPontos({
             <tbody>
               {ensaio.pontos.map((p, i) => {
                 const r = porId.get(p.id)
-                // Etapas por baixo + pesos por cima ≠ carga do ponto: faltam pesos ou o nível passa da carga
+                // Etapas por baixo + pesos por cima ≠ carga do ponto: faltam pesos ou o nível passa da carga (também com
+                // os pesos escolhidos à mão: o cálculo usa a soma deles, e a diferença é pendência)
                 const nivel = substituicao ? p.nivelSubstituicao : 0
+                const foraDosPadroes = p.carga > 0 && pesos.length > 0 && !!pecasSemPadrao(p.pecas, pesos)
                 const diferenca =
-                  p.carga > 0 && pesos.length && (!p.pecasManuais || nivel > 0)
+                  p.carga > 0 && pesos.length && !foraDosPadroes
                     ? diferencaDoPonto(p.carga, nivel * cargaEtapa, cargaDasPecas(p.pecas, pesos, u))
                     : 0
-                const falta = diferenca !== 0
+                const falta = diferenca !== 0 || foraDosPadroes
                 return (
                   <tr key={p.id} className="border-t border-line align-top">
                     {/* Linha alinhada pelo topo: textos com leading-9 ficam no meio dos campos (36 px) */}
@@ -278,10 +351,12 @@ function TabelaPontos({
                                 <span className="whitespace-nowrap">{grupo}</span>
                               </Fragment>
                             ))}
-                          {falta &&
-                            (diferenca < 0
-                              ? ` · faltam ${formatarNumero(-diferenca, casas)} ${u}`
-                              : ` · passa ${formatarNumero(diferenca, casas)} ${u} da carga`)}
+                          {foraDosPadroes
+                            ? ' · pesos fora dos padrões escolhidos'
+                            : falta &&
+                              (diferenca < 0
+                                ? ` · faltam ${formatarNumero(-diferenca, casas)} ${u}`
+                                : ` · passa ${formatarNumero(diferenca, casas)} ${u} da carga`)}
                           {/* Ícone em vez de "· à mão": a descrição cabe numa linha e a linha fica da altura dos campos */}
                           {p.pecasManuais && (
                             <span className="whitespace-nowrap text-muted">
@@ -318,7 +393,7 @@ function TabelaPontos({
                           aoMudar={(v) => setPonto(p.id, (x) => ({ ...x, crescente: v }))}
                           aria-label={`Indicação crescente do ponto ${i + 1}`}
                           grade={{ grupo, lin: i, col: 1 }}
-                          tom={tomLeitura(r, 'crescente')}
+                          tom={tomLeitura(p, r, 'crescente', balanca)}
                           unidade={u}
                         />
                       </td>
@@ -333,7 +408,7 @@ function TabelaPontos({
                           aria-label={`Indicação decrescente do ponto ${i + 1}`}
                           // Na descida, a ordem natural é do último ponto para o primeiro
                           grade={{ grupo, lin: ensaio.pontos.length - i, col: 2 }}
-                          tom={tomLeitura(r, 'decrescente')}
+                          tom={tomLeitura(p, r, 'decrescente', balanca)}
                           unidade={u}
                         />
                       </td>
@@ -359,7 +434,7 @@ function TabelaPontos({
                               'inline-flex h-9 items-center gap-1 align-top text-xs font-medium',
                               r.conformidade === 'CONFORME' ? 'text-success' : 'text-danger',
                             )}
-                            title={`EMA ±${r.texto.ema} ${u}`}
+                            title={`EMA ±${r.texto.ema} ${u}${r.texto.emaDecrescente ? ` (descida, na faixa maior: ±${r.texto.emaDecrescente} ${u})` : ''}`}
                           >
                             {r.conformidade === 'CONFORME' ? (
                               <CircleCheck className="h-4 w-4" />
@@ -367,6 +442,7 @@ function TabelaPontos({
                               <CircleX className="h-4 w-4" />
                             )}
                             ±{r.texto.ema}
+                            {r.texto.emaDecrescente && <span className="text-muted">/±{r.texto.emaDecrescente}</span>}
                           </span>
                         ) : (
                           <span className="text-muted">—</span>
@@ -442,14 +518,6 @@ function ErroPonto({ r, metodo, histerese }: { r: ResultadoPonto; metodo: Metodo
   return <span className="pt-0.5">{sobe || desce || '—'}</span>
 }
 
-function tomLeitura(r: ResultadoPonto | undefined, lado: 'crescente' | 'decrescente'): 'normal' | 'erro' | 'atencao' {
-  const o = r?.[lado]
-  if (!r || !o) return 'normal'
-  // Leitura muito longe da carga: provável erro de digitação (vírgula esquecida, outra unidade)
-  if (r.carga > 0 && Math.abs(o.erro) > 0.1 * r.carga) return 'erro'
-  if (r.conformidade === 'NAO_CONFORME') return 'atencao'
-  return 'normal'
-}
 
 /** Escolha manual das peças de um ponto. */
 function PecasModal({

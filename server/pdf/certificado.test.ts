@@ -23,6 +23,7 @@ import {
   OCUPACAO_MINIMA_ULTIMA,
   RESSALVA_OPINIOES,
   RITMOS,
+  textoEmaDoPonto,
 } from './certificado.ts'
 import {
   exemploBalanca32kg,
@@ -1484,5 +1485,15 @@ describe.runIf(temPdftoppm)('amostras em PNG (revisão visual)', { timeout: 60_0
     const r = spawnSync('pdftoppm', ['-r', '80', '-png', caminho, join(PASTA_EXEMPLOS, arquivo)])
     expect(r.status).toBe(0)
     expect(readdirSync(PASTA_EXEMPLOS).some((f) => f.startsWith(`${arquivo}-`) && f.endsWith('.png'))).toBe(true)
+  })
+})
+
+describe('EMA na tabela do erro de indicação', () => {
+  const ponto = (ema: string, emaDecrescente?: string) =>
+    ({ texto: { ema, ...(emaDecrescente ? { emaDecrescente } : {}) } }) as Parameters<typeof textoEmaDoPonto>[0]
+  it('o da carga; nas múltiplas faixas, o da descida (na faixa maior) ao lado, quando é outro', () => {
+    expect(textoEmaDoPonto(ponto('0,0015'))).toBe('±0,0015')
+    expect(textoEmaDoPonto(ponto('0,0015', '0,005'))).toBe('±0,0015 ↑ / ±0,005 ↓')
+    expect(textoEmaDoPonto(ponto(''))).toBe('—')
   })
 })

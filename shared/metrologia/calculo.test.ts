@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { OpcoesCalculo } from '../tipos.ts'
-import { calcular } from './calculo.ts'
+import { calcular, leituraImplausivel } from './calculo.ts'
 import { pesosMinimosSubstituicao } from './sugestoes.ts'
 import type { EntradaCalculo, Orcamento, PecaCalculo, PontoCalculo } from './tipos.ts'
 
@@ -650,7 +650,8 @@ describe('regras do cálculo', () => {
     expect(texto).toMatch(/erro: Leitura\(s\) mais de 10 % fora da carga.*50\u00a0000 em 5000 g/)
     expect(texto).toMatch(/atencao: Carga sem padrões em 5000 g/)
     expect(texto).toMatch(/atencao: Classe dos pesos insuficiente em 25\u00a0000 g/)
-    expect(texto).toMatch(/info: U menor que a divisão em 0 g; 5000 g:/)
+    // s = 0 de só 3 leituras (o mínimo é 5): suspeito, com destaque
+    expect(texto).toMatch(/atencao: U menor que a divisão em 0 g; 5000 g: resultado suspeito/)
     // a referência do ponto sem padrões é a carga digitada
     expect(r.pontos[1].referencia).toBe(5000)
   })
@@ -758,5 +759,513 @@ describe('regras do cálculo', () => {
     const r = calcular(e)
     expect(r.conformidade).toBeNull()
     expect(r.pendencias.some((p) => p.startsWith('Conformidade'))).toBe(true)
+  })
+
+  describe('U menor que a divisão: informativo quando as leituras se repetem de verdade', () => {
+    const m1 = (nominal: number, ema: number): PecaCalculo => ({
+      nominal,
+      correcao: 0,
+      incerteza: 0,
+      k: 2,
+      ema,
+      usarCertificado: false,
+      quantidade: 1,
+    })
+    /**
+     * O caso real do dono: Toledo Prix IV DUE, multi-intervalo 6/15/30 kg, e = d = 2/5/10 g, classe III; só a subida
+     * (1, 2, 5, 10, 20 e 30 kg); repetibilidade um ensaio por intervalo com 5 leituras iguais; excentricidade toda igual.
+     */
+    function prix(): EntradaCalculo {
+      const pecas = (kg: number) => [m1(kg, kg * 0.00005)]
+      return {
+        instrumento: {
+          unidade: 'kg',
+          classe: 'III',
+          tipoFaixas: 'MULTI_INTERVALO',
+          faixas: [
+            { max: 6, e: 0.002, d: 0.002 },
+            { max: 15, e: 0.005, d: 0.005 },
+            { max: 30, e: 0.01, d: 0.01 },
+          ],
+        },
+        opcoes: OPCOES,
+        repetibilidade: [
+          { id: 'r5', carga: 5, leituras: [4.998, 4.998, 4.998, 4.998, 4.998] },
+          { id: 'r10', carga: 10, leituras: [9.995, 9.995, 9.995, 9.995, 9.995] },
+          { id: 'r20', carga: 20, leituras: [19.99, 19.99, 19.99, 19.99, 19.99] },
+        ],
+        excentricidade: { aplicavel: true, carga: 10, metodo: 1, posicoes: posicoes([9.995, 9.995, 9.995, 9.995, 9.995]) },
+        indicacao: {
+          metodo: 'CONTINUO',
+          retornoZero: null,
+          substituicao: { ativa: false, pecas: [], etapas: [] },
+          pontos: [
+            ponto('1', 1, pecas(1), 1),
+            ponto('2', 2, pecas(2), 2),
+            ponto('5', 5, pecas(5), 4.998),
+            ponto('10', 10, pecas(10), 9.995),
+            ponto('20', 20, pecas(20), 19.99),
+            ponto('30', 30, pecas(30), 29.99),
+          ],
+        },
+        conformidade: { solicitada: false, criterio: 'PORTARIA_SERVICO', toleranciaCliente: 0, regra: 'BANDA_GUARDA' },
+      }
+    }
+    const avisoUd = (e: EntradaCalculo) =>
+      calcular(e)
+        .avisos.filter((a) => a.mensagem.startsWith('U menor que a divisão'))
+        .map((a) => ({ ...a, mensagem: a.mensagem.replace(/[\u00A0\u2009\u202F]/g, ' ') }))
+
+    it('caso real (Prix 6/15/30 kg): s = 0 com 5 leituras e excentricidade sem desvio → só informação', () => {
+      const r = calcular(prix())
+      expect(r.repetibilidade.map((x) => x.s)).toEqual([0, 0, 0])
+      expect(r.excentricidade.maiorDesvio).toBe(0)
+      expect(avisoUd(prix())).toEqual([
+        {
+          nivel: 'info',
+          mensagem:
+            'U menor que a divisão em 1,000 kg; 2,000 kg; 5,000 kg; 10,000 kg; 20,00 kg; 30,00 kg: normal quando as leituras se repetem exatamente; confira se a divisão (d) está certa.',
+        },
+      ])
+      expect(r.avisos.some((a) => a.mensagem.includes('suspeito'))).toBe(false)
+    })
+
+    it('s = 0 com poucas leituras (3 numa carga < 100 kg) → suspeito, com atenção', () => {
+      const e = prix()
+      e.repetibilidade = e.repetibilidade.map((x) => ({ ...x, leituras: x.leituras.slice(0, 3) }))
+      const [a] = avisoUd(e)
+      expect(a.nivel).toBe('atencao')
+      expect(a.mensagem).toMatch(/: resultado suspeito; confira a repetibilidade \(s = 0\?\) e a divisão\.$/)
+    })
+
+    it('só um intervalo com poucas leituras basta (é o s usado nos pontos dele)', () => {
+      const e = prix()
+      e.repetibilidade[2] = { ...e.repetibilidade[2], leituras: [19.99, 19.99, 19.99] }
+      expect(avisoUd(e)[0].nivel).toBe('atencao')
+    })
+
+    it('sem repetibilidade nenhuma (s = 0 por falta de ensaio) → suspeito', () => {
+      const e = prix()
+      e.repetibilidade = []
+      expect(avisoUd(e)[0]).toMatchObject({ nivel: 'atencao', mensagem: expect.stringContaining('resultado suspeito') })
+    })
+
+    it('divisão que parece errada (leituras que não são múltiplas do d cadastrado) → suspeito', () => {
+      const e = prix()
+      // d cadastrado 10 g em toda a faixa, mas a balança indicou 4,998 kg (passo de 2 g)
+      e.instrumento = { ...e.instrumento, faixas: e.instrumento.faixas.map((f) => ({ ...f, e: 0.01, d: 0.01 })) }
+      expect(avisoUd(e)[0].nivel).toBe('atencao')
+      // No intervalo de 5 g, 9,996 kg não é múltiplo de 5 g
+      const f = prix()
+      f.indicacao.pontos[3] = ponto('10', 10, [m1(10, 0.0005)], 9.996)
+      expect(avisoUd(f)[0].nivel).toBe('atencao')
+    })
+
+    it('classe I: 5 leituras iguais ainda são poucas (o mínimo é 10)', () => {
+      const e = prix()
+      e.instrumento = { ...e.instrumento, classe: 'I' }
+      expect(avisoUd(e)[0].nivel).toBe('atencao')
+      e.repetibilidade = e.repetibilidade.map((x) => ({ ...x, leituras: Array.from({ length: 10 }, () => x.leituras[0]) }))
+      expect(avisoUd(e)[0].nivel).toBe('info')
+    })
+
+    it('com o modo de serviço, a divisão conferida é a de teste', () => {
+      const e = prix()
+      e.opcoes = { ...OPCOES, divisaoTeste: 0.001 }
+      // Leituras de 1 g em 1 g: múltiplas de d_T (U < d_T nas cargas pequenas, onde os pesos quase não pesam) → informativo
+      expect(avisoUd(e)).toEqual([expect.objectContaining({ nivel: 'info' })])
+      // Uma leitura com meio grama: não é múltipla nem da divisão de teste → suspeito
+      e.indicacao.pontos[1] = ponto('2', 2, [m1(2, 0.0001)], 2.0005)
+      expect(avisoUd(e)).toEqual([expect.objectContaining({ nivel: 'atencao' })])
+    })
+  })
+})
+
+// ---- Repetibilidade: ensaio sem leituras não conta como feito (POP 7.9) ----------------------------------
+
+describe('repetibilidade: ensaio copiado sem leituras', () => {
+  const avisosRep = (ensaios: Array<{ carga: number; leituras: Array<number | null> }>) => {
+    const e = exemplo30kg()
+    e.instrumento = {
+      unidade: 'g',
+      classe: 'III',
+      tipoFaixas: 'MULTI_INTERVALO',
+      faixas: [
+        { max: 15000, e: 5, d: 5 },
+        { max: 30000, e: 10, d: 10 },
+      ],
+    }
+    e.repetibilidade = ensaios.map((r, i) => ({ id: `r${i}`, ...r }))
+    const r = calcular(e)
+    return {
+      avisos: r.avisos
+        .filter((a) => /^Repetibilidade( a |:)/.test(a.mensagem))
+        .map((a) => `${a.nivel}: ${a.mensagem.replace(/[\u00A0\u2009\u202F]/g, ' ')}`),
+      pendencias: r.pendencias,
+    }
+  }
+  const cinco = (c: number) => [c, c + 5, c, c, c + 5]
+  const faltaDeCima =
+    'atencao: Repetibilidade: 1 ensaio para 2 intervalos; falta no intervalo até 30 000 g (d = 10 g). O POP (7.9) pede um ensaio em cada intervalo de d diferente.'
+
+  it('o ensaio de cima sem leituras: falta o intervalo dele e o aviso para registrar ou remover', () => {
+    expect(
+      avisosRep([
+        { carga: 10000, leituras: cinco(10000) },
+        { carga: 25000, leituras: [null, null, null] },
+      ]).avisos,
+    ).toEqual(['atencao: Repetibilidade a 25 000 g: sem leituras; registre as leituras ou remova o ensaio.', faltaDeCima])
+  })
+
+  it('o de cima com 1 leitura: não vale (n < 2) e falta o intervalo dele', () => {
+    const { avisos } = avisosRep([
+      { carga: 10000, leituras: cinco(10000) },
+      { carga: 25000, leituras: [25010] },
+    ])
+    expect(avisos).toContain(faltaDeCima)
+    expect(avisos.join('\n')).toMatch(/Repetibilidade a 25 000 g: 1 leitura\(s\); o mínimo é 5/)
+  })
+
+  it('os dois com leituras: nenhum dos avisos; todos vazios: só a pendência', () => {
+    expect(
+      avisosRep([
+        { carga: 10000, leituras: cinco(10000) },
+        { carga: 25000, leituras: cinco(25000) },
+      ]).avisos,
+    ).toEqual([])
+    const vazio = avisosRep([
+      { carga: 10000, leituras: [null, null, null, null, null] },
+      { carga: 25000, leituras: [null, null, null, null, null] },
+    ])
+    expect(vazio.avisos).toEqual([])
+    expect(vazio.pendencias[0]).toMatch(/^Repetibilidade: registre pelo menos 2 leituras/)
+  })
+})
+
+// ---- Pesos sem EMA conhecido (sem a classe R111): a deriva, o empuxo e o nominal dependem dele -----------
+
+describe('pesos sem EMA conhecido', () => {
+  const semClasse = (extra: Partial<PecaCalculo> = {}): PecaCalculo => ({
+    nominal: 10000,
+    correcao: 0.1,
+    incerteza: 0.16,
+    k: 2,
+    ema: 0,
+    usarCertificado: true,
+    quantidade: 1,
+    classe: '',
+    jogo: 'JP-B',
+    ...extra,
+  })
+  const calc = (peca: PecaCalculo, opcoes: Partial<OpcoesCalculo> = {}) => {
+    const e = exemplo30kg(opcoes)
+    e.indicacao.pontos = [
+      ponto('0', 0, [], 0, 0),
+      ponto('10', 10000, [peca], 10000, 10005),
+      ponto('30', 30000, [{ ...peca, quantidade: 3 }], 30005, 30005),
+    ]
+    return calcular(e)
+  }
+  const pendencia =
+    'Pesos sem EMA conhecido (OIML R 111): o jogo JP-B está sem a classe. O EMA entra na incerteza dos pesos (deriva, empuxo ou valor nominal); confira a classe no cadastro do padrão.'
+
+  it('pelo certificado e sem a classe, com a deriva pelo EMA (o padrão): pendência', () => {
+    const r = calc(semClasse())
+    expect(r.pendencias).toEqual([pendencia])
+    // Com a classe, nada
+    expect(calc(semClasse({ classe: 'M1', ema: 0.5 })).pendencias).toEqual([])
+  })
+
+  it('deriva kD·U e sem o empuxo estimado: o EMA não entra; só o aviso de que a classe não foi conferida', () => {
+    const r = calc(semClasse(), { deriva: 'KD', empuxo: 'NENHUM' })
+    expect(r.pendencias).toEqual([])
+    const avisos = r.avisos.map((a) => ({ ...a, mensagem: a.mensagem.replace(/[\u00A0\u2009\u202F]/g, ' ') }))
+    expect(avisos).toContainEqual({
+      nivel: 'atencao',
+      mensagem: 'Classe dos pesos não conferida em 10 000 g; 30 000 g: pesos sem a classe OIML R 111 (R76 3.7.1).',
+    })
+    // Deriva kD·U, mas o empuxo estimado usa o EMA (5d): pendência
+    expect(calc(semClasse(), { deriva: 'KD' }).pendencias).toEqual([pendencia])
+  })
+
+  it('pelo nominal sem a classe (ou pelo certificado sem U): uma pendência só', () => {
+    expect(calc(semClasse({ usarCertificado: false, incerteza: 0, correcao: 0 })).pendencias).toEqual([pendencia])
+  })
+
+  it('nominal sem EMA na classe do jogo', () => {
+    const r = calc(semClasse({ classe: 'M1-2' }))
+    expect(r.pendencias.map((p) => p.replace(/[\u00A0\u2009\u202F]/g, ' '))).toEqual([
+      'Pesos sem EMA conhecido (OIML R 111): a peça de 10 000 g do jogo JP-B não tem EMA na classe M1-2. O EMA entra na incerteza dos pesos (deriva, empuxo ou valor nominal); confira a classe no cadastro do padrão.',
+    ])
+  })
+
+  it('peça sem nenhuma incerteza (certificado sem U e com EMA): pendência', () => {
+    const r = calc(semClasse({ classe: 'M1', ema: 0.5, incerteza: 0 }))
+    expect(r.pendencias.map((p) => p.replace(/[\u00A0\u2009\u202F]/g, ' '))).toEqual([
+      'Pesos sem incerteza conhecida (classe ou U do certificado) em 10 000 g; 30 000 g.',
+    ])
+  })
+})
+
+// ---- Múltiplas faixas: a descida sem descarregar continua na faixa maior (R76-1 4.10) ----------------------
+
+describe('múltiplas faixas: leituras decrescentes na faixa da maior carga', () => {
+  const P = (kg: number): PecaCalculo => ({
+    nominal: kg,
+    correcao: 0,
+    incerteza: 0,
+    k: 2,
+    ema: (0.0005 * kg) / 10,
+    usarCertificado: false,
+    quantidade: 1,
+    classe: 'M1',
+  })
+  function entrada(
+    tipoFaixas: EntradaCalculo['instrumento']['tipoFaixas'],
+    opcoes: Partial<OpcoesCalculo> = {},
+    desce = 3.005,
+    metodo: EntradaCalculo['indicacao']['metodo'] = 'CRESCENTE_DECRESCENTE',
+  ): EntradaCalculo {
+    return {
+      instrumento: {
+        unidade: 'kg',
+        classe: 'III',
+        tipoFaixas,
+        faixas: [
+          { max: 6, e: 0.001, d: 0.001 },
+          { max: 15, e: 0.005, d: 0.005 },
+        ],
+      },
+      opcoes: { ...OPCOES, ...opcoes },
+      repetibilidade: [
+        { id: 'r1', carga: 5, leituras: [5, 5.001, 5, 5, 5.001] },
+        { id: 'r2', carga: 10, leituras: [10, 10.005, 10, 10, 10] },
+      ],
+      excentricidade: { aplicavel: false, carga: 0, metodo: 1, posicoes: [] },
+      indicacao: {
+        metodo,
+        retornoZero: 0,
+        substituicao: { ativa: false, pecas: [], etapas: [] },
+        pontos: [
+          ponto('0', 0, [], 0, 0),
+          ponto('3', 3, [P(2), P(1)], 3.001, metodo === 'DESCONTINUO' ? null : desce),
+          ponto('6', 6, [P(5), P(1)], 6.001, metodo === 'DESCONTINUO' ? null : 6.005),
+          ponto('10', 10, [P(10)], 10.005, metodo === 'DESCONTINUO' ? null : 10.005),
+          ponto('15', 15, [P(10), P(5)], 15.005, metodo === 'DESCONTINUO' ? null : 15.005),
+        ],
+      },
+      conformidade: { solicitada: true, criterio: 'OIML_INICIAL', toleranciaCliente: 0, regra: 'SIMPLES' },
+    }
+  }
+  const raiz12 = Math.sqrt(12)
+
+  it('↓ abaixo de Max1 com o d e o e da faixa 2; ↑ pela carga (faixa 1)', () => {
+    const r = calcular(entrada('MULTIPLAS_FAIXAS'))
+    const tres = r.pontos[1]
+    perto(orc(tres.decrescente).uDigL, 0.005 / raiz12, 1e-12, 'u(d_L) ↓')
+    perto(orc(tres.crescente).uDigL, 0.001 / raiz12, 1e-12, 'u(d_L) ↑')
+    expect(tres.ema).toBe(0.0015)
+    expect(tres.emaDecrescente).toBe(0.005)
+    expect(tres.texto.emaDecrescente).toBe('0,005')
+    expect(tres.conformidade).toBe('CONFORME')
+    // 6 kg = Max1: a subida ainda na faixa 1; a descida na 2
+    perto(orc(r.pontos[2].decrescente).uDigL, 0.005 / raiz12, 1e-12, 'u(d_L) ↓ 6 kg')
+    perto(orc(r.pontos[2].crescente).uDigL, 0.001 / raiz12, 1e-12, 'u(d_L) ↑ 6 kg')
+    // Acima de Max1, as duas na faixa 2 (sem EMA da descida à parte)
+    expect(r.pontos[3].emaDecrescente).toBeUndefined()
+    expect(r.conformidade).toBe('CONFORME')
+  })
+
+  it('histerese pela média: o d maior (o da faixa 2)', () => {
+    const r = calcular(entrada('MULTIPLAS_FAIXAS', { histerese: 'MEDIA' }))
+    perto(orc(r.pontos[1].media).uDigL, 0.005 / raiz12, 1e-12, 'u(d_L) média')
+  })
+
+  it('↓ 3,003 não é múltiplo do d da faixa 2: U < d com o aviso de atenção', () => {
+    const r = calcular(entrada('MULTIPLAS_FAIXAS', {}, 3.003))
+    expect(r.avisos.find((a) => a.mensagem.startsWith('U menor que a divisão'))).toMatchObject({
+      nivel: 'atencao',
+      mensagem: expect.stringMatching(/resultado suspeito/),
+    })
+  })
+
+  it('multi-intervalo (d pela indicação) e múltiplas faixas sem descida: como antes', () => {
+    const multi = calcular(entrada('MULTI_INTERVALO'))
+    perto(orc(multi.pontos[1].decrescente).uDigL, 0.001 / raiz12, 1e-12, 'multi-intervalo ↓')
+    expect(multi.pontos[1].emaDecrescente).toBeUndefined()
+    const descontinuo = calcular(entrada('MULTIPLAS_FAIXAS', {}, 3.005, 'DESCONTINUO'))
+    perto(orc(descontinuo.pontos[1].crescente).uDigL, 0.001 / raiz12, 1e-12, 'descontínuo ↑')
+    expect(descontinuo.pontos[1].decrescente).toBeNull()
+  })
+
+  it('só descendo: todas as leituras na faixa da maior carga, e o EMA delas', () => {
+    const e = entrada('MULTIPLAS_FAIXAS', {}, 3.005, 'DECRESCENTE')
+    e.indicacao.pontos = e.indicacao.pontos.map((p) => ({ ...p, crescente: null }))
+    const r = calcular(e)
+    perto(orc(r.pontos[1].decrescente).uDigL, 0.005 / raiz12, 1e-12, 'u(d_L) ↓')
+    expect(r.pontos[1].ema).toBe(0.005)
+    expect(r.pontos[1].emaDecrescente).toBeUndefined()
+    expect(r.pontos[1].conformidade).toBe('CONFORME')
+  })
+})
+
+// ---- Mínimos do POP e leituras fora do esperado: pendências na calibração nova (`regrasDoPop`) -----------------
+
+describe('calibração nova: os mínimos do POP e as leituras fora do esperado bloqueiam a emissão', () => {
+  const sem = (t: string) => t.replace(/[\u00A0\u2009\u202F]/g, ' ')
+  const nova = (mudar: (e: EntradaCalculo) => void = () => {}) => {
+    const e: EntradaCalculo = { ...exemplo30kg(), regrasDoPop: true }
+    mudar(e)
+    const r = calcular(e)
+    return { r, pendencias: r.pendencias.map(sem), avisos: r.avisos.map((a) => `${a.nivel}: ${sem(a.mensagem)}`) }
+  }
+  const comLeituras = (e: EntradaCalculo, cargas: number[]) => {
+    e.indicacao.pontos = e.indicacao.pontos.map((p) =>
+      cargas.includes(p.carga) ? p : { ...p, crescente: null, decrescente: null },
+    )
+  }
+
+  it('o exemplo completo (6 pontos, 6 leituras, excentricidade): nada', () => {
+    expect(nova().pendencias).toEqual([])
+  })
+
+  it('só o zero lido: pendência (não é ensaio de carga) e sem o aviso de faixa parcial', () => {
+    const { pendencias, avisos } = nova((e) => {
+      comLeituras(e, [0])
+      e.excentricidade.aplicavel = false
+    })
+    expect(pendencias).toContain('Erro de indicação: registre as leituras das cargas acima de zero (POP 7.7).')
+    expect(avisos.join('\n')).not.toMatch(/faixa parcial/)
+    // No registro de antes, como era: o aviso de faixa parcial com a maior carga 0
+    const e = exemplo30kg()
+    comLeituras(e, [0])
+    expect(calcular(e).pendencias).toEqual([])
+    expect(calcular(e).avisos.some((a) => /faixa parcial/.test(a.mensagem))).toBe(true)
+  })
+
+  it('menos de 5 pontos lidos (contando o zero): pendência; com 5, nada', () => {
+    expect(nova((e) => comLeituras(e, [0, 5000, 10000, 30000])).pendencias).toEqual([
+      'Erro de indicação: 4 pontos lidos; o POP pede no mínimo 5, contando o zero (7.7).',
+    ])
+    expect(nova((e) => comLeituras(e, [0, 5000, 10000, 20000, 30000])).pendencias).toEqual([])
+    // Os avisos de antes saem (a pendência diz)
+    expect(nova((e) => comLeituras(e, [0, 5000, 10000, 30000])).avisos.join('\n')).not.toMatch(/o mínimo é 5, contando/)
+  })
+
+  it('subida obrigatória: o método "Decrescente" e o ponto lido só na descida são pendência', () => {
+    expect(nova((e) => (e.indicacao.metodo = 'DECRESCENTE')).pendencias).toContain(
+      'Erro de indicação: a subida é obrigatória; troque o método “Decrescente” (POP 7.7).',
+    )
+    expect(
+      nova((e) => {
+        e.indicacao.pontos[2] = { ...e.indicacao.pontos[2], crescente: null }
+      }).pendencias,
+    ).toEqual(['Erro de indicação: falta a leitura de subida em 10 000 g (POP 7.7).'])
+  })
+
+  it('repetibilidade abaixo da Tabela 4: 2 e 4 leituras a 15 kg são pendência; 5 não; 3 com 100 kg ou mais não', () => {
+    const rep = (leituras: number[]) =>
+      nova((e) => (e.repetibilidade = [{ id: 'r', carga: 15000, leituras }])).pendencias.filter((p) => p.startsWith('Repet'))
+    expect(rep([15000, 15005])).toEqual([
+      'Repetibilidade a 15 000 g: 2 leituras; o mínimo é 5 (POP, Tabela 4; 3 só com carga ≥ 100 kg).',
+    ])
+    expect(rep([15000, 15005, 15000, 15000])).toEqual([
+      'Repetibilidade a 15 000 g: 4 leituras; o mínimo é 5 (POP, Tabela 4; 3 só com carga ≥ 100 kg).',
+    ])
+    expect(rep([15000, 15005, 15000, 15000, 15005])).toEqual([])
+    // Uma leitura só num segundo ensaio também conta
+    expect(
+      nova((e) => e.repetibilidade.push({ id: 'r2', carga: 25000, leituras: [25000] })).pendencias.filter((p) =>
+        p.startsWith('Repet'),
+      ),
+    ).toEqual(['Repetibilidade a 25 000 g: 1 leitura; o mínimo é 5 (POP, Tabela 4; 3 só com carga ≥ 100 kg).'])
+    // Balança de 300 kg, carga de 150 kg: 3 leituras bastam; 2 não
+    const pesada = (leituras: number[]) =>
+      nova((e) => {
+        e.instrumento = { unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 300, e: 0.1, d: 0.1 }] }
+        e.repetibilidade = [{ id: 'r', carga: 150, leituras }]
+        e.excentricidade = { aplicavel: false, carga: 0, metodo: 1, posicoes: [] }
+        e.indicacao.pontos = [0, 75, 150, 225, 300].map((c) => ponto(`${c}`, c, [], c))
+      }).pendencias.filter((p) => p.startsWith('Repet'))
+    expect(pesada([150, 150.1, 150])).toEqual([])
+    expect(pesada([150, 150.1])).toEqual([
+      'Repetibilidade a 150,0 kg: 2 leituras; o mínimo é 3 com carga ≥ 100 kg (POP, Tabela 4).',
+    ])
+  })
+
+  it('classe I: 10 leituras (5 é pendência, sem o aviso de antes); com 10, nada', () => {
+    const classeI = (n: number) =>
+      nova((e) => {
+        e.instrumento = { ...e.instrumento, classe: 'I' }
+        e.repetibilidade = [{ id: 'r', carga: 15000, leituras: Array.from({ length: n }, (_, i) => (i % 2 ? 15005 : 15000)) }]
+      })
+    const cinco = classeI(5)
+    expect(cinco.pendencias).toContain('Repetibilidade a 15 000 g: 5 leituras; na classe I o mínimo é 10 (POP, Tabela 4).')
+    expect(cinco.avisos.join('\n')).not.toMatch(/faça 10 leituras/)
+    expect(classeI(10).pendencias.filter((p) => p.startsWith('Repet'))).toEqual([])
+  })
+
+  it('multi-intervalo com um ensaio só: falta o do outro intervalo (pendência, não aviso)', () => {
+    const { pendencias, avisos } = nova((e) => {
+      e.instrumento = {
+        unidade: 'g',
+        classe: 'III',
+        tipoFaixas: 'MULTI_INTERVALO',
+        faixas: [
+          { max: 15000, e: 5, d: 5 },
+          { max: 30000, e: 10, d: 10 },
+        ],
+      }
+      e.repetibilidade = [{ id: 'r', carga: 25000, leituras: [25000, 25010, 25000, 25000, 25010] }]
+    })
+    expect(pendencias).toContain(
+      'Repetibilidade: 1 ensaio para 2 intervalos; falta no intervalo até 15 000 g (d = 5 g). O POP (7.9) pede um ensaio em cada intervalo de d diferente.',
+    )
+    expect(avisos.join('\n')).not.toMatch(/1 ensaio para 2 intervalos/)
+  })
+
+  it('leitura fora do esperado (vírgula esquecida): uma pendência por leitura, em cada ensaio', () => {
+    const { pendencias, avisos } = nova((e) => {
+      e.indicacao.pontos[5] = { ...e.indicacao.pontos[5], crescente: 3001000 }
+      e.repetibilidade = [{ id: 'r', carga: 15000, leituras: [15000, 15005, 1500500, 15000, 15005, 15000] }]
+      e.excentricidade.posicoes = posicoes([10000, 10005, 10000, 100, 10005])
+    })
+    expect(pendencias).toEqual([
+      'Erro de indicação, ponto de 30 000 g: leitura 3 001 000 fora do esperado; confira a digitação.',
+      'Excentricidade (P4): leitura 100 fora do esperado com 10 000 g; confira a digitação.',
+      'Repetibilidade a 15 000 g: leitura 1 500 500 fora do esperado; confira a digitação.',
+    ])
+    expect(avisos.join('\n')).not.toMatch(/provável erro de digitação/)
+    // No registro de antes, o aviso (vermelho) de sempre, sem pendência
+    const antes = exemplo30kg()
+    antes.indicacao.pontos[5] = { ...antes.indicacao.pontos[5], crescente: 3001000 }
+    expect(calcular(antes).pendencias).toEqual([])
+    expect(calcular(antes).avisos.find((a) => /provável erro de digitação/.test(a.mensagem))?.nivel).toBe('erro')
+  })
+
+  it('a regra: mais de 10 % da carga ou, na carga pequena, mais de 2 e', () => {
+    const inst = { tipoFaixas: 'UNICA' as const, faixas: [{ max: 30, e: 0.02, d: 0.02 }] }
+    // Carga de 3 d (0,06 kg): 1 d fora (0,04 ou 0,08) passa de 10 %, mas não de 2 e
+    expect(leituraImplausivel(0.04, 0.06, inst)).toBe(false)
+    expect(leituraImplausivel(0.08, 0.06, inst)).toBe(false)
+    expect(leituraImplausivel(0.12, 0.06, inst)).toBe(true)
+    // Carga grande: 10 %
+    expect(leituraImplausivel(27.1, 30, inst)).toBe(false)
+    expect(leituraImplausivel(26.9, 30, inst)).toBe(true)
+    expect(leituraImplausivel(30001, 30, inst)).toBe(true)
+    // Zero, sem leitura ou carga zero: nunca
+    expect(leituraImplausivel(5, 0, inst)).toBe(false)
+    expect(leituraImplausivel(null, 30, inst)).toBe(false)
+    // Multi-intervalo: o e do intervalo da carga
+    const multi = {
+      tipoFaixas: 'MULTI_INTERVALO' as const,
+      faixas: [
+        { max: 15, e: 0.005, d: 0.005 },
+        { max: 30, e: 0.5, d: 0.5 },
+      ],
+    }
+    expect(leituraImplausivel(17.5, 16, multi)).toBe(false)
+    expect(leituraImplausivel(17.7, 16, multi)).toBe(true)
+    expect(leituraImplausivel(14.9, 13.5, multi)).toBe(true)
   })
 })

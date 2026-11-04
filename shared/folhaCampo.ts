@@ -23,6 +23,7 @@ import {
   metodoIndicacaoPadrao,
   numeroBr,
   padroesSemHistorico,
+  type BalancaDosPadroes,
   pressaoObrigatoria,
   situacaoValidade,
   type SituacaoValidade,
@@ -61,11 +62,12 @@ import type {
  * tabela, repetibilidade na horizontal, escritório ao lado das observações. Rev. 03: só a medição: sem QR, sem
  * rubrica no rodapé e só a OS na faixa do alto; sem a verificação antes de calibrar (o passo 4 é só o ambiente),
  * sem ajuste e reparo, sem "como encontrado" e "depois do ajuste", sem a faixa do EMA e sem o encerramento (a
- * conformidade e a próxima calibração ficam só no sistema; o diferente e as observações vão no espaço livre da
- * frente, embaixo do passo 4, ou numa folha anexa: o verso são os ensaios); o ΔT pesos − ar só na balança classe I (a
- * folha em branco é das classes II a IIII); a excentricidade com o método numa frase fixa; o lembrete do ambiente do
- * fim antes das assinaturas; 8 passos. O procedimento de referência é o POP configurado no sistema (sai no rodapé,
- * ver `referenciaDoFormulario`); `referencia` é o guia técnico (metadados do PDF).
+ * conformidade e a próxima calibração ficam só no sistema; o diferente, as observações e as anomalias vão no bloco
+ * Anotações, no pé da frente, embaixo do passo 4, ou numa folha anexa: o verso são os ensaios); o ΔT pesos − ar e o
+ * ajuste interno de rotina (CAL) antes dos ensaios só na balança classe I (a folha em branco é das classes II a
+ * IIII); a excentricidade com o método numa frase fixa; o lembrete do ambiente do fim antes das assinaturas; 8 passos.
+ * O procedimento de referência é o POP configurado no sistema (sai no rodapé, ver `referenciaDoFormulario`);
+ * `referencia` é o guia técnico (metadados do PDF).
  */
 export const FORMULARIO_FOLHA_CAMPO = {
   codigo: 'FOR-CAL-01',
@@ -235,12 +237,13 @@ export const nivelSugerido = (carga: number, etapa: number) =>
 
 /**
  * Padrões previstos: os escolhidos no rascunho ou, sem escolha, os de um rascunho novo, como no POST (os ativos,
- * menos os "outro"; na classe I, só os jogos E1, E2 e F1, e com os "outro", como o termômetro de duas entradas).
+ * menos os "outro"; na classe I, só os jogos E1, E2 e F1, e com os "outro", como o termômetro de duas entradas; com a
+ * balança, nas outras classes, sem o jogo de classe pior que a mínima quando os outros montam Max).
  */
 export function padroesPrevistos(
   calibracao: Pick<CalibracaoInput, 'padroesIds'> | null,
   padroes: Padrao[],
-  classe?: ClasseExatidao | null,
+  classe?: ClasseExatidao | BalancaDosPadroes | null,
 ): Padrao[] {
   const ids = calibracao?.padroesIds ?? []
   if (ids.length) {
@@ -289,7 +292,7 @@ export function planoDaFolha(
   const u = balanca.unidade
   const faixas = faixasOrdenadas(balanca.faixas)
   const max = faixas.at(-1)?.max ?? 0
-  const previstos = padroesPrevistos(calibracao, padroes, balanca.classe)
+  const previstos = padroesPrevistos(calibracao, padroes, balanca)
   const pesos = previstos.filter((p) => p.tipo === 'PESOS' && p.ativo)
   const conformidade = calibracao?.conformidade.solicitada ? calibracao.conformidade : null
   // Tolerância do cliente pedida, mas ainda sem o valor (vem na visita): sem ela não há EMA, e a faixa para
@@ -336,7 +339,8 @@ export function planoDaFolha(
           : 0
     // Com substituição, a carga do ponto é nível × carga da etapa + os pesos por cima (como no cálculo): as
     // peças automáticas completam só o resto (como o editor monta, `montagemDoPonto`)
-    const pecas = p.pecas ?? montarPonto(p.carga, nivel, cargaEtapa, u, pesos).pecas
+    // Pela classe dos pesos, como o editor monta (POP 6.1)
+    const pecas = p.pecas ?? montarPonto(p.carga, nivel, cargaEtapa, u, pesos, balanca).pecas
     const base = cargaPlanejada(p.carga, u, pesos, p.carga > 0 ? pecas : undefined)
     const diferenca = p.carga > 0 ? diferencaDoPonto(p.carga, nivel * cargaEtapa, cargaDasPecas(pecas, pesos, u)) : 0
     const ema = faixaAceitavel
@@ -381,10 +385,11 @@ export function planoDaFolha(
         .join(', ')}: ${pequenas ? 'leve pesos menores.' : 'leve mais pesos ou use cargas de substituição.'}`,
     )
   }
-  // Classe I: cargas em que as peças previstas passam de 1/3 do EMA (POP 6.1; R76 3.7.1). As sugeridas já evitam
-  // (`pontosSugeridos`), mas Max, as do rascunho e um jogo pior podem cair fora; sem o aviso, o técnico mediria a
-  // carga e o escritório só veria "Classe dos pesos insuficiente" no cálculo
-  if (balanca.classe === 'I') {
+  // Cargas em que as peças previstas passam de 1/3 do EMA (POP 6.1; R76 3.7.1), em toda classe. A montagem já prefere
+  // os jogos de classe melhor (`montarCarga`) e, na classe I, as sugeridas já evitam (`pontosSugeridos`), mas Max, as do
+  // rascunho e um jogo pior podem cair fora; sem o aviso, o técnico mediria a carga e o escritório só veria "Classe dos
+  // pesos insuficiente" no cálculo
+  {
     const fora = pontos.filter(
       (p) =>
         p.carga > 0 &&
@@ -395,7 +400,7 @@ export function planoDaFolha(
     const cargas = fora.map((p) => `${numeroBr(p.carga)} ${u}`).join(', ')
     if (fora.length)
       avisos.push(
-        `Os pesos previstos não atendem a 6.1 do POP ${fora.length === 1 ? 'na carga' : 'nas cargas'} de ${cargas}: a soma dos EMA das peças passa de 1/3 do EMA da balança. Leve pesos de classe melhor (E1) ou mude a carga no sistema.`,
+        `Os pesos previstos não atendem a 6.1 do POP ${fora.length === 1 ? 'na carga' : 'nas cargas'} de ${cargas}: a soma dos EMA das peças passa de 1/3 do EMA da balança. Leve pesos de classe melhor${balanca.classe === 'I' ? ' (E1)' : ''} ou mude a carga no sistema.`,
       )
   }
   // Etapas por baixo que, com os pesos por cima, passam da carga do ponto: o cálculo usaria a soma

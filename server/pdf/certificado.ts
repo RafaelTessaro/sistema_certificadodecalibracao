@@ -1183,10 +1183,19 @@ function tabelaErros(ctx: Contexto, r: ResultadoCalculo, ensaio: EnsaioIndicacao
       p.texto.U || '—',
       { text: p.texto.k || '—', color: COR.textoSecundario },
       { text: p.texto.nuEff || '—', color: COR.textoSecundario },
-      ...(o.conformidade ? [p.texto.ema ? `±${p.texto.ema}` : '—', { ...situacao, fontSize: 7.6 }] : []),
+      ...(o.conformidade ? [textoEmaDoPonto(p), { ...situacao, fontSize: 7.6 }] : []),
     ]
   })
   return tabela(ctx.r, colunas, linhas, { pequena: linhas.length <= LINHAS_INTEIRAS })
+}
+
+/**
+ * O EMA do ponto na tabela: o da carga e, nas múltiplas faixas com a descida na faixa maior (R76-1 4.10), o da descida
+ * ao lado, quando é outro.
+ */
+export function textoEmaDoPonto(p: Pick<ResultadoPonto, 'texto'>): string {
+  if (!p.texto.ema) return '—'
+  return p.texto.emaDecrescente ? `±${p.texto.ema} ↑ / ±${p.texto.emaDecrescente} ↓` : `±${p.texto.ema}`
 }
 
 /** Há resultado "como encontrado" (então 5.3 é o "como deixado"). */

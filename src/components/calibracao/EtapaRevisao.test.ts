@@ -9,7 +9,7 @@ import { BALANCA_VAZIA, calibracaoVazia, CLIENTE_VAZIO, CONFIG_PADRAO } from '#s
 import type { Balanca, Cliente } from '#shared/tipos.ts'
 import type { ContextoEtapa } from './contexto'
 import { EtapaRevisao } from './EtapaRevisao'
-import { dicaRepetibilidade, proximosEnsaiosRepetibilidade, textoDeltaT } from './util'
+import { dicaRepetibilidade, proximosEnsaiosRepetibilidade, repetibilidadeCompleta, textoDeltaT } from './util'
 
 const balanca = { ...BALANCA_VAZIA, id: 'b1', faixas: [{ max: 30, e: 0.01, d: 0.01 }] } as Balanca
 const ctx: ContextoEtapa = {
@@ -88,5 +88,23 @@ describe('dicas das etapas pela balança', () => {
     expect(proximosEnsaiosRepetibilidade(sugeridos, [{ carga: 4.8 }])).toEqual([{ carga: 12 }])
     expect(proximosEnsaiosRepetibilidade(sugeridos, sugeridos)).toEqual([{ carga: 16.5 }])
     expect(proximosEnsaiosRepetibilidade([], [])).toEqual([])
+  })
+
+  it('repetibilidade feita: algum ensaio com 2 leituras e nenhum com carga e sem leitura (o copiado ou o sugerido)', () => {
+    expect(repetibilidadeCompleta([{ carga: 10, n: 5 }])).toBe(true)
+    expect(
+      repetibilidadeCompleta([
+        { carga: 10, n: 5 },
+        { carga: 25, n: 0 },
+      ]),
+    ).toBe(false)
+    expect(
+      repetibilidadeCompleta([
+        { carga: 10, n: 5 },
+        { carga: 0, n: 0 },
+      ]),
+    ).toBe(true)
+    expect(repetibilidadeCompleta([{ carga: 10, n: 1 }])).toBe(false)
+    expect(repetibilidadeCompleta([])).toBe(false)
   })
 })

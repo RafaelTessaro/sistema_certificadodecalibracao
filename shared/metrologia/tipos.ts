@@ -78,6 +78,13 @@ export interface PontoCalculo {
   decrescente: number | null
   /** Cargas de substituição por baixo dos pesos (0 = só pesos). */
   nivelSubstituicao: number
+  /**
+   * Peças do ponto (ou das etapas de substituição dele) que não entram no cálculo: jogo fora dos padrões escolhidos
+   * ou peça tirada do cadastro do jogo. É o motivo da pendência; o ponto não é calculado e `carga` é a digitada.
+   */
+  semPadrao?: string
+  /** Carga digitada quando as etapas e os pesos não somam a carga (`carga` é a soma deles): a diferença é pendência. */
+  cargaDigitada?: number
 }
 
 export interface EntradaCalculo {
@@ -111,6 +118,13 @@ export interface EntradaCalculo {
   ar?: ArCalculo | null
   /** Diferença de temperatura pesos − ar; ausente = não registrada. */
   termica?: TermicaCalculo | null
+  /**
+   * Calibração nova: os mínimos do POP (5 pontos com uma carga acima de zero, a subida, as leituras e um ensaio da
+   * repetibilidade por intervalo de d; 7.7 e 7.9) e as leituras fora do esperado (`leituraImplausivel`) são pendências
+   * (bloqueiam a emissão). Ausente ou false (registro de antes dessas regras: revisão de certificado emitido, "como
+   * encontrado"): só avisos, como na época.
+   */
+  regrasDoPop?: boolean
 }
 
 /** Resultado de um ensaio de repetibilidade. */
@@ -186,6 +200,11 @@ export interface ResultadoPonto {
   media: Orcamento | null
   /** EMA do critério de conformidade nesta carga (quando há declaração de conformidade). */
   ema: number | null
+  /**
+   * Múltiplas faixas: EMA das leituras decrescentes, quando é outro (a descida sem descarregar continua na faixa da
+   * maior carga, R76-1 4.10). Ausente quando é o mesmo de `ema`.
+   */
+  emaDecrescente?: number
   conformidade: SituacaoConformidade | null
   /** Valores prontos para o certificado (vírgula decimal, U com 2 algarismos, E na casa de U). */
   texto: {
@@ -200,6 +219,8 @@ export interface ResultadoPonto {
     k: string
     nuEff: string
     ema: string
+    /** EMA das leituras decrescentes, quando é outro (ver `emaDecrescente`). */
+    emaDecrescente?: string
   }
 }
 

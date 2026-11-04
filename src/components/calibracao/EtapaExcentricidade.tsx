@@ -1,6 +1,6 @@
 import { Crosshair, Wand2 } from 'lucide-react'
-import { useEffect } from 'react'
-import { METODOS_EXCENTRICIDADE } from '#shared/dominio.ts'
+import { useEffect, useState } from 'react'
+import { METODOS_EXCENTRICIDADE, metodoExcentricidadeForaDoPop, metodoExcentricidadePadrao } from '#shared/dominio.ts'
 import {
   cargaExcentricidade,
   formatarNumero,
@@ -12,12 +12,14 @@ import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Field, Input, Select } from '../ui/Form'
+import { useSessao } from '../../store/sessao'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
 import { Resultado } from './EtapaRepetibilidade'
 import { casasDe, maxDe } from './util'
 
 export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa) {
+  const admin = useSessao((x) => x.usuario?.nivel === 'ADMIN')
   const ecc = f.excentricidade
   const u = balanca.unidade
   const casas = casasDe(balanca)
@@ -47,6 +49,14 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
       set((e) => ({ ...e, aplicavel: false, motivo: e.motivo || 'Balança suspensa (gancho): a carga se centraliza sozinha.' }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gancho])
+
+  // O método é fixo pela classe (POP 7.10: 1; na classe I, 3): a calibração nova já nasce com ele, e trocar a classe
+  // da balança troca o método do ensaio ainda sem leituras (CalibracaoForm). Outro método só num registro de antes ou
+  // escolhido pelo administrador ("alterar"), que também é quem pode mudar
+  const metodoDaClasse = metodoExcentricidadePadrao(balanca.classe)
+  const foraDoPop = metodoExcentricidadeForaDoPop(ecc.metodo, balanca.classe)
+  const [alterando, setAlterando] = useState(false)
+  const podeAlterar = admin || foraDoPop
 
   return (
     <div className="flex flex-col gap-6">
@@ -96,24 +106,47 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                 unidade={u}
               />
             </Field>
-            <Field
-              label="Como foi feito"
-              htmlFor="ecc-metodo"
-              className="sm:col-span-2"
-              hint={classeI ? 'Classe I: método 3 (POP 7.10).' : undefined}
-            >
-              <Select
-                id="ecc-metodo"
-                value={ecc.metodo}
-                onChange={(e) => set((x) => ({ ...x, metodo: Number(e.target.value) as MetodoExcentricidade }))}
+            {alterando && podeAlterar ? (
+              <Field
+                label="Como foi feito"
+                htmlFor="ecc-metodo"
+                className="sm:col-span-2"
+                hint={`Pelo POP (7.10), na ${classeI ? 'classe I' : 'classe da balança'}: método ${metodoDaClasse}.`}
               >
-                {([1, 2, 3, 4] as const).map((m) => (
-                  <option key={m} value={m}>
-                    {m}. {METODOS_EXCENTRICIDADE[m]}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+                <Select
+                  id="ecc-metodo"
+                  value={ecc.metodo}
+                  onChange={(e) => set((x) => ({ ...x, metodo: Number(e.target.value) as MetodoExcentricidade }))}
+                >
+                  {([1, 2, 3, 4] as const).map((m) => (
+                    <option key={m} value={m}>
+                      {m}. {METODOS_EXCENTRICIDADE[m]}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : (
+              <div className="flex flex-col gap-1.5 sm:col-span-2">
+                <span className="text-[13px] font-medium text-ink-2">Como foi feito</span>
+                <p className="flex min-h-10 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink">
+                  <span>{METODOS_EXCENTRICIDADE[ecc.metodo]}</span>
+                  {podeAlterar && (
+                    <button
+                      type="button"
+                      onClick={() => setAlterando(true)}
+                      className="cursor-pointer text-[13px] font-medium text-brand-ink hover:underline"
+                    >
+                      alterar
+                    </button>
+                  )}
+                </p>
+                <span className="text-xs text-muted">
+                  {foraDoPop
+                    ? `Diferente do POP (7.10): ${classeI ? 'na classe I' : 'nesta classe'}, o método é “${METODOS_EXCENTRICIDADE[metodoDaClasse].toLowerCase()}”.`
+                    : `Fixo pela classe (POP 7.10)${classeI ? ': na classe I, o zero é conferido antes de cada posição' : ''}.`}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </Card>

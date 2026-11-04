@@ -1,17 +1,18 @@
 // Testes da folha de campo em PDF: gera as amostras (server/pdf/exemplosFolhaCampo.ts), confere que a
 // geração é determinística e, com o pdftotext (poppler-utils), o conteúdo de cada página: cabeçalho de
 // identificação (com o nº do certificado reservado, quando há), rótulos iguais aos da tela do assistente,
-// plano de cargas, o POP no rodapé, o tamanho da folha (rev. 03, só a medição: 8 passos, dado impresso diferente
-// e observações no verso) e o que NÃO pode aparecer (aprovado/reprovado, validade — fora a nota da etiqueta —,
+// plano de cargas, o POP no rodapé, o tamanho da folha (rev. 03, só a medição: 8 passos, dado impresso diferente,
+// observações e anomalias no bloco Anotações, no pé da frente) e o que NÃO pode aparecer (aprovado/reprovado, validade — fora a nota da etiqueta —,
 // caixas de "confere", e o que saiu na rev. 03: QR, rubrica, verificação antes de calibrar, ajuste e reparo,
 // "como encontrado" e "depois do ajuste", faixa do EMA, encerramento).
 
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { AJUSTES } from '#shared/dominio.ts'
 import { AVISO_ETIQUETA, FORMULARIO_FOLHA_CAMPO } from '#shared/folhaCampo.ts'
 import type { Padrao } from '#shared/tipos.ts'
-import { A4, BASE_RODAPE, MODULO, TOPO_CABECALHO } from './base.ts'
+import { A4, BASE_RODAPE, MODULO, pdfmake, TOPO_CABECALHO } from './base.ts'
 import {
   folhaClasseI,
   folhaEmBranco,
@@ -24,8 +25,10 @@ import {
   padroesDaEmpresa,
 } from './exemplosFolhaCampo.ts'
 import {
+  AJUSTE_INTERNO_CLASSE_I,
   AVISO_ANOTACOES,
   AVISO_CLASSE_I_EM_BRANCO,
+  DICA_ANOTACOES,
   type DadosFolhaCampo,
   definicaoFolhaCampo,
   descricaoPadraoNaFolha,
@@ -37,6 +40,7 @@ import {
   montar,
   nomeArquivoFolhaCampo,
   ONDE_ANOTAR,
+  TITULO_ANOTACOES,
 } from './folhaCampo.ts'
 import { POP_EXEMPLO } from './exemplosCertificado.ts'
 
@@ -185,8 +189,9 @@ const TITULOS_PASSOS = [
 ]
 
 /**
- * O que saiu na rev. 03 (a folha só registra a medição; os acordos ficam no sistema e as observações no verso): a
- * verificação antes de calibrar, o ajuste e o reparo, os dois grupos de leituras, a faixa do EMA, o "como foi feito"
+ * O que saiu na rev. 03 (a folha só registra a medição; os acordos ficam no sistema e as observações nas Anotações): a
+ * verificação antes de calibrar, o ajuste e o reparo (na classe I, só a caixa do ajuste interno de rotina, antes dos
+ * ensaios: `semAjusteDaClasseI`), os dois grupos de leituras, a faixa do EMA, o "como foi feito"
  * da excentricidade, o encerramento (conformidade, próxima calibração, observações, escritório), a finalidade e a
  * rubrica do rodapé.
  */
@@ -223,6 +228,9 @@ const REMOVIDOS = [
   'Finalidade',
   'RUBRICA',
 ]
+
+/** O texto sem a caixa do ajuste interno de rotina da classe I (o único "ajuste interno" que a folha pode ter). */
+const semAjusteDaClasseI = (t: string) => t.replace(AJUSTE_INTERNO_CLASSE_I, '')
 
 describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
   it.each(EXEMPLOS)('gera um PDF válido: $nome', async (e) => {
@@ -325,23 +333,25 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     expect(m.faltando).toEqual([])
   })
 
-  it('sem "confere" nem caixas de correção ou de observações: o diferente e as observações vão no espaço livre da frente (uma linha no alto da página 1)', () => {
-    // A folha é impressa frente e verso, e os ensaios ocupam o verso: o espaço livre fica na frente, embaixo do passo 4
-    expect(ONDE_ANOTAR).toBe('no espaço livre da frente')
+  it('sem "confere" nem caixas de correção ou de observações: o diferente e as observações vão em Anotações, no pé da frente (uma linha no alto da página 1)', () => {
+    // A folha é impressa frente e verso, e os ensaios ocupam o verso: as Anotações ficam na frente, embaixo do passo 4
+    expect(ONDE_ANOTAR).toBe('em Anotações (frente)')
+    expect(TITULO_ANOTACOES).toBe('Anotações')
+    expect(DICA_ANOTACOES).toBe('dado impresso diferente, observações e anomalias, com o nº do passo, rubrica e data')
     expect(AVISO_ANOTACOES).toBe(
-      'Dado impresso diferente ou observação? Anote no espaço livre da frente (ou numa folha anexa), com o nº do passo, rubrica e data.',
+      'Dado impresso diferente ou observação? Anote em Anotações (frente), com o nº do passo, rubrica e data; sem espaço, numa folha anexa.',
     )
     for (const e of EXEMPLOS) {
       const json = jsonDe(e.dados())
       expect(json, e.nome).not.toMatch(/"confere"|escreva o certo/)
       expect(json, e.nome).toContain(AVISO_ANOTACOES)
-      // Nenhuma instrução manda anotar "no verso": o verso são os ensaios
-      expect(json, e.nome).not.toMatch(/no verso/)
+      // Nenhuma instrução manda anotar "no verso" (o verso são os ensaios) nem num "espaço livre" (agora é o bloco)
+      expect(json, e.nome).not.toMatch(/no verso|espaço livre/)
     }
   })
 
   it.each(EXEMPLOS)('rev. 03: nada do que saiu (verificação, ajuste, EMA, encerramento, finalidade): $nome', (e) => {
-    const json = jsonDe(e.dados())
+    const json = semAjusteDaClasseI(jsonDe(e.dados()))
     for (const x of REMOVIDOS) expect(json, x).not.toContain(x)
     // O ajuste também não aparece na instrução nem nas notas (nenhum "depois do ajuste", "ajustou?")
     expect(json).not.toMatch(/[Aa]justou|depois do ajuste|como encontrado/)
@@ -429,14 +439,17 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
   })
 
   it('em branco (classes II a IIII): sem o ΔT pesos − ar nem dicas da classe I; ao lado da classe, a linha que manda usar a folha da balança classe I cadastrada', () => {
-    expect(AVISO_CLASSE_I_EM_BRANCO).toBe('Classe I: não use a folha em branco; cadastre a balança e imprima a folha dela.')
+    expect(AVISO_CLASSE_I_EM_BRANCO).toBe('Classe I: cadastre a balança e imprima a folha dela')
     for (const d of [folhaEmBranco(), folhaEmBrancoOitoPadroes()]) {
       const t = jsonDe(d)
       expect(t).not.toContain('ΔT pesos − ar')
       expect(t).not.toContain('Zero antes')
+      // Nem o ajuste interno de rotina antes dos ensaios (só na folha de uma balança classe I cadastrada)
+      expect(t).not.toMatch(/Ajuste interno|\(CAL\)/)
       // A classe I sai das opções; a linha ao lado (em duas linhas miúdas) diz o que fazer
       expect(t).toContain('{"text":"Classe I: ","bold":true')
-      expect(t).toContain('não use a folha em branco;\\ncadastre a balança e imprima a folha dela.')
+      expect(t).toContain('cadastre a balança\\ne imprima a folha dela"')
+      expect(t).not.toContain('não use a folha em branco')
       expect(t).not.toMatch(/classe[\s\u00a0]I(?![I\w])|uma peça só/)
       expect(t).not.toContain('{"text":"I","fontSize"')
       // A pressão: obrigatória na classe II (na classe I também, mas ela não usa esta folha)
@@ -588,7 +601,7 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     ).toBe(true)
     expect([...posicoes].sort((a, b) => a - b)).toEqual(posicoes)
     for (const etapa of Object.values(ETAPAS_SISTEMA)) expect(t).toContain(etapa)
-    for (const x of REMOVIDOS) expect(t, x).not.toContain(x)
+    for (const x of REMOVIDOS) expect(semAjusteDaClasseI(t), x).not.toContain(x)
     expect(t).toContain('Como as cargas foram aplicadas')
     expect(t).toContain('Início do ensaio')
     expect(t).toContain('Indicação ↑')
@@ -607,9 +620,11 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     // (em duas linhas, que o pdftotext intercala com as colunas vizinhas)
     expect(t).toContain('quem acompanhou;')
     expect(t).toContain('ciente das condições, não dos resultados')
-    // Dado impresso diferente e observações: no espaço livre da frente (sem caixas de "confere", de correção nem de
+    // Dado impresso diferente e observações: em Anotações, no pé da frente (sem caixas de "confere", de correção nem de
     // observações)
     expect(corrido(paginasDe(texto)[0])).toContain(AVISO_ANOTACOES)
+    expect(corrido(paginasDe(texto)[0])).toContain(`${TITULO_ANOTACOES.toUpperCase()} — ${DICA_ANOTACOES}`)
+    expect(corrido(paginasDe(texto)[1])).not.toContain(TITULO_ANOTACOES.toUpperCase())
     expect(t).not.toMatch(/\bconfere\b/)
     // Nada de aprovação ou "validade" numa folha de campo (fora a nota da etiqueta: a validade fica em branco);
     // o nº do certificado só como reservado, nunca como o título de um certificado
@@ -632,7 +647,7 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain('FRIGORÍFICO VALE DO CORUMBATAÍ LTDA')
     expect(t).toContain('Avenida Brasil, 2450')
     expect(t).toContain('Carlos Eduardo Lima')
-    // O cliente impresso, compacto (sem "confere" nem caixa para o certo: diferente, no espaço livre); o técnico
+    // O cliente impresso, compacto (sem "confere" nem caixa para o certo: diferente, em Anotações); o técnico
     // previsto é só uma dica, numa caixa branca, e o nome ao lado da assinatura fica para quem executou escrever
     expect(corrido(paginas[0])).toMatch(/Razão social Contato no cliente CNPJ FRIGORÍFICO VALE DO CORUMBATAÍ LTDA/)
     expect(corrido(paginas[0])).toMatch(/Técnico que executou ● .{0,80}previsto: Carlos Eduardo Lima/)
@@ -640,22 +655,22 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     const assinaturas = ultima.slice(ultima.indexOf('ASSINATURAS'), ultima.indexOf(FORMULARIO_FOLHA_CAMPO.codigo))
     expect(assinaturas).toContain('Técnico que executou — nome e assinatura')
     expect(assinaturas).not.toContain('Carlos')
-    // Como o POP (10) pede: a correção e o dado a mais, com rubrica e data (ISO/IEC 17025, 7.5.2), no espaço livre da
-    // frente (o verso são os ensaios)
+    // Como o POP (10) pede: a correção e o dado a mais, com rubrica e data (ISO/IEC 17025, 7.5.2), em Anotações, no pé
+    // da frente (o verso são os ensaios)
     expect(t).toContain(
-      'Dado impresso diferente ou observação? Anote no espaço livre da frente (ou numa folha anexa), com o nº do passo, rubrica e data.',
+      'Dado impresso diferente ou observação? Anote em Anotações (frente), com o nº do passo, rubrica e data; sem espaço, numa folha anexa.',
     )
     expect(t).toContain('Errou: um risco só sobre o valor errado (continua legível), o certo ao lado, rubrica e data.')
-    expect(t).toContain('Diferente? Anote o certo no espaço livre (passo 2 ou 3) e avise o cliente.')
+    expect(t).toContain('Diferente? Anote o certo em Anotações (passo 2 ou 3) e avise o cliente.')
     expect(t).toContain('Marque com X')
     expect(t).toMatch(/no cliente\s+PREVISTO/)
-    // Troca de pesos: no espaço livre da frente, com o nº da linha e as peças usadas (a nota em cima da tabela de
-    // pontos diz)
+    // Troca de pesos: em Anotações (frente), com o nº da linha e as peças usadas (a nota em cima da tabela de pontos
+    // diz)
     expect(t).not.toContain('PESOS DIFERENTES DO PREVISTO')
-    expect(t).toContain('Pesos diferentes dos impressos: no espaço livre da frente, com o nº da linha.')
-    // Antes de assinar (no verso), o lembrete do ambiente do fim, que fica na frente (passo 4)
+    expect(t).toContain('Pesos diferentes dos impressos: em Anotações (frente), com o nº da linha.')
+    // Antes de assinar (no verso), o lembrete curto do ambiente do fim, que fica na frente (passo 4)
     expect(corrido(paginas[1])).toContain(LEMBRETE_AMBIENTE_FIM)
-    expect(LEMBRETE_AMBIENTE_FIM).toBe('Antes de assinar: meça o ambiente e anote na linha Fim do passo 4 (na frente).')
+    expect(LEMBRETE_AMBIENTE_FIM).toBe('Antes de assinar: preencha a linha Fim do passo 4.')
     expect(t).toContain('Portaria Inmetro/Dimel nº')
     expect(t).toContain('0236/2009')
     expect(t).toContain('Toledo do Brasil 2180 · nº')
@@ -993,7 +1008,7 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     )
     // Classes II a IIII: a classe I usa a folha da balança cadastrada (a linha ao lado das opções diz isso)
     expect(t).toMatch(
-      /Classe I: não use a folha em branco; Classe II III IIII não marcada Faixas única multi-intervalo múltiplas cadastre a balança e imprima a folha dela\./,
+      /Classe I: cadastre a balança Classe II III IIII não marcada Faixas única multi-intervalo múltiplas e imprima a folha dela/,
     )
     expect(t).toContain('prato redondo')
     expect(t).toContain(
@@ -1531,7 +1546,11 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     expect(frente).toContain('Tabelas na próxima página: os pontos e as etapas de substituição, juntos.')
     expect(verso).toMatch(/^.*5 ERRO DE INDICAÇÃO \(CONTINUAÇÃO\) NO SISTEMA 6 · Erro de indicação Nº Carga/)
     expect(verso).toMatch(/Cargas de substituição sugeridas — 10 000 kg de pesos padrão em cada etapa/)
-    expect(verso).toMatch(/6 REPETIBILIDADE .*7 EXCENTRICIDADE .*8 ASSINATURAS .*Antes de assinar: meça o ambiente/)
+    expect(verso).toMatch(
+      /6 REPETIBILIDADE .*7 EXCENTRICIDADE .*8 ASSINATURAS .*Antes de assinar: preencha a linha Fim do passo 4\./,
+    )
+    // O pé da frente, depois do aviso das tabelas, é o bloco Anotações
+    expect(frente).toMatch(/Tabelas na próxima página: os pontos e as etapas de substituição, juntos\. ANOTAÇÕES — /)
   })
 
   it('rodoviária com anotações longas na chegada: tudo continua em 2 páginas, sem repetir o "como fazer" das etapas', async () => {
@@ -2058,13 +2077,15 @@ describe.runIf(temPdftotext)(
         ['Indicação', '(kg)'],
       ])
         expect(alturaDaLinha(plataforma.pdf, pp, rotulo).mm, rotulo.join(' ')).toBeGreaterThanOrEqual(8.4)
-      // O espaço livre vira escrita mais folgada até ≈ 88 % da altura útil: fica um respiro no pé de cada página
+      // O espaço livre vira escrita mais folgada até ≈ 88 % da altura útil: fica um respiro no pé do verso; o que ainda
+      // sobra na frente são as Anotações, até o pé da página
       for (const dados of [folhaPlataforma, folhaClasseI, folhaEmBranco]) {
         const m = await montar(dados())
         expect(m.paginas, dados.name).toBe(2)
         expect(m.extras.folgaLeitura?.verso, dados.name).toBeGreaterThan(0)
-        for (const [i, mm] of brancoNoPe(m.pdf, m.paginas).entries())
-          expect(mm, `${dados.name}, página ${i + 1}`).toBeGreaterThan(24)
+        const [frente, verso] = brancoNoPe(m.pdf, m.paginas)
+        expect(verso, `${dados.name}, verso`).toBeGreaterThan(24)
+        expect(frente, `${dados.name}, frente`).toBeLessThan(5)
       }
       // As que já estão cheias no verso (as rodoviárias) não ganham altura lá, e nada passa para outra página
       for (const dados of [folhaRodoviaria, folhaRodoviariaSemHistorico, () => folhaRodoviariaMultiIntervalo()]) {
@@ -2105,6 +2126,214 @@ describe.runIf(temPdftotext)(
         expect(t.numeros).toBeGreaterThanOrEqual(6)
         expect(t.frente).toBeGreaterThanOrEqual(5.5)
       }
+    })
+  },
+)
+
+/** Em branco com `n` padrões ativos (a tabela dos padrões cresce e empurra o passo 4 para o pé da frente). */
+function emBrancoComPadroes(n: number): DadosFolhaCampo {
+  const base = folhaEmBrancoOitoPadroes().padroes
+  return {
+    ...folhaEmBranco(),
+    padroes: Array.from({ length: n }, (_, i): Padrao => ({
+      ...base[i % base.length],
+      id: `pad-${i}`,
+      identificacao: `${base[i % base.length].identificacao}${i >= base.length ? '-B' : ''}`,
+    })),
+  }
+}
+
+/** A caixa das linhas das Anotações na definição: a altura e as linhas pontilhadas (y de cada uma). */
+function caixaDasAnotacoes(d: DadosFolhaCampo, extras: Parameters<typeof definicaoFolhaCampo>[1]) {
+  const [bloco] = nosQue((definicaoFolhaCampo(d, extras) as { content: unknown }).content, (x) => x.id === 'anotacoes')
+  if (!bloco) return null
+  const [canvas] = nosQue(bloco, (x) => Array.isArray(x.canvas))
+  const formas = canvas.canvas as Array<{ type: string; h?: number; y1?: number; dash?: unknown; lineColor?: string }>
+  return {
+    bloco,
+    caixa: formas.find((f) => f.type === 'rect')!,
+    linhas: formas.filter((f) => f.type === 'line'),
+  }
+}
+
+describe.runIf(temPdftotext)(
+  'rev. 03, últimos acertos: Anotações na frente, ajuste interno da classe I e lembrete do passo 8',
+  { timeout: 240_000 },
+  () => {
+    it.each(EXEMPLOS)(
+      '$nome: o pé da frente é o bloco Anotações (a barra e a caixa com linhas pontilhadas até o rodapé)',
+      async (e) => {
+        const m = await montar(e.dados())
+        expect(m.paginas).toBe(2)
+        expect(m.faltando).toEqual([])
+        // Depois do passo 4 (os ensaios no verso) ou, na rodoviária com o título do passo 5 no pé da frente, depois dele
+        const naIndicacao = /^rodoviária (60 t|multi-intervalo)/.test(e.nome)
+        expect(m.extras.anotacoes?.depois).toBe(naIndicacao ? 'indicacao' : 'ambiente')
+        expect(m.marcas.get('anotacoes')?.pagina).toBe(1)
+        expect(m.marcas.get('fim:anotacoes')?.pagina).toBe(1)
+        // A caixa acaba logo acima do rodapé (≈ 1,4 mm de respiro), na mesma altura em toda folha
+        expect(m.marcas.get('fim:anotacoes')!.topo).toBeGreaterThan(783)
+        expect(m.marcas.get('fim:anotacoes')!.topo).toBeLessThan(786)
+        // Linhas de pelo menos ≈ 7 mm (20 pt), repartidas por igual, pontilhadas e cinza (para não brigar com a escrita)
+        const c = caixaDasAnotacoes(e.dados(), { extras: m.extras })!
+        expect(c.caixa.h).toBe(m.extras.anotacoes!.altura)
+        const n = c.linhas.length + 1
+        expect(n).toBeGreaterThanOrEqual(2)
+        const passo = c.caixa.h! / n
+        expect(passo).toBeGreaterThanOrEqual(20)
+        expect(passo).toBeLessThan(30)
+        c.linhas.forEach((l, i) => {
+          expect(l.y1).toBeCloseTo((i + 1) * passo, 6)
+          expect(l.dash).toBeTruthy()
+          expect(l.lineColor).toBe('#8C8C8C')
+        })
+        // No PDF: na frente, a barra do bloco, depois do passo 4 (e do título do passo 5, na rodoviária); nada no verso
+        const [frente, verso] = paginasDe(textoDoPdf(m.pdf)).map(corrido)
+        const barra = `${TITULO_ANOTACOES.toUpperCase()} — ${DICA_ANOTACOES}`
+        expect(frente).toContain(barra)
+        expect(frente.indexOf('4 AMBIENTE')).toBeLessThan(frente.indexOf(barra))
+        if (naIndicacao) expect(frente.indexOf('5 ERRO DE INDICAÇÃO')).toBeLessThan(frente.indexOf(barra))
+        expect(verso).not.toContain(TITULO_ANOTACOES.toUpperCase())
+        // Todo "onde anotar" da folha aponta para ele; nenhum para o verso ou para um "espaço livre"
+        const t = corrido(textoDoPdf(m.pdf))
+        expect(t).not.toMatch(/no verso|espaço livre/)
+        if (e.dados !== folhaEmBranco && e.dados !== folhaEmBrancoOitoPadroes) {
+          expect(t).toContain('Anote o certo em Anotações (passo 2 ou 3) e avise o cliente.')
+          expect(t).toContain('Pesos diferentes dos impressos: em Anotações (frente), com o nº da linha.')
+        }
+      },
+    )
+
+    it('as Anotações só ocupam o pé da frente: o verso sai igual, sem página a mais', async () => {
+      for (const dados of [folhaPlataforma, folhaClasseI, folhaEmBranco, folhaRodoviariaSemHistorico]) {
+        const m = await montar(dados())
+        const semAnotacoes = definicaoFolhaCampo(dados(), { extras: { ...m.extras, anotacoes: undefined } })
+        const pdf: Buffer = await pdfmake().createPdf(semAnotacoes).getBuffer()
+        const [frenteSem, versoSem] = paginasDe(textoDoPdf(pdf))
+        const [frente, verso] = paginasDe(textoDoPdf(m.pdf))
+        expect(paginasDe(textoDoPdf(pdf)), dados.name).toHaveLength(2)
+        expect(verso, dados.name).toBe(versoSem)
+        expect(corrido(frenteSem), dados.name).not.toContain('ANOTAÇÕES —')
+        expect(corrido(frente), dados.name).toContain('ANOTAÇÕES —')
+      }
+    })
+
+    it('sem espaço no pé da frente: sem o bloco (a regra do alto manda para uma folha anexa), e a folha não muda', async () => {
+      // Em branco com 12 padrões: o passo 4 acaba no pé da frente
+      const m = await montar(emBrancoComPadroes(12))
+      expect(m.paginas).toBe(2)
+      expect(m.faltando).toEqual([])
+      expect(m.extras.anotacoes).toBeUndefined()
+      expect(m.marcas.has('anotacoes')).toBe(false)
+      const frente = corrido(paginasDe(textoDoPdf(m.pdf))[0])
+      expect(frente).not.toContain('ANOTAÇÕES —')
+      expect(frente).toContain('sem espaço, numa folha anexa')
+      // Com 10, ainda cabem 2 linhas
+      const dez = await montar(emBrancoComPadroes(10))
+      expect(dez.paginas).toBe(2)
+      expect(caixaDasAnotacoes(emBrancoComPadroes(10), { extras: dez.extras })?.linhas).toHaveLength(1)
+      // A definição sem a medida da montagem não leva o bloco
+      expect(caixaDasAnotacoes(folhaPlataforma(), {})).toBeNull()
+    })
+
+    it('rodoviária multi-intervalo em 3 páginas: as Anotações no pé da frente, depois do título do passo 5', async () => {
+      const m = await montar(
+        folhaRodoviariaMultiIntervalo([
+          { id: 'r1', carga: 10_000, leituras: [null, null, null] },
+          { id: 'r2', carga: 40_000, leituras: [null, null, null] },
+          { id: 'r3', carga: 70_000, leituras: [null, null, null] },
+        ]),
+      )
+      expect(m.paginas).toBe(3)
+      expect(m.faltando).toEqual([])
+      expect(m.extras.anotacoes?.depois).toBe('indicacao')
+      expect(m.marcas.get('fim:anotacoes')?.pagina).toBe(1)
+      expect(m.extras.continuacoes).toContain('parte-5-1')
+    })
+
+    it('classe I: a caixa do ajuste interno de rotina (CAL) antes dos ensaios, com a hora, no alto do passo 5', async () => {
+      expect(AJUSTE_INTERNO_CLASSE_I).toBe('Ajuste interno (CAL) feito antes dos ensaios')
+      const json = jsonDe(folhaClasseI()).replace(/ /g, ' ')
+      expect(json.split(AJUSTE_INTERNO_CLASSE_I)).toHaveLength(2)
+      // A rotina da analítica, não reparo, e onde ela é digitada: a etapa da tela que tem o "ajuste interno"
+      expect(json).toContain(`rotina das analíticas, não é reparo · no sistema: ${ETAPAS_SISTEMA.balanca}`)
+      expect(AJUSTES.INTERNO).toMatch(/^Ajuste interno/)
+      const tela = readFileSync(new URL('../../src/pages/CalibracaoForm.tsx', import.meta.url), 'utf8')
+      expect(tela).toContain(`titulo: '${ETAPAS_SISTEMA.balanca.replace(/^\d · /, '')}'`)
+      // Uma caixa de marcar (branca) e a hora ao lado
+      const [linha] = nosQue((definicaoFolhaCampo(folhaClasseI()) as { content: unknown }).content, (x) =>
+        JSON.stringify((x.table as { body?: unknown[][] } | undefined)?.body ?? '').includes(AJUSTE_INTERNO_CLASSE_I),
+      )
+      const texto = JSON.stringify(linha)
+      expect(texto).toContain('"Hora"')
+      expect(texto).toContain('____:____')
+      const caixas = nosQue(linha, (x) => x.type === 'rect' && x.w === x.h)
+      expect(caixas.length).toBeGreaterThanOrEqual(1)
+      for (const q of caixas) expect(q.color).toBe('#FFFFFF')
+      // No PDF: no verso, embaixo do título do passo 5 e antes do método (o ajuste é feito antes dos ensaios)
+      const m = await montar(folhaClasseI())
+      expect(m.paginas).toBe(2)
+      const verso = corrido(paginasDe(textoDoPdf(m.pdf))[1])
+      const i = verso.indexOf(AJUSTE_INTERNO_CLASSE_I)
+      expect(verso.indexOf('5 ERRO DE INDICAÇÃO')).toBeLessThan(i)
+      expect(i).toBeLessThan(verso.indexOf('Como as cargas foram aplicadas'))
+      expect(verso).toMatch(
+        /Ajuste interno \(CAL\) feito antes dos ensaios rotina das analíticas, não é reparo · no sistema: 2 · Balança e ajuste Hora/,
+      )
+      expect(verso).not.toMatch(/Reparo ou manutenção|depois do ajuste|como encontrado/i)
+      // Só na folha de uma balança classe I: nem nas outras classes, nem na em branco, nem na classe I mudada para II
+      for (const d of [
+        folhaPlataforma(),
+        folhaMultiIntervalo(),
+        folhaRodoviaria(),
+        folhaEmBranco(),
+        folhaEmBrancoOitoPadroes(),
+        { ...folhaClasseI(), balanca: { ...folhaClasseI().balanca!, classe: 'II' as const } },
+      ])
+        expect(jsonDe(d)).not.toMatch(/Ajuste interno|\(CAL\)/)
+    })
+
+    it('passo 8: na barra da nota, o lembrete curto de preencher a linha Fim do passo 4, com e sem nº reservado', () => {
+      expect(LEMBRETE_AMBIENTE_FIM).toBe('Antes de assinar: preencha a linha Fim do passo 4.')
+      for (const e of EXEMPLOS)
+        for (const d of [e.dados(), { ...e.dados(), numeroCertificado: undefined }]) {
+          // A barra: a nota com o fio grosso à esquerda (2,2 pt)
+          const barras = nosQue((definicaoFolhaCampo(d) as { content: unknown }).content, (x) => {
+            const layout = x.layout as { vLineWidth?: (i: number, no: unknown) => number } | undefined
+            const tabela = x.table as { widths?: unknown[]; body?: unknown[] } | undefined
+            return (
+              typeof layout?.vLineWidth === 'function' &&
+              tabela?.widths?.length === 1 &&
+              layout.vLineWidth(0, { table: { widths: tabela.widths, body: tabela.body ?? [] } }) === 2.2
+            )
+          })
+          const comLembrete = barras.filter((b) => JSON.stringify(b).includes(LEMBRETE_AMBIENTE_FIM))
+          expect(comLembrete, e.nome).toHaveLength(1)
+          // Em negrito, numa linha própria (depois da nota da etiqueta, quando há o nº)
+          expect(JSON.stringify(comLembrete[0])).toContain(`{"text":"${LEMBRETE_AMBIENTE_FIM}","bold":true}`)
+          expect(JSON.stringify(comLembrete[0]).includes(AVISO_ETIQUETA), e.nome).toBe(!!d.numeroCertificado)
+        }
+    })
+
+    it('chegada e identificação: a instrução de conferir aponta para as Anotações e cabe numa linha', async () => {
+      const m = await montar(folhaPlataforma())
+      const linhas = paginasDe(textoDoPdf(m.pdf))[0].split('\n')
+      const linha = linhas.find((l) => l.includes('Confira o cliente'))!
+      expect(linha.trim()).toBe(
+        'Confira o cliente, o endereço e a plaqueta do indicador (o mostrador). Diferente? Anote o certo em Anotações (passo 2 ou 3) e avise o cliente.',
+      )
+    })
+
+    it('em branco: ao lado da classe, a linha da classe I em duas linhas miúdas, sem a classe I nas opções', async () => {
+      const m = await montar(folhaEmBranco())
+      const frente = paginasDe(textoDoPdf(m.pdf))[0]
+      expect(corrido(frente)).toMatch(/Classe I: cadastre a balança .*e imprima a folha dela/)
+      expect(corrido(frente)).not.toContain('não use a folha em branco')
+      const palavras = palavrasDoPdf(m.pdf)[0]
+      const [cadastre, imprima] = ['cadastre', 'imprima'].map((w) => palavras.find((p) => p.texto === w)!)
+      // Duas linhas: "imprima" embaixo de "cadastre", na mesma coluna
+      expect(imprima.y0).toBeGreaterThan(cadastre.y1 - 1)
+      expect(imprima.x0).toBeLessThan(cadastre.x0)
     })
   },
 )

@@ -11,15 +11,18 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
   O sistema avisa quando um padrão está vencendo e **bloqueia a emissão** quando ele já venceu.
 - **Calibração passo a passo**:
   1. Identificação e nº da **OS** do sistema de ordens de serviço
-  2. Instrumento
+  2. Balança e ajuste (a calibração não inclui ajuste: só o ajuste interno, CAL, feito antes dos ensaios)
   3. Padrões e condições ambientais
   4. Repetibilidade
-  5. Excentricidade
-  6. Erro de indicação, antes e depois do ajuste
+  5. Excentricidade (o método é o da classe: zera e desloca; na classe I, zera antes de cada posição)
+  6. Erro de indicação
   7. Conclusão
   8. Revisão
 
   O cálculo de erro, incerteza (k e νeff) e conformidade é feito **ao vivo** pelo método EURAMET cg-18.
+  Calibrações gravadas antes do POP de calibração (com ajuste externo, "como encontrado", reparo ou verificação
+  preliminar "não") continuam abrindo e saindo no certificado como antes, só para conferência. Rodoviárias e
+  ferroviárias não entram no cadastro novo (as já cadastradas continuam).
 
 - **Folha de campo** para levar ao cliente e preencher à caneta (o registro de dados brutos da ISO/IEC 17025, 7.5):
   - roteiro na ordem do serviço no local (padrões, chegada, plaqueta, verificação e ambiente, erro de indicação, ajuste, repetibilidade, excentricidade, encerramento e assinaturas), e cada passo diz em que etapa do sistema é digitado;

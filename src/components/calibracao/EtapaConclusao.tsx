@@ -4,12 +4,13 @@ import {
   calculoLegado,
   CRITERIOS_EMA,
   faltamOpcoesDaClasse,
+  numeroBr,
   opcoesDaClasse,
   REGRAS_DECISAO,
   somarMeses,
   termosSensiveis,
 } from '#shared/dominio.ts'
-import type { ClasseExatidao, CriterioEma, OpcoesCalculo, RegraDecisao } from '#shared/tipos.ts'
+import type { ClasseExatidao, CriterioEma, OpcoesCalculo, RegraDecisao, Unidade } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
@@ -184,6 +185,7 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
       <OpcoesAvancadas
         opcoes={f.opcoes}
         classe={balanca.classe}
+        unidade={balanca.unidade}
         legado={calculoLegado(f)}
         aoMudar={(o) => alterar((s) => ({ ...s, opcoes: o }))}
       />
@@ -191,14 +193,21 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
   )
 }
 
-function OpcoesAvancadas({
+/**
+ * Opções do cálculo da incerteza (POP 8.1), fechadas: as padrão da empresa. A divisão do modo de serviço (POP 7.6)
+ * fica só aqui dentro; em uso, uma linha avisa com o cartão fechado.
+ */
+export function OpcoesAvancadas({
   opcoes,
   classe,
+  unidade,
   legado,
   aoMudar,
 }: {
   opcoes: OpcoesCalculo
   classe: ClasseExatidao
+  /** Unidade da indicação (a da divisão do modo de serviço). */
+  unidade: Unidade
   /** Revisão de certificado emitido antes do cálculo da classe I: não oferece as opções da classe (ver `calculoLegado`). */
   legado: boolean
   aoMudar: (o: OpcoesCalculo) => void
@@ -236,6 +245,15 @@ function OpcoesAvancadas({
             Aplicar
           </Button>
         </div>
+      )}
+      {opcoes.divisaoTeste > 0 && !aberto && (
+        <p className="mx-5 mb-4 flex items-start gap-2 rounded-xl bg-info-soft px-3.5 py-2.5 text-[13px] text-info">
+          <Info className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Leituras no modo de serviço, com divisão de {numeroBr(opcoes.divisaoTeste)} {unidade} (POP 7.6): o certificado avisa
+            que a incerteza é menor que a da divisão normal.
+          </span>
+        </p>
       )}
       {classeI && legado && (
         <p className="mx-5 mb-4 flex items-start gap-2 rounded-xl bg-info-soft px-3.5 py-2.5 text-[13px] text-info">
@@ -309,8 +327,17 @@ function OpcoesAvancadas({
               <option value="MEDIA">Um erro pela média, com a histerese na incerteza</option>
             </Select>
           </Field>
-          <Field label="Divisão usada nas leituras (modo serviço)" htmlFor="op-dteste" hint="0 = a divisão normal da balança.">
-            <CampoNumero id="op-dteste" valor={opcoes.divisaoTeste || null} aoMudar={(v) => set('divisaoTeste', v ?? 0)} />
+          <Field
+            label="Divisão usada nas leituras (modo serviço)"
+            htmlFor="op-dteste"
+            hint="Vazio = a divisão normal. Só com a concordância do cliente, anotada na folha (POP 7.6)."
+          >
+            <CampoNumero
+              id="op-dteste"
+              valor={opcoes.divisaoTeste || null}
+              aoMudar={(v) => set('divisaoTeste', v ?? 0)}
+              unidade={unidade}
+            />
           </Field>
           {/* As chaves ficam numa linha própria, embaixo dos campos (não ao lado de um campo, desalinhadas) */}
           <div className="flex flex-col gap-2.5 sm:col-span-2">
