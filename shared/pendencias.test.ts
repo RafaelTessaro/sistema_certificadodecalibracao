@@ -8,6 +8,7 @@ import { arDoAmbiente, calcularCalibracao, termicaDoAmbiente } from './calibraca
 import {
   AMBIENTE_VAZIO,
   BALANCA_VAZIA,
+  balancaIdentificada,
   calibracaoVazia,
   normalizarCalibracao,
   OPCOES_CALCULO_PADRAO,
@@ -17,6 +18,7 @@ import {
   padroesDaCalibracao,
   pendenciasAmbiente,
   pendenciasEmissao,
+  proximaAlemDoPop,
   versoesAnterioresApos,
 } from './dominio.ts'
 import type { Balanca, CalibracaoInput, ClasseExatidao, EnsaioIndicacao, Padrao } from './tipos.ts'
@@ -119,6 +121,54 @@ describe('pendências da classe I', () => {
     expect(classeI([padrao({ ...e2, classe: 'F1', uso: 'NOMINAL' }), th, br])).toEqual([
       'Balança classe I: use o jogo JP-E2 pelo valor do certificado (cadastro do padrão; POP 6.1; OIML R 111-1, 5.3.2).',
     ])
+  })
+
+  it('peça usada sem a U do certificado (o jogo pelo certificado): pendência por jogo, com as peças (POP 6.1)', () => {
+    const jogo = {
+      ...e2,
+      id: 'e2',
+      pesos: [
+        { id: 'g100', marca: '', nominal: 100, correcao: -0.12, incerteza: 0, k: 2 },
+        { id: 'g50', marca: '', nominal: 50, correcao: 0.02, incerteza: 0, k: 2 },
+        { id: 'g20', marca: '', nominal: 20, correcao: 0.01, incerteza: 0.03, k: 2 },
+        { id: 'g10', marca: '', nominal: 10, correcao: 0, incerteza: 0, k: 2 },
+      ],
+    }
+    const comPontos = (pecas: string[][], extra: Partial<CalibracaoInput> = {}) => {
+      const k: CalibracaoInput = {
+        ...calibracaoVazia(),
+        dataCalibracao: '2026-10-20',
+        tecnicoId: 't1',
+        localEndereco: 'Rua A, 1 – Rio Claro/SP',
+        padroesIds: [jogo.id, th.id, br.id],
+        ambiente: { temperaturaInicial: 22, temperaturaFinal: 22.4, umidadeInicial: 50, umidadeFinal: 51, pressao: 941.5 },
+        ...extra,
+      }
+      k.opcoes = { ...k.opcoes, empuxo: 'MEDIDO', conveccao: 'CALCULAR' }
+      k.indicacao = {
+        ...k.indicacao,
+        pontos: pecas.map((ids, i) => ({
+          id: `p${i}`,
+          carga: 0,
+          pecas: ids.map((pesoId) => ({ padraoId: jogo.id, pesoId, quantidade: 1 })),
+          pecasManuais: true,
+          crescente: i === 3 ? null : 0,
+          decrescente: null,
+          nivelSubstituicao: 0,
+        })),
+      }
+      return pendenciasEmissao(k, { padroes: [jogo, th, br], hoje: '2026-10-28', temPesos: true, classe: 'I' })
+    }
+    expect(comPontos([[], ['g20'], ['g100', 'g50'], ['g10']])).toEqual([
+      'Balança classe I: o jogo JP-E2 está sem a incerteza (U) do certificado das peças de 100 g e 50 g; complete o cadastro do padrão (POP 6.1).',
+    ])
+    expect(comPontos([[], ['g100'], ['g20']])).toEqual([
+      'Balança classe I: o jogo JP-E2 está sem a incerteza (U) do certificado da peça de 100 g; complete o cadastro do padrão (POP 6.1).',
+    ])
+    // Só peças com U, ou a peça sem U num ponto sem leitura: nada
+    expect(comPontos([[], ['g20'], [], ['g10']])).toEqual([])
+    // Registro de antes do cálculo da classe I: as exigências da época
+    expect(comPontos([[], ['g100']], { calculoLegado: true })).toEqual([])
   })
 
   it('empuxo "não considerar" e convecção desligada bloqueiam', () => {
@@ -237,7 +287,7 @@ describe('densidade dos jogos no empuxo pela densidade do ar medida (pendência 
   }
   const ensaio = (): EnsaioIndicacao => ({
     metodo: 'DESCONTINUO',
-    retornoZero: null,
+    retornoZero: 0,
     substituicao: { ativa: false, pecas: [], etapas: [] },
     pontos: [
       { id: 'z', carga: 0, pecas: [], pecasManuais: false, crescente: 0, decrescente: null, nivelSubstituicao: 0 },
@@ -519,5 +569,90 @@ describe('datas incoerentes', () => {
       pressao: 92.7,
       temperaturaFinal: 81,
     })
+  })
+})
+
+describe('pendências da emissão: excentricidade dispensada, balança sem identificação e padrão fora do intervalo', () => {
+  const base = (x: Partial<CalibracaoInput> = {}): CalibracaoInput => ({
+    ...calibracaoVazia(),
+    dataCalibracao: '2026-11-04',
+    tecnicoId: 't1',
+    localEndereco: 'Rua A, 1 – Rio Claro/SP',
+    padroesIds: ['JP-01'],
+    ambiente: { temperaturaInicial: 22, temperaturaFinal: 23, umidadeInicial: 50, umidadeFinal: 51, pressao: null },
+    ...x,
+  })
+  const ident = { numeroSerie: 'TL-2231', identificacao: '', plataformaSerie: '' }
+  const de = (
+    k: CalibracaoInput,
+    balanca: { receptor: Balanca['receptor']; numeroSerie: string; identificacao: string; plataformaSerie?: string },
+    padroes: Padrao[] = [pesos],
+  ) => pendenciasEmissao(k, { padroes, hoje: '2026-11-04', temPesos: true, classe: 'III', balanca })
+  const naoFeito = (motivo: string) => ({ aplicavel: false, motivo, carga: 0, metodo: 1 as const, posicoes: [] })
+  const SO_GANCHO =
+    'Excentricidade: o POP (7.10, Tabela 6) só dispensa o ensaio na balança suspensa (gancho); registre as leituras das posições.'
+  const MOTIVO = 'Excentricidade: informe por que o ensaio não foi feito (sai no certificado).'
+
+  it('excentricidade "não realizada" numa plataforma: pendência (o POP só dispensa no gancho)', () => {
+    expect(de(base({ excentricidade: naoFeito('Prato pequeno') }), { receptor: 'RETANGULAR', ...ident })).toEqual([SO_GANCHO])
+    expect(de(base({ excentricidade: naoFeito('') }), { receptor: 'APOIOS', ...ident })).toEqual([SO_GANCHO, MOTIVO])
+    // Gancho com o motivo: nada; sem o motivo: a pendência do motivo
+    expect(de(base({ excentricidade: naoFeito('A carga se centraliza sozinha.') }), { receptor: 'GANCHO', ...ident })).toEqual([])
+    expect(de(base({ excentricidade: naoFeito('  ') }), { receptor: 'GANCHO', ...ident })).toEqual([MOTIVO])
+    // Ensaio feito: nada
+    expect(de(base(), { receptor: 'RETANGULAR', ...ident })).toEqual([])
+  })
+
+  it('registro de antes (revisão de certificado de antes das regras, ou legado): como na época', () => {
+    const revisao = base({ excentricidade: naoFeito(''), substituiId: 'k-original' })
+    expect(de(revisao, { receptor: 'RETANGULAR', ...ident })).toEqual([])
+    expect(de({ ...revisao, substituiId: '', calculoLegado: true }, { receptor: 'RETANGULAR', ...ident })).toEqual([])
+    // Revisão de um certificado emitido já com as regras: as regras valem
+    expect(de({ ...revisao, regrasDoPop: true }, { receptor: 'RETANGULAR', ...ident })).toEqual([SO_GANCHO, MOTIVO])
+  })
+
+  it('balança sem nº de série, sem TAG e sem a série da plataforma: não identificável (POP 7.3)', () => {
+    const SEM_ID = 'Balança sem nº de série nem identificação (TAG): identifique a balança no cadastro antes de emitir (POP 7.3).'
+    const vazia = { receptor: 'RETANGULAR' as const, numeroSerie: ' ', identificacao: '', plataformaSerie: '' }
+    expect(de(base(), vazia)).toEqual([SEM_ID])
+    expect(de(base(), { ...vazia, numeroSerie: 'TL-2231' })).toEqual([])
+    expect(de(base(), { ...vazia, identificacao: 'BAL-07' })).toEqual([])
+    expect(de(base(), { ...vazia, plataformaSerie: 'PL-1' })).toEqual([])
+    // Também na revisão: a emissão usa o cadastro de hoje, e a TAG é preenchida nele
+    expect(de(base({ substituiId: 'k-original' }), vazia)).toEqual([SEM_ID])
+  })
+
+  it('padrão calibrado há mais de 24 meses (POP, Tabela 3), mesmo com a próxima calibração digitada distante', () => {
+    const velho = padrao({ dataCalibracao: '2022-03-10', validade: '2032-03-10' })
+    expect(de(base(), { receptor: 'RETANGULAR', ...ident }, [velho])).toEqual([
+      'O padrão JP-01 foi calibrado em 10/03/2022, há mais de 24 meses desta calibração (POP, Tabela 3).',
+    ])
+    // Exatamente 24 meses depois: ainda vale; um dia depois, não
+    const limite = padrao({ dataCalibracao: '2024-11-04', validade: '2026-11-04' })
+    expect(de(base(), { receptor: 'RETANGULAR', ...ident }, [limite])).toEqual([])
+    expect(
+      de(base({ dataCalibracao: '2026-11-03' }), { receptor: 'RETANGULAR', ...ident }, [
+        { ...limite, dataCalibracao: '2024-11-02' },
+      ]),
+    ).toEqual(['O padrão JP-01 foi calibrado em 02/11/2024, há mais de 24 meses desta calibração (POP, Tabela 3).'])
+    // Revisão de certificado de antes das regras: como na época
+    expect(de(base({ substituiId: 'k-original' }), { receptor: 'RETANGULAR', ...ident }, [velho])).toEqual([])
+  })
+})
+
+describe('ajudas dos cadastros: balança identificável e próxima calibração do padrão além do POP', () => {
+  it('identificável pela série, pela TAG ou pela série da plataforma; o cadastro antigo sem os campos não quebra', () => {
+    expect(balancaIdentificada({ numeroSerie: '', identificacao: ' ', plataformaSerie: '' })).toBe(false)
+    expect(balancaIdentificada({})).toBe(false)
+    expect(balancaIdentificada({ numeroSerie: 'TL-1', identificacao: '' })).toBe(true)
+    expect(balancaIdentificada({ numeroSerie: '', identificacao: 'BAL-07' })).toBe(true)
+    expect(balancaIdentificada({ numeroSerie: '', identificacao: '', plataformaSerie: 'PL-1' })).toBe(true)
+  })
+
+  it('a próxima calibração passa de 24 meses da calibração (POP, Tabela 3): o aviso do cadastro', () => {
+    expect(proximaAlemDoPop({ dataCalibracao: '2022-03-10', validade: '2032-03-10' })).toBe(true)
+    expect(proximaAlemDoPop({ dataCalibracao: '2024-03-10', validade: '2026-03-10' })).toBe(false)
+    expect(proximaAlemDoPop({ dataCalibracao: '2024-03-10', validade: '2026-03-11' })).toBe(true)
+    expect(proximaAlemDoPop({ dataCalibracao: '', validade: '2099-01-01' })).toBe(false)
   })
 })

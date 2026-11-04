@@ -1,9 +1,18 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { separarProcedimento } from '#shared/arquivos.ts'
-import { calculoLegado, hojeLocalIso, parteSeparada, semIndicadorLegado, textoBusca, textoBuscaBalanca } from '#shared/dominio.ts'
-import type { Balanca, Calibracao } from '#shared/tipos.ts'
+import { POP_DA_ATUALIZACAO, separarProcedimento } from '#shared/arquivos.ts'
+import {
+  calculoLegado,
+  enderecoCliente,
+  hojeLocalIso,
+  parteSeparada,
+  semIndicadorLegado,
+  textoBusca,
+  textoBuscaBalanca,
+  textoBuscaCalibracao,
+} from '#shared/dominio.ts'
+import type { Balanca, Calibracao, Cliente } from '#shared/tipos.ts'
 
 export type Banco = DatabaseSync
 
@@ -215,6 +224,18 @@ const MIGRACOES: Migracao[] = [
   // certificado cita o método usado na calibração (ISO/IEC 17025, 7.8.2.1), o da folha, não o vigente na emissão
   // (`popDaCalibracao` em certificados.ts). As folhas já impressas ficam com a vigente na primeira impressão.
   popDasFolhas,
+
+  // 11: a revisão em andamento que a troca do cliente dono da balança levou para o novo dono volta para o cliente
+  // do certificado revisado (a revisão corrige aquele certificado e sai em nome dele; ver `verificarLigacoes`).
+  revisoesDoClienteRevisado,
+
+  // 12: as balanças que foram em cada lembrete de calibração (JSON com os ids; vazio nos lembretes de antes, que
+  // não marcam nenhuma balança em Vencimentos): a balança só aparece avisada pelo lembrete que a incluiu.
+  (db) => acrescentarColuna(db, 'envios', 'balancas', "TEXT NOT NULL DEFAULT ''"),
+
+  // 13: os endereços que o servidor de e-mail recusou em cada envio (JSON; vazio nos de antes). `para` guarda só quem
+  // recebeu: o servidor que recusa parte dos destinatários entrega aos outros sem dar erro.
+  (db) => acrescentarColuna(db, 'envios', 'recusados', "TEXT NOT NULL DEFAULT ''"),
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
@@ -314,6 +335,68 @@ function revisoesLegadas(db: Banco) {
 }
 
 /**
+ * Migração 11 (ver acima). Repetível: só mexe na revisão em andamento com outro cliente que o do certificado
+ * revisado. O endereço que tinha passado para o do novo dono volta para o do certificado revisado (o digitado na
+ * revisão fica); a busca acompanha e a versão sobe (a tela aberta com a revisão de antes não grava por cima). O
+ * registro de atividades diz quais.
+ */
+function revisoesDoClienteRevisado(db: Banco) {
+  const linhas = db
+    .prepare(
+      `SELECT r.id, r.dados, r.versao, o.cliente_id AS cliente_revisado, o.dados AS original,
+              n.dados AS cliente_novo, c.dados AS cliente, b.dados AS balanca
+         FROM calibracoes r
+         JOIN calibracoes o ON o.id = r.substitui_id
+         JOIN clientes c ON c.id = o.cliente_id
+         LEFT JOIN clientes n ON n.id = r.cliente_id
+         LEFT JOIN balancas b ON b.id = r.balanca_id
+        WHERE r.substitui_id <> '' AND r.status IN ('RASCUNHO','REVISAO') AND r.cliente_id <> o.cliente_id`,
+    )
+    .all() as Array<{
+    id: string
+    dados: string
+    versao: number
+    cliente_revisado: string
+    original: string
+    cliente_novo: string | null
+    cliente: string
+    balanca: string | null
+  }>
+  if (!linhas.length) return
+  const em = new Date().toISOString()
+  const gravar = db.prepare(
+    'UPDATE calibracoes SET cliente_id = ?, busca = ?, dados = ?, versao = ?, atualizado_em = ? WHERE id = ?',
+  )
+  const numeros: string[] = []
+  for (const l of linhas) {
+    const k = JSON.parse(l.dados) as Calibracao
+    const original = JSON.parse(l.original) as Calibracao
+    const novoDono = l.cliente_novo ? (JSON.parse(l.cliente_novo) as Cliente) : null
+    const versao = l.versao + 1
+    const revisao: Calibracao = {
+      ...k,
+      clienteId: l.cliente_revisado,
+      localEndereco: novoDono && k.localEndereco === enderecoCliente(novoDono) ? original.localEndereco : k.localEndereco,
+      versao,
+      atualizadoEm: em,
+    }
+    const cliente = JSON.parse(l.cliente) as Cliente
+    const balanca = l.balanca ? (JSON.parse(l.balanca) as Balanca) : null
+    gravar.run(l.cliente_revisado, textoBuscaCalibracao(revisao, cliente, balanca), JSON.stringify(revisao), versao, em, l.id)
+    numeros.push(original.numero || l.id)
+  }
+  db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)").run(
+    em,
+    detalheLista(
+      numeros.length === 1
+        ? 'A revisão aberta voltou para o cliente do certificado revisado (a balança tinha passado para outro cliente). Certificado: '
+        : `${numeros.length} revisões abertas voltaram para o cliente do certificado revisado (a balança tinha passado para outro cliente). Certificados: `,
+      numeros,
+    ),
+  )
+}
+
+/**
  * Migração 10 (ver acima). Repetível: só acrescenta a coluna e preenche as folhas sem ela. A vigente na primeira
  * impressão é a última registrada até ela (`Repositorio.popVigente`: a de maior id); antes de todas, nenhuma.
  */
@@ -367,13 +450,14 @@ function arquivosEPop(db: Banco) {
   const em = new Date()
   db.prepare(
     `INSERT INTO pop_versoes (codigo, revisao, data, arquivo, observacao, criado_em, criado_por)
-     VALUES (?, ?, ?, NULL, ?, ?, 'Atualização do sistema')`,
+     VALUES (?, ?, ?, NULL, ?, ?, ?)`,
   ).run(
     codigo.slice(0, 60),
     revisao.slice(0, 10),
     hojeLocalIso(em),
     'Código e revisão que estavam nas configurações do certificado.',
     em.toISOString(),
+    POP_DA_ATUALIZACAO,
   )
   db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)").run(
     em.toISOString(),

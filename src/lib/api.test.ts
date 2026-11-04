@@ -131,6 +131,15 @@ describe('calibrações', () => {
     expect(api.urlFolhaCampoAvulsa({ clienteId: 'c1' })).toMatch(/^\/api\/folha-campo\?clienteId=c1&chave=/)
   })
 
+  it('arquivo guardado: o link leva o nome da referência (o mesmo conteúdo pode ter outro nome em outro padrão)', () => {
+    const sha = 'a'.repeat(64)
+    expect(api.urlArquivo(sha)).toBe(`/api/arquivos/${sha}`)
+    expect(api.urlArquivo(sha, { baixar: true, nome: 'Cert 1.pdf' })).toBe(`/api/arquivos/${sha}?baixar=1&nome=Cert+1.pdf`)
+    const ref = { sha256: sha, nome: 'Certificado JP-01.pdf', tamanho: 10, tipo: 'application/pdf', enviadoEm: '' }
+    expect(api.urlAnexo(ref)).toBe(`/api/arquivos/${sha}?nome=Certificado+JP-01.pdf`)
+    expect(api.urlAnexo({ ...ref, nome: '' })).toBe(`/api/arquivos/${sha}`)
+  })
+
   it('PDF para ver ou baixar; emitir com o signatário e a versão', async () => {
     expect(api.urlPdf('k/1')).toBe('/api/calibracoes/k%2F1/pdf')
     expect(api.urlPdf('k1', true)).toBe('/api/calibracoes/k1/pdf?baixar=1')
@@ -140,6 +149,9 @@ describe('calibrações', () => {
     expect(url).toBe('/api/calibracoes/k1/emitir')
     expect(init?.method).toBe('POST')
     expect(JSON.parse(String(init?.body))).toEqual({ signatarioId: 'u1', versao: 3 })
+    // Emitido, mas sem o PDF gravado na hora: o aviso chega para a tela mostrar
+    simularFetch(200, { calibracao: { numero: 'CC-2026-00001' }, aviso: 'O PDF é gerado de novo ao abrir.' })
+    expect(await api.emitir('k1', { versao: 4 })).toMatchObject({ aviso: 'O PDF é gerado de novo ao abrir.' })
   })
 
   it('a lista leva só os filtros informados', async () => {

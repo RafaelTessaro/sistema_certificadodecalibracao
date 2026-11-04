@@ -915,6 +915,226 @@ describe('restauração de uma cópia do banco', { timeout: 30_000 }, () => {
     }
   })
 
+  it('a avulsa impressa antes da cópia, ligada e emitida depois: cada nº como no banco atual (o do certificado emitido)', async () => {
+    await iniciar()
+    const k = await c.calibracaoPronta()
+    const fc1 = numeroDe(await folhaDe(k.id))
+    const fc2 = await avulsa(`&balancaId=${c.balanca.id}`)
+    const copia = await t.ctx.backups.copiar('manual')
+    // Depois da cópia: a avulsa foi a campo (a calibração passa a usar o nº dela), e o certificado sai com ele
+    expect((await ligar(k.id, fc2)).json().numeroReservado.numero).toBe(cc(2))
+    expect((await emitir(k.id)).numero).toBe(cc(2))
+    const destino = abrirBanco(copia)
+    try {
+      transplantarFolhasCampo(t.ctx.db, destino)
+      expect(numerosDe(destino)).toEqual(numerosDe(t.ctx.db))
+      expect(numerosDe(destino).map((n) => [n.numero, n.situacao])).toEqual([
+        [cc(1), 'nao_utilizado'],
+        [cc(2), 'emitido'],
+      ])
+      // Nenhum nº "reservado" para o certificado emitido: nem na tela, nem na lista
+      const repo = new Repositorio(destino)
+      expect(repo.numeroReservadoDa(k.id)).toBeNull()
+      expect(repo.listarCalibracoes().itens.find((i) => i.id === k.id)).toMatchObject({ numero: cc(2) })
+      expect(repo.listarCalibracoes().itens.find((i) => i.id === k.id)?.numeroReservado).toBeUndefined()
+      // A folha do certificado é a que foi a campo
+      expect(repo.folhaCampoDaCalibracao(k.id)).toMatchObject({ numero: fc2, substituidas: [fc1] })
+      expect(
+        (
+          destino.prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' ORDER BY id").all() as Array<{
+            detalhe: string
+          }>
+        ).map((r) => r.detalhe),
+      ).toContain(`${cc(1)}, da cópia, ficou como no banco atual: não utilizado`)
+      // De novo: nada muda
+      const antes = destino.prepare('SELECT COUNT(*) AS n FROM auditoria').get()
+      transplantarFolhasCampo(t.ctx.db, destino)
+      expect(numerosDe(destino)).toEqual(numerosDe(t.ctx.db))
+      expect(destino.prepare('SELECT COUNT(*) AS n FROM auditoria').get()).toEqual(antes)
+    } finally {
+      destino.close()
+    }
+  })
+
+  it('a avulsa ligada por engano antes da cópia, desfeito e emitido depois: cada nº e cada folha como no banco atual', async () => {
+    await iniciar()
+    const k = await c.calibracaoPronta()
+    const fc1 = numeroDe(await folhaDe(k.id))
+    const fc2 = await avulsa(`&balancaId=${c.balanca.id}`)
+    expect((await ligar(k.id, fc2)).json().numeroReservado.numero).toBe(cc(2))
+    const copia = await t.ctx.backups.copiar('manual')
+    // Depois da cópia: a folha dela foi a campo, afinal; o certificado sai com o nº dela
+    expect((await ligar(k.id, fc1)).statusCode).toBe(200)
+    expect((await emitir(k.id)).numero).toBe(cc(1))
+    const destino = abrirBanco(copia)
+    try {
+      transplantarFolhasCampo(t.ctx.db, destino)
+      expect(numerosDe(destino)).toEqual(numerosDe(t.ctx.db))
+      expect(numerosDe(destino).map((n) => [n.numero, n.calibracao_id, n.folha, n.situacao])).toEqual([
+        [cc(1), k.id, fc1, 'emitido'],
+        [cc(2), '', fc2, 'reservado'],
+      ])
+      const repo = new Repositorio(destino)
+      expect(repo.folhaCampoDaCalibracao(k.id)).toMatchObject({ numero: fc1 })
+      // A avulsa fica livre, com o nº dela, como no banco atual
+      expect(destino.prepare('SELECT calibracao_id, substituida_por FROM folhas_campo WHERE numero = ?').get(fc2)).toEqual({
+        calibracao_id: '',
+        substituida_por: '',
+      })
+    } finally {
+      destino.close()
+    }
+  })
+
+  it('o nº de uma avulsa descartado depois da cópia continua não utilizado, com o motivo', async () => {
+    await iniciar()
+    const fc = await avulsa()
+    const copia = await t.ctx.backups.copiar('manual')
+    const [n] = (await t.chamar('GET', '/api/numeros-reservados', { cookie: t.cookieAdmin })).json().numeros as NumeroReservado[]
+    const descarte = await t.chamar('POST', `/api/numeros-reservados/${n.id}/nao-utilizado`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Folha perdida no caminho' },
+    })
+    expect(descarte.statusCode, descarte.body).toBe(200)
+    const destino = abrirBanco(copia)
+    try {
+      transplantarFolhasCampo(t.ctx.db, destino)
+      expect(numerosDe(destino)).toEqual(numerosDe(t.ctx.db))
+      expect(numerosDe(destino)[0]).toMatchObject({
+        numero: cc(1),
+        folha: fc,
+        situacao: 'nao_utilizado',
+        motivo: 'Folha perdida no caminho',
+        situacao_por: 'Admin Teste',
+      })
+    } finally {
+      destino.close()
+    }
+  })
+
+  it('a calibração em andamento na cópia fica com o nº que combina com a folha dela (a da cópia ou a do banco atual)', async () => {
+    await iniciar()
+    // y: rascunho excluído depois da cópia (volta com a cópia, com a folha e o nº dela)
+    const y = await c.calibracaoPronta()
+    const fcY = numeroDe(await folhaDe(y.id))
+    // w: ligada depois da cópia a uma avulsa impressa antes dela, sem folha nova: fica como na cópia
+    const w = await c.calibracaoPronta()
+    const fcW = numeroDe(await folhaDe(w.id))
+    const avulsaW = await avulsa()
+    // z: folha nova depois da cópia e, no lugar dela, uma avulsa impressa antes da cópia (a que foi a campo)
+    const z = await c.calibracaoPronta()
+    const fcZ = numeroDe(await folhaDe(z.id))
+    const avulsaZ = await avulsa()
+    const copia = await t.ctx.backups.copiar('manual')
+    expect((await t.chamar('DELETE', `/api/calibracoes/${y.id}`, { cookie: t.cookieAdmin })).statusCode).toBe(204)
+    expect((await ligar(w.id, avulsaW)).statusCode).toBe(200)
+    const novaZ = numeroDe(await folhaNova(z.id))
+    expect((await ligar(z.id, avulsaZ)).statusCode).toBe(200)
+    const destino = abrirBanco(copia)
+    try {
+      transplantarFolhasCampo(t.ctx.db, destino)
+      const repo = new Repositorio(destino)
+      // y: a folha e o nº da cópia
+      expect(repo.folhaCampoDaCalibracao(y.id)?.numero).toBe(fcY)
+      expect(repo.numeroReservadoDa(y.id)).toMatchObject({ numero: cc(1), folha: fcY })
+      // w: a folha da cópia e o nº impresso nela; a avulsa livre, com o dela
+      expect(repo.folhaCampoDaCalibracao(w.id)?.numero).toBe(fcW)
+      expect(repo.numeroReservadoDa(w.id)?.numero).toBe(cc(2))
+      expect(numerosDe(destino).find((n) => n.numero === cc(3))).toMatchObject({ calibracao_id: '', situacao: 'reservado' })
+      // z: a avulsa que foi a campo, como no banco atual, e o nº dela (o da folha da cópia, não utilizado)
+      expect(repo.folhaCampoDaCalibracao(z.id)).toMatchObject({ numero: avulsaZ, substituidas: [fcZ, novaZ] })
+      expect(repo.numeroReservadoDa(z.id)?.numero).toBe(cc(5))
+      expect(numerosDe(destino).find((n) => n.numero === cc(4))).toMatchObject({ calibracao_id: z.id, situacao: 'nao_utilizado' })
+    } finally {
+      destino.close()
+    }
+  })
+
+  it('a avulsa que era a folha vigente de um rascunho na cópia e foi emitida noutra calibração: o rascunho volta à folha dele', async () => {
+    await iniciar()
+    const y = await c.calibracaoPronta()
+    const fcY = numeroDe(await folhaDe(y.id))
+    const fc = await avulsa()
+    // Antes da cópia, a avulsa ligada por engano ao rascunho y (que passa a usar o nº dela)
+    expect((await ligar(y.id, fc)).json().numeroReservado.numero).toBe(cc(2))
+    const copia = await t.ctx.backups.copiar('manual')
+    // Depois: y volta à folha dele, e a avulsa vai a campo pela calibração k, emitida com o nº dela
+    expect((await ligar(y.id, fcY)).statusCode).toBe(200)
+    const k = await c.calibracaoPronta()
+    expect((await ligar(k.id, fc)).statusCode).toBe(200)
+    expect((await emitir(k.id)).numero).toBe(cc(2))
+    const destino = abrirBanco(copia)
+    try {
+      transplantarFolhasCampo(t.ctx.db, destino)
+      const repo = new Repositorio(destino)
+      expect(repo.folhaCampoDaCalibracao(k.id)).toMatchObject({ numero: fc })
+      expect(repo.folhaCampoDaCalibracao(y.id)).toMatchObject({ numero: fcY, substituidas: [] })
+      expect(repo.numeroReservadoDa(y.id)?.numero).toBe(cc(1))
+      expect(numerosDe(destino)).toEqual(numerosDe(t.ctx.db))
+      expect(
+        destino
+          .prepare(
+            "SELECT COUNT(*) AS n FROM folhas_campo WHERE calibracao_id <> '' AND substituida_por = '' GROUP BY calibracao_id",
+          )
+          .all(),
+      ).toEqual([{ n: 1 }, { n: 1 }])
+    } finally {
+      destino.close()
+    }
+  })
+
+  it('o rascunho excluído depois da cópia volta sem a folha que foi para um certificado emitido depois', async () => {
+    await iniciar()
+    const y = await c.calibracaoPronta()
+    const fcY = numeroDe(await folhaDe(y.id))
+    const copia = await t.ctx.backups.copiar('manual')
+    // Depois da cópia: y é excluído, e a folha dele (livre) vai a campo por k, emitido com o nº dela
+    expect((await t.chamar('DELETE', `/api/calibracoes/${y.id}`, { cookie: t.cookieAdmin })).statusCode).toBe(204)
+    const k = await c.calibracaoPronta()
+    expect((await ligar(k.id, fcY)).statusCode).toBe(200)
+    expect((await emitir(k.id)).numero).toBe(cc(1))
+    const destino = abrirBanco(copia)
+    try {
+      transplantarFolhasCampo(t.ctx.db, destino)
+      const repo = new Repositorio(destino)
+      expect(repo.folhaCampoDaCalibracao(k.id)).toMatchObject({ numero: fcY })
+      expect(repo.folhaCampoDaCalibracao(y.id)).toBeNull()
+      expect(repo.numeroReservadoDa(y.id)).toBeNull()
+      expect(numerosDe(destino)).toEqual(numerosDe(t.ctx.db))
+    } finally {
+      destino.close()
+    }
+  })
+
+  it('a calibração refeita excluída depois da cópia volta com a folha do certificado cancelado que tinha passado para ela', async () => {
+    await iniciar()
+    const k = await c.calibracaoPronta()
+    const fc = numeroDe(await folhaDe(k.id))
+    await emitir(k.id)
+    const cancelar = await t.chamar('POST', `/api/calibracoes/${k.id}/cancelar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Balança errada no certificado' },
+    })
+    expect(cancelar.statusCode, cancelar.body).toBe(200)
+    const refeita = await c.calibracaoPronta()
+    expect((await ligar(refeita.id, fc, t.cookieAdmin)).statusCode).toBe(200)
+    const copia = await t.ctx.backups.copiar('manual')
+    // Depois da cópia, a refeita é excluída (a folha volta para o cancelado); a cópia traz a refeita de volta
+    expect((await t.chamar('DELETE', `/api/calibracoes/${refeita.id}`, { cookie: t.cookieAdmin })).statusCode).toBe(204)
+    const destino = abrirBanco(copia)
+    try {
+      transplantarFolhasCampo(t.ctx.db, destino)
+      const repo = new Repositorio(destino)
+      expect(repo.folhaCampoDaCalibracao(refeita.id)).toMatchObject({ numero: fc })
+      expect(repo.folhaCampoDaCalibracao(k.id)).toMatchObject({ numero: fc, passouPara: expect.stringMatching(/^rascunho/) })
+      expect(destino.prepare('SELECT de_calibracao_id, para_calibracao_id FROM folhas_campo_passagens').all()).toEqual([
+        { de_calibracao_id: k.id, para_calibracao_id: refeita.id },
+      ])
+    } finally {
+      destino.close()
+    }
+  })
+
   it('cópia posta à mão (sem a ferramenta): o nº impresso na folha que volta pela pasta volta com ela e nunca é dado de novo', async () => {
     await iniciar()
     const k = await c.calibracaoPronta()
@@ -1008,3 +1228,12 @@ describe('restauração de uma cópia do banco', { timeout: 30_000 }, () => {
 })
 
 const numeroDe = (r: { headers: Record<string, unknown> }) => r.headers['x-folha-campo'] as string
+
+/** Os nºs reservados de um banco, com tudo o que a lista mostra (para comparar a cópia restaurada com o banco atual). */
+const numerosDe = (db: ReturnType<typeof abrirBanco>) =>
+  db
+    .prepare(
+      `SELECT numero, calibracao_id, folha, situacao, motivo, situacao_em, situacao_por FROM numeros_reservados
+        ORDER BY ano, sequencia`,
+    )
+    .all() as Array<Record<string, string>>

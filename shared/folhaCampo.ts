@@ -30,6 +30,7 @@ import {
 } from './dominio.ts'
 import {
   cargaExcentricidade,
+  CRITERIO_NAO_PESA_CORRETAMENTE,
   emaInstrumento,
   excentricidadeAbaixoDoMinimo,
   faixaDoValor,
@@ -119,9 +120,8 @@ export interface PontoPlanejado extends CargaPlanejada {
 }
 
 /**
- * Critério da coluna "faixa aceitável" (carga ± EMA), só para decidir o ajuste no local: o da declaração de
- * conformidade, quando o cliente pediu; sem pedido, o EMA em serviço da Portaria 157 (o critério padrão do
- * sistema), quando a balança tem classe.
+ * Critério da "faixa aceitável" (carga ± EMA) de cada ponto: o da declaração de conformidade, quando o cliente pediu;
+ * sem pedido, o limite de "não pesa corretamente" do POP (7.8, o EMA em serviço), quando a balança tem classe.
  */
 export interface FaixaAceitavel {
   criterio: CriterioEma
@@ -135,8 +135,11 @@ export interface FaixaAceitavel {
   toleranciaPendente: boolean
 }
 
-/** Critério de decisão do ajuste quando o cliente não pediu declaração de conformidade. */
-export const CRITERIO_AJUSTE: Exclude<CriterioEma, 'CLIENTE'> = 'PORTARIA_SERVICO'
+/**
+ * Critério da faixa aceitável quando o cliente não pediu declaração de conformidade: o mesmo do cálculo para a balança
+ * que não pesa corretamente (POP 7.8; `CRITERIO_NAO_PESA_CORRETAMENTE`).
+ */
+export const CRITERIO_AJUSTE: Exclude<CriterioEma, 'CLIENTE'> = CRITERIO_NAO_PESA_CORRETAMENTE
 
 export interface PadraoPlanejado {
   padrao: Padrao

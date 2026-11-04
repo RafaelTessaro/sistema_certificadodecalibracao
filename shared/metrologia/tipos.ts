@@ -32,6 +32,11 @@ export interface PecaCalculo {
   ema: number
   /** true = usar o valor do certificado (u = U/k); false = nominal (u = EMA/√3). */
   usarCertificado: boolean
+  /**
+   * Jogo pelo valor do certificado, mas a peça sem a U no cadastro: ela entra pelo nominal (`usarCertificado` false) e
+   * esta é a correção do certificado que ficou de fora (0 quando não há). Ausente nos demais casos.
+   */
+  correcaoSemU?: number
   /** Quantas peças iguais a esta compõem a carga. */
   quantidade: number
   /** Classe R 111 da peça ('' ou ausente = desconhecida): decide se a convecção conta. */
@@ -120,11 +125,29 @@ export interface EntradaCalculo {
   termica?: TermicaCalculo | null
   /**
    * Calibração nova: os mínimos do POP (5 pontos com uma carga acima de zero, a subida, as leituras e um ensaio da
-   * repetibilidade por intervalo de d; 7.7 e 7.9) e as leituras fora do esperado (`leituraImplausivel`) são pendências
-   * (bloqueiam a emissão). Ausente ou false (registro de antes dessas regras: revisão de certificado emitido, "como
-   * encontrado"): só avisos, como na época.
+   * repetibilidade por intervalo de d; 7.7 e 7.9), as leituras fora do esperado (`leituraImplausivel`, também com carga
+   * zero e no zero antes da excentricidade), o ponto lido sem carga depois do zero e o ponto sem nenhum peso padrão são
+   * pendências (bloqueiam a emissão). Ausente ou false (registro de antes dessas regras: revisão de certificado emitido,
+   * "como encontrado"): só avisos, como na época.
    */
   regrasDoPop?: boolean
+  /**
+   * Revisão de um certificado emitido antes das regras do POP (sem `regrasDoPop`): as leituras dele. A leitura fora do
+   * esperado que a revisão mudou (ou acrescentou) é pendência; a que já estava no certificado revisado, só o aviso.
+   */
+  leiturasDoOriginal?: LeiturasOriginais
+}
+
+/** As leituras de um certificado emitido (para a revisão dele): por ponto, por ensaio e por posição. */
+export interface LeiturasOriginais {
+  /** Pelo id do ponto do erro de indicação. */
+  indicacao: Record<string, { crescente: number | null; decrescente: number | null }>
+  /** Pelo id do ensaio de repetibilidade, na ordem. */
+  repetibilidade: Record<string, Array<number | null>>
+  /** Pela ordem das posições da excentricidade. */
+  excentricidade: Array<number | null>
+  /** A referência de cada posição da excentricidade (o zero antes, no método 3), na ordem; ausente = não comparada. */
+  referenciasExcentricidade?: Array<number | null>
 }
 
 /** Resultado de um ensaio de repetibilidade. */
@@ -206,6 +229,11 @@ export interface ResultadoPonto {
    */
   emaDecrescente?: number
   conformidade: SituacaoConformidade | null
+  /**
+   * Leituras com o erro (como reportado) maior que o EMA em serviço da classe ou, sem classe, que a tolerância do
+   * cliente: a balança não pesa corretamente (POP 7.8). Ausente quando nenhuma passa.
+   */
+  foraDoEmaServico?: { crescente: boolean; decrescente: boolean }
   /** Valores prontos para o certificado (vírgula decimal, U com 2 algarismos, E na casa de U). */
   texto: {
     carga: string

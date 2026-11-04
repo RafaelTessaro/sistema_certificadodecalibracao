@@ -37,7 +37,8 @@ export interface Toast {
   id: number
   titulo: string
   descricao?: string
-  tipo: 'sucesso' | 'erro' | 'info'
+  /** `aviso`: deu certo só em parte, e é preciso conferir algo (ex.: um destinatário recusado). */
+  tipo: 'sucesso' | 'erro' | 'info' | 'aviso'
 }
 
 interface ToastState {
@@ -52,7 +53,7 @@ export const useToasts = create<ToastState>()((set, get) => ({
   mostrar(t) {
     const id = ++seq
     set((s) => ({ toasts: [...s.toasts.slice(-3), { ...t, id }] }))
-    setTimeout(() => get().fechar(id), t.tipo === 'erro' ? 6000 : 3500)
+    setTimeout(() => get().fechar(id), t.tipo === 'erro' || t.tipo === 'aviso' ? 6000 : 3500)
   },
   fechar: (id) => set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) })),
 }))
@@ -61,6 +62,7 @@ export const toast = {
   sucesso: (titulo: string, descricao?: string) => useToasts.getState().mostrar({ titulo, descricao, tipo: 'sucesso' }),
   erro: (titulo: string, descricao?: string) => useToasts.getState().mostrar({ titulo, descricao, tipo: 'erro' }),
   info: (titulo: string, descricao?: string) => useToasts.getState().mostrar({ titulo, descricao, tipo: 'info' }),
+  aviso: (titulo: string, descricao?: string) => useToasts.getState().mostrar({ titulo, descricao, tipo: 'aviso' }),
 }
 
 /** Mostra o erro de uma operação no servidor de forma amigável. */

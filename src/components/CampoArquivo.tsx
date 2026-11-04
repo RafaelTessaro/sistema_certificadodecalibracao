@@ -153,7 +153,7 @@ export function CampoArquivo({
   const nome = local ? local.name : salvo!.nome
   const tamanho = local ? local.size : salvo!.tamanho
   const enviadoEm = salvo?.enviadoEm ?? ''
-  const url = local ? urlLocal : api.urlArquivo(salvo!.sha256)
+  const url = local ? urlLocal : api.urlAnexo(salvo!)
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
       <div

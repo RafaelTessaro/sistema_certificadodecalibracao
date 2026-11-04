@@ -1,10 +1,16 @@
 import { Crosshair, Wand2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { METODOS_EXCENTRICIDADE, metodoExcentricidadeForaDoPop, metodoExcentricidadePadrao } from '#shared/dominio.ts'
+import {
+  LIMITES,
+  METODOS_EXCENTRICIDADE,
+  metodoExcentricidadeForaDoPop,
+  metodoExcentricidadePadrao,
+  regrasDoPopComoAviso,
+} from '#shared/dominio.ts'
 import {
   cargaExcentricidade,
+  excentricidadeImplausivel,
   formatarNumero,
-  leituraImplausivel,
   posicoesExcentricidade,
   REGRA_CARGA_EXCENTRICIDADE,
 } from '#shared/metrologia/index.ts'
@@ -59,6 +65,13 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
   const [alterando, setAlterando] = useState(false)
   const podeAlterar = admin || foraDoPop
 
+  // O POP (7.10, Tabela 6) só dispensa o ensaio na balança suspensa (gancho), com o motivo (sai no certificado). Nas
+  // outras, "Ensaio realizado" só aparece para voltar a marcar o que já veio desmarcado (registro de antes); a revisão
+  // de um certificado de antes das regras fica como na época
+  const podeDispensar = balanca.receptor === 'GANCHO' || regrasDoPopComoAviso(f)
+  const mostrarRealizado = podeDispensar || !ecc.aplicavel
+  const semMotivo = !ecc.aplicavel && !ecc.motivo.trim()
+
   return (
     <div className="flex flex-col gap-6">
       <Card>
@@ -67,25 +80,41 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
           titulo="Excentricidade"
           descricao="A mesma carga em posições diferentes do prato ou da plataforma. Mostra quanto a posição muda a indicação."
           acoes={
-            <label className="flex cursor-pointer items-center gap-2 text-[13px] font-medium text-ink-2">
-              <input
-                type="checkbox"
-                checked={ecc.aplicavel}
-                onChange={(e) => set((x) => ({ ...x, aplicavel: e.target.checked }))}
-                className="h-4 w-4 accent-[var(--brand)]"
-              />
-              Ensaio realizado
-            </label>
+            mostrarRealizado && (
+              <label className="flex cursor-pointer items-center gap-2 text-[13px] font-medium text-ink-2">
+                <input
+                  type="checkbox"
+                  checked={ecc.aplicavel}
+                  onChange={(e) => set((x) => ({ ...x, aplicavel: e.target.checked }))}
+                  className="h-4 w-4 accent-[var(--brand)]"
+                />
+                Ensaio realizado
+              </label>
+            )
           }
         />
         {!ecc.aplicavel ? (
-          <div className="px-5 pb-5">
-            <Field label="Por que o ensaio não foi feito" htmlFor="ecc-motivo" hint="Sai no certificado.">
+          <div className="flex flex-col gap-3 px-5 pb-5">
+            {!podeDispensar && (
+              <p role="note" className="rounded-xl bg-danger-soft px-3.5 py-2.5 text-[13px] text-danger">
+                O POP (7.10) só dispensa a excentricidade na balança suspensa (gancho). Marque “Ensaio realizado” e registre as
+                leituras das posições.
+              </p>
+            )}
+            <Field
+              label="Por que o ensaio não foi feito"
+              htmlFor="ecc-motivo"
+              hint="Obrigatório. Sai no certificado."
+              erro={semMotivo ? 'Informe o motivo.' : undefined}
+            >
               <Input
                 id="ecc-motivo"
                 value={ecc.motivo}
                 onChange={(e) => set((x) => ({ ...x, motivo: e.target.value }))}
                 placeholder="Ex.: balança suspensa, a carga se centraliza sozinha"
+                maxLength={LIMITES.motivoExcentricidade}
+                aria-invalid={semMotivo ? true : undefined}
+                className={cn(semMotivo && 'border-danger!')}
               />
             </Field>
           </div>
@@ -197,6 +226,8 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                     {ecc.posicoes.map((p, i) => {
                       const desvio = r?.desvios[i]
                       const maior = r && i === r.posicaoMaior && r.maiorDesvio > 0
+                      // Fora do esperado (a indicação com a carga; no método 3, o zero antes): a regra da pendência
+                      const fora = excentricidadeImplausivel(ecc, p, balanca)
                       return (
                         <tr key={i} className="border-t border-line">
                           <td className="py-2 pr-3">
@@ -226,6 +257,7 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                                   }))
                                 }
                                 grade={{ grupo: 'ecc', lin: i, col: 0 }}
+                                tom={fora.referencia ? 'erro' : 'normal'}
                                 unidade={u}
                               />
                             </td>
@@ -240,12 +272,7 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                                 set((x) => ({ ...x, posicoes: x.posicoes.map((y, j) => (j === i ? { ...y, leitura: v } : y)) }))
                               }
                               grade={{ grupo: 'ecc', lin: i, col: 1 }}
-                              // Fora do esperado com a carga (métodos 1 e 3): a mesma regra da pendência do cálculo
-                              tom={
-                                (ecc.metodo === 1 || ecc.metodo === 3) && leituraImplausivel(p.leitura, ecc.carga, balanca)
-                                  ? 'erro'
-                                  : 'normal'
-                              }
+                              tom={fora.leitura ? 'erro' : 'normal'}
                               unidade={u}
                             />
                           </td>

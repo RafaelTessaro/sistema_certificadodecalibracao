@@ -328,8 +328,9 @@ export class ServicoUsuarios {
   }
 
   /**
-   * Login. Ordem: limite de tentativas (429, sem rodar o scrypt) → senha (401, igual para usuário
-   * inexistente) → conta desativada (403, só depois de a senha conferir) → sessão nova.
+   * Login. Ordem: limite de tentativas (429, sem rodar o scrypt; as tentativas ainda em andamento contam) →
+   * senha (401, igual para usuário inexistente) → conta desativada (403, só depois de a senha conferir) →
+   * sessão nova.
    * `sessaoAnterior`: id (hash) da sessão do cookie deste navegador, que é substituída.
    */
   async entrar(e: unknown, ip: string, sessaoAnterior?: string | null): Promise<ResultadoEntrada> {
@@ -347,7 +348,15 @@ export class ServicoUsuarios {
     const bloqueio = this.limite.bloqueio(chaves, linha ? Date.parse(linha.senha_alterada_em) : undefined)
     if (bloqueio) throw erroMuitasTentativas(bloqueio.segundos, bloqueio.tipo === 'ip')
 
-    const confere = await conferirSenha(senha, linha ? linha.senha_hash : await this.obterHashFalso())
+    // A tentativa conta já na chegada: numa rajada de pedidos simultâneos, os que passariam do limite
+    // recebem 429 sem esperar o scrypt dos primeiros
+    const liberar = this.limite.reservar(chaves)
+    let confere: boolean
+    try {
+      confere = await conferirSenha(senha, linha ? linha.senha_hash : await this.obterHashFalso())
+    } finally {
+      liberar()
+    }
     // A conta pode ter mudado enquanto o scrypt rodava (senha redefinida, conta excluída)
     const atual = linha && this.linhaPorId(linha.id)
     if (!linha || !confere || !atual || atual.senha_hash !== linha.senha_hash) {
@@ -603,7 +612,7 @@ export class ServicoUsuarios {
 
   /**
    * Troca da própria senha. Mantém a sessão atual (o mesmo cookie) e encerra as outras.
-   * A senha atual errada conta no limite de tentativas (mesma regra do login).
+   * A senha atual errada conta no limite de tentativas (mesma regra do login, também para as simultâneas).
    */
   async trocarPropriaSenha(
     sessaoId: string,
@@ -624,7 +633,15 @@ export class ServicoUsuarios {
     const chaves: ChavesTentativa = { trocaSenhaDe: linha.id }
     const espera = this.limite.espera(chaves, Date.parse(linha.senha_alterada_em))
     if (espera !== null) throw erroMuitasTentativas(espera)
-    if (!(await conferirSenha(senhaAtual, linha.senha_hash))) {
+    // Como no login: a tentativa conta já na chegada (uma rajada não testa mais senhas que o limite)
+    const liberar = this.limite.reservar(chaves)
+    let confere: boolean
+    try {
+      confere = await conferirSenha(senhaAtual, linha.senha_hash)
+    } finally {
+      liberar()
+    }
+    if (!confere) {
       const { bloqueouAgora } = this.limite.falhou(chaves)
       if (bloqueouAgora) {
         this.registrar('BLOQUEIO', { usuario: linha, ip, detalhe: DESCRICAO_BLOQUEIO.senha })
@@ -929,7 +946,11 @@ export function transplantarUsuarios(origem: Banco, destino: Banco): { usuarios:
  * vigentes (`umaVigentePorCalibracao`). Devolve quantas passaram; o registro de atividades da cópia guarda
  * quais. Os certificados emitidos depois da cópia (`transplantarCertificados`) e os nºs de certificado reservados
  * depois dela (impressos nas folhas; `transplantarNumeros`) passam junto, antes, na mesma transação: a folha de uma
- * calibração emitida depois da cópia continua ligada a ela. Ver `transplantarRegistros`.
+ * calibração emitida depois da cópia continua ligada a ela. As folhas dos certificados emitidos, cancelados ou
+ * revisados ficam como no banco atual, também as que a cópia já tinha, com as passagens de um cancelado para a
+ * calibração refeita (`folhasDosConcluidos`); a revisão do POP impressa nas folhas que passam vai junto
+ * (`passarPops`); e os nºs que a cópia tinha e mudaram depois dela ficam como no banco atual quando combinam com as
+ * folhas (`numerosComoNoAtual`). Ver `transplantarRegistros`.
  */
 export function transplantarFolhasCampo(origem: Banco, destino: Banco): number {
   return transplantarRegistros(origem, destino).folhasCampo
@@ -952,7 +973,12 @@ export function transplantarRegistros(origem: Banco, destino: Banco): { folhasCa
   return { folhasCampo, certificados }
 }
 
-/** As folhas de campo de `origem` que faltam em `destino` (ver `transplantarFolhasCampo`). Dentro da transação. */
+/**
+ * As folhas de campo de `origem` que faltam em `destino` (ver `transplantarFolhasCampo`), com a revisão do POP impressa
+ * nelas (`passarPops`), e as folhas dos certificados emitidos, cancelados ou revisados como no banco atual
+ * (`folhasDosConcluidos`). Depois das folhas, os nºs de certificado que mudaram depois da cópia (`numerosComoNoAtual`),
+ * que dependem de qual folha ficou com cada calibração. Dentro da transação.
+ */
 function passarFolhasCampo(origem: Banco, destino: Banco): number {
   const colunas = (db: Banco) =>
     (db.prepare('PRAGMA table_info(folhas_campo)').all() as Array<{ name: string }>).map((c) => c.name)
@@ -964,7 +990,10 @@ function passarFolhasCampo(origem: Banco, destino: Banco): number {
   let passaram: string[] = []
   transacao(destino, () => {
     transplantarNumeros(origem, destino)
+    const historico = comuns.includes('substituida_por')
     const existe = destino.prepare('SELECT 1 FROM folhas_campo WHERE numero = ? OR chave = ? OR (ano = ? AND sequencia = ?)')
+    const noAtual = historico ? estadoNoAtual(origem, destino) : null
+    const pops = comuns.includes('pop_id') ? passarPops(origem, destino) : null
     const calibracao = destino.prepare('SELECT 1 FROM calibracoes WHERE id = ?')
     const inserir = destino.prepare(
       `INSERT INTO folhas_campo (${comuns.join(', ')}) VALUES (${comuns.map(() => '?').join(', ')})`,
@@ -973,19 +1002,23 @@ function passarFolhasCampo(origem: Banco, destino: Banco): number {
     for (const l of linhas) {
       if (existe.get(l.numero, l.chave, l.ano, l.sequencia)) continue
       const linha = { ...l }
-      if (linha.calibracao_id && !calibracao.get(linha.calibracao_id)) {
-        linha.calibracao_id = ''
-        if ('substituida_por' in linha) linha.substituida_por = ''
-        if ('substituida_em' in linha) linha.substituida_em = ''
-      }
+      // A de uma calibração que a cópia não tem volta para o certificado cancelado de onde passou, ou fica livre
+      const estado = noAtual?.(String(l.numero))
+      if (estado) Object.assign(linha, estado)
+      else if (linha.calibracao_id && !calibracao.get(linha.calibracao_id)) linha.calibracao_id = ''
+      if (pops && linha.pop_id !== null && linha.pop_id !== undefined)
+        linha.pop_id = pops.daFolha(String(l.numero), Number(l.pop_id))
       inserir.run(...comuns.map((c) => linha[c] ?? null))
       passaram.push(String(l.numero))
     }
-    const historico = comuns.includes('substituida_por')
+    pops?.conferirFolhasDaCopia()
+    pops?.registrar()
+    const concluidos = historico ? folhasDosConcluidos(origem, destino, passaram) : { folhas: [], passagens: [] }
     const ligadas = historico ? ligarComoNoAtual(origem, destino, passaram) : []
     const trocadas = historico ? conciliarVigentes(origem, destino, passaram) : []
     // A garantia vem por último e diz como cada folha terminou
     const garantidas = historico ? umaVigentePorCalibracao(origem, destino) : []
+    numerosComoNoAtual(origem, destino)
     const conciliadas = trocadas.filter((n) => !garantidas.includes(n))
     const lista = (l: string[], uma: string, varias: string) =>
       l.length === 1 ? `${l[0]}, ${uma}` : `${l.join(', ')}, ${varias}`
@@ -995,6 +1028,24 @@ function passarFolhasCampo(origem: Banco, destino: Banco): number {
         : passaram.length
           ? `${passaram.length} folhas de campo impressas depois da cópia (${passaram[0]} a ${passaram.at(-1)}) continuam registradas: os nºs não se repetem`
           : '',
+      concluidos.folhas.length
+        ? caberNoRegistro(
+            (l) =>
+              concluidos.folhas.length === 1
+                ? `${l}, da cópia, ficou como no banco atual (é de um certificado emitido, cancelado ou revisado)`
+                : `${l}, da cópia, ficaram como no banco atual (são de certificados emitidos, cancelados ou revisados)`,
+            concluidos.folhas,
+          )
+        : '',
+      concluidos.passagens.length
+        ? caberNoRegistro(
+            (l) =>
+              concluidos.passagens.length === 1
+                ? `a passagem da ${l} do certificado cancelado para a calibração refeita continua registrada`
+                : `as passagens das ${l} dos certificados cancelados para as calibrações refeitas continuam registradas`,
+            concluidos.passagens,
+          )
+        : '',
       conciliadas.length
         ? lista(
             conciliadas,
@@ -1020,6 +1071,256 @@ function passarFolhasCampo(origem: Banco, destino: Banco): number {
     if (partes.length) gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe: partes.join('; ') })
   })
   return passaram.length
+}
+
+type EstadoFolha = { calibracao_id: string; substituida_por: string; substituida_em: string }
+const FOLHA_LIVRE: EstadoFolha = { calibracao_id: '', substituida_por: '', substituida_em: '' }
+
+/**
+ * Como a folha está no banco atual (`origem`), para gravar na cópia (`destino`): a calibração e se foi substituída.
+ * Ligada a uma calibração que a cópia não tem, volta para o certificado cancelado de onde passou para ela, como
+ * estava nele (como `Repositorio.soltarFolha` faz quando a refeita é excluída), ou fica livre. undefined: a folha não
+ * está no banco atual.
+ */
+function estadoNoAtual(origem: Banco, destino: Banco): (numero: string) => EstadoFolha | undefined {
+  const folha = origem.prepare('SELECT calibracao_id, substituida_por, substituida_em FROM folhas_campo WHERE numero = ?')
+  const passagem = temTabela(origem, 'folhas_campo_passagens')
+    ? origem.prepare(
+        `SELECT de_calibracao_id, substituida_por, substituida_em FROM folhas_campo_passagens
+          WHERE numero = ? AND para_calibracao_id = ? ORDER BY id DESC LIMIT 1`,
+      )
+    : null
+  const naCopia = destino.prepare('SELECT 1 FROM calibracoes WHERE id = ?')
+  return (numero) => {
+    const a = folha.get(numero) as EstadoFolha | undefined
+    if (!a) return undefined
+    let estado: EstadoFolha = {
+      calibracao_id: a.calibracao_id,
+      substituida_por: a.substituida_por,
+      substituida_em: a.substituida_em,
+    }
+    const vistas = new Set<string>()
+    while (estado.calibracao_id && !naCopia.get(estado.calibracao_id)) {
+      const p = vistas.has(estado.calibracao_id)
+        ? undefined
+        : (passagem?.get(numero, estado.calibracao_id) as
+            { de_calibracao_id: string; substituida_por: string; substituida_em: string } | undefined)
+      vistas.add(estado.calibracao_id)
+      estado = p
+        ? { calibracao_id: p.de_calibracao_id, substituida_por: p.substituida_por, substituida_em: p.substituida_em }
+        : { ...FOLHA_LIVRE }
+    }
+    return estado
+  }
+}
+
+/** As calibrações emitidas, canceladas ou substituídas no banco atual que estão assim também na cópia. */
+function concluidasNasDuas(origem: Banco, destino: Banco): Set<string> {
+  const naCopia = destino.prepare('SELECT status FROM calibracoes WHERE id = ?')
+  const concluidas = new Set<string>()
+  for (const l of origem
+    .prepare("SELECT id, status FROM calibracoes WHERE status IN ('EMITIDO', 'CANCELADO', 'SUBSTITUIDO')")
+    .all() as Array<{ id: string; status: string }>)
+    if ((naCopia.get(l.id) as { status: string } | undefined)?.status === l.status) concluidas.add(l.id)
+  return concluidas
+}
+
+/**
+ * As folhas de campo dos certificados emitidos, cancelados ou revisados ficam como no banco atual: a calibração, se
+ * foi substituída e as passagens de um certificado cancelado para a calibração refeita. Também as que a cópia já
+ * tinha (a avulsa ligada ao rascunho e emitida depois da cópia, a de um cancelado passada à refeita, a avulsa
+ * ligada a uma revisão): o certificado entregue continua com a folha que foi a campo, e ela não fica livre para outra
+ * calibração. O rascunho excluído depois da cópia volta com ela, com as folhas que tinha. A calibração em andamento
+ * que perde para um certificado a folha vigente que tinha na cópia fica com as dela como no banco atual. Antes de
+ * `ligarComoNoAtual` e `conciliarVigentes`. Devolve os nºs das folhas da cópia que mudaram e os das folhas cujas
+ * passagens foram registradas.
+ */
+function folhasDosConcluidos(origem: Banco, destino: Banco, passaram: string[]): { folhas: string[]; passagens: string[] } {
+  const concluidas = concluidasNasDuas(origem, destino)
+  if (!concluidas.size) return { folhas: [], passagens: [] }
+  const noAtual = estadoNoAtual(origem, destino)
+  const existeNoAtual = origem.prepare('SELECT 1 FROM calibracoes WHERE id = ?')
+  const passouNaCopia = temTabela(destino, 'folhas_campo_passagens')
+    ? destino.prepare('SELECT 1 FROM folhas_campo_passagens WHERE numero = ? AND de_calibracao_id = ? AND para_calibracao_id = ?')
+    : { get: () => undefined }
+  const naCopia = destino.prepare('SELECT calibracao_id, substituida_por, substituida_em FROM folhas_campo WHERE numero = ?')
+  const gravar = destino.prepare(
+    'UPDATE folhas_campo SET calibracao_id = ?, substituida_por = ?, substituida_em = ? WHERE numero = ?',
+  )
+  const vigente = destino.prepare("SELECT 1 FROM folhas_campo WHERE calibracao_id = ? AND substituida_por = '' LIMIT 1")
+  const folhas: string[] = []
+  const perderam = new Set<string>()
+  const numeros = origem.prepare('SELECT numero, calibracao_id FROM folhas_campo ORDER BY ano, sequencia').all() as Array<{
+    numero: string
+    calibracao_id: string
+  }>
+  const dosConcluidos: string[] = []
+  for (const { numero, calibracao_id: dono } of numeros) {
+    const d = naCopia.get(numero) as EstadoFolha | undefined
+    if (!d) continue
+    const novo = passaram.includes(numero)
+    if (!concluidas.has(dono) && !concluidas.has(d.calibracao_id)) continue
+    // O rascunho excluído depois da cópia volta com ela, e com a folha do certificado cancelado que tinha passado para
+    // ele (no banco atual, ela voltou para o cancelado com a exclusão). A que foi para outro certificado depois, não
+    if (
+      !novo &&
+      d.calibracao_id &&
+      !concluidas.has(d.calibracao_id) &&
+      !existeNoAtual.get(d.calibracao_id) &&
+      passouNaCopia.get(numero, dono, d.calibracao_id)
+    )
+      continue
+    dosConcluidos.push(numero)
+    const a = noAtual(numero)
+    if (!a || novo) continue
+    if (a.calibracao_id === d.calibracao_id && a.substituida_por === d.substituida_por && a.substituida_em === d.substituida_em)
+      continue
+    const antes = d.calibracao_id && !d.substituida_por ? d.calibracao_id : ''
+    gravar.run(a.calibracao_id, a.substituida_por, a.substituida_em, numero)
+    folhas.push(numero)
+    if (antes && antes !== a.calibracao_id && !concluidas.has(antes) && !vigente.get(antes)) perderam.add(antes)
+  }
+  // A calibração em andamento que ficou sem a folha vigente da cópia: as folhas dela como no banco atual
+  const dela = destino.prepare('SELECT numero FROM folhas_campo WHERE calibracao_id = ? ORDER BY ano, sequencia')
+  for (const k of perderam)
+    for (const { numero } of dela.all(k) as Array<{ numero: string }>) {
+      const a = noAtual(numero)
+      const d = naCopia.get(numero) as EstadoFolha
+      if (a?.calibracao_id !== k || (a.substituida_por === d.substituida_por && a.substituida_em === d.substituida_em)) continue
+      gravar.run(k, a.substituida_por, a.substituida_em, numero)
+      if (!folhas.includes(numero)) folhas.push(numero)
+    }
+  return { folhas, passagens: passagensComoNoAtual(origem, destino, dosConcluidos) }
+}
+
+/**
+ * As passagens de cada folha de `numeros` (de um certificado cancelado para a calibração refeita) ficam como no banco
+ * atual, só as das calibrações que a cópia tem: o cancelado continua mostrando a folha e quem a usa agora, e ela volta
+ * para ele se a refeita for excluída. Devolve os nºs das folhas cujas passagens mudaram.
+ */
+function passagensComoNoAtual(origem: Banco, destino: Banco, numeros: string[]): string[] {
+  if (!temTabela(origem, 'folhas_campo_passagens') || !temTabela(destino, 'folhas_campo_passagens')) return []
+  const campos = 'numero, de_calibracao_id, para_calibracao_id, substituida_por, substituida_em, em, por'
+  const doAtual = origem.prepare(`SELECT ${campos} FROM folhas_campo_passagens WHERE numero = ? ORDER BY id`)
+  const daCopia = destino.prepare(`SELECT ${campos} FROM folhas_campo_passagens WHERE numero = ? ORDER BY id`)
+  const naCopia = destino.prepare('SELECT 1 FROM calibracoes WHERE id = ?')
+  const apagar = destino.prepare('DELETE FROM folhas_campo_passagens WHERE numero = ?')
+  const inserir = destino.prepare(`INSERT INTO folhas_campo_passagens (${campos}) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+  type Passagem = Record<
+    'numero' | 'de_calibracao_id' | 'para_calibracao_id' | 'substituida_por' | 'substituida_em' | 'em' | 'por',
+    string
+  >
+  const texto = (l: Passagem[]) =>
+    JSON.stringify(l.map((p) => [p.de_calibracao_id, p.para_calibracao_id, p.substituida_por, p.substituida_em, p.em, p.por]))
+  const mudaram: string[] = []
+  for (const numero of numeros) {
+    const atual = (doAtual.all(numero) as Passagem[]).filter(
+      (p) => naCopia.get(p.de_calibracao_id) && naCopia.get(p.para_calibracao_id),
+    )
+    if (texto(atual) === texto(daCopia.all(numero) as Passagem[])) continue
+    apagar.run(numero)
+    for (const p of atual)
+      inserir.run(p.numero, p.de_calibracao_id, p.para_calibracao_id, p.substituida_por, p.substituida_em, p.em, p.por)
+    if (atual.length) mudaram.push(numero)
+  }
+  return mudaram
+}
+
+/**
+ * A revisão do POP impressa em cada folha que passa (pop_id) passa junto, com o mesmo id e o arquivo, se a cópia não a
+ * tem: o certificado cita o método impresso no papel (ISO/IEC 17025, 7.8.2.1), e a próxima revisão registrada na cópia
+ * nunca recebe o id dela (o AUTOINCREMENT da cópia sobe junto). A mesma revisão (código e nº) registrada na cópia com
+ * outro id serve; o id que na cópia é de outra revisão não serve: a folha fica sem revisão (o certificado cita a que
+ * valia na data da calibração), e o registro de atividades diz qual. `conferirFolhasDaCopia`: o mesmo para as folhas da
+ * cópia que citam uma revisão que ela não tem (de um transplante anterior a esta correção).
+ */
+function passarPops(origem: Banco, destino: Banco) {
+  const usar = temTabela(origem, 'pop_versoes') && temTabela(destino, 'pop_versoes')
+  const comuns = usar ? colunasComuns(origem, destino, 'pop_versoes') : []
+  const doAtual = usar ? origem.prepare(`SELECT ${comuns.join(', ')} FROM pop_versoes WHERE id = ?`) : null
+  const daCopia = usar ? destino.prepare('SELECT id, codigo, revisao FROM pop_versoes ORDER BY id DESC') : null
+  const inserir = usar
+    ? destino.prepare(`INSERT INTO pop_versoes (${comuns.join(', ')}) VALUES (${comuns.map(() => '?').join(', ')})`)
+    : null
+  // Maiúsculas e minúsculas não contam, com acento (como `Repositorio.registrarPop`)
+  const chave = (codigo: unknown, revisao: unknown) =>
+    `${String(codigo).normalize('NFC').toLocaleUpperCase('pt-BR')}\u0000${String(revisao)}`
+  const texto = (l: LinhaBanco) => `${l.codigo} rev. ${l.revisao}`
+  const destinos = new Map<number, number | null>()
+  const registradas: string[] = []
+  const semId = new Map<string, string[]>()
+  const daFolha = (numero: string, id: number): number | null => {
+    if (!usar) return null
+    if (!destinos.has(id)) {
+      const o = doAtual!.get(id) as LinhaBanco | undefined
+      let fica: number | null = null
+      if (o) {
+        const copia = daCopia!.all() as Array<{ id: number; codigo: string; revisao: string }>
+        const mesma = (v: { codigo: string; revisao: string }) => chave(v.codigo, v.revisao) === chave(o.codigo, o.revisao)
+        const comId = copia.find((v) => Number(v.id) === id)
+        const igual = comId && mesma(comId) ? comId : copia.find(mesma)
+        if (igual) fica = Number(igual.id)
+        else if (!comId) {
+          // O arquivo do POP (chave estrangeira) vai junto; sem ele no banco atual, a revisão passa sem o arquivo
+          const linha = { ...o }
+          if (linha.arquivo && !arquivoNaCopia(origem, destino, String(linha.arquivo))) linha.arquivo = null
+          inserir!.run(...comuns.map((c) => linha[c] ?? null))
+          registradas.push(texto(o))
+          fica = id
+        }
+      }
+      destinos.set(id, fica)
+      if (o && fica === null) semId.set(texto(o), [])
+    }
+    const fica = destinos.get(id) ?? null
+    const o = fica === null ? (doAtual?.get(id) as LinhaBanco | undefined) : undefined
+    if (o) semId.get(texto(o))?.push(numero)
+    return fica
+  }
+  return {
+    daFolha,
+    conferirFolhasDaCopia() {
+      if (!usar) return
+      const orfas = destino
+        .prepare(
+          `SELECT numero, pop_id FROM folhas_campo WHERE pop_id IS NOT NULL AND pop_id NOT IN (SELECT id FROM pop_versoes)
+            ORDER BY ano, sequencia`,
+        )
+        .all() as Array<{ numero: string; pop_id: number }>
+      const gravar = destino.prepare('UPDATE folhas_campo SET pop_id = ? WHERE numero = ?')
+      for (const f of orfas) gravar.run(daFolha(f.numero, Number(f.pop_id)), f.numero)
+    },
+    registrar() {
+      const partes = [
+        registradas.length === 1
+          ? `a revisão do POP impressa nas folhas de campo que passaram (${registradas[0]}) continua registrada, como no banco atual`
+          : registradas.length
+            ? `as revisões do POP impressas nas folhas de campo que passaram (${registradas.join(', ')}) continuam registradas, como no banco atual`
+            : '',
+        ...[...semId].map(([pop, folhas]) =>
+          caberNoRegistro(
+            (l) =>
+              `a revisão do POP impressa ${folhas.length === 1 ? 'na folha' : 'nas folhas'} de campo ${l} (${pop}) não passou para a cópia (o id dela já é de outra revisão lá): o certificado cita a que valia na data da calibração`,
+            folhas,
+          ),
+        ),
+      ].filter(Boolean)
+      for (const detalhe of partes) gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe })
+    },
+  }
+}
+
+/** O arquivo `sha256` está na cópia no fim (passa do banco atual se faltar). */
+function arquivoNaCopia(origem: Banco, destino: Banco, sha256: string): boolean {
+  if (!temTabela(origem, 'arquivos') || !temTabela(destino, 'arquivos')) return false
+  if (destino.prepare('SELECT 1 FROM arquivos WHERE sha256 = ?').get(sha256)) return true
+  const comuns = colunasComuns(origem, destino, 'arquivos')
+  const a = origem.prepare(`SELECT ${comuns.join(', ')} FROM arquivos WHERE sha256 = ?`).get(sha256) as LinhaBanco | undefined
+  if (!a) return false
+  destino
+    .prepare(`INSERT INTO arquivos (${comuns.join(', ')}) VALUES (${comuns.map(() => '?').join(', ')})`)
+    .run(...comuns.map((c) => a[c] ?? null))
+  return true
 }
 
 const temTabela = (db: Banco, nome: string) =>
@@ -1253,6 +1554,84 @@ function transplantarNumeros(origem: Banco, destino: Banco): string[] {
     .join('; ')
   if (detalhe) gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe })
   return passaram
+}
+
+/**
+ * Depois das folhas: os nºs de certificado que a cópia já tinha e que mudaram depois dela ficam como no banco atual (a
+ * situação, a calibração, a folha e o motivo), quando isso combina com as folhas que ficaram na cópia: os nºs dos
+ * certificados emitidos, cancelados ou revisados (o nº emitido nunca aparece como não utilizado nem fica reservado para
+ * um certificado já emitido), os das folhas avulsas sem calibração (o descarte de uma folha perdida continua valendo)
+ * e os da calibração em andamento que ficou com a mesma folha vigente do banco atual (o nº segue o papel). O rascunho
+ * excluído depois da cópia volta com o nº dele, e a calibração em andamento que ficou com a folha da cópia, com o nº
+ * impresso nela. O índice `numeros_reservados_calibracao` (um nº reservado por calibração) vale em cada passo.
+ */
+function numerosComoNoAtual(origem: Banco, destino: Banco) {
+  if (!temTabela(origem, 'numeros_reservados') || !temTabela(destino, 'numeros_reservados')) return
+  type Linha = Record<'numero' | 'calibracao_id' | 'folha' | 'situacao' | 'motivo' | 'situacao_em' | 'situacao_por', string> & {
+    id: number
+    ano: number
+    sequencia: number
+  }
+  const campos = ['calibracao_id', 'folha', 'situacao', 'motivo', 'situacao_em', 'situacao_por'] as const
+  const selecao = `SELECT id, numero, ano, sequencia, ${campos.join(', ')} FROM numeros_reservados`
+  const linhas = origem.prepare(`${selecao} ORDER BY ano, sequencia`).all() as Linha[]
+  const naCopia = destino.prepare(`${selecao} WHERE ano = ? AND sequencia = ?`)
+  const concluidas = concluidasNasDuas(origem, destino)
+  const calibracaoNaCopia = destino.prepare('SELECT 1 FROM calibracoes WHERE id = ?')
+  const existeNaCopia = (id: string) => !!calibracaoNaCopia.get(id)
+  const vigente = (db: Banco) => {
+    const q = db.prepare(
+      "SELECT numero FROM folhas_campo WHERE calibracao_id = ? AND substituida_por = '' ORDER BY ano DESC, sequencia DESC LIMIT 1",
+    )
+    return (id: string) => (q.get(id) as { numero: string } | undefined)?.numero ?? ''
+  }
+  const vigenteNaCopia = vigente(destino)
+  const vigenteNoAtual = vigente(origem)
+  // A calibração da cópia está como no banco atual quanto ao papel: concluída nas duas, ou com a mesma folha vigente (o
+  // rascunho excluído depois da cópia, só se ficou sem folha). A que a cópia não tem não conta (o nº fica sem ela)
+  const combina = (id: string) => !id || concluidas.has(id) || !existeNaCopia(id) || vigenteNaCopia(id) === vigenteNoAtual(id)
+  const mudar: Array<{ id: number; numero: string; fica: Linha }> = []
+  for (const o of linhas) {
+    const d = naCopia.get(o.ano, o.sequencia) as Linha | undefined
+    if (!d) continue
+    const fica = { ...o }
+    if (fica.situacao === 'reservado' && fica.calibracao_id && !existeNaCopia(fica.calibracao_id)) fica.calibracao_id = ''
+    if (campos.every((c) => String(fica[c]) === String(d[c]))) continue
+    if (!combina(o.calibracao_id) || !combina(d.calibracao_id)) continue
+    mudar.push({ id: d.id, numero: String(o.numero), fica })
+  }
+  const gravar = destino.prepare(`UPDATE numeros_reservados SET ${campos.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`)
+  const reservadoDe = destino.prepare(
+    "SELECT id FROM numeros_reservados WHERE calibracao_id = ? AND situacao = 'reservado' AND calibracao_id <> ''",
+  )
+  const comDono = (m: (typeof mudar)[number]) => m.fica.situacao === 'reservado' && !!m.fica.calibracao_id
+  // Primeiro os que deixam de ser reservados de uma calibração; depois, sem dono, os que passam a ser; por fim, o dono
+  for (const m of mudar.filter((x) => !comDono(x))) gravar.run(...campos.map((c) => m.fica[c]), m.id)
+  // A calibração que ainda tem na cópia outro nº reservado, que fica como está: este fica como na cópia (e o que
+  // ficaria reservado no lugar dele, também)
+  let reservar = mudar.filter(comDono)
+  for (let antes = -1; antes !== reservar.length;) {
+    antes = reservar.length
+    const ids = new Set(reservar.map((m) => m.id))
+    reservar = reservar.filter((m) =>
+      (reservadoDe.all(m.fica.calibracao_id) as Array<{ id: number }>).every((r) => ids.has(r.id)),
+    )
+  }
+  const soltar = destino.prepare("UPDATE numeros_reservados SET calibracao_id = '' WHERE id = ?")
+  for (const m of reservar) soltar.run(m.id)
+  for (const m of reservar) gravar.run(...campos.map((c) => m.fica[c]), m.id)
+  const feitos = mudar.filter((m) => !comDono(m) || reservar.includes(m))
+  if (!feitos.length) return
+  const situacao = (m: (typeof mudar)[number]) =>
+    m.fica.situacao === 'nao_utilizado' ? 'não utilizado' : m.fica.situacao === 'emitido' ? 'emitido' : 'reservado'
+  const detalhe =
+    feitos.length === 1
+      ? `${feitos[0].numero}, da cópia, ficou como no banco atual: ${situacao(feitos[0])}`
+      : caberNoRegistro(
+          (l) => `${feitos.length} nºs de certificado da cópia ficaram como no banco atual: ${l}`,
+          feitos.map((m) => `${m.numero} (${situacao(m)})`),
+        )
+  gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe })
 }
 
 /**

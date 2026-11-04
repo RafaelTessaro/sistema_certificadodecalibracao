@@ -95,6 +95,62 @@ describe('limite de tentativas', () => {
     expect(l.espera({ trocaSenhaDe: 'u2' })).toBeNull()
   })
 
+  it('tentativas em andamento (senha ainda sendo conferida) contam no limite: uma rajada não passa da regra', () => {
+    const r = relogio()
+    const l = new LimiteTentativas(r.agora)
+    const c = { login: 'maria', ip: '192.168.0.20', loopback: false }
+    const liberar: Array<() => void> = []
+    for (let i = 0; i < 5; i++) {
+      expect(l.bloqueio(c)).toBeNull()
+      liberar.push(l.reservar(c))
+    }
+    // 5 em andamento: a 6ª espera, como se as 5 já tivessem errado
+    expect(l.bloqueio(c)).toEqual({ segundos: 30, tipo: 'par' })
+    // O par é outro com outro login (o IP ainda tem vaga)
+    expect(l.bloqueio({ ...c, login: 'joao' })).toBeNull()
+    // Liberar devolve a vaga (uma vez só, mesmo chamado de novo)
+    liberar[0]()
+    liberar[0]()
+    expect(l.bloqueio(c)).toBeNull()
+    liberar[0] = l.reservar(c)
+    expect(l.bloqueio(c)).not.toBeNull()
+    // As 5 erram: o bloqueio de verdade começa uma vez só
+    const motivos = liberar.map((f) => (f(), l.falhou(c).motivos))
+    expect(motivos.flat()).toEqual(['par'])
+    expect(l.reservas).toBe(0)
+    // Depois da espera, só uma por vez (a próxima falha já dobra a espera)
+    r.avancar(30_000)
+    expect(l.bloqueio(c)).toBeNull()
+    const uma = l.reservar(c)
+    expect(l.bloqueio(c)).toEqual({ segundos: 60, tipo: 'par' })
+    uma()
+    expect(l.bloqueio(c)).toBeNull()
+  })
+
+  it('em andamento também contam nos tetos por IP (20) e por login (50), e na troca da própria senha (5)', () => {
+    const l = new LimiteTentativas(relogio().agora)
+    for (let i = 0; i < 20; i++) {
+      const c = { login: `login${i}`, ip: '10.2.2.2', loopback: false }
+      expect(l.bloqueio(c)).toBeNull()
+      l.reservar(c)
+    }
+    expect(l.bloqueio({ login: 'outro', ip: '10.2.2.2', loopback: false })).toEqual({ segundos: 15 * 60, tipo: 'ip' })
+    for (let i = 0; i < 50; i++) {
+      const c = { login: 'admin', ip: `10.3.${i}.1`, loopback: false }
+      expect(l.bloqueio(c)).toBeNull()
+      l.reservar(c)
+    }
+    expect(l.bloqueio({ login: 'admin', ip: '10.3.99.1', loopback: false })?.segundos).toBe(15 * 60)
+    // Pelo próprio servidor, o teto por login não vale
+    expect(l.bloqueio({ login: 'admin', ip: '127.0.0.1', loopback: true })).toBeNull()
+    for (let i = 0; i < 5; i++) {
+      expect(l.espera({ trocaSenhaDe: 'u1' })).toBeNull()
+      l.reservar({ trocaSenhaDe: 'u1' })
+    }
+    expect(l.espera({ trocaSenhaDe: 'u1' })).toBe(30)
+    expect(l.espera({ trocaSenhaDe: 'u2' })).toBeNull()
+  })
+
   it('a limpeza esquece o que venceu; o bloqueio começa uma vez só', () => {
     const r = relogio()
     const l = new LimiteTentativas(r.agora)

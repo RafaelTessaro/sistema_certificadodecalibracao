@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
   detectarTipoArquivo,
+  extensaoAceita,
   LIMITE_ARQUIVO_BYTES,
   LIMITE_EMAIL_ANEXOS,
   LIMITE_EMAIL_BYTES,
   nomeArquivoSeguro,
   nomeArquivoSimples,
+  nomeComExtensaoDoTipo,
   normalizarArquivoAnexo,
   normalizarPop,
+  ordemDoPop,
+  POP_DA_ATUALIZACAO,
   popNaData,
   problemaDoArquivo,
   problemaDosAnexos,
@@ -40,6 +44,26 @@ describe('tipo do arquivo pelo conteúdo', () => {
     expect(detectarTipoArquivo(bytes(' '.repeat(2000), '%PDF-1.4'))).toBeNull()
   })
 
+  it('executável ou script com "%PDF-" no começo (num comentário) não passa por PDF', () => {
+    const mz = new Uint8Array(512)
+    mz.set([...Buffer.from('MZ')], 0)
+    mz.set([...Buffer.from('%PDF-1.7')], 0x40)
+    mz.set([...Buffer.from('PE\0\0', 'latin1')], 0x80)
+    expect(detectarTipoArquivo(mz)).toBeNull()
+    expect(detectarTipoArquivo(bytes([0x7f], 'ELF', [2, 1, 1], '%PDF-1.4'))).toBeNull()
+    expect(detectarTipoArquivo(bytes('<!-- %PDF-1.4 --><html><script>alert(1)</script>'))).toBeNull()
+    expect(detectarTipoArquivo(bytes('  <hta:application> %PDF-1.4'))).toBeNull()
+    expect(detectarTipoArquivo(bytes('@REM %PDF-1.4\r\nstart calc'))).toBeNull()
+    expect(detectarTipoArquivo(bytes('#!/bin/sh\n# %PDF-1.4'))).toBeNull()
+    expect(detectarTipoArquivo(bytes('#%PDF-1.4\nStart-Process calc'))).toBeNull()
+    expect(detectarTipoArquivo(bytes("'%PDF-1.4\nCreateObject"))).toBeNull()
+    expect(detectarTipoArquivo(bytes([0xef, 0xbb, 0xbf], '<html> %PDF-1.4'))).toBeNull()
+    // O lixo que alguns programas põem antes continua aceito: espaços, BOM, o cabeçalho de impressora (PJL)
+    expect(detectarTipoArquivo(bytes([0xef, 0xbb, 0xbf], '%PDF-1.4'))).toBe('pdf')
+    expect(detectarTipoArquivo(bytes([0x1b], '%-12345X@PJL JOB\r\n%PDF-1.4'))).toBe('pdf')
+    expect(detectarTipoArquivo(bytes('\r\n%PDF-1.4'))).toBe('pdf')
+  })
+
   it('o nome não conta: texto, executável e ZIP qualquer não passam', () => {
     expect(detectarTipoArquivo(bytes('certificado.pdf'))).toBeNull()
     expect(detectarTipoArquivo(bytes('MZ', [0x90, 0]))).toBeNull()
@@ -69,6 +93,32 @@ describe('arquivo aceito para a finalidade', () => {
   })
 })
 
+describe('extensão do arquivo escolhido na tela', () => {
+  it('a dos tipos aceitos para a finalidade, em maiúsculas ou minúsculas; sem extensão, decide o conteúdo', () => {
+    expect(extensaoAceita('Certificado RBC 0456.pdf', 'padrao')).toBe(true)
+    expect(extensaoAceita('foto.JPEG', 'padrao')).toBe(true)
+    // O Windows salva fotos da internet como .jfif (é um JPG)
+    expect(extensaoAceita('foto.jfif', 'padrao')).toBe(true)
+    expect(extensaoAceita('scan.png. ', 'padrao')).toBe(true)
+    expect(extensaoAceita('POP-CAL-01 rev 03.docx', 'pop')).toBe(true)
+    expect(extensaoAceita('POP-CAL-01 rev 03.PDF', 'pop')).toBe(true)
+    // Um número depois do ponto não é extensão
+    expect(extensaoAceita('Certificado nº 12.345', 'padrao')).toBe(true)
+    expect(extensaoAceita('Certificado 12', 'padrao')).toBe(true)
+  })
+
+  it('a página ou o programa com nome de documento é recusado (o Windows esconde o ".html" do fim)', () => {
+    expect(extensaoAceita('Certificado RBC 0456.pdf.html', 'padrao')).toBe(false)
+    expect(extensaoAceita('Certificado RBC 0456.jpg.HTM', 'padrao')).toBe(false)
+    expect(extensaoAceita('desenho.svg', 'padrao')).toBe(false)
+    expect(extensaoAceita('POP-CAL-01 rev 03.docx.html', 'pop')).toBe(false)
+    expect(extensaoAceita('x.pdf.exe. .', 'padrao')).toBe(false)
+    // A de um tipo de outra finalidade
+    expect(extensaoAceita('POP.docx', 'padrao')).toBe(false)
+    expect(extensaoAceita('foto.jpg', 'pop')).toBe(false)
+  })
+})
+
 describe('nomes de arquivo', () => {
   it('tira o caminho e os caracteres que o Windows não aceita', () => {
     expect(nomeArquivoSeguro('C:\\Users\\ana\\Certificado RBC: 0456/2026.pdf')).toBe('2026.pdf')
@@ -79,6 +129,36 @@ describe('nomes de arquivo', () => {
     const longo = nomeArquivoSeguro(`${'a'.repeat(300)}.pdf`)
     expect(longo).toHaveLength(150)
     expect(longo.endsWith('.pdf')).toBe(true)
+  })
+
+  it('a extensão é sempre a do tipo conferido pelo conteúdo (nunca .exe, .html, .hta…)', () => {
+    expect(nomeComExtensaoDoTipo('Certificado RBC 1234.pdf.exe', 'pdf')).toBe('Certificado RBC 1234.pdf')
+    expect(nomeComExtensaoDoTipo('a.pdf.hta', 'pdf')).toBe('a.pdf')
+    expect(nomeComExtensaoDoTipo('Certificado.pdf.html', 'pdf')).toBe('Certificado.pdf')
+    expect(nomeComExtensaoDoTipo('x.html.exe', 'pdf')).toBe('x.html.pdf')
+    expect(nomeComExtensaoDoTipo('fatura.exe', 'pdf')).toBe('fatura.pdf')
+    expect(nomeComExtensaoDoTipo('x.pdf.exe. . .', 'pdf')).toBe('x.pdf') // o Windows tira os pontos e espaços do fim
+    expect(nomeComExtensaoDoTipo('Certificado RBC 1234', 'pdf')).toBe('Certificado RBC 1234.pdf')
+    expect(nomeComExtensaoDoTipo('Certificado nº 12.345', 'pdf')).toBe('Certificado nº 12.345.pdf')
+    expect(nomeComExtensaoDoTipo('Relatório.PDF', 'pdf')).toBe('Relatório.PDF')
+    expect(nomeComExtensaoDoTipo('foto.jpeg', 'jpg')).toBe('foto.jpeg')
+    expect(nomeComExtensaoDoTipo('foto.JPG', 'jpg')).toBe('foto.JPG')
+    expect(nomeComExtensaoDoTipo('scan.png.scr', 'png')).toBe('scan.png')
+    expect(nomeComExtensaoDoTipo('scan.pdf', 'png')).toBe('scan.png')
+    expect(nomeComExtensaoDoTipo('POP.pdf', 'docx')).toBe('POP.docx')
+    expect(nomeComExtensaoDoTipo('POP rev 03.docx', 'docx')).toBe('POP rev 03.docx')
+    // Sem nome: o padrão de quem chama, com a extensão
+    expect(nomeComExtensaoDoTipo('.exe', 'pdf', 'Certificado')).toBe('Certificado.pdf')
+    expect(nomeComExtensaoDoTipo('.pdf', 'pdf', 'Certificado')).toBe('Certificado.pdf')
+    expect(nomeComExtensaoDoTipo('', 'docx', 'POP')).toBe('POP.docx')
+    expect(nomeComExtensaoDoTipo('', 'pdf')).toBe('arquivo.pdf')
+    // Até 150 letras, com a extensão
+    const longo = nomeComExtensaoDoTipo(`${'a'.repeat(148)}.exe`, 'pdf')
+    expect(longo).toHaveLength(150)
+    expect(longo.endsWith('a.pdf')).toBe(true)
+    // Caracteres que invertem o texto na tela (".exe" disfarçado de "exe.pdf") saem do nome
+    expect(nomeArquivoSeguro('Certificado\u202Efdp.exe')).toBe('Certificadofdp.exe')
+    expect(nomeComExtensaoDoTipo(nomeArquivoSeguro('Certificado\u202Efdp.exe'), 'pdf')).toBe('Certificadofdp.pdf')
   })
 
   it('nome simples para o anexo do e-mail', () => {
@@ -190,5 +270,47 @@ describe('limites do e-mail', () => {
     expect(problemaDosAnexos(LIMITE_EMAIL_ANEXOS, LIMITE_EMAIL_BYTES)).toBeNull()
     expect(problemaDosAnexos(LIMITE_EMAIL_ANEXOS + 1, 1000)).toMatch(/^São 21 anexos; o limite é 20 por e-mail/)
     expect(problemaDosAnexos(3, 21.5 * 1024 * 1024)).toMatch(/^Os anexos somam 21,5 MB; o limite é 18 MB por e-mail/)
+  })
+})
+
+describe('ordem das revisões do POP (o certificado cita a que valia na data da calibração)', () => {
+  const v = (id: number, codigo: string, revisao: string, data: string, criadoPor = 'Admin') =>
+    ({ id, codigo, revisao, data, arquivo: null, observacao: '', criadoEm: '', criadoPor, vigente: false }) as VersaoPop
+  const versoes = [v(2, 'POP-CAL-01', '01', '2026-06-01'), v(1, 'POP-CAL-01', '00', '2026-01-05')]
+
+  it('a data não pode ser antes da vigente (o ano errado encobriria a vigente desde então)', () => {
+    expect(ordemDoPop({ codigo: 'POP-CAL-01', revisao: '02', data: '2025-11-04' }, versoes)).toEqual({
+      erros: ['A data da revisão precisa ser igual ou posterior à da rev. 01 (01/06/2026).'],
+      dataMinima: '2026-06-01',
+    })
+    expect(ordemDoPop({ codigo: 'POP-CAL-01', revisao: '02', data: '2026-06-01' }, versoes).erros).toEqual([])
+    // Também de outro código (a vigente é uma só)
+    expect(ordemDoPop({ codigo: 'POP-NOVO', revisao: '00', data: '2026-05-31' }, versoes).erros).toHaveLength(1)
+  })
+
+  it('no mesmo código, o número precisa ser maior que o de todas as registradas (maiúsculas não contam)', () => {
+    expect(ordemDoPop({ codigo: 'pop-cal-01', revisao: '01', data: '2026-10-28' }, versoes).erros).toEqual([
+      'A revisão precisa ser maior que a rev. 01 do POP-CAL-01.',
+    ])
+    expect(ordemDoPop({ codigo: 'POP-CAL-01', revisao: '00', data: '2026-10-28' }, versoes).erros).toHaveLength(1)
+    expect(ordemDoPop({ codigo: 'POP-CAL-01', revisao: '05', data: '2026-10-28' }, versoes).erros).toEqual([])
+    // Outro código começa do 00
+    expect(ordemDoPop({ codigo: 'POP-NOVO', revisao: '00', data: '2026-10-28' }, versoes).erros).toEqual([])
+  })
+
+  it('a trazida das configurações (data da atualização, não a do documento) não limita a data; sem nenhuma, nada', () => {
+    const migrada = [v(1, 'BALANÇAS-POP-123', '02', '2026-11-01', POP_DA_ATUALIZACAO)]
+    expect(ordemDoPop({ codigo: 'POP-CAL-01', revisao: '00', data: '2026-10-28' }, migrada)).toEqual({
+      erros: [],
+      dataMinima: '',
+    })
+    expect(ordemDoPop({ codigo: 'POP-CAL-01', revisao: '00', data: '2026-10-28' }, [])).toEqual({ erros: [], dataMinima: '' })
+    // Depois de uma registrada por alguém, ela é a referência
+    expect(
+      ordemDoPop({ codigo: 'POP-CAL-01', revisao: '01', data: '2026-10-27' }, [
+        v(2, 'POP-CAL-01', '00', '2026-10-28'),
+        ...migrada,
+      ]).erros,
+    ).toEqual(['A data da revisão precisa ser igual ou posterior à da rev. 00 (28/10/2026).'])
   })
 })

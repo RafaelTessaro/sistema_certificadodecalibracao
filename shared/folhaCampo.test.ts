@@ -138,7 +138,7 @@ describe('planoDaFolha', () => {
     expect(p.avisos[0]).toMatch(
       /^Os pesos previstos não chegam às cargas acima de 10\s000 kg: a folha sugere até 5 etapas de substituição de 10\s000 kg; combine o material/,
     )
-    // Sem conformidade pedida: a faixa para decidir o ajuste é a do EMA em serviço da classe III
+    // Sem conformidade pedida: a faixa é a do limite de "não pesa corretamente" (POP 7.8, EMA em serviço da classe III)
     expect(p.faixaAceitavel).toEqual({
       criterio: 'PORTARIA_SERVICO',
       toleranciaCliente: 0,

@@ -32,12 +32,26 @@ export const VERSAO_APP: string = JSON.parse(readFileSync(new URL('../package.js
 export const CABECALHO_APP = 'x-bc-calibracao'
 
 /**
- * Nomes pelos quais o servidor pode ser acessado. Endereços IP, "localhost" e o nome do computador
- * sempre valem; outros nomes (ex.: um apelido no roteador) vão em HOSTS_PERMITIDOS, separados por vírgula.
- * Bloqueia o "DNS rebinding": um site de fora que aponta o próprio nome para o IP do servidor
- * para ler os dados pelo navegador de quem está na rede.
+ * Sufixos que não existem na internet (ninguém de fora registra um nome com eles): o mDNS (.local) e os
+ * que roteadores e redes internas usam. `<nome do computador>.<um destes>` vale sem configurar nada.
  */
-export function hostPermitido(host: string | undefined, extras: ReadonlySet<string>, maquina = hostname()): boolean {
+const SUFIXOS_DA_REDE_LOCAL = ['local', 'lan', 'home.arpa', 'internal', 'localdomain']
+
+/**
+ * Nomes pelos quais o servidor pode ser acessado. Endereços IP, "localhost", o nome do computador (exato),
+ * `<nome>.local` (e os outros sufixos que só existem na rede interna) e `<nome>.<domínio do Windows>`
+ * (USERDNSDOMAIN, quando existe) sempre valem; outros nomes (ex.: um apelido no roteador ou o nome completo
+ * no DNS da empresa, servidor.empresa.com.br) vão em HOSTS_PERMITIDOS, separados por vírgula.
+ * Bloqueia o "DNS rebinding": um site de fora que aponta o próprio nome para o IP do servidor
+ * para ler os dados pelo navegador de quem está na rede. Por isso `<nome>.<um domínio qualquer>` nunca vale:
+ * quem tem o domínio atacante.com cria servidor.atacante.com apontando para cá.
+ */
+export function hostPermitido(
+  host: string | undefined,
+  extras: ReadonlySet<string>,
+  maquina = hostname(),
+  dominioWindows = process.env.USERDNSDOMAIN ?? '',
+): boolean {
   if (!host) return false
   let nome: string
   try {
@@ -48,8 +62,15 @@ export function hostPermitido(host: string | undefined, extras: ReadonlySet<stri
   if (nome.startsWith('[') && nome.endsWith(']')) nome = nome.slice(1, -1)
   if (isIP(nome)) return true
   if (nome === 'localhost' || nome.endsWith('.localhost')) return true
-  const computador = maquina.toLowerCase()
-  if (computador && (nome === computador || nome.startsWith(computador + '.'))) return true
+  const computador = maquina.toLowerCase().replace(/\.$/, '')
+  if (computador) {
+    const dominio = dominioWindows
+      .trim()
+      .toLowerCase()
+      .replace(/^\.+|\.$/g, '')
+    const sufixos = dominio ? [...SUFIXOS_DA_REDE_LOCAL, dominio] : SUFIXOS_DA_REDE_LOCAL
+    if (nome === computador || sufixos.some((s) => nome === `${computador}.${s}`)) return true
+  }
   return extras.has(nome)
 }
 

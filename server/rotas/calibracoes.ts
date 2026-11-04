@@ -8,6 +8,7 @@ import {
   enderecoCliente,
   formatarDataBr,
   hojeLocalIso,
+  LIMITES,
   listaEmails,
   nomeArquivoCertificado,
   normalizarCalibracao,
@@ -17,6 +18,7 @@ import {
 import type { Calibracao, Cliente, StatusCalibracao } from '#shared/tipos.ts'
 import {
   anexosDoCertificado,
+  avisosDa,
   certificadosDosPadroes,
   emitirCertificado,
   padroesDa,
@@ -39,6 +41,8 @@ import {
 import { registrarNumeros } from './numeros.ts'
 
 type ComId = FastifyRequest<{ Params: { id: string } }>
+/** Balanças guardadas com um lembrete (as do pedido além disso ficam de fora do registro). */
+const LIMITE_BALANCAS_LEMBRETE = 500
 type Corpo = Record<string, unknown>
 const corpo = (req: FastifyRequest): Corpo => (req.body && typeof req.body === 'object' ? (req.body as Corpo) : {})
 const versaoDe = (c: Corpo) => (typeof c.versao === 'number' ? c.versao : undefined)
@@ -86,6 +90,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       padroes: k.emissao?.padroes ?? padroesDa(ctx, k),
       envios: repo.listarEnvios({ calibracaoId: k.id }),
       pendencias: aberta ? pendenciasDa(ctx, k) : [],
+      // Para conferir, sem impedir a emissão (ex.: a folha de campo saiu com outra revisão do POP que a da data)
+      avisos: aberta ? avisosDa(ctx, k) : [],
       revisoes: repo.revisoesDe(k.id),
       folhaCampo: repo.folhaCampoDaCalibracao(k.id),
       // Em andamento: o nº de certificado já reservado (impresso na folha de campo), com que ela vai ser emitida
@@ -127,7 +133,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
 
   app.put('/api/calibracoes/:id', async (req: ComId) => {
     const k = repo.atualizarCalibracao(req.params.id, req.body)
-    return { calibracao: k, pendencias: pendenciasDa(ctx, k) }
+    return { calibracao: k, pendencias: pendenciasDa(ctx, k), avisos: avisosDa(ctx, k) }
   })
 
   // O nº de certificado reservado para ela volta para a folha de campo em que foi impresso (para a refeita)
@@ -152,11 +158,15 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     const u = autor(req)
     const c = corpo(req)
     const reservado = repo.numeroReservadoDa(req.params.id)
-    const k = await emitirCertificado(ctx, req.params.id, u, { versao: versaoDe(c) })
-    // Com o nº reservado na impressão da folha de campo: o registro diz de qual folha
-    if (reservado && k.numero === reservado.numero)
-      req.detalheAuditoria = `${k.numero}, reservado na folha de campo ${reservado.folha}`
-    return { calibracao: k }
+    const { calibracao: k, aviso } = await emitirCertificado(ctx, req.params.id, u, { versao: versaoDe(c) })
+    // Com o nº reservado na impressão da folha de campo, o registro diz de qual folha; e se o PDF ficou para depois
+    req.detalheAuditoria = [
+      reservado && k.numero === reservado.numero ? `${k.numero}, reservado na folha de campo ${reservado.folha}` : '',
+      aviso ? 'o PDF não foi gravado na emissão (é gerado ao abrir)' : '',
+    ]
+      .filter(Boolean)
+      .join('; ')
+    return aviso ? { calibracao: k, aviso } : { calibracao: k }
   })
 
   app.post('/api/calibracoes/:id/cancelar', async (req: ComId) => {
@@ -170,6 +180,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     const original = obter(req.params.id)
     const motivo = String(corpo(req).motivo ?? '').trim()
     if (motivo.length < 5) throw new ErroApi(400, 'Explique o motivo da revisão (sai no certificado novo).')
+    // Inteiro no certificado: o que passa do limite é recusado, nunca cortado no meio da palavra
+    if (motivo.length > LIMITES.motivo) throw new ErroApi(400, `O motivo da revisão pode ter até ${LIMITES.motivo} caracteres.`)
     const k = repo.criarCalibracao({ ...naUnidadeAtual(original), substituiId: original.id, motivoRevisao: motivo }, u)
     return reply.code(201).send({ calibracao: k })
   })
@@ -261,17 +273,23 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       texto,
       anexos: escolhidos.map((a) => ({ nome: a.nome, tipo: a.tipo, conteudo: a.ler() })),
     })
+    // Só quem recebeu; os que o servidor de e-mail recusou ficam à parte (a tela avisa)
+    const recusados = r.recusados.map((x) => x.endereco)
     repo.registrarEnvio({
       calibracaoId: k.id,
       clienteId: k.clienteId,
       tipo: 'CERTIFICADO',
-      para: para.join(', '),
+      para: r.para.join(', '),
       assunto,
       usuarioId: u.id,
       usuarioNome: u.nome,
       anexos: escolhidos.map((a) => a.nome),
+      recusados,
     })
-    req.detalheAuditoria = `${escolhidos.length} ${escolhidos.length === 1 ? 'anexo' : 'anexos'}`
+    req.detalheAuditoria = [
+      `${escolhidos.length} ${escolhidos.length === 1 ? 'anexo' : 'anexos'}`,
+      ...(recusados.length ? [`recusados pelo servidor de e-mail: ${recusados.join(', ')}`] : []),
+    ].join('; ')
     return { ...r, anexos: escolhidos.map((a) => a.nome) }
   })
 
@@ -288,16 +306,27 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       .slice(0, 200)
     const texto = String(c.texto ?? '').slice(0, 20_000)
     if (!assunto || !texto) throw new ErroApi(400, 'Informe o assunto e a mensagem do lembrete.')
+    // As balanças que vão no e-mail (as escolhidas na tela): só as deste cliente, sem repetir. Em Vencimentos, cada
+    // balança aparece avisada só pelo lembrete que a incluiu (`Repositorio.vencimentos`)
+    const balancas = [
+      ...new Set((Array.isArray(c.balancas) ? c.balancas : []).filter((id): id is string => typeof id === 'string')),
+    ]
+      .slice(0, LIMITE_BALANCAS_LEMBRETE)
+      .filter((id) => repo.obterBalanca(id)?.clienteId === clienteId)
     const r = await email.enviar({ para, assunto, texto, anexos: [] })
+    const recusados = r.recusados.map((x) => x.endereco)
     repo.registrarEnvio({
       calibracaoId: '',
       clienteId,
       tipo: 'LEMBRETE',
-      para: para.join(', '),
+      para: r.para.join(', '),
       assunto,
       usuarioId: u.id,
       usuarioNome: u.nome,
+      balancas,
+      recusados,
     })
+    if (recusados.length) req.detalheAuditoria = `recusados pelo servidor de e-mail: ${recusados.join(', ')}`
     return r
   })
 

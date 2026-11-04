@@ -149,9 +149,9 @@ export function entradasDeRegressao(quantas = 400): EntradaCalculo[] {
 
 /**
  * Campos que o motor ganhou com a classe I e depois (ficam fora da impressão digital): o EMA da descida nas múltiplas
- * faixas só existe quando difere do da carga.
+ * faixas só existe quando difere do da carga; as leituras fora do EMA em serviço (POP 7.8), só quando há alguma.
  */
-const CAMPOS_NOVOS = new Set(['uConveccao', 'correcaoEmpuxo', 'ar', 'avisos', 'emaDecrescente'])
+const CAMPOS_NOVOS = new Set(['uConveccao', 'correcaoEmpuxo', 'ar', 'avisos', 'emaDecrescente', 'foraDoEmaServico'])
 
 /**
  * Pendências novas, de regras que vieram depois (ficam fora da impressão digital): os pesos sem EMA (jogo sem a

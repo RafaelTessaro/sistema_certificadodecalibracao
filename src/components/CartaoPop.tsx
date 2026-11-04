@@ -6,7 +6,7 @@
 
 import { BookOpenText, Download, ExternalLink, FileText, History, Loader2, Plus, ShieldAlert, TriangleAlert } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
-import { normalizarPop, revisaoPop, ROTULO_TIPO_ARQUIVO, textoPop, tipoDoMime } from '#shared/arquivos.ts'
+import { normalizarPop, ordemDoPop, revisaoPop, ROTULO_TIPO_ARQUIVO, textoPop, tipoDoMime } from '#shared/arquivos.ts'
 import { formatarDataBr } from '#shared/dominio.ts'
 import type { VersaoPop } from '#shared/tipos.ts'
 import { api } from '../lib/api'
@@ -149,7 +149,12 @@ export function CartaoPop() {
         </details>
       )}
 
-      <RegistrarPopModal aberto={registrando} aoFechar={() => setRegistrando(false)} atual={atual} />
+      <RegistrarPopModal
+        aberto={registrando}
+        aoFechar={() => setRegistrando(false)}
+        atual={atual}
+        versoes={dados?.versoes ?? []}
+      />
     </div>
   )
 }
@@ -182,7 +187,7 @@ export function LinhaRevisao({
         {v.arquivo ? (
           <>
             <a
-              href={api.urlArquivo(v.arquivo.sha256)}
+              href={api.urlAnexo(v.arquivo)}
               target="_blank"
               rel="noopener"
               title={v.arquivo.nome}
@@ -219,10 +224,13 @@ export function RegistrarPopModal({
   aberto,
   aoFechar,
   atual,
+  versoes = [],
 }: {
   aberto: boolean
   aoFechar: () => void
   atual: VersaoPop | null
+  /** As revisões registradas, da mais nova para a mais antiga (a ordem: `ordemDoPop`). */
+  versoes?: VersaoPop[]
 }) {
   const inicial = () => ({
     codigo: atual?.codigo ?? '',
@@ -245,12 +253,16 @@ export function RegistrarPopModal({
     }
   }
 
-  // A data da revisão vai até hoje (o servidor confere de novo)
+  // A data da revisão vai da vigente até hoje, e o número é maior que o das registradas no código (o servidor confere
+  // de novo): fora de ordem, ela encobriria a vigente nas calibrações
   const hoje = hojeISO()
-  const { valor, erros } = normalizarPop({ ...f, arquivo: '' }, hoje)
+  const normalizada = normalizarPop({ ...f, arquivo: '' }, hoje)
+  const { valor } = normalizada
+  const ordem = ordemDoPop(valor, versoes)
+  const erros = [...normalizada.erros, ...ordem.erros]
   const erroDe = (re: RegExp) => (tentou ? erros.find((e) => re.test(e)) : undefined)
   const erroCodigo = erroDe(/código/)
-  const erroRevisao = erroDe(/revisão do POP com/)
+  const erroRevisao = erroDe(/revisão do POP com|revisão precisa ser maior/)
   const erroData = erroDe(/data/)
 
   const registrar = async (e?: FormEvent) => {
@@ -349,6 +361,7 @@ export function RegistrarPopModal({
           <Input
             id="pop-data"
             type="date"
+            min={ordem.dataMinima || undefined}
             max={hoje}
             value={f.data}
             onChange={(e) => setF((x) => ({ ...x, data: e.target.value }))}

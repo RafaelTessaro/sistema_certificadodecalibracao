@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { criarApp, VERSAO_APP } from './app.ts'
+import { criarApp, hostPermitido, lerHostsPermitidos, VERSAO_APP } from './app.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
 import { ARQUIVO_ID, idDaInstalacao } from './identidade.ts'
 
@@ -57,6 +57,57 @@ describe('GET /api/saude', () => {
     expect(r.json()).toHaveProperty('revisao')
     const pelaRede = (await saude('192.168.0.40', '192.168.0.10:4850')).json()
     expect(r.json()).toMatchObject({ id: pelaRede.id, instancia: pelaRede.instancia })
+  })
+})
+
+describe('nome no endereço (Host) e DNS rebinding', () => {
+  const vazio = new Set<string>()
+
+  it('aceita o nome exato do computador e <nome>.local; nunca <nome>.<domínio qualquer>', () => {
+    for (const host of ['servidor', 'SERVIDOR:4850', 'servidor.local', 'SERVIDOR.', 'servidor.local.:4850', 'Servidor.LOCAL'])
+      expect(hostPermitido(host, vazio, 'SERVIDOR', ''), host).toBe(true)
+    for (const host of [
+      'servidor.atacante.com',
+      'servidor.atacante.com:4850',
+      'SERVIDOR.atacante.example.',
+      'servidor.local.atacante.com',
+      'servidor-x',
+      'servidorx.local',
+      'servidor.empresa.local',
+    ])
+      expect(hostPermitido(host, vazio, 'SERVIDOR', ''), host).toBe(false)
+    // IPs e localhost continuam valendo
+    for (const host of ['192.168.0.10:4850', '[::1]:4850', 'localhost:4850', '127.0.0.1'])
+      expect(hostPermitido(host, vazio, 'SERVIDOR', ''), host).toBe(true)
+  })
+
+  it('sufixos que não existem na internet (do roteador ou da rede interna) também valem', () => {
+    for (const host of ['servidor.lan', 'servidor.home.arpa:4850', 'SERVIDOR.internal', 'servidor.localdomain'])
+      expect(hostPermitido(host, vazio, 'SERVIDOR', ''), host).toBe(true)
+    expect(hostPermitido('servidor.lan.atacante.com', vazio, 'SERVIDOR', '')).toBe(false)
+  })
+
+  it('o domínio da empresa: pelo HOSTS_PERMITIDOS ou pelo domínio do Windows (USERDNSDOMAIN)', () => {
+    expect(hostPermitido('servidor.empresa.local', lerHostsPermitidos('servidor.empresa.local'), 'SERVIDOR', '')).toBe(true)
+    expect(hostPermitido('servidor.empresa.com.br:4850', vazio, 'SERVIDOR', 'EMPRESA.COM.BR')).toBe(true)
+    expect(hostPermitido('servidor.outra.com.br', vazio, 'SERVIDOR', 'EMPRESA.COM.BR')).toBe(false)
+  })
+
+  it('pela API: GET /api/saude e o primeiro acesso com o nome do atacante dão 403 e não criam ninguém', async () => {
+    const rebind = `${hostname()}.atacante.example:4850`
+    expect((await saude('192.168.0.30', rebind)).statusCode).toBe(403)
+    const r = await t.app.inject({
+      method: 'POST',
+      url: '/api/primeiro-acesso',
+      remoteAddress: '127.0.0.1',
+      headers: { host: rebind, origin: `http://${rebind}`, 'x-bc-calibracao': '1' },
+      payload: { nome: 'Suporte', login: 'suporte', senha: 'mesa-de-madeira-azul' },
+    })
+    expect(r.statusCode).toBe(403)
+    expect(r.json().erro).toMatch(/HOSTS_PERMITIDOS/)
+    expect(t.usuarios.situacao().usuarios).toBe(0)
+    // O próprio nome do computador continua funcionando
+    expect((await saude('192.168.0.30', `${hostname()}:4850`)).statusCode).toBe(200)
   })
 })
 

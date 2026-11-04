@@ -1,6 +1,8 @@
 // Arquivos guardados no sistema (o certificado de calibração de cada padrão e o POP) e as revisões do POP.
 // O envio é o arquivo puro (application/octet-stream), com o nome na consulta; o tipo é conferido pelo
-// conteúdo e o tamanho no máximo de 10 MB. Quem entrou no sistema baixa; só o administrador registra o POP.
+// conteúdo e o tamanho no máximo de 10 MB. O nome sai sempre com a extensão desse tipo (guardado e baixado):
+// "Certificado.pdf.exe" nunca chega ao Windows como executável. Quem entrou no sistema baixa; só o
+// administrador registra o POP.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import {
@@ -8,6 +10,8 @@ import {
   LIMITE_ARQUIVO_BYTES,
   MIME_ARQUIVO,
   nomeArquivoSeguro,
+  nomeComExtensaoDoTipo,
+  nomeDoArquivoGuardado,
   problemaDoArquivo,
   ROTULO_TIPO_ARQUIVO,
   SHA256_VALIDO,
@@ -58,14 +62,18 @@ export async function rotasArquivos(app: FastifyInstance, ctx: Contexto) {
       const tipo = detectarTipoArquivo(conteudo)
       const problema = problemaDoArquivo(conteudo.length, tipo, finalidade)
       if (problema) throw new ErroApi(conteudo.length > LIMITE_ARQUIVO_BYTES ? 413 : 400, problema)
-      const nome = nomeArquivoSeguro(q.nome, finalidade === 'pop' ? `POP.${tipo}` : `Certificado.${tipo}`)
+      const nome = nomeComExtensaoDoTipo(String(q.nome ?? ''), tipo!, finalidade === 'pop' ? 'POP' : 'Certificado')
       const arquivo = repo.guardarArquivo(conteudo, { nome, tipo: MIME_ARQUIVO[tipo!], por: u.nome })
       req.detalheAuditoria = `${FINALIDADES[finalidade]} (${ROTULO_TIPO_ARQUIVO[tipo!]})`
       return reply.code(201).send({ arquivo })
     })
   })
 
-  /** Baixa (ou abre, no caso de PDF e imagem) um arquivo guardado. `?baixar=1` sempre baixa. */
+  /**
+   * Baixa (ou abre, no caso de PDF e imagem) um arquivo guardado. `?baixar=1` sempre baixa; `?nome=` é o nome
+   * da referência (o mesmo conteúdo pode estar em dois padrões com nomes diferentes). Com ou sem ele, o nome
+   * sai com a extensão do tipo guardado, também nas linhas gravadas antes desta regra.
+   */
   app.get('/api/arquivos/:sha256', async (req, reply) => {
     const sha256 = String((req.params as { sha256?: string }).sha256 ?? '').toLowerCase()
     const a = SHA256_VALIDO.test(sha256) ? repo.lerArquivo(sha256) : undefined
@@ -73,7 +81,7 @@ export async function rotasArquivos(app: FastifyInstance, ctx: Contexto) {
     const q = req.query as Record<string, unknown>
     // Word não abre no navegador: sempre baixa
     const baixar = q.baixar === '1' || tipoDoMime(a.tipo) === 'docx'
-    const nome = nomeArquivoSeguro(q.nome, '') || a.nome
+    const nome = nomeDoArquivoGuardado(nomeArquivoSeguro(q.nome, '') || a.nome, a.tipo)
     return reply.header('Content-Type', a.tipo).header('Content-Disposition', disposicao(nome, baixar)).send(a.conteudo)
   })
 

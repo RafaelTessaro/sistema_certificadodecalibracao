@@ -19,6 +19,7 @@ import {
   Loader2,
   Mail,
   MailCheck,
+  MailWarning,
   MailX,
   Monitor,
   Moon,
@@ -64,6 +65,7 @@ import { CampoSenha } from '../components/sessao/CampoSenha'
 import { api, type ConfigEmail } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
+import { textoRecusados } from '../lib/envioEmail'
 import { dataHora, hojeISO, tamanhoArquivo } from '../lib/format'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast, useUI, type Tema } from '../store/ui'
@@ -1929,7 +1931,8 @@ function FormEmail({
   // ---- Teste e esquecer ----
   const [para, setPara] = useState(atual.remetenteEmail)
   const [testando, setTestando] = useState(false)
-  const [resultado, setResultado] = useState<{ ok: boolean; texto: string } | null>(null)
+  /** `aviso`: chegou só a parte dos endereços (o servidor de e-mail recusou os outros). */
+  const [resultado, setResultado] = useState<{ ok: boolean; aviso?: boolean; texto: string } | null>(null)
   const motivoSemTeste = !atual.configurado
     ? 'Salve a configuração antes de testar.'
     : s.sujo
@@ -1942,8 +1945,13 @@ function FormEmail({
     setTestando(true)
     setResultado(null)
     try {
-      await api.testarEmail(destino)
-      setResultado({ ok: true, texto: `Enviado para ${destino}. Confira a caixa de entrada (e a pasta de spam).` })
+      const r = await api.testarEmail(destino)
+      const recusados = r.recusados ?? []
+      setResultado(
+        recusados.length
+          ? { ok: true, aviso: true, texto: `Enviado para ${r.para.join(', ')}. ${textoRecusados(recusados)}` }
+          : { ok: true, texto: `Enviado para ${destino}. Confira a caixa de entrada (e a pasta de spam).` },
+      )
     } catch (e) {
       setResultado({ ok: false, texto: e instanceof Error ? e.message : 'Erro inesperado.' })
     } finally {
@@ -2207,8 +2215,17 @@ function FormEmail({
           <AnimatePresence initial={false}>
             {resultado && (
               <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} role="status">
-                <Nota tom={resultado.ok ? 'info' : 'perigo'} icone={resultado.ok ? <MailCheck /> : <MailX />}>
-                  <b className="font-semibold">{resultado.ok ? 'E-mail de teste enviado.' : 'O teste falhou.'}</b>{' '}
+                <Nota
+                  tom={resultado.aviso ? 'aviso' : resultado.ok ? 'info' : 'perigo'}
+                  icone={resultado.aviso ? <MailWarning /> : resultado.ok ? <MailCheck /> : <MailX />}
+                >
+                  <b className="font-semibold">
+                    {resultado.aviso
+                      ? 'E-mail de teste enviado só para parte dos endereços.'
+                      : resultado.ok
+                        ? 'E-mail de teste enviado.'
+                        : 'O teste falhou.'}
+                  </b>{' '}
                   {resultado.texto}
                 </Nota>
               </motion.div>

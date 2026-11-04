@@ -2,9 +2,16 @@
 // converte os pesos padrão para a unidade da balança e monta a entrada do cálculo.
 // Usado no navegador (cálculo ao vivo) e no servidor (emissão e PDF).
 
-import { calculoLegado, CLASSES_PESO, massaLegivel, valorAmbiente } from './dominio.ts'
+import { calculoLegado, CLASSES_PESO, massaLegivel, regrasDoPopComoAviso, valorAmbiente } from './dominio.ts'
 import { calcular, emaInstrumento, emaPeso, sugerirPontos } from './metrologia/index.ts'
-import type { ArCalculo, EntradaCalculo, PecaCalculo, ResultadoCalculo, TermicaCalculo } from './metrologia/tipos.ts'
+import type {
+  ArCalculo,
+  EntradaCalculo,
+  LeiturasOriginais,
+  PecaCalculo,
+  ResultadoCalculo,
+  TermicaCalculo,
+} from './metrologia/tipos.ts'
 import type {
   Balanca,
   CalibracaoInput,
@@ -25,10 +32,15 @@ export const GRAMAS: Record<Unidade, number> = { mg: 0.001, g: 1, kg: 1000, t: 1
 /** Converte um valor em gramas para a unidade (arredondado em 12 algarismos para não carregar ruído binário). */
 export const deGramas = (g: number, u: Unidade) => Number((g / GRAMAS[u]).toPrecision(12))
 
-/** Peça de peso pronta para o cálculo, na unidade da balança. */
+/**
+ * Peça de peso pronta para o cálculo, na unidade da balança. A peça sem U num jogo pelo valor do certificado entra pelo
+ * nominal (u = EMA/√3, conservador nas classes II a IIII) e leva a correção do certificado que ficou de fora
+ * (`correcaoSemU`): o cálculo avisa e, na classe I, a emissão pede a U (`pendenciasEmissao`, POP 6.1).
+ */
 export function pecaParaCalculo(padrao: Padrao, peso: PesoPadrao, unidade: Unidade, quantidade = 1): PecaCalculo {
   const emaMg = padrao.classe ? (emaPeso(peso.nominal, padrao.classe) ?? 0) : 0
   const usarCertificado = padrao.uso === 'CERTIFICADO' && peso.incerteza > 0
+  const semU = padrao.uso === 'CERTIFICADO' && !usarCertificado
   return {
     nominal: deGramas(peso.nominal, unidade),
     correcao: usarCertificado ? deGramas(peso.correcao / 1000, unidade) : 0,
@@ -36,6 +48,7 @@ export function pecaParaCalculo(padrao: Padrao, peso: PesoPadrao, unidade: Unida
     k: peso.k > 0 ? peso.k : 2,
     ema: deGramas(emaMg / 1000, unidade),
     usarCertificado,
+    ...(semU ? { correcaoSemU: Number.isFinite(peso.correcao) ? deGramas(peso.correcao / 1000, unidade) : 0 } : {}),
     quantidade,
     classe: padrao.classe,
     // Registro antigo pode não ter os campos (JSON gravado antes desta versão)
@@ -329,32 +342,42 @@ export function opcoesComoEncontrado(opcoes: OpcoesCalculo, classe: Balanca['cla
   return { ...opcoes, empuxo: 'MEDIDO' }
 }
 
-/**
- * Os mínimos do POP (pontos, subida, leituras e ensaios da repetibilidade) e as leituras fora do esperado ficam só como
- * avisos (sem `EntradaCalculo.regrasDoPop`)? Sim na revisão de um certificado emitido (é a mesma visita: as leituras não podem
- * ser refeitas, e o original pode ser de antes dessas regras), no registro de antes da classe I (`calculoLegado`) e no
- * "como encontrado" (registro anterior, antes do ajuste). Na calibração nova, são pendências.
- */
-export function regrasDoPopComoAviso(
-  k: Pick<CalibracaoInput, 'opcoes'> & Partial<Pick<CalibracaoInput, 'calculoLegado' | 'substituiId'>> & { emissao?: unknown },
-  momento: 'FINAL' | 'COMO_ENCONTRADO' = 'FINAL',
-): boolean {
-  return momento === 'COMO_ENCONTRADO' || !!k.substituiId || calculoLegado(k)
+/** Ver `regrasDoPopComoAviso` em dominio.ts (lá, para `pendenciasEmissao` também usar). */
+export { regrasDoPopComoAviso }
+
+/** As leituras de um certificado emitido, para a revisão dele (`EntradaCalculo.leiturasDoOriginal`). */
+export function leiturasOriginais(
+  k: Pick<CalibracaoInput, 'indicacao' | 'repetibilidade' | 'excentricidade'>,
+): LeiturasOriginais {
+  return {
+    indicacao: Object.fromEntries(k.indicacao.pontos.map((p) => [p.id, leiturasDoMetodo(p, k.indicacao.metodo)])),
+    repetibilidade: Object.fromEntries(k.repetibilidade.map((r) => [r.id, r.leituras])),
+    excentricidade: k.excentricidade.posicoes.map((p) => p.leitura),
+    referenciasExcentricidade: k.excentricidade.posicoes.map((p) => p.referencia),
+  }
 }
+
+/** O certificado revisado (as leituras), para a revisão de um certificado de antes das regras do POP. */
+type Original = Pick<CalibracaoInput, 'indicacao' | 'repetibilidade' | 'excentricidade'>
 
 /**
  * Entrada do motor de cálculo a partir da calibração gravada. `momento`: o ensaio final (logo após o ajuste,
- * quando houve) ou o "como encontrado" (sempre sem ajuste logo antes).
+ * quando houve) ou o "como encontrado" (sempre sem ajuste logo antes). `original`: na revisão de um certificado de
+ * antes das regras do POP, o certificado revisado (a leitura fora do esperado que a revisão mudou é pendência).
  */
 export function entradaDoCalculo(
   k: Pick<CalibracaoInput, 'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade'> &
-    Partial<Pick<CalibracaoInput, 'ambiente' | 'ajuste' | 'calculoLegado' | 'substituiId'>> & { emissao?: unknown },
+    Partial<Pick<CalibracaoInput, 'ambiente' | 'ajuste' | 'calculoLegado' | 'substituiId' | 'regrasDoPop'>> & {
+      emissao?: unknown
+    },
   balanca: Pick<Balanca, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>,
   padroes: Padrao[],
   ensaio: EnsaioIndicacao = k.indicacao,
   momento: 'FINAL' | 'COMO_ENCONTRADO' = 'FINAL',
+  original?: Original | null,
 ): EntradaCalculo {
   const ajustadaAntes = momento === 'FINAL' && (k.ajuste?.realizado ?? 'NAO') !== 'NAO'
+  const comoAviso = regrasDoPopComoAviso(k, momento)
   return {
     instrumento: { unidade: balanca.unidade, classe: balanca.classe, tipoFaixas: balanca.tipoFaixas, faixas: balanca.faixas },
     // O certificado emitido antes do cálculo da classe I (e a revisão dele) calcula como na época
@@ -370,21 +393,26 @@ export function entradaDoCalculo(
     conformidade: k.conformidade,
     ar: arDoAmbiente(k.ambiente, ajustadaAntes),
     termica: termicaDoAmbiente(k.ambiente),
-    ...(regrasDoPopComoAviso(k, momento) ? {} : { regrasDoPop: true }),
+    ...(comoAviso ? {} : { regrasDoPop: true }),
+    ...(comoAviso && momento === 'FINAL' && original ? { leiturasDoOriginal: leiturasOriginais(original) } : {}),
   }
 }
 
-/** Calcula os ensaios finais e, quando houve ajuste e foi medido, o "como encontrado". */
+/**
+ * Calcula os ensaios finais e, quando houve ajuste e foi medido, o "como encontrado". `original`: na revisão, o
+ * certificado revisado (ver `entradaDoCalculo`).
+ */
 export function calcularCalibracao(
   k: Pick<
     CalibracaoInput,
     'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade' | 'comoEncontrado' | 'ajuste'
   > &
-    Partial<Pick<CalibracaoInput, 'ambiente' | 'calculoLegado' | 'substituiId'>> & { emissao?: unknown },
+    Partial<Pick<CalibracaoInput, 'ambiente' | 'calculoLegado' | 'substituiId' | 'regrasDoPop'>> & { emissao?: unknown },
   balanca: Pick<Balanca, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>,
   padroes: Padrao[],
+  original?: Original | null,
 ): { resultado: ResultadoCalculo; comoEncontrado: ResultadoCalculo | null } {
-  const resultado = calcular(entradaDoCalculo(k, balanca, padroes))
+  const resultado = calcular(entradaDoCalculo(k, balanca, padroes, k.indicacao, 'FINAL', original))
   const temAntes = k.ajuste.realizado !== 'NAO' && !!k.comoEncontrado?.pontos.some((p) => p.crescente !== null)
   const comoEncontrado = temAntes ? calcular(entradaDoCalculo(k, balanca, padroes, k.comoEncontrado!, 'COMO_ENCONTRADO')) : null
   return { resultado, comoEncontrado }

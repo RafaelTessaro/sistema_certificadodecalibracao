@@ -23,6 +23,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { textoPop } from '#shared/arquivos.ts'
+import { hojeLocalIso } from '#shared/dominio.ts'
 import { pode } from '#shared/permissoes.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente } from '#shared/tipos.ts'
 import { padroesDa, popDaCalibracao } from '../certificados.ts'
@@ -163,11 +164,13 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     const balanca = k.emissao?.balanca ?? repo.obterBalanca(k.balancaId) ?? null
     const padroes = k.emissao?.padroes ?? padroesDa(ctx, k)
     const tecnico = k.emissao?.tecnico.nome ?? ctx.usuarios.obter(k.tecnicoId)?.nome ?? ''
-    // Emitida: o POP do certificado. Em andamento: o que o certificado vai citar (`popDaCalibracao`: o da data da
-    // calibração; numa revisão, o do certificado revisado); a folha nova, o da data (fica no lugar da de antes)
+    // Emitida: o POP do certificado. Em andamento: o que o certificado vai citar (`popDaCalibracao`; numa revisão, o
+    // do certificado revisado). A primeira impressão e a folha nova (que fica no lugar da de antes) vão a campo agora:
+    // o que vale na data da calibração ou, se ela já passou (o rascunho nasce com a data do dia em que foi criado),
+    // no dia da impressão. A reimpressão é o PDF guardado (com a revisão de quando saiu)
     const pop = k.emissao
       ? { procedimento: k.emissao.textos.procedimento, pop: k.emissao.pop ?? null }
-      : popDaCalibracao(ctx, k, { semFolha: !!nova })
+      : popDaCalibracao(ctx, k, { semFolha: !!nova, dataMinima: hojeLocalIso(repo.agora()) })
     const { pdf, numero } = await gerar(req, {
       chave: nova ? `calibracao:${k.id}:${nova}` : `calibracao:${k.id}`,
       calibracao: entradaDe(k),

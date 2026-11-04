@@ -1,4 +1,4 @@
-import { CircleAlert, CircleCheck, Eye, FileBadge2, Hourglass, Loader2, ShieldCheck } from 'lucide-react'
+import { CircleAlert, CircleCheck, Eye, FileBadge2, Hourglass, Loader2, ShieldCheck, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 import { formatarNumeroCertificado } from '#shared/dominio.ts'
 import { podeEmitir } from '#shared/permissoes.ts'
@@ -15,6 +15,7 @@ export function EtapaRevisao({
   numeroReservado = null,
   numeroRevisao = null,
   pendencias,
+  avisos: avisosServidor = [],
   salvando,
   aoVisualizar,
   aoEnviarRevisao,
@@ -27,6 +28,8 @@ export function EtapaRevisao({
   /** Revisão: o nº com que ela sai (o do certificado revisado, com o -R dela). */
   numeroRevisao?: string | null
   pendencias: string[]
+  /** Do servidor, para conferir sem impedir a emissão (ex.: a folha de campo saiu com outra revisão do POP). */
+  avisos?: string[]
   salvando: boolean
   aoVisualizar: () => void
   aoEnviarRevisao: () => void
@@ -70,6 +73,19 @@ export function EtapaRevisao({
               </li>
             ))}
           </ul>
+        )}
+        {avisosServidor.length > 0 && (
+          <div className="mx-5 mb-5 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-warning">
+            <p className="mb-2 text-xs font-semibold">Confira antes de emitir (não impede a emissão)</p>
+            <ul className="flex flex-col gap-1.5">
+              {avisosServidor.map((a) => (
+                <li key={a} className="flex items-start gap-2 text-[13px] font-medium">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                  {a}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         {avisos.length > 0 && (
           <div className="mx-5 mb-5 rounded-xl border border-line bg-surface-2/50 px-4 py-3">
@@ -147,6 +163,9 @@ export function EtapaRevisao({
                   <span className="tnum">{numeroRevisao}</span>{' '}
                   <span className="font-normal text-muted">(o do certificado revisado)</span>
                 </p>
+              ) : f.substituiId ? (
+                // Revisão sem o nº previsto: o certificado revisado não está mais emitido (a pendência diz a saída)
+                <p className="mt-0.5 font-medium text-ink">Não sai: o certificado revisado não está mais emitido</p>
               ) : (
                 <p className="tnum mt-0.5 font-medium text-ink">Gerado na emissão (ex.: {exemplo})</p>
               )}

@@ -18,6 +18,14 @@ import { api } from '../lib/api'
 import { useConsulta } from '../lib/consulta'
 import { exportarCSV } from '../lib/csv'
 import { dataCurta, normalizar, numero } from '../lib/format'
+import {
+  agruparPorCliente,
+  clientesAvisadosNoMes,
+  COLUNAS_CSV_VENCIMENTOS,
+  diaDoLembrete,
+  type GrupoCliente,
+  linhaCsvVencimento,
+} from '../lib/vencimentos'
 
 type Filtro = 'vencidas' | '30' | '60' | '90' | 'todas'
 
@@ -39,18 +47,6 @@ const FILTROS: Array<{ valor: Filtro; label: string; dica: string; passa: (v: Ve
   { valor: 'todas', label: 'Todas', dica: 'Todas as balanças com a próxima calibração marcada.', passa: () => true },
 ]
 
-interface GrupoCliente {
-  clienteId: string
-  clienteNome: string
-  clienteEmail: string
-  itens: Vencimento[]
-  vencidas: number
-  /** Vencem nos próximos dias de aviso (sem as vencidas). */
-  vencendo: number
-  /** Lembrete mais recente enviado para este cliente (ISO) ou ''. */
-  ultimoLembrete: string
-}
-
 const MESES = [
   'janeiro',
   'fevereiro',
@@ -65,9 +61,6 @@ const MESES = [
   'novembro',
   'dezembro',
 ]
-
-/** Mês (yyyy-MM) de um instante, no fuso deste computador. */
-const mesLocal = (iso: string) => hojeLocalIso(new Date(iso)).slice(0, 7)
 
 export function Vencimentos() {
   const navegar = useNavigate()
@@ -92,13 +85,12 @@ export function Vencimentos() {
     const mes = hojeLocalIso().slice(0, 7)
     const vencidas = todos.filter((v) => v.dias < 0)
     const em30 = todos.filter((v) => v.dias >= 0 && v.dias <= 30)
-    const avisados = new Set(todos.filter((v) => v.lembreteEm && mesLocal(v.lembreteEm) === mes).map((v) => v.clienteId))
     return {
       vencidas: vencidas.length,
       clientesVencidas: new Set(vencidas.map((v) => v.clienteId)).size,
       em30: em30.length,
       clientesEm30: new Set(em30.map((v) => v.clienteId)).size,
-      avisados: avisados.size,
+      avisados: clientesAvisadosNoMes(todos, mes),
     }
   }, [todos])
 
@@ -117,62 +109,10 @@ export function Vencimentos() {
       )
   }, [todos, busca, filtroAtual])
 
-  const grupos = useMemo(() => {
-    const mapa = new Map<string, GrupoCliente>()
-    for (const v of lista) {
-      let g = mapa.get(v.clienteId)
-      if (!g) {
-        g = {
-          clienteId: v.clienteId,
-          clienteNome: v.clienteNome,
-          clienteEmail: v.clienteEmail,
-          itens: [],
-          vencidas: 0,
-          vencendo: 0,
-          ultimoLembrete: '',
-        }
-        mapa.set(v.clienteId, g)
-      }
-      g.itens.push(v)
-      if (v.dias < 0) g.vencidas++
-      else if (v.dias <= diasAviso) g.vencendo++
-      if (v.lembreteEm > g.ultimoLembrete) g.ultimoLembrete = v.lembreteEm
-    }
-    for (const g of mapa.values()) g.itens.sort((a, b) => a.dias - b.dias)
-    // O cliente com a balança mais atrasada primeiro
-    return [...mapa.values()].sort(
-      (a, b) => a.itens[0].dias - b.itens[0].dias || a.clienteNome.localeCompare(b.clienteNome, 'pt-BR'),
-    )
-  }, [lista, diasAviso])
+  // O cliente com a balança mais atrasada primeiro
+  const grupos = useMemo(() => agruparPorCliente(lista, diasAviso), [lista, diasAviso])
 
-  const exportar = () =>
-    exportarCSV(
-      'vencimentos.csv',
-      [
-        'Cliente',
-        'E-mail',
-        'Balança',
-        'Nº de série',
-        'TAG',
-        'Última calibração',
-        'Certificado',
-        'Próxima calibração',
-        'Dias',
-        'Último lembrete',
-      ],
-      lista.map((v) => [
-        v.clienteNome,
-        v.clienteEmail,
-        v.balancaDescricao,
-        v.numeroSerie,
-        v.identificacao,
-        dataCurta(v.ultimaCalibracao),
-        v.ultimoCertificado,
-        dataCurta(v.proximaCalibracao),
-        v.dias,
-        v.lembreteEm ? dataCurta(v.lembreteEm.slice(0, 10)) : '',
-      ]),
-    )
+  const exportar = () => exportarCSV('vencimentos.csv', COLUNAS_CSV_VENCIMENTOS, lista.map(linhaCsvVencimento))
 
   const nomeMes = MESES[Number(hojeLocalIso().slice(5, 7)) - 1]
 
@@ -380,7 +320,7 @@ function CartaoCliente({
                 )}
                 {g.ultimoLembrete ? (
                   <span className="inline-flex items-center gap-1 text-xs text-muted">
-                    <BellRing className="h-3 w-3" /> Último lembrete em {dataCurta(hojeLocalIso(new Date(g.ultimoLembrete)))}
+                    <BellRing className="h-3 w-3" /> Último lembrete ao cliente em {diaDoLembrete(g.ultimoLembrete)}
                   </span>
                 ) : (
                   <span className="text-xs text-muted">Nenhum lembrete enviado</span>
@@ -433,7 +373,7 @@ function CartaoCliente({
                   <PrazoBadge data={v.proximaCalibracao} diasAviso={diasAviso} className="text-xs" />
                 </Td>
                 <Td className="tnum whitespace-nowrap max-lg:hidden">
-                  {v.lembreteEm ? dataCurta(hojeLocalIso(new Date(v.lembreteEm))) : <span className="text-muted">—</span>}
+                  {v.lembreteEm ? diaDoLembrete(v.lembreteEm) : <span className="text-muted">—</span>}
                 </Td>
                 <Td alinhar="right" onClick={(e) => e.stopPropagation()}>
                   <Button

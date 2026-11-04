@@ -1,15 +1,25 @@
 // Fluxo completo pela API: cadastros → calibração → emissão (PDF guardado e imutável) → verificação
 // pública → revisão (substitui) → cancelamento, com as travas de quem pode fazer o quê.
 
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { BALANCA_VAZIA, CLIENTE_VAZIO, PADRAO_VAZIO } from '#shared/dominio.ts'
+import { BALANCA_VAZIA, CLIENTE_VAZIO, PADRAO_VAZIO, PENDENCIA_REVISADO_CANCELADO } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
+import { anexosDoCertificado, gerarPdf } from './certificados.ts'
 import { ASSINATURA_EXEMPLO_1 } from './pdf/assinaturasExemplo.ts'
+import { textoPdf } from './pdf/carimbo.ts'
+import { MSG_CANCELAR_COM_REVISAO } from './repositorio.ts'
+
+/** O texto do PDF (pdftotext, do poppler-utils; sem ele, as conferências pelo texto ficam de fora). */
+const temPdftotext = !spawnSync('pdftotext', ['-v'], { stdio: 'ignore' }).error
+const textoDoPdf = (pdf: Buffer) =>
+  spawnSync('pdftotext', ['-enc', 'UTF-8', '-', '-'], { input: pdf, maxBuffer: 50 * 1024 * 1024 }).stdout.toString('utf8')
+const contar = (texto: string, trecho: string) => texto.split(trecho).length - 1
 
 let t: AppComLogin
 let cliente: Cliente
@@ -155,11 +165,53 @@ const emitir = (k: Calibracao, cookie = t.cookieAdmin) =>
   t.chamar('POST', `/api/calibracoes/${k.id}/emitir`, { cookie, payload: { versao: k.versao } })
 
 describe('emissão do certificado', () => {
+  it('a gravação do PDF falha depois da emissão: 200 com o aviso, o registro de atividades guarda a emissão e o PDF sai ao abrir', async () => {
+    const k = await calibracaoPronta()
+    // A folha de campo reserva o nº (o registro de atividades diz de qual folha)
+    const folha = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
+    expect(folha.statusCode, folha.body).toBe(200)
+    const ano = new Date().getFullYear()
+    const numero = `CC-${ano}-00001`
+    // A gravação falha (disco cheio, antivírus travando o arquivo): uma pasta no lugar do arquivo temporário
+    const parcial = join(t.pasta, 'certificados', String(ano), `Certificado-${numero}.pdf.parcial`)
+    mkdirSync(parcial, { recursive: true })
+    const atual = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().calibracao as Calibracao
+    const r = await emitir(atual)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json()).toMatchObject({
+      calibracao: { status: 'EMITIDO', numero },
+      aviso: 'O certificado foi emitido, mas o PDF não pôde ser gravado agora. Ele é gerado de novo ao abrir.',
+    })
+    expect(t.ctx.repo.obterCalibracao(k.id)!.emissao!.hashPdf).toBe('')
+    const emissoes = t.ctx.db.prepare("SELECT alvo, detalhe FROM auditoria WHERE acao = 'CERTIFICADO_EMITIDO'").all() as Array<{
+      alvo: string
+      detalhe: string
+    }>
+    expect(emissoes).toEqual([
+      {
+        alvo: k.id,
+        detalhe: `POST /api/calibracoes/:id/emitir | ${numero}, reservado na folha de campo ${folha.headers['x-folha-campo']}; o PDF não foi gravado na emissão (é gerado ao abrir)`,
+      },
+    ])
+    // Tentar de novo não emite outra vez
+    expect((await emitir(atual)).statusCode).toBe(409)
+    // Resolvida a causa, o PDF é gerado e gravado ao abrir, com o hash registrado
+    rmSync(parcial, { recursive: true })
+    const pdf = await t.chamar('GET', `/api/calibracoes/${k.id}/pdf`, { cookie: t.cookieAdmin })
+    expect(pdf.statusCode).toBe(200)
+    const hash = t.ctx.repo.obterCalibracao(k.id)!.emissao!.hashPdf
+    expect(hash).toBe(createHash('sha256').update(pdf.rawPayload).digest('hex'))
+    expect(existsSync(join(t.pasta, 'certificados', String(ano), `Certificado-${numero}.pdf`))).toBe(true)
+  })
+
   it('numera, congela os dados, guarda o PDF e não deixa mais alterar', async () => {
     const k = await calibracaoPronta()
     const r = await emitir(k)
     expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().aviso).toBeUndefined()
     const emitida: Calibracao = r.json().calibracao
+    // Uma linha só no registro de atividades
+    expect(t.ctx.db.prepare("SELECT alvo FROM auditoria WHERE acao = 'CERTIFICADO_EMITIDO'").all()).toEqual([{ alvo: k.id }])
     const ano = new Date().getFullYear()
     expect(emitida.status).toBe('EMITIDO')
     expect(emitida.numero).toBe(`CC-${ano}-00001`)
@@ -250,6 +302,117 @@ describe('emissão do certificado', () => {
     const r = await emitir(k)
     expect(r.statusCode).toBe(409)
     expect(r.json().erro).toMatch(/outra pessoa/)
+  })
+
+  describe('com revisor obrigatório, trocar o técnico não contorna a regra', () => {
+    async function exigirRevisor(ligado = true) {
+      const config = (await t.chamar('GET', '/api/config', { cookie: t.cookieAdmin })).json().config
+      const r = await t.chamar('PUT', '/api/config', { cookie: t.cookieAdmin, payload: { ...config, exigirRevisor: ligado } })
+      expect(r.statusCode).toBe(200)
+    }
+    async function tornarSignatario(id: string) {
+      const r = await t.chamar('PUT', `/api/usuarios/${id}`, { cookie: t.cookieAdmin, payload: { signatario: true } })
+      expect(r.statusCode, r.body).toBe(200)
+    }
+    /** Um terceiro usuário, signatário: o revisor. */
+    async function revisor(): Promise<{ id: string; cookie: string }> {
+      const senha = 'tucano-roxo-cantando'
+      const { usuario } = await t.usuarios.definirSenhaLocal({ login: 'revisor', nome: 'Revisor Teste', senha })
+      await tornarSignatario(usuario.id)
+      return { id: usuario.id, cookie: await t.cookieDe('revisor', senha) }
+    }
+    async function salvar(k: Calibracao, cookie: string, mudar: Partial<CalibracaoInput> & Record<string, unknown>) {
+      const r = await t.chamar('PUT', `/api/calibracoes/${k.id}`, { cookie, payload: { ...k, ...mudar, versao: k.versao } })
+      expect(r.statusCode, r.body).toBe(200)
+      return r.json().calibracao as Calibracao
+    }
+    const registros = (alvo: string) =>
+      (
+        t.ctx.db.prepare("SELECT detalhe FROM auditoria WHERE acao = 'ALTERACAO' AND alvo = ? ORDER BY id").all(alvo) as Array<{
+          detalhe: string
+        }>
+      ).map((r) => r.detalhe)
+
+    it('o signatário que executou troca o técnico para um colega e mesmo assim não emite; outro signatário emite', async () => {
+      await exigirRevisor()
+      await tornarSignatario(t.comumId)
+      const k = await calibracaoPronta(t.cookieComum)
+      expect(k).toMatchObject({ tecnicoId: t.comumId, tecnicoDefinidoPorId: t.comumId })
+      expect((await emitir(k, t.cookieComum)).statusCode).toBe(409)
+
+      const trocado = await salvar(k, t.cookieComum, { tecnicoId: t.adminId })
+      expect(trocado).toMatchObject({ tecnicoId: t.adminId, tecnicoDefinidoPorId: t.comumId })
+      const negado = await emitir(trocado, t.cookieComum)
+      expect(negado.statusCode).toBe(409)
+      expect(negado.json().erro).toBe(
+        'A empresa exige que outra pessoa revise e autorize: quem indicou o técnico desta calibração não pode emitir o certificado.',
+      )
+      // O registro de atividades diz a troca
+      expect(registros(k.id)).toContain('PUT /api/calibracoes/:id | técnico: Comum Teste → Admin Teste')
+      // O técnico indicado (admin) também não emite: é o dele
+      expect((await emitir(trocado, t.cookieAdmin)).json().erro).toMatch(/técnico que executou/)
+
+      const r = await revisor()
+      const ok = await emitir(trocado, r.cookie)
+      expect(ok.statusCode, ok.body).toBe(200)
+      expect(ok.json().calibracao.emissao).toMatchObject({ tecnico: { id: t.adminId }, signatario: { id: r.id } })
+    })
+
+    it('o revisor que só corrige a digitação emite; o técnico indicado que grava a própria calibração confirma', async () => {
+      await exigirRevisor()
+      // O técnico (sem ser signatário) digita a folha; o signatário confere, corrige uma observação e emite
+      const k = await calibracaoPronta(t.cookieComum)
+      const corrigido = await salvar(k, t.cookieAdmin, { observacoes: 'Balança conferida no local de uso.' })
+      expect(corrigido.tecnicoDefinidoPorId).toBe(t.comumId)
+      expect(registros(k.id).filter((d) => d.includes('técnico:'))).toEqual([])
+      const ok = await emitir(corrigido, t.cookieAdmin)
+      expect(ok.statusCode, ok.body).toBe(200)
+
+      // O admin digita a calibração do colega e indica o técnico: não emite. O técnico indicado grava a calibração
+      // (confere os dados): a indicação passa a ser dele, e o admin emite
+      await tornarSignatario(t.comumId)
+      const outra = await calibracaoPronta(t.cookieAdmin)
+      const doColega = await salvar(outra, t.cookieAdmin, { tecnicoId: t.comumId })
+      expect(doColega.tecnicoDefinidoPorId).toBe(t.adminId)
+      expect((await emitir(doColega, t.cookieAdmin)).json().erro).toMatch(/quem indicou o técnico/)
+      const conferido = await salvar(doColega, t.cookieComum, { observacoes: 'Conferido pelo técnico.' })
+      expect(conferido.tecnicoDefinidoPorId).toBe(t.comumId)
+      expect((await emitir(conferido, t.cookieAdmin)).statusCode).toBe(200)
+    })
+
+    it('quem indicou o técnico vem só do servidor: o enviado pela tela é ignorado', async () => {
+      const criado = await t.chamar('POST', '/api/calibracoes', {
+        cookie: t.cookieComum,
+        payload: { clienteId: cliente.id, balancaId: balanca.id, tecnicoDefinidoPorId: t.adminId },
+      })
+      const k: Calibracao = criado.json().calibracao
+      expect(k.tecnicoDefinidoPorId).toBe(t.comumId)
+      const salvo = await salvar(k, t.cookieAdmin, { tecnicoDefinidoPorId: 'outro' })
+      expect(salvo.tecnicoDefinidoPorId).toBe(t.comumId)
+      expect(t.ctx.repo.obterCalibracao(k.id)!.tecnicoDefinidoPorId).toBe(t.comumId)
+    })
+
+    it('a revisão do certificado mantém quem indicou o técnico: o signatário que revisa emite', async () => {
+      await exigirRevisor()
+      const emitida: Calibracao = (await emitir(await calibracaoPronta(t.cookieComum))).json().calibracao
+      const { calibracao: rev } = (await criar(`/api/calibracoes/${emitida.id}/revisar`, {
+        motivo: 'Correção da identificação da balança',
+      })) as { calibracao: Calibracao }
+      expect(rev).toMatchObject({ tecnicoId: t.comumId, tecnicoDefinidoPorId: t.comumId })
+      const r = await emitir(rev)
+      expect(r.statusCode, r.body).toBe(200)
+      // Calibrar de novo: o técnico é quem pediu
+      const nova = await criar(`/api/calibracoes/${emitida.id}/recalibrar`, {}, t.cookieComum)
+      expect(nova.calibracao).toMatchObject({ tecnicoId: t.comumId, tecnicoDefinidoPorId: t.comumId })
+    })
+
+    it('desligado, nada muda: quem troca o técnico emite (e a troca fica no registro)', async () => {
+      await exigirRevisor(false)
+      const k = await calibracaoPronta(t.cookieAdmin)
+      const trocado = await salvar(k, t.cookieAdmin, { tecnicoId: t.comumId })
+      expect(registros(k.id)).toContain('PUT /api/calibracoes/:id | técnico: Admin Teste → Comum Teste')
+      expect((await emitir(trocado, t.cookieAdmin)).statusCode).toBe(200)
+    })
   })
 
   it('padrão vencido na data da calibração bloqueia a emissão', async () => {
@@ -420,20 +583,152 @@ describe('PDF do certificado emitido: o arquivo guardado é o documento (o hash 
     expect(hashNoBanco(k)).toBe(k.emissao!.hashPdf)
   })
 
-  it('cancelado ou substituído: refeito com a marca d’água, sem mexer no arquivo nem no hash da emissão', async () => {
-    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
-    const original = readFileSync(caminhoDo(k))
+  const cancelar = async (k: Calibracao) => {
     const ok = await t.chamar('POST', `/api/calibracoes/${k.id}/cancelar`, {
       cookie: t.cookieAdmin,
       payload: { motivo: 'Emitido por engano', versao: k.versao },
     })
-    expect(ok.statusCode).toBe(200)
+    expect(ok.statusCode, ok.body).toBe(200)
+    return ok.json().calibracao as Calibracao
+  }
+
+  /**
+   * O motor mudou depois da emissão (uma atualização do programa): o certificado entregue tem a descida (colunas
+   * "Indicação ↓" e "Erro ↓"), e o cálculo de hoje, com os mesmos dados, deixa só a subida (como a coluna escondida
+   * pelo método, que passou a ficar de fora). O PDF refeito agora sai outro documento.
+   */
+  async function motorMudou(k: Calibracao) {
+    const atual = t.ctx.repo.obterCalibracao(k.id)!
+    const dados = { ...atual, indicacao: { ...atual.indicacao, metodo: 'CONTINUO' } }
+    t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(dados), k.id)
+    const refeito = await gerarPdf(t.ctx.repo.obterCalibracao(k.id)!, k.emissao!, '')
+    expect(sha(refeito)).not.toBe(k.emissao!.hashPdf)
+    if (temPdftotext) expect(textoDoPdf(refeito)).not.toContain('Erro ↓')
+  }
+
+  /** A cópia parte do PDF entregue: os bytes dele, intactos, no começo, e a marca d'água acrescentada depois. */
+  function confereCopiaDoEntregue(copia: Buffer, entregue: Buffer, marca: string) {
+    expect(sha(entregue)).not.toBe(sha(copia))
+    expect(copia.length).toBeGreaterThan(entregue.length)
+    expect(sha(copia.subarray(0, entregue.length))).toBe(sha(entregue))
+    // A marca desenhada no que foi acrescentado (o pdftotext não lê o texto inclinado)
+    expect(copia.subarray(entregue.length).toString('latin1')).toContain(`(${textoPdf(marca)}) Tj`)
+    if (!temPdftotext) return
+    const texto = textoDoPdf(copia)
+    // Os números do certificado entregue (a descida que o cálculo de hoje deixaria de fora)
+    const doEntregue = textoDoPdf(entregue)
+    expect(doEntregue).toContain('Erro ↓')
+    for (const trecho of ['Erro ↓', 'Indicação ↓', '+0,010']) expect(contar(texto, trecho)).toBe(contar(doEntregue, trecho))
+  }
+
+  it('cancelado: a cópia é o PDF entregue com a marca d’água, mesmo se o cálculo de hoje sair outro', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const entregue = readFileSync(caminhoDo(k))
+    const cancelado = await cancelar(k)
+    await motorMudou(k)
+    const r = await baixar(k)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.headers['content-type']).toBe('application/pdf')
+    confereCopiaDoEntregue(r.rawPayload, entregue, 'CANCELADO')
+    // O anexo do certificado (e-mail) é a mesma cópia
+    const { anexos } = await anexosDoCertificado(t.ctx, t.ctx.repo.obterCalibracao(cancelado.id)!)
+    expect(anexos[0].id).toBe('certificado')
+    expect(anexos[0].ler().equals(r.rawPayload)).toBe(true)
+    expect(anexos[0].tamanho).toBe(r.rawPayload.length)
+    // O arquivo guardado e o hash da emissão ficam como estão
+    expect(readFileSync(caminhoDo(k)).equals(entregue)).toBe(true)
+    expect(hashNoBanco(k)).toBe(k.emissao!.hashPdf)
+  })
+
+  it('substituído: a cópia do revisado é o PDF entregue dele com a marca d’água, não um PDF refeito', async () => {
+    const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const entregue = readFileSync(caminhoDo(original))
+    const { calibracao: rev } = (await criar(`/api/calibracoes/${original.id}/revisar`, {
+      motivo: 'Erro de indicação da descida',
+    })) as { calibracao: Calibracao }
+    const r1 = await emitir(rev)
+    expect(r1.statusCode, r1.body).toBe(200)
+    expect(t.ctx.repo.obterCalibracao(original.id)!.status).toBe('SUBSTITUIDO')
+    await motorMudou(original)
+    const r = await baixar(original)
+    expect(r.statusCode, r.body).toBe(200)
+    confereCopiaDoEntregue(r.rawPayload, entregue, 'SUBSTITUÍDO')
+    expect(readFileSync(caminhoDo(original)).equals(entregue)).toBe(true)
+    expect(hashNoBanco(original)).toBe(original.emissao!.hashPdf)
+  })
+
+  it('cancelado com o arquivo sumido e o PDF refeito idêntico: o original volta para a pasta e a cópia sai com a marca', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const entregue = readFileSync(caminhoDo(k))
+    await cancelar(k)
     unlinkSync(caminhoDo(k))
     const r = await baixar(k)
-    expect(r.statusCode).toBe(200)
-    expect(sha(r.rawPayload)).not.toBe(sha(original))
+    expect(r.statusCode, r.body).toBe(200)
+    expect(sha(r.rawPayload.subarray(0, entregue.length))).toBe(k.emissao!.hashPdf)
+    expect(r.rawPayload.subarray(entregue.length).toString('latin1')).toContain('(CANCELADO) Tj')
+    expect(readFileSync(caminhoDo(k)).equals(entregue)).toBe(true)
+    expect(hashNoBanco(k)).toBe(k.emissao!.hashPdf)
+  })
+
+  it('cancelado com o arquivo sumido e o PDF refeito outro: 409, sem cópia com outros números', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    await cancelar(k)
+    await motorMudou(k)
+    unlinkSync(caminhoDo(k))
+    const r = await baixar(k)
+    expect(r.statusCode).toBe(409)
+    expect(r.json().erro).toBe(
+      `O PDF do certificado ${k.numero} não está na pasta de dados (certificados/${k.emissao!.arquivo}). Volte essa pasta da cópia de segurança externa: um PDF refeito agora não seria o mesmo documento.`,
+    )
     expect(existsSync(caminhoDo(k))).toBe(false)
     expect(hashNoBanco(k)).toBe(k.emissao!.hashPdf)
+  })
+
+  it('cancelado com o arquivo alterado: 409, e o arquivo e o hash ficam como estão', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    await cancelar(k)
+    const alterado = readFileSync(caminhoDo(k))
+    alterado[alterado.length - 20] ^= 0x01
+    writeFileSync(caminhoDo(k), alterado)
+    const r = await baixar(k)
+    expect(r.statusCode).toBe(409)
+    expect(r.json().erro).toBe(
+      `O PDF do certificado ${k.numero} (certificados/${k.emissao!.arquivo}) foi alterado depois da emissão. Volte o original da cópia de segurança externa.`,
+    )
+    expect(readFileSync(caminhoDo(k)).equals(alterado)).toBe(true)
+  })
+
+  it('cancelado com um PDF guardado que não recebe a marca (outro formato): 409, nunca a cópia sem a marca', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    await cancelar(k)
+    // Um PDF de outro programa no lugar, registrado como o emitido (o hash confere)
+    const outro = Buffer.from('%PDF-1.7\n% outro gerador\n1 0 obj\n<<>>\nendobj\n%%EOF\n', 'latin1')
+    writeFileSync(caminhoDo(k), outro)
+    const atual = t.ctx.repo.obterCalibracao(k.id)!
+    const dados = { ...atual, emissao: { ...atual.emissao!, hashPdf: sha(outro) } }
+    t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(dados), k.id)
+    const r = await baixar(k)
+    expect(r.statusCode).toBe(409)
+    expect(r.json().erro).toMatch(
+      new RegExp(`^Não foi possível pôr a marca d'água "CANCELADO" no PDF do certificado ${k.numero} \\(certificados/`),
+    )
+    expect(readFileSync(caminhoDo(k)).equals(outro)).toBe(true)
+  })
+
+  it('cancelado sem o PDF registrado (o servidor caiu antes da gravação): sem documento entregue, sai o refeito com a marca', async () => {
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    await cancelar(k)
+    unlinkSync(caminhoDo(k))
+    const atual = t.ctx.repo.obterCalibracao(k.id)!
+    const dados = { ...atual, emissao: { ...atual.emissao!, hashPdf: '', arquivo: '' } }
+    t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(dados), k.id)
+    const r = await baixar(k)
+    expect(r.statusCode, r.body).toBe(200)
+    const k2 = t.ctx.repo.obterCalibracao(k.id)!
+    expect(r.rawPayload.equals(await gerarPdf(k2, k2.emissao!, 'CANCELADO'))).toBe(true)
+    // Nada é gravado nem registrado: o cancelado não ganha um "emitido" novo
+    expect(existsSync(caminhoDo(k))).toBe(false)
+    expect(t.ctx.repo.obterCalibracao(k.id)!.emissao).toMatchObject({ hashPdf: '', arquivo: '' })
   })
 })
 
@@ -560,6 +855,71 @@ describe('revisão e cancelamento', () => {
       payload: { para: 'a@b.com' },
     })
     expect(email.statusCode).toBe(409)
+  })
+
+  it('com a revisão em andamento, o certificado não é cancelado (emita ou exclua a revisão antes)', async () => {
+    const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const { calibracao: rev } = (await criar(`/api/calibracoes/${original.id}/revisar`, {
+      motivo: 'Correção do endereço do cliente',
+    })) as { calibracao: Calibracao }
+    const recusado = await t.chamar('POST', `/api/calibracoes/${original.id}/cancelar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Emitido por engano', versao: original.versao },
+    })
+    expect(recusado.statusCode).toBe(409)
+    expect(recusado.json().erro).toBe(MSG_CANCELAR_COM_REVISAO)
+    const depois = (await t.chamar('GET', `/api/calibracoes/${original.id}`, { cookie: t.cookieAdmin })).json()
+    expect(depois.calibracao).toMatchObject({ status: 'EMITIDO', versao: original.versao, cancelamento: null })
+    // A revisão continua pronta para emitir, com o nº do certificado revisado
+    const revisao = (await t.chamar('GET', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).json()
+    expect(revisao.pendencias).toEqual([])
+    expect(revisao.numeroRevisao).toBe(`${original.numero}-R1`)
+
+    // Sem a revisão, o cancelamento passa
+    expect((await t.chamar('DELETE', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).statusCode).toBe(204)
+    const ok = await t.chamar('POST', `/api/calibracoes/${original.id}/cancelar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Emitido por engano', versao: original.versao },
+    })
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json().calibracao.status).toBe('CANCELADO')
+  })
+
+  it('revisão de um certificado cancelado antes da trava (dado antigo): pendência, sem nº e sem emissão', async () => {
+    const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const { calibracao: rev } = (await criar(`/api/calibracoes/${original.id}/revisar`, {
+      motivo: 'Correção do endereço do cliente',
+    })) as { calibracao: Calibracao }
+    // Cancelado por fora (como acontecia antes da trava do cancelamento)
+    const cancelado = {
+      ...original,
+      status: 'CANCELADO',
+      cancelamento: { motivo: 'Emitido por engano', por: 'Admin Teste', em: '2026-11-04T10:00:00.000Z' },
+    }
+    t.ctx.db
+      .prepare("UPDATE calibracoes SET status = 'CANCELADO', dados = ? WHERE id = ?")
+      .run(JSON.stringify(cancelado), original.id)
+
+    const PENDENCIA = PENDENCIA_REVISADO_CANCELADO
+    const revisao = (await t.chamar('GET', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).json()
+    expect(revisao.pendencias).toContain(PENDENCIA)
+    // A tela não mostra o nº do certificado revisado (ele não sai)
+    expect(revisao.numeroRevisao).toBeNull()
+    // Gravar continua (para não perder o que foi digitado), com a pendência
+    const salvar = await t.chamar('PUT', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin, payload: revisao.calibracao })
+    expect(salvar.statusCode, salvar.body).toBe(200)
+    expect(salvar.json().pendencias).toContain(PENDENCIA)
+    // Nem vai para revisão de um signatário, nem é emitida
+    const situacao = await t.chamar('POST', `/api/calibracoes/${rev.id}/situacao`, {
+      cookie: t.cookieAdmin,
+      payload: { status: 'REVISAO' },
+    })
+    expect(situacao.statusCode).toBe(409)
+    const emissao = await emitir(salvar.json().calibracao)
+    expect(emissao.statusCode).toBe(409)
+    expect(emissao.json().erro).toBe(PENDENCIA)
+    // Excluir a revisão é a saída
+    expect((await t.chamar('DELETE', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).statusCode).toBe(204)
   })
 
   it('calibrar de novo aproveita pontos e padrões, sem as leituras', async () => {
@@ -713,6 +1073,103 @@ describe('troca do cliente dono da balança', () => {
       expect(salvar.json().pendencias).toEqual([])
     })
   }
+
+  const moverBalanca = async (para: Cliente, extra: Partial<Balanca> = {}) => {
+    const atual: Balanca = (await t.chamar('GET', `/api/balancas/${balanca.id}`, { cookie: t.cookieAdmin })).json().balanca
+    const r = await t.chamar('PUT', `/api/balancas/${balanca.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...atual, clienteId: para.id, ...extra, versao: atual.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+  }
+
+  it('o certificado emitido antes da troca continua corrigível: a revisão é do cliente do certificado revisado', async () => {
+    const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const novo = await outroCliente()
+    await moverBalanca(novo)
+
+    const r = await t.chamar('POST', `/api/calibracoes/${original.id}/revisar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Correção da ordem de serviço' },
+    })
+    expect(r.statusCode, r.body).toBe(201)
+    const rev: Calibracao = r.json().calibracao
+    expect(rev).toMatchObject({ clienteId: cliente.id, balancaId: balanca.id, substituiId: original.id })
+    expect(rev.localEndereco).toContain('Rio Claro')
+    // Gravar a revisão continua valendo, sem pendência
+    const salvar = await t.chamar('PUT', `/api/calibracoes/${rev.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...rev, ordemServico: 'OS 4472' },
+    })
+    expect(salvar.statusCode, salvar.body).toBe(200)
+    expect(salvar.json().pendencias).toEqual([])
+    // Sai em nome do cliente do certificado revisado, com o nº dele e -R1
+    const emitida = await emitir(salvar.json().calibracao)
+    expect(emitida.statusCode, emitida.body).toBe(200)
+    const nova: Calibracao = emitida.json().calibracao
+    expect(nova.numero).toBe(`${original.numero}-R1`)
+    expect(nova.clienteId).toBe(cliente.id)
+    expect(nova.emissao?.cliente).toMatchObject({ id: cliente.id, nome: 'Mercado Bom Preço' })
+    // Calibrar de novo segue o dono de hoje
+    const { calibracao: denovo } = (await criar(`/api/calibracoes/${nova.id}/recalibrar`, {})) as { calibracao: Calibracao }
+    expect(denovo.clienteId).toBe(novo.id)
+  })
+
+  for (const comUnidade of [false, true]) {
+    it(`a revisão aberta antes da troca continua do cliente do certificado revisado${comUnidade ? ' (a unidade acompanha)' : ''}`, async () => {
+      const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+      const { calibracao: rev } = (await criar(`/api/calibracoes/${original.id}/revisar`, {
+        motivo: 'Correção da ordem de serviço',
+      })) as { calibracao: Calibracao }
+      const rascunho = await calibracaoPronta()
+      const novo = await outroCliente()
+      await moverBalanca(novo, comUnidade ? { unidade: 'g', faixas: [{ max: 30000, e: 10, d: 10 }] } : {})
+
+      // O rascunho comum passa para o novo dono; a revisão, não
+      expect(await abertasDe(novo)).toEqual([rascunho.id])
+      expect(await abertasDe(cliente)).toEqual([rev.id])
+      const k: Calibracao = (await t.chamar('GET', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).json().calibracao
+      expect(k.clienteId).toBe(cliente.id)
+      expect(k.localEndereco).toBe(rev.localEndereco)
+      // Só a troca da unidade mexe nela (e então a versão sobe)
+      expect(k.versao).toBe(comUnidade ? rev.versao + 1 : rev.versao)
+      expect(k.repetibilidade[0].carga).toBe(comUnidade ? 15000 : 15)
+      const emitida = await emitir(k)
+      expect(emitida.statusCode, emitida.body).toBe(200)
+      expect(emitida.json().calibracao.emissao.cliente).toMatchObject({ id: cliente.id, nome: 'Mercado Bom Preço' })
+    })
+  }
+
+  it('a revisão não troca de cliente nem de balança', async () => {
+    const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const { calibracao: rev } = (await criar(`/api/calibracoes/${original.id}/revisar`, {
+      motivo: 'Correção da ordem de serviço',
+    })) as { calibracao: Calibracao }
+    const novo = await outroCliente()
+    const outra: Balanca = (
+      await criar('/api/balancas', {
+        ...BALANCA_VAZIA,
+        clienteId: novo.id,
+        fabricante: 'Filizola',
+        modelo: 'BP-15',
+        numeroSerie: 'FZ-77',
+        faixas: [{ max: 30, e: 0.01, d: 0.01 }],
+      })
+    ).balanca
+    for (const troca of [{ clienteId: novo.id, balancaId: outra.id }, { clienteId: novo.id }]) {
+      const r = await t.chamar('PUT', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin, payload: { ...rev, ...troca } })
+      expect(r.statusCode, r.body).toBe(400)
+      expect(r.json().erro).toBe('A revisão é do mesmo cliente e da mesma balança do certificado revisado.')
+    }
+    // A balança movida para outro cliente também não vale para o rascunho comum
+    const { calibracao: comum } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
+    const r = await t.chamar('PUT', `/api/calibracoes/${comum.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...comum, balancaId: outra.id },
+    })
+    expect(r.statusCode).toBe(400)
+    expect(r.json().erro).toBe('A balança escolhida é de outro cliente.')
+  })
 })
 
 describe('listas e painel', () => {
@@ -916,7 +1373,18 @@ describe('balança classe I: o rascunho novo', () => {
         aclimatacao: null,
       },
       repetibilidade: [{ id: 'r', carga: 200, leituras: Array.from({ length: 10 }, (_, i) => (i % 2 ? 200.0003 : 200.0002)) }],
-      excentricidade: { aplicavel: false, motivo: 'Teste', carga: 0, metodo: 3, posicoes: [] },
+      // Método 3 (zera antes de cada posição), com uma peça de 100 g (POP 7.10)
+      excentricidade: {
+        aplicavel: true,
+        motivo: '',
+        carga: 100,
+        metodo: 3,
+        posicoes: ['Centro', 'Frente (0°)', 'Direita (90°)', 'Trás (180°)', 'Esquerda (270°)'].map((rotulo) => ({
+          rotulo,
+          leitura: 100.0001,
+          referencia: 0,
+        })),
+      },
       comoEncontrado: ensaio(true),
       indicacao: ensaio(false),
     }
@@ -1128,6 +1596,21 @@ describe('peças dos pontos e a carga digitada (bloqueiam a emissão)', () => {
     expect(pendencias.filter((p) => p.includes('não está entre os padrões escolhidos'))).toHaveLength(4)
     const r = await emitir(calibracao)
     expect(r.statusCode).toBe(409)
+  })
+
+  it('pesos tirados à mão do ponto (nenhum peso padrão): pendência e a emissão recusada', async () => {
+    const k = await calibracaoPronta()
+    const { calibracao, pendencias } = await salvar(k, (x) => ({
+      versao: x.versao,
+      indicacao: {
+        ...x.indicacao,
+        pontos: x.indicacao.pontos.map((p) => (p.id === 'b' ? { ...p, pecas: [], pecasManuais: true } : p)),
+      },
+    }))
+    expect(pendencias).toEqual([
+      'Erro de indicação, ponto de 10,00 kg: nenhum peso padrão no ponto; escolha os pesos do ponto ou, nos padrões, um jogo que faça essa carga.',
+    ])
+    expect((await emitir(calibracao)).statusCode).toBe(409)
   })
 
   it('peça tirada do cadastro do jogo: o rascunho com ela fica com pendência', async () => {

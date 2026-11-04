@@ -17,6 +17,7 @@ import { forwardRef, useId, useMemo, useRef, useState, type FormEvent, type Inpu
 import { GRAMAS } from '#shared/calibracao.ts'
 import {
   avisosBalanca,
+  balancaIdentificada,
   capacidadeTexto,
   converterMassa,
   divisaoLegivel,
@@ -555,7 +556,15 @@ function FormularioBalanca({
             label="Identificação no cliente"
             htmlFor={`${ids}-tag`}
             className="sm:col-span-2"
-            hint="TAG, patrimônio ou código interno."
+            hint={
+              balancaIdentificada(f) ? (
+                'TAG, patrimônio ou código interno.'
+              ) : (
+                <span className="text-warning">
+                  Sem nº de série: informe a TAG (o certificado identifica a balança; POP 7.3).
+                </span>
+              )
+            }
           >
             <Input
               id={`${ids}-tag`}
@@ -569,6 +578,7 @@ function FormularioBalanca({
           <Field label="Local de instalação" htmlFor={`${ids}-local`} className="sm:col-span-2" hint="Setor, linha ou filial.">
             <Input
               id={`${ids}-local`}
+              maxLength={LIMITES.localInstalacao}
               value={f.localInstalacao}
               onChange={(e) => set('localInstalacao', e.target.value)}
               placeholder="Ex.: Expedição"
@@ -830,6 +840,7 @@ function FormularioBalanca({
             >
               <Input
                 id={`${ids}-pam`}
+                maxLength={LIMITES.portariaAprovacao}
                 value={f.portariaAprovacao}
                 onChange={(e) => set('portariaAprovacao', e.target.value)}
                 placeholder="Portaria Inmetro/Dimel nº …"

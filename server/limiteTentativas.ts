@@ -6,6 +6,9 @@
 //   ip:<ip>            20 falhas em 15 min → 15 min sem entrar a partir desse IP; não zera no acerto
 //   login:<login>      50 falhas em 1 h, de qualquer IP → 15 min sem entrar; não vale para o próprio servidor
 //   senha:<usuarioId>  senha atual errada na troca da própria senha: mesma regra do par
+//
+// A tentativa conta desde a chegada (`reservar`, antes do scrypt), não só quando a senha dá errado: sem isso,
+// uma rajada de pedidos simultâneos passava inteira pela conferência antes de a 1ª falha ser contada.
 
 const SEGUNDO = 1000
 const MINUTO = 60 * SEGUNDO
@@ -57,6 +60,8 @@ interface Registro {
 
 export class LimiteTentativas {
   private registros = new Map<string, Registro>()
+  /** Tentativas em andamento (senha ainda sendo conferida), por chave. */
+  private emAndamento = new Map<string, number>()
   private agora: () => number
 
   constructor(agora: () => number = Date.now) {
@@ -81,18 +86,39 @@ export class LimiteTentativas {
     let maior = 0
     let tipoMaior: Tipo = 'par'
     for (const [chave, tipo] of this.chaves(chaves)) {
-      const r = this.vigente(chave, agora)
-      if (!r) continue
-      if (desbloqueadoEm !== undefined && DESTRAVA_COM_SENHA_NOVA.has(tipo) && desbloqueadoEm > r.inicio) {
+      let r = this.vigente(chave, agora)
+      if (r && desbloqueadoEm !== undefined && DESTRAVA_COM_SENHA_NOVA.has(tipo) && desbloqueadoEm > r.inicio) {
         this.registros.delete(chave)
-        continue
+        r = undefined
       }
-      if (r.bloqueadoAte - agora > maior) {
-        maior = r.bloqueadoAte - agora
+      const ms = Math.max(r ? r.bloqueadoAte - agora : 0, this.esperaSeAsEmAndamentoFalharem(chave, tipo, r, agora))
+      if (ms > maior) {
+        maior = ms
         tipoMaior = tipo
       }
     }
     return maior > 0 ? { segundos: Math.ceil(maior / SEGUNDO), tipo: tipoMaior } : null
+  }
+
+  /**
+   * Conta a tentativa que vai conferir a senha agora (chamar logo depois de `bloqueio` dar `null`, antes do
+   * scrypt). Enquanto ela não termina, ocupa uma vaga: as em andamento somam com as falhas, e o pedido que
+   * passaria do limite se todas elas errassem recebe a espera na hora. Devolve a função que libera a vaga
+   * (chamar quando a conferência termina, antes de `falhou` ou `acertou`; chamar de novo não faz nada).
+   */
+  reservar(chaves: ChavesTentativa): () => void {
+    const lista = this.chaves(chaves).map(([chave]) => chave)
+    for (const chave of lista) this.emAndamento.set(chave, (this.emAndamento.get(chave) ?? 0) + 1)
+    let liberada = false
+    return () => {
+      if (liberada) return
+      liberada = true
+      for (const chave of lista) {
+        const n = (this.emAndamento.get(chave) ?? 0) - 1
+        if (n > 0) this.emAndamento.set(chave, n)
+        else this.emAndamento.delete(chave)
+      }
+    }
   }
 
   /** Registra uma falha. `bloqueouAgora`: um bloqueio começou com esta falha (para registrar uma vez só). */
@@ -147,6 +173,29 @@ export class LimiteTentativas {
   /** Quantos registros estão em memória (para os testes). */
   get tamanho() {
     return this.registros.size
+  }
+
+  /** Quantas chaves têm tentativas em andamento (para os testes). */
+  get reservas() {
+    return this.emAndamento.size
+  }
+
+  /**
+   * Espera (ms) para quem chega com a chave já cheia de tentativas em andamento: a que valeria se todas elas
+   * errassem; 0 se ainda há vaga. Vagas: as falhas que faltam para o bloqueio; depois de um bloqueio que já
+   * acabou, uma por vez (como em série, a próxima falha já bloqueia de novo).
+   */
+  private esperaSeAsEmAndamentoFalharem(chave: string, tipo: Tipo, r: Registro | undefined, agora: number): number {
+    const andamento = this.emAndamento.get(chave) ?? 0
+    if (!andamento) return 0
+    const regra = REGRAS_TENTATIVAS[tipo]
+    if (regra.modo === 'seguidas') {
+      const falhas = r?.falhas ?? 0
+      if (andamento < Math.max(regra.livres - falhas, 1)) return 0
+      return Math.min(regra.esperaInicialMs * 2 ** Math.max(falhas + andamento - regra.livres, 0), regra.esperaMaximaMs)
+    }
+    const falhas = r ? r.horarios.filter((t) => agora - t < regra.janelaMs).length : 0
+    return andamento < Math.max(regra.falhas - falhas, 1) ? 0 : regra.bloqueioMs
   }
 
   /** O registro, se ainda conta; um vencido é apagado. */

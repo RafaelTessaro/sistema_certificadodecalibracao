@@ -171,16 +171,30 @@ export function ondeFaltaRepetibilidade(
 }
 
 /**
+ * As faixas (ou intervalos) que o erro de indicação alcançou: a da maior carga lida e as de baixo (POP 7.1: na
+ * calibração parcial acordada, as de cima não foram calibradas). Sem a maior carga (ou 0: o planejamento, antes das
+ * leituras), todas. Em ordem crescente de Max.
+ */
+export function faixasAlcancadas(instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'>, maiorCarga = 0): Faixa[] {
+  const faixas = faixasOrdenadas(instrumento.faixas)
+  if (!(maiorCarga > 0) || instrumento.tipoFaixas === 'UNICA' || faixas.length < 2) return faixas
+  const ate = faixas.findIndex((f) => Math.abs(maiorCarga) <= f.max * (1 + TOL))
+  return ate < 0 ? faixas : faixas.slice(0, ate + 1)
+}
+
+/**
  * Multi-intervalo e múltiplas faixas: os intervalos (ou faixas) de d diferente sem ensaio de repetibilidade
  * entre as `cargas` (POP 7.9: um ensaio em cada). A carga é do intervalo que a comporta (o menor); um d
- * repetido em mais de um conta uma vez (fica o de maior Max). Faixa única: nenhum.
+ * repetido em mais de um conta uma vez (fica o de maior Max). Faixa única: nenhum. Com a `maiorCargaLida` do erro de
+ * indicação, só os que ele alcançou (`faixasAlcancadas`: a calibração parcial acordada não ensaia os de cima).
  */
 export function faixasSemRepetibilidade(
   instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'>,
   cargas: number[],
+  maiorCargaLida = 0,
 ): Faixa[] {
-  const faixas = faixasOrdenadas(instrumento.faixas)
-  if (instrumento.tipoFaixas === 'UNICA' || faixas.length < 2) return []
+  if (instrumento.tipoFaixas === 'UNICA' || instrumento.faixas.length < 2) return []
+  const faixas = faixasAlcancadas(instrumento, maiorCargaLida)
   const iguais = (a: number, b: number) => Math.abs(a - b) <= TOL * Math.max(Math.abs(a), Math.abs(b))
   const cobertos = cargas.filter((c) => c > 0).map((c) => faixaDoValor(c, instrumento).d)
   return faixas.filter((f, i) => !faixas.slice(i + 1).some((g) => iguais(g.d, f.d)) && !cobertos.some((d) => iguais(d, f.d)))

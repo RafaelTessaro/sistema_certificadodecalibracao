@@ -239,7 +239,17 @@ describe('folha de campo de uma calibração', { timeout: 30_000 }, () => {
       ...k,
       ambiente: { temperaturaInicial: 22, temperaturaFinal: 22.4, umidadeInicial: 50, umidadeFinal: 52, pressao: null },
       repetibilidade: [{ id: 'r1', carga: 10, leituras: [10, 10, 10, 10, 10] }],
-      excentricidade: { aplicavel: false, motivo: 'Prato pequeno', carga: 0, metodo: 1, posicoes: [] },
+      excentricidade: {
+        aplicavel: true,
+        motivo: '',
+        carga: 10,
+        metodo: 1,
+        posicoes: ['Centro', 'Frente esquerda', 'Trás esquerda', 'Trás direita', 'Frente direita'].map((rotulo) => ({
+          rotulo,
+          leitura: 10,
+          referencia: null,
+        })),
+      },
       indicacao: {
         metodo: 'CONTINUO',
         retornoZero: 0,
@@ -455,7 +465,17 @@ async function emitir(k: Calibracao): Promise<Calibracao> {
     ...k,
     ambiente: { temperaturaInicial: 22.1, temperaturaFinal: 22.6, umidadeInicial: 55, umidadeFinal: 57, pressao: null },
     repetibilidade: [{ id: 'r1', carga: 15, leituras: [15, 15, 15.01, 15, 15, 15] }],
-    excentricidade: { aplicavel: false, motivo: 'Prato pequeno', carga: 0, metodo: 1, posicoes: [] },
+    excentricidade: {
+      aplicavel: true,
+      motivo: '',
+      carga: 10,
+      metodo: 1,
+      posicoes: ['Centro', 'Frente esquerda', 'Trás esquerda', 'Trás direita', 'Frente direita'].map((rotulo) => ({
+        rotulo,
+        leitura: 10,
+        referencia: null,
+      })),
+    },
     indicacao: {
       metodo: 'CRESCENTE_DECRESCENTE',
       retornoZero: 0,

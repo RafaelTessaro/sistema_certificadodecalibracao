@@ -48,6 +48,14 @@ const MULTIPLICADORES: Record<Exclude<CriterioEma, 'CLIENTE'>, readonly [number,
 }
 
 /**
+ * Limite de "não pesa corretamente" do POP (7.8): o EMA em serviço da Portaria Inmetro 157/2022 (2.5.3 e 8.9: o dobro
+ * da coluna "Verificação" da Tabela 5), duas divisões de verificação até a 1ª mudança de EMA (500 e na classe III) e
+ * quatro acima dela; o mesmo critério padrão da declaração de conformidade. A balança com erro de indicação acima dele
+ * (ou que não volta ao zero dentro dele) não é calibrada. Sem classe, vale a tolerância do cliente.
+ */
+export const CRITERIO_NAO_PESA_CORRETAMENTE: Exclude<CriterioEma, 'CLIENTE'> = 'PORTARIA_SERVICO'
+
+/**
  * Trechos do EMA de uma classe, em múltiplos de e (para a tabela impressa da folha de campo em branco):
  * [{ ate: 500, multiplo: 2 }, { ate: null, multiplo: 4 }] — `ate` em e (null = acima do anterior); trechos
  * vizinhos com o mesmo múltiplo saem juntos.

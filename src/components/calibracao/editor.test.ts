@@ -13,6 +13,8 @@ import {
   CLIENTE_VAZIO,
   CONFIG_PADRAO,
   PADRAO_VAZIO,
+  PENDENCIA_REVISADO_CANCELADO,
+  PENDENCIA_REVISADO_NAO_EMITIDO,
   PENDENCIA_TECNICO_EXCLUIDO,
   pendenciasEmissao,
 } from '#shared/dominio.ts'
@@ -164,6 +166,50 @@ describe('etapa Padrões e ambiente na lista de etapas', () => {
   })
 })
 
+describe('etapas Excentricidade e Erro de indicação na lista de etapas (POP 7.7 e 7.10)', () => {
+  const naoFeita = (motivo: string): CalibracaoInput => ({
+    ...calibracaoVazia(),
+    excentricidade: { aplicavel: false, motivo, carga: 0, metodo: 1, posicoes: [] },
+  })
+  const balancaDe = (receptor: Balanca['receptor']) => ({ ...BALANCA_VAZIA, receptor }) as Balanca
+
+  it('excentricidade "não realizada": só na balança suspensa (gancho) e com o motivo', () => {
+    const de = (f: CalibracaoInput, receptor: Balanca['receptor']) =>
+      etapaCompleta('excentricidade', { f, calc: null, selecionados: [], balanca: balancaDe(receptor) })
+    expect(de(naoFeita('A carga se centraliza sozinha.'), 'GANCHO')).toBe(true)
+    expect(de(naoFeita(''), 'GANCHO')).toBe(false)
+    expect(de(naoFeita('Prato pequeno'), 'RETANGULAR')).toBe(false)
+    // Registro de antes das regras (revisão de certificado da 1.0.2): como na época
+    expect(de({ ...naoFeita('Prato pequeno'), substituiId: 'orig' }, 'RETANGULAR')).toBe(true)
+  })
+
+  it('erro de indicação: com todos os pontos lidos, falta o retorno ao zero na calibração nova', () => {
+    const lida = (retornoZero: number | null): CalibracaoInput => {
+      const f = calibracaoVazia()
+      return {
+        ...f,
+        indicacao: {
+          ...f.indicacao,
+          retornoZero,
+          pontos: [0, 10].map((carga) => ({
+            id: `p${carga}`,
+            carga,
+            pecas: [],
+            pecasManuais: false,
+            crescente: carga,
+            decrescente: null,
+            nivelSubstituicao: 0,
+          })),
+        },
+      }
+    }
+    const de = (f: CalibracaoInput) => etapaCompleta('indicacao', { f, calc: null, selecionados: [] })
+    expect(de(lida(0))).toBe(true)
+    expect(de(lida(null))).toBe(false)
+    expect(de({ ...lida(null), substituiId: 'orig' })).toBe(true)
+  })
+})
+
 describe('montagem das cargas ao abrir o editor', () => {
   const ponto = (carga: number): PontoIndicacao => ({
     id: `p${carga}`,
@@ -234,6 +280,9 @@ describe('pendências da tela', () => {
       'Local A.',
       PENDENCIA_TECNICO_EXCLUIDO,
     ])
+    // A revisão de um certificado cancelado também (nunca "Tudo pronto" para uma revisão que o servidor recusa)
+    for (const p of [PENDENCIA_REVISADO_CANCELADO, PENDENCIA_REVISADO_NAO_EMITIDO])
+      expect(pendenciasDaTela({ ...base, servidor: [p, 'Antiga.'], emDia: false })).toEqual(['Local A.', p])
   })
 
   it('o POP quem diz é a consulta ao vivo (registrado em outra aba, a do servidor ficou velha)', () => {
@@ -295,6 +344,11 @@ describe('balança corrigida dentro do editor', () => {
     expect(e.f.clienteId).toBe('c2')
     expect(e.f.repetibilidade[0].carga).toBe(12000)
     expect(e.pendencias).toEqual(['Uma.'])
+    // Os avisos do servidor (não impedem a emitir); a resposta de antes desta versão vem sem eles
+    expect(e.avisos).toEqual([])
+    expect(estadoDoServidor({ ...d, avisos: ['Confira a data da calibração.'] }).avisos).toEqual([
+      'Confira a data da calibração.',
+    ])
     expect(e.numeroReservado).toBeNull()
     // Só os dados de entrada: a versão vai à parte (no PUT)
     expect('versao' in e.f || 'id' in e.f || 'status' in e.f).toBe(false)

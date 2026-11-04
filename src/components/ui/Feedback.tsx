@@ -15,7 +15,8 @@ export function Toaster() {
     <div className="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-[360px] max-w-[calc(100vw-2rem)] flex-col gap-2">
       <AnimatePresence initial={false}>
         {toasts.map((t) => {
-          const Icone = t.tipo === 'sucesso' ? CircleCheck : t.tipo === 'erro' ? CircleAlert : Info
+          const Icone =
+            t.tipo === 'sucesso' ? CircleCheck : t.tipo === 'erro' ? CircleAlert : t.tipo === 'aviso' ? TriangleAlert : Info
           return (
             <motion.div
               key={t.id}
@@ -33,6 +34,7 @@ export function Toaster() {
                   t.tipo === 'sucesso' && 'text-success',
                   t.tipo === 'erro' && 'text-danger',
                   t.tipo === 'info' && 'text-info',
+                  t.tipo === 'aviso' && 'text-warning',
                 )}
               />
               <div className="min-w-0 flex-1">

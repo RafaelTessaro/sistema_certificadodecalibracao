@@ -203,6 +203,102 @@ describe('arquivo do certificado no cadastro do padrão', () => {
   })
 })
 
+describe('nome do arquivo guardado: a extensão é a do tipo conferido', () => {
+  /** Executável do Windows com "%PDF-" no trecho do DOS (passava por PDF). */
+  function executavelComPdf() {
+    const b = Buffer.alloc(512)
+    b.write('MZ', 0, 'latin1')
+    b.writeUInt32LE(0x80, 0x3c)
+    b.write('%PDF-1.7', 0x40, 'latin1')
+    b.write('PE\0\0', 0x80, 'latin1')
+    return b
+  }
+  const disposicaoDe = async (sha256: string, consulta = '') =>
+    (await t.chamar('GET', `/api/arquivos/${sha256}${consulta}`, { cookie: t.cookieAdmin })).headers['content-disposition']
+
+  it('o envio com outra extensão (.exe, .hta, .html) é guardado e baixado com a do tipo', async () => {
+    t = await criarAppComLogin()
+    const r = await enviar(
+      ARQUIVOS_TESTE.pdf('rbc'),
+      `finalidade=padrao&nome=${encodeURIComponent('Certificado RBC 1234.pdf.exe')}`,
+      t.cookieComum,
+    )
+    expect(r.statusCode).toBe(201)
+    const a: ArquivoAnexo = r.json().arquivo
+    expect(a.nome).toBe('Certificado RBC 1234.pdf')
+    expect(t.ctx.repo.infoArquivo(a.sha256)?.nome).toBe('Certificado RBC 1234.pdf')
+    expect(await disposicaoDe(a.sha256, '?baixar=1')).toMatch(/^attachment; filename="Certificado RBC 1234\.pdf";/)
+    expect((await enviar(ARQUIVOS_TESTE.pdf('hta'), 'finalidade=padrao&nome=a.pdf.hta')).json().arquivo.nome).toBe('a.pdf')
+    expect((await enviar(ARQUIVOS_TESTE.jpg(), 'finalidade=padrao&nome=foto.jpeg')).json().arquivo.nome).toBe('foto.jpeg')
+    expect((await enviar(ARQUIVOS_TESTE.png(), 'finalidade=padrao&nome=scan.pdf')).json().arquivo.nome).toBe('scan.png')
+    expect((await enviar(ARQUIVOS_TESTE.docx(), 'finalidade=pop&nome=POP.pdf')).json().arquivo.nome).toBe('POP.docx')
+    expect((await enviar(ARQUIVOS_TESTE.pdf('sem'), 'finalidade=pop&nome=.exe')).json().arquivo.nome).toBe('POP.pdf')
+  })
+
+  it('executável ou página com "%PDF-" num comentário é recusado', async () => {
+    t = await criarAppComLogin()
+    for (const [conteudo, nome] of [
+      [executavelComPdf(), 'Certificado.pdf.exe'],
+      [Buffer.from('<!-- %PDF-1.4 --><html><body>oi</body></html>'), 'Certificado.pdf.html'],
+      [Buffer.from('@REM %PDF-1.4\r\nstart calc'), 'Certificado.pdf.bat'],
+    ] as const) {
+      const r = await enviar(conteudo, `finalidade=padrao&nome=${encodeURIComponent(nome)}`, t.cookieComum)
+      expect(r.statusCode, nome).toBe(400)
+    }
+    expect(t.ctx.db.prepare('SELECT COUNT(*) AS n FROM arquivos').get()).toEqual({ n: 0 })
+  })
+
+  it('no download, ?nome= e o nome antigo (gravado antes desta versão) saem com a extensão do tipo', async () => {
+    t = await criarAppComLogin()
+    const a = (await enviar(ARQUIVOS_TESTE.pdf(), 'finalidade=padrao&nome=certo.pdf')).json().arquivo as ArquivoAnexo
+    expect(await disposicaoDe(a.sha256, '?nome=a.exe')).toMatch(/^inline; filename="a\.pdf";/)
+    expect(await disposicaoDe(a.sha256, '?baixar=1&nome=fatura.exe')).toMatch(/^attachment; filename="fatura\.pdf";/)
+    // Linha antiga com ".exe" no nome (o banco fica como está; só o download muda)
+    const antigo = t.ctx.repo.guardarArquivo(ARQUIVOS_TESTE.pdf('antigo'), {
+      nome: 'velho.pdf.exe',
+      tipo: 'application/pdf',
+      por: 'x',
+    })
+    expect(await disposicaoDe(antigo.sha256)).toMatch(/^inline; filename="velho\.pdf";/)
+    expect(t.ctx.repo.infoArquivo(antigo.sha256)?.nome).toBe('velho.pdf.exe')
+    const word = t.ctx.repo.guardarArquivo(ARQUIVOS_TESTE.docx('antigo'), {
+      nome: 'POP.hta',
+      tipo: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      por: 'x',
+    })
+    expect(await disposicaoDe(word.sha256)).toMatch(/^attachment; filename="POP\.docx";/)
+  })
+
+  it('o padrão guarda a referência com a extensão do tipo; o mesmo conteúdo com outro nome baixa com o nome novo', async () => {
+    t = await criarAppComLogin()
+    const c = await cenarioCalibracao(t)
+    const primeiro = await c.enviarArquivo(ARQUIVOS_TESTE.pdf('jp01'), 'Certificado RBC 1234.pdf')
+    // A tela mandou outro nome na referência (ex.: um técnico pelo PUT direto)
+    const r = await t.chamar('PUT', `/api/padroes/${c.pesos.id}`, {
+      cookie: t.cookieComum,
+      payload: { ...c.pesos, certificadoArquivo: { ...primeiro, nome: 'c.exe' }, versao: c.pesos.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    const p: Padrao = r.json().padrao
+    expect(p.certificadoArquivo?.nome).toBe('c.pdf')
+
+    // Reenvio do mesmo conteúdo com outro nome: a referência e o link (com o nome dela) batem
+    const denovo = await c.enviarArquivo(ARQUIVOS_TESTE.pdf('jp01'), 'Certificado-correto.pdf')
+    expect(denovo).toMatchObject({ sha256: primeiro.sha256, nome: 'Certificado-correto.pdf' })
+    expect(await disposicaoDe(denovo.sha256, `?nome=${encodeURIComponent(denovo.nome)}`)).toMatch(
+      /^inline; filename="Certificado-correto\.pdf";/,
+    )
+    // O POP mostra e baixa o nome da linha guardada, também com a extensão do tipo
+    const pop = t.ctx.repo.guardarArquivo(ARQUIVOS_TESTE.pdf('pop'), { nome: 'POP.pdf.exe', tipo: 'application/pdf', por: 'x' })
+    const registrado = await t.chamar('POST', '/api/pop', {
+      cookie: t.cookieAdmin,
+      payload: { ...POP_TESTE, revisao: '07', arquivo: pop.sha256 },
+    })
+    expect(registrado.statusCode, registrado.body).toBe(201)
+    expect((registrado.json().versao as VersaoPop).arquivo?.nome).toBe('POP.pdf')
+  })
+})
+
 describe('POP: revisões, quem registra e o certificado', () => {
   it('sem POP, a emissão fica pendente; registrado, o código e a revisão saem no certificado e ficam congelados', async () => {
     t = await criarAppComLogin({ semPop: true })

@@ -3,19 +3,24 @@
 // verificação pública): é sempre servido do arquivo, conferido pelo hash, e o hash da emissão nunca muda.
 // Se o arquivo sumir, o PDF refeito dos dados congelados só volta para a pasta se sair idêntico (a mesma
 // versão do gerador); com outro layout seria outro documento, e é erro (`pdfEmitido`). Nenhum PDF da pasta é
-// sobrescrito (`gravarSemSobrescrever`).
+// sobrescrito (`gravarSemSobrescrever`). A cópia de um cancelado ou substituído é esse mesmo documento com a
+// marca d'água por cima (`carimbarMarcaDagua`), nunca um PDF refeito com o cálculo de hoje.
 
 import { createHash, randomInt } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { nomeArquivoSimples, PENDENCIA_POP, popNaData, textoPop, tipoDoMime } from '#shared/arquivos.ts'
-import { calcularCalibracao } from '#shared/calibracao.ts'
+import { calcularCalibracao, regrasDoPopComoAviso } from '#shared/calibracao.ts'
 import {
   arquivoDoCertificado,
+  dataIsoValida,
+  formatarDataBr,
   formatarNumeroCertificado,
   hojeLocalIso,
   nomeArquivoCertificado,
   padroesDaCalibracao,
+  PENDENCIA_REVISADO_CANCELADO,
+  PENDENCIA_REVISADO_NAO_EMITIDO,
   PENDENCIA_TECNICO_EXCLUIDO,
   pendenciasEmissao,
 } from '#shared/dominio.ts'
@@ -36,7 +41,9 @@ import type {
 import type { Contexto } from './contexto.ts'
 import { PROCEDIMENTO_EXEMPLO_ANTIGO } from './db.ts'
 import { ErroApi } from './erros.ts'
+import { carimbarMarcaDagua, ErroCarimbo } from './pdf/carimbo.ts'
 import { gerarCertificadoPdf } from './pdf/certificado.ts'
+import { naUnidadeAtual } from './rascunhos.ts'
 
 /** Código de autenticidade: 8 caracteres sem os que se confundem (0/O, 1/I/L), em dois grupos: "7F3K-92QD". */
 const ALFABETO = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
@@ -96,12 +103,14 @@ const daVersao = (v: VersaoPop): PopDaCalibracao => ({ versao: v, pop: popEmitid
  *   revisão do POP tem agora: o anexado depois). O certificado emitido antes das revisões do POP: o procedimento que
  *   saiu nele (o exemplo de fábrica não conta);
  * - a impressa na folha herdada do certificado revisado;
- * - a que valia na data da calibração (`popNaData`: antes de todas, a mais antiga; sem a data, a vigente).
+ * - a que valia na data da calibração (`popNaData`: antes de todas, a mais antiga; sem a data, a vigente). `dataMinima`
+ *   (yyyy-MM-dd): a primeira impressão da folha de campo (e a folha nova) usa a que vale no dia da impressão, se a data
+ *   da calibração for antes dele (o rascunho nasce com a data do dia em que foi criado, e a folha vai a campo agora).
  */
 export function popDaCalibracao(
   ctx: Contexto,
   k: Pick<Calibracao, 'id' | 'substituiId' | 'dataCalibracao'>,
-  opcoes: { semFolha?: boolean } = {},
+  opcoes: { semFolha?: boolean; dataMinima?: string } = {},
 ): PopDaCalibracao | null {
   const versoes = ctx.repo.versoesPop()
   const daFolha = opcoes.semFolha ? null : ctx.repo.popDaFolhaDaCalibracao(k.id)
@@ -121,11 +130,41 @@ export function popDaCalibracao(
     const v = versoes.find((x) => textoPop(x) === legado)
     return { versao: v ?? null, pop: v ? popEmitido(v) : null, procedimento: original!.textos.procedimento }
   }
-  const v = daFolha?.pop ?? popNaData(versoes, k.dataCalibracao)
+  const minima = opcoes.dataMinima ?? ''
+  const v = daFolha?.pop ?? popNaData(versoes, minima > k.dataCalibracao ? minima : k.dataCalibracao)
   return v ? daVersao(v) : null
 }
 
-/** O que falta para emitir: cadastro, padrões, POP e cálculo. */
+/**
+ * O que a tela mostra para conferir, sem impedir a emissão: a folha de campo da calibração em andamento saiu com uma
+ * revisão do POP que não é a que valia na data da calibração (a data ficou a do dia em que o rascunho foi criado, ou a
+ * folha foi impressa antes de uma revisão nova). O certificado cita a da folha (o papel que foi a campo); se a data
+ * estiver errada, basta corrigi-la. A folha herdada do certificado revisado não conta (é a mesma visita).
+ */
+export function avisosDa(ctx: Contexto, k: Pick<Calibracao, 'id' | 'status' | 'dataCalibracao'>): string[] {
+  if ((k.status !== 'RASCUNHO' && k.status !== 'REVISAO') || !dataIsoValida(k.dataCalibracao)) return []
+  const daFolha = ctx.repo.popDaFolhaDaCalibracao(k.id)
+  if (!daFolha || daFolha.herdada) return []
+  const versoes = ctx.repo.versoesPop()
+  const naData = popNaData(versoes, k.dataCalibracao)
+  const impressa = daFolha.pop
+  if (!naData || naData.id === impressa.id) return []
+  const folha = ctx.repo.folhaCampoDaCalibracao(k.id)?.numero ?? ''
+  const mesmoCodigo = naData.codigo.trim().toLocaleUpperCase('pt-BR') === impressa.codigo.trim().toLocaleUpperCase('pt-BR')
+  const valia = mesmoCodigo ? `a rev. ${naData.revisao}` : `o ${textoPop(naData)}`
+  // `versoes`: da mais nova para a mais antiga
+  const posicao = (id: number) => versoes.findIndex((x) => x.id === id)
+  const quando = posicao(naData.id) < posicao(impressa.id) ? 'já' : 'ainda'
+  return [
+    `A folha de campo ${folha} saiu com o ${textoPop(impressa)}, mas em ${formatarDataBr(k.dataCalibracao)} ${quando} valia ${valia}. Confira a data da calibração.`,
+  ]
+}
+
+/**
+ * O que falta para emitir: cadastro (com a identificação da balança e o receptor, que o POP confere), padrões, POP e
+ * cálculo. Na revisão de um certificado de antes das regras do POP, o cálculo recebe o certificado revisado (na unidade
+ * de hoje da balança): a leitura fora do esperado que a revisão mudou é pendência (`EntradaCalculo.leiturasDoOriginal`).
+ */
 export function pendenciasDa(ctx: Contexto, k: Calibracao): string[] {
   const balanca = ctx.repo.obterBalanca(k.balancaId)
   if (!balanca) return ['Balança não encontrada.']
@@ -135,12 +174,21 @@ export function pendenciasDa(ctx: Contexto, k: Calibracao): string[] {
     hoje: hojeLocalIso(),
     temPesos: padroes.some((x) => x.tipo === 'PESOS'),
     classe: balanca.classe,
+    balanca,
   })
   // Técnico com a conta excluída (desativada continua valendo): o certificado sairia sem quem executou
   if (k.tecnicoId && !ctx.usuarios.obter(k.tecnicoId)) p.push(PENDENCIA_TECNICO_EXCLUIDO)
+  // Revisão de um certificado que não está mais emitido (cancelado antes da trava de `Repositorio.cancelar`): a
+  // emissão é recusada; a pendência vem primeiro (é a que a tela e a recusa mostram) e diz a saída
+  if (k.substituiId) {
+    const status = ctx.repo.obterCalibracao(k.substituiId)?.status
+    if (status !== 'EMITIDO') p.unshift(status === 'CANCELADO' ? PENDENCIA_REVISADO_CANCELADO : PENDENCIA_REVISADO_NAO_EMITIDO)
+  }
   if (!popDaCalibracao(ctx, k)) p.push(PENDENCIA_POP)
   try {
-    const { resultado, comoEncontrado } = calcularCalibracao(k, balanca, padroes)
+    const revisado = k.substituiId && regrasDoPopComoAviso(k) ? ctx.repo.obterCalibracao(k.substituiId) : undefined
+    const original = revisado ? naUnidadeAtual(ctx, revisado) : null
+    const { resultado, comoEncontrado } = calcularCalibracao(k, balanca, padroes, original)
     p.push(...resultado.pendencias)
     if (comoEncontrado) p.push(...comoEncontrado.pendencias.map((x) => `Como encontrado: ${x}`))
   } catch (e) {
@@ -187,6 +235,8 @@ export function montarEmissao(
     pop: pop?.pop ?? null,
     substituiNumero: original?.numero ?? '',
     substituiEmissao: original?.dataEmissao ?? '',
+    // Calculado com as regras do POP: a revisão dele também as segue (`Repositorio.criarCalibracao`)
+    ...(regrasDoPopComoAviso(k) ? {} : { regrasDoPop: true }),
   }
 }
 
@@ -290,16 +340,22 @@ function gravarArquivo(caminho: string, conteudo: Buffer) {
   renameSync(parcial, caminho)
 }
 
+/** O aviso da emissão gravada cujo PDF não pôde ser gravado na hora (disco cheio, antivírus travando o arquivo…). */
+export const AVISO_PDF_NAO_GRAVADO =
+  'O certificado foi emitido, mas o PDF não pôde ser gravado agora. Ele é gerado de novo ao abrir.'
+
 /**
  * Emite: confere, dá o número (o reservado na impressão da folha de campo, se houver; ver `Repositorio.emitir`),
- * congela os dados, gera e guarda o PDF.
+ * congela os dados, gera e guarda o PDF. A emissão fica gravada antes do PDF (o nº já foi dado): se a gravação do PDF
+ * falhar, ela não é desfeita nem repetida, e volta com `aviso`; o PDF é gerado e gravado ao abrir (`pdfEmitido`, sem
+ * o hash registrado).
  */
 export async function emitirCertificado(
   ctx: Contexto,
   id: string,
   autor: { id: string; nome: string; signatario: boolean },
   entrada: { signatarioId?: string; versao?: number },
-): Promise<Calibracao> {
+): Promise<{ calibracao: Calibracao; aviso?: string }> {
   const config = ctx.repo.obterConfig()
   const atual = ctx.repo.obterCalibracao(id)
   if (!atual) throw new ErroApi(404, 'Calibração não encontrada.')
@@ -328,8 +384,15 @@ export async function emitirCertificado(
       por: autor.nome,
     },
   )
-  await salvarPdf(ctx, emitida)
-  return ctx.repo.obterCalibracao(id)!
+  try {
+    await salvarPdf(ctx, emitida)
+  } catch (e) {
+    ctx.log.warn(
+      `[certificados] o certificado ${emitida.numero} foi emitido, mas o PDF não foi gravado: ${(e as Error)?.message ?? e}`,
+    )
+    return { calibracao: ctx.repo.obterCalibracao(id)!, aviso: AVISO_PDF_NAO_GRAVADO }
+  }
+  return { calibracao: ctx.repo.obterCalibracao(id)! }
 }
 
 /**
@@ -404,14 +467,30 @@ async function pdfEmitido(ctx: Contexto, k: Calibracao, emissao: EmissaoCertific
 /**
  * PDF para baixar ou enviar:
  * - emitido: o arquivo guardado, conferido pelo hash da emissão (`pdfEmitido`);
- * - cancelado ou substituído: refeito com a marca d'água (o arquivo e o hash da emissão ficam como estão);
+ * - cancelado ou substituído: esse mesmo documento, o entregue ao cliente, com a marca d'água por cima
+ *   (`carimbarMarcaDagua`: os bytes dele ficam intactos no começo da cópia). Refeito agora, sairia com o cálculo e o
+ *   layout de hoje, e o que motivou a revisão sumiria do registro (ISO/IEC 17025, 7.5 e 7.8.8). O arquivo e o hash
+ *   da emissão ficam como estão; o arquivo sumido ou alterado é erro, como no emitido. Sem o PDF registrado (o
+ *   servidor caiu entre a emissão e a gravação, e ninguém chegou a baixá-lo), não há documento entregue: sai o
+ *   refeito, com a marca;
  * - rascunho: prévia com marca d'água e número provisório, sem as imagens das assinaturas (ninguém autorizou).
  */
 export async function pdfDaCalibracao(ctx: Contexto, k: Calibracao): Promise<Buffer> {
   const config = ctx.repo.obterConfig()
   if (k.emissao) {
     if (k.status === 'EMITIDO') return pdfEmitido(ctx, k, k.emissao)
-    return gerarPdf(k, k.emissao, k.status === 'CANCELADO' ? 'CANCELADO' : 'SUBSTITUÍDO')
+    const marca = k.status === 'CANCELADO' ? 'CANCELADO' : 'SUBSTITUÍDO'
+    if (!k.emissao.hashPdf) return gerarPdf(k, k.emissao, marca)
+    const entregue = await pdfEmitido(ctx, k, k.emissao)
+    try {
+      return carimbarMarcaDagua(entregue, marca)
+    } catch (e) {
+      if (!(e instanceof ErroCarimbo)) throw e
+      throw new ErroApi(
+        409,
+        `Não foi possível pôr a marca d'água "${marca}" no PDF do certificado ${k.numero} (certificados/${k.emissao.arquivo || arquivoDoPdf(k)}): ${e.message}. O arquivo continua como foi emitido.`,
+      )
+    }
   }
   return previa(ctx, k, config)
 }

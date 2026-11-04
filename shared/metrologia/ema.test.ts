@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emaInstrumento, emaPeso, faixaDoValor } from './ema.ts'
+import { CRITERIO_NAO_PESA_CORRETAMENTE, emaInstrumento, emaPeso, faixaDoValor } from './ema.ts'
 import type { InstrumentoEma } from './ema.ts'
 
 const classeIII5g: InstrumentoEma = { classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30000, e: 5, d: 5 }] }
@@ -28,6 +28,16 @@ describe('emaInstrumento', () => {
     expect(emaInstrumento(2500, classeIII5g, 'PORTARIA_SERVICO')).toBe(10)
     expect(emaInstrumento(10000, classeIII5g, 'PORTARIA_SERVICO')).toBe(20)
     expect(emaInstrumento(30000, classeIII5g, 'PORTARIA_SERVICO')).toBe(20)
+  })
+
+  it('"não pesa corretamente" (POP 7.8): o EMA em serviço da Portaria 157/2022, o mesmo do critério padrão da conformidade', () => {
+    expect(CRITERIO_NAO_PESA_CORRETAMENTE).toBe('PORTARIA_SERVICO')
+    // Classe III, e = 10 g: 2 e até 500 e e 4 e acima (Tabela 5, coluna "Verificação" {1; 2; 2}·e, em dobro; item 2.5.3)
+    const classeIII10g: InstrumentoEma = { classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30, e: 0.01, d: 0.01 }] }
+    expect(emaInstrumento(0, classeIII10g, CRITERIO_NAO_PESA_CORRETAMENTE)).toBe(0.02)
+    expect(emaInstrumento(5, classeIII10g, CRITERIO_NAO_PESA_CORRETAMENTE)).toBe(0.02)
+    expect(emaInstrumento(10, classeIII10g, CRITERIO_NAO_PESA_CORRETAMENTE)).toBe(0.04)
+    expect(emaInstrumento(30, classeIII10g, CRITERIO_NAO_PESA_CORRETAMENTE)).toBe(0.04)
   })
 
   it('multi-intervalo do exemplo R76 (2/5/15 kg; e = 1/2/10 g): o e é o da faixa parcial', () => {

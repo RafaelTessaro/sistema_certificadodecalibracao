@@ -348,6 +348,8 @@ function EditorCalibracao({ id }: { id: string }) {
   const [etapa, setEtapa] = useState<IdEtapa>('identificacao')
   const [salvo, setSalvo] = useState<EstadoSalvo>('salvo')
   const [pendenciasServidor, setPendenciasServidor] = useState<string[]>([])
+  /** Do servidor, para conferir sem impedir a emissão (ex.: a folha de campo saiu com outra revisão do POP). */
+  const [avisosServidor, setAvisosServidor] = useState<string[]>([])
   const { dados: pop } = useConsulta('pop', () => api.pop(), ['config'])
   const [editandoBalanca, setEditandoBalanca] = useState(false)
   const [previa, setPrevia] = useState<{ url: string } | { carregando: true } | null>(null)
@@ -388,6 +390,7 @@ function EditorCalibracao({ id }: { id: string }) {
         setFolha(inicial.folha)
         setNumeroReservado(inicial.numeroReservado)
         setPendenciasServidor(inicial.pendencias)
+        setAvisosServidor(inicial.avisos)
         // Retoma na primeira etapa ainda sem dados
         if (k.indicacao.pontos.some((x) => x.crescente !== null)) setEtapa('revisao')
         else if (k.repetibilidade.length) setEtapa('excentricidade')
@@ -408,6 +411,8 @@ function EditorCalibracao({ id }: { id: string }) {
         .then((d) => {
           setFolha(d.folhaCampo)
           setNumeroReservado(d.numeroReservado ?? null)
+          // A folha impressa agora pode ter saído com outra revisão do POP que a da data da calibração
+          setAvisosServidor(d.avisos ?? [])
         })
         .catch(() => {}),
     [id],
@@ -471,6 +476,7 @@ function EditorCalibracao({ id }: { id: string }) {
           const r = await api.salvarCalibracao(id, atual, versao.current)
           versao.current = r.calibracao.versao
           setPendenciasServidor(r.pendencias)
+          setAvisosServidor(r.avisos ?? [])
           setSalvo(sujo.current ? 'pendente' : 'salvo')
           useTempoReal.getState().mudou('calibracao')
           return true
@@ -532,6 +538,7 @@ function EditorCalibracao({ id }: { id: string }) {
       hoje: hojeISO(),
       temPesos: selecionados.some((p) => p.tipo === 'PESOS'),
       classe: balanca?.classe,
+      balanca,
     })
     // Sem POP registrado (o servidor também confere): o código e a revisão saem em toda página
     return pendenciasDaTela({ locais, calc, semPop: !!pop && !pop.atual, servidor: pendenciasServidor, emDia })
@@ -618,6 +625,7 @@ function EditorCalibracao({ id }: { id: string }) {
         setFolha(e.folha)
         setNumeroReservado(e.numeroReservado)
         setPendenciasServidor(e.pendencias)
+        setAvisosServidor(e.avisos)
         setSalvo('salvo')
         setDados((x) => (x ? { ...x, balanca: d.balanca ?? b, cliente: d.cliente ?? x.cliente, calibracao: d.calibracao } : x))
       } catch {
@@ -691,7 +699,8 @@ function EditorCalibracao({ id }: { id: string }) {
     try {
       const r = await api.emitir(id, { versao: versao.current })
       useTempoReal.getState().mudou('calibracao')
-      toast.sucesso(`Certificado ${r.calibracao.numero} emitido`, 'O PDF já está pronto para baixar e enviar.')
+      if (r.aviso) toast.aviso(`Certificado ${r.calibracao.numero} emitido`, r.aviso)
+      else toast.sucesso(`Certificado ${r.calibracao.numero} emitido`, 'O PDF já está pronto para baixar e enviar.')
       sujo.current = false
       navegar(`/calibracoes/${id}`, { replace: true })
     } catch (e) {
@@ -859,6 +868,7 @@ function EditorCalibracao({ id }: { id: string }) {
                   numeroReservado={numeroReservado}
                   numeroRevisao={dados.numeroRevisao}
                   pendencias={pendencias}
+                  avisos={avisosServidor}
                   salvando={salvo === 'salvando'}
                   aoVisualizar={() => void verPrevia()}
                   aoEnviarRevisao={() => void mudarSituacao('REVISAO')}

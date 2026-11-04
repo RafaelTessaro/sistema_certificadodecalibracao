@@ -505,7 +505,7 @@ function CartaoPadrao({
           {p.certificadoArquivo && (
             // Por cima do botão que cobre o cartão (abrir o arquivo não abre a edição)
             <a
-              href={api.urlArquivo(p.certificadoArquivo.sha256)}
+              href={api.urlAnexo(p.certificadoArquivo)}
               target="_blank"
               rel="noopener"
               className="relative z-10 ml-auto inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-brand-ink transition-colors hover:bg-brand-soft"

@@ -6,7 +6,7 @@ import {
   somarMeses,
   temLeiturasExcentricidade,
 } from '#shared/dominio.ts'
-import { casasDecimais, leituraImplausivel } from '#shared/metrologia/index.ts'
+import { cargaDaFaixaDecrescente, casasDecimais, leituraImplausivel } from '#shared/metrologia/index.ts'
 import type { ResultadoPonto } from '#shared/metrologia/tipos.ts'
 import type { Balanca, CalibracaoInput, ClasseExatidao, Padrao, PontoIndicacao } from '#shared/tipos.ts'
 
@@ -69,11 +69,12 @@ export function comMetodoDaClasse<T extends Pick<CalibracaoInput, 'excentricidad
 }
 
 /**
- * A etapa Repetibilidade está feita: algum ensaio com 2 leituras ou mais e nenhum ensaio com carga e sem leitura (o
- * copiado do último certificado, ou o da carga sugerida, que ficou para trás: registre as leituras ou remova-o).
+ * A etapa Repetibilidade está feita: algum ensaio com 2 leituras ou mais, nenhum ensaio com carga e sem leitura (o
+ * copiado do último certificado, ou o da carga sugerida, que ficou para trás: registre as leituras ou remova-o) e
+ * nenhum com leituras e sem a carga (o campo apagado grava 0; POP 7.9).
  */
 export const repetibilidadeCompleta = (ensaios: ReadonlyArray<{ carga: number; n: number }>) =>
-  ensaios.some((r) => r.n >= 2) && ensaios.every((r) => r.n > 0 || !(r.carga > 0))
+  ensaios.some((r) => r.n >= 2) && ensaios.every((r) => (r.n > 0 ? r.carga > 0 : !(r.carga > 0)))
 
 /**
  * Posição da leitura `i` do ensaio `iEns` na navegação de planilha: todos os ensaios num grupo só, um ensaio por
@@ -83,17 +84,23 @@ export const repetibilidadeCompleta = (ensaios: ReadonlyArray<{ carga: number; n
 export const gradeRepetibilidade = (iEns: number, i: number) => ({ grupo: 'rep', lin: i, col: iEns })
 
 /**
- * Cor do campo da leitura: fora do esperado para a carga (provável erro de digitação: vírgula esquecida, outra unidade;
- * a mesma regra da pendência do cálculo, `leituraImplausivel`), erro; fora do EMA, atenção.
+ * Cor do campo da leitura: fora do esperado para a carga (provável erro de digitação: vírgula esquecida, outra unidade,
+ * a carga esquecida; a mesma regra da pendência do cálculo, `leituraImplausivel`), erro; com o erro acima do EMA em
+ * serviço (a balança não pesa corretamente, POP 7.8, mesmo sem a conformidade pedida) ou fora do EMA da conformidade,
+ * atenção. `cargaDescida`: a do cálculo (`cargaDaDescida`), para a leitura decrescente das múltiplas faixas ser
+ * conferida pelo e da faixa em que foi lida.
  */
 export function tomLeitura(
   p: Pick<PontoIndicacao, 'carga' | 'crescente' | 'decrescente'>,
   r: ResultadoPonto | undefined,
   lado: 'crescente' | 'decrescente',
   balanca: Pick<Balanca, 'tipoFaixas' | 'faixas'>,
+  cargaDescida: number | null = null,
 ): 'normal' | 'erro' | 'atencao' {
   // A carga digitada (a do cálculo é a soma dos pesos; quando não fecham, a diferença já é pendência)
-  if (leituraImplausivel(p[lado], p.carga, balanca)) return 'erro'
+  const faixa = lado === 'decrescente' ? cargaDaFaixaDecrescente(p.carga, cargaDescida) : p.carga
+  if (leituraImplausivel(p[lado], p.carga, balanca, faixa)) return 'erro'
+  if (r?.foraDoEmaServico?.[lado]) return 'atencao'
   if (r?.[lado] && r.conformidade === 'NAO_CONFORME') return 'atencao'
   return 'normal'
 }

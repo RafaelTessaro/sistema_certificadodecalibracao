@@ -42,11 +42,13 @@ import {
   METODOS_EXCENTRICIDADE,
   numeroBr,
   parteSeparada,
+  pecasSemUDoCertificado,
   RECEPTORES,
   REGRAS_DECISAO,
   resumoPesos,
   ROTULO_CLASSE,
   textoComEmpresa,
+  textoPecas,
   TIPOS_BALANCA,
   TIPOS_PADRAO,
 } from '#shared/dominio.ts'
@@ -892,6 +894,23 @@ function secaoInstrumento(ctx: Contexto, n: number): No[] {
 
 // ---- 4. Padrões utilizados -------------------------------------------------------------------------
 
+/**
+ * Nota dos pesos usados pelo valor nominal: os jogos "Valor nominal" e, nos jogos pelo certificado, as peças usadas
+ * sem a U no cadastro (o cálculo as usa pelo nominal: `pecaParaCalculo`). null sem nenhum.
+ */
+export function notaPesosNominais(padroes: Padrao[], k: Pick<Calibracao, 'indicacao' | 'comoEncontrado'>): string | null {
+  const semU = pecasSemUDoCertificado([k.indicacao, k.comoEncontrado], padroes)
+  const itens = padroes
+    .filter((p) => p.tipo === 'PESOS')
+    .flatMap((p) => {
+      if (p.uso === 'NOMINAL') return [p.identificacao]
+      const x = semU.find((y) => y.padrao.id === p.id)
+      return x ? [`${p.identificacao} (${textoPecas(x)})`] : []
+    })
+  if (!itens.length) return null
+  return `Pesos padrão ${itens.join(', ')} usados pelo valor nominal: o erro máximo admissível da classe (OIML R 111) entra como contribuição para a incerteza.`
+}
+
 function secaoPadroes(ctx: Contexto, n: number): No[] {
   const padroes = [...ctx.e.padroes].sort((a, b) => Number(b.tipo === 'PESOS') - Number(a.tipo === 'PESOS'))
   const pequeno = (t: string): NoObjeto => ({ text: `\n${t}`, fontSize: 7, color: COR.textoSecundario })
@@ -927,13 +946,10 @@ function secaoPadroes(ctx: Contexto, n: number): No[] {
     laboratorio(p),
     { text: ou(formatarDataBr(p.validade)), alignment: 'right' },
   ])
-  const nominais = padroes.filter((p) => p.tipo === 'PESOS' && p.uso === 'NOMINAL').map((p) => p.identificacao)
   const notas: string[] = []
   if (!vazio(ctx.e.textos.rastreabilidade)) notas.push(textoComEmpresa(ctx.e.textos.rastreabilidade.trim(), ctx.e.empresa))
-  if (nominais.length)
-    notas.push(
-      `Pesos padrão ${nominais.join(', ')} usados pelo valor nominal: o erro máximo admissível da classe (OIML R 111) entra como contribuição para a incerteza.`,
-    )
+  const nominais = notaPesosNominais(padroes, ctx.k)
+  if (nominais) notas.push(nominais)
   // A rastreabilidade ("por meio dos padrões abaixo") vem logo abaixo do título e fica com ele; a tabela pode se
   // dividir entre as páginas (por linha, com o cabeçalho de novo): inteira, ela deixaria um vão no pé da página
   // quando a identificação do instrumento é longa (ajuste e reparo)
@@ -1951,18 +1967,20 @@ function rodape(ctx: Contexto): { no: () => NoObjeto; margemBase: number } {
 /** Assinatura do rodapé (fio grafite e trapézio verde), repetida no fundo de cada página. */
 const fundo = fundoTimbrado(MARGEM_X, LARGURA)
 
+/**
+ * Cor, transparência e inclinação da marca d'água (o ângulo do pdfmake, em graus, no sistema dele, com y para baixo):
+ * a do certificado gerado e a posta sobre o PDF guardado de um cancelado ou substituído (`carimbarMarcaDagua`).
+ */
+export function estiloMarcaDagua(texto: string): { cor: string; opacidade: number; angulo: number } {
+  const cancelado = /cancel/i.test(texto)
+  return { cor: cancelado ? '#B42318' : '#7A817C', opacidade: cancelado ? 0.13 : 0.1, angulo: -50 }
+}
+
 function marcaDagua(texto: string): NoObjeto | undefined {
   const t = texto.trim()
   if (!t) return undefined
-  const cancelado = /cancel/i.test(t)
-  return {
-    text: t,
-    color: cancelado ? '#B42318' : '#7A817C',
-    opacity: cancelado ? 0.13 : 0.1,
-    bold: true,
-    font: 'InterMedio',
-    angle: -50,
-  }
+  const { cor, opacidade, angulo } = estiloMarcaDagua(t)
+  return { text: t, color: cor, opacity: opacidade, bold: true, font: 'InterMedio', angle: angulo }
 }
 
 // ---- Documento ---------------------------------------------------------------------------------------

@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { multilinha, REPRODUCAO_ANTIGA, TEXTOS_ANTIGOS, TEXTOS_PADRAO } from '#shared/dominio.ts'
+import { massaLegivel, multilinha, REPRODUCAO_ANTIGA, TEXTOS_ANTIGOS, TEXTOS_PADRAO } from '#shared/dominio.ts'
 import { densidadeAr, posicoesExcentricidade } from '#shared/metrologia/index.ts'
 import { A4, pdfmake } from './base.ts'
 import {
@@ -22,6 +22,7 @@ import {
   MAX_PAGINAS,
   montarCertificado,
   notaEmpuxoConveccao,
+  notaPesosNominais,
   OCUPACAO_MINIMA_ULTIMA,
   RESSALVA_OPINIOES,
   RITMOS,
@@ -1163,6 +1164,35 @@ describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', {
     conferirCabecalhos(texto, d.calibracao.numero, 'BALANÇAS.COM', 'BALANÇAS-POP-123 rev. 2')
     expect(corrido(texto)).toContain('MÉTODO — PROCEDIMENTO (POP) BALANÇAS-POP-123 rev. 2 —')
     expect((definicaoCertificado(d) as { info: { keywords: string } }).info.keywords).toContain('BALANÇAS-POP-123 rev. 2')
+  })
+})
+
+describe('nota dos padrões: os pesos usados pelo valor nominal', () => {
+  it('jogo pelo nominal: a nota de sempre; tudo pelo certificado, nenhuma', () => {
+    const d = exemploBancada()
+    expect(notaPesosNominais(d.emissao.padroes, d.calibracao)).toBeNull()
+    const jogo = d.emissao.padroes.find((p) => p.tipo === 'PESOS')!
+    const nominal = d.emissao.padroes.map((p) => (p.id === jogo.id ? { ...p, uso: 'NOMINAL' as const } : p))
+    expect(notaPesosNominais(nominal, d.calibracao)).toBe(
+      `Pesos padrão ${jogo.identificacao} usados pelo valor nominal: o erro máximo admissível da classe (OIML R 111) entra como contribuição para a incerteza.`,
+    )
+  })
+
+  it('jogo pelo certificado com a peça usada sem a U no cadastro: a peça entra na nota (o cálculo a usou pelo nominal)', () => {
+    const d = exemploBancada()
+    const lido = d.calibracao.indicacao.pontos.find((p) => p.crescente !== null && p.pecas.length)!
+    const { padraoId, pesoId } = lido.pecas[0]
+    const jogo = d.emissao.padroes.find((p) => p.id === padraoId)!
+    const peso = jogo.pesos.find((w) => w.id === pesoId)!
+    const semU = d.emissao.padroes.map((p) =>
+      p.id === padraoId ? { ...p, pesos: p.pesos.map((w) => (w.id === pesoId ? { ...w, incerteza: 0 } : w)) } : p,
+    )
+    expect(notaPesosNominais(semU, d.calibracao)).toBe(
+      `Pesos padrão ${jogo.identificacao} (peça de ${massaLegivel(peso.nominal)}) usados pelo valor nominal: o erro máximo admissível da classe (OIML R 111) entra como contribuição para a incerteza.`,
+    )
+    // No documento, na seção dos padrões
+    const dados = recalculado({ ...d, emissao: { ...d.emissao, padroes: semU } })
+    expect(JSON.stringify(definicaoCertificado(dados))).toContain(`${jogo.identificacao} (peça de ${massaLegivel(peso.nominal)})`)
   })
 })
 

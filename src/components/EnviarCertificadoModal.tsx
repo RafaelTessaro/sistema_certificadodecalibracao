@@ -7,6 +7,7 @@ import type { AnexoEmailDisponivel, Balanca, Calibracao, Cliente } from '#shared
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
+import { mostrarEnvio } from '../lib/envioEmail'
 import { tamanhoArquivo } from '../lib/format'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
@@ -114,10 +115,11 @@ export function EnviarCertificadoModal({
         anexos: escolhidos.map((a) => a.id),
       })
       useTempoReal.getState().mudou('calibracao')
-      toast.sucesso(
-        'Certificado enviado',
-        `Para ${r.para.join(', ')}, com ${r.anexos.length} ${r.anexos.length === 1 ? 'anexo' : 'anexos'}`,
-      )
+      // O servidor de e-mail pode recusar parte dos endereços (e entregar aos outros): aviso, não sucesso
+      mostrarEnvio(r, {
+        titulo: 'Certificado enviado',
+        detalhe: `com ${r.anexos.length} ${r.anexos.length === 1 ? 'anexo' : 'anexos'}`,
+      })
       aoFechar()
     } catch (e) {
       avisarErro('Não foi possível enviar o e-mail', e)

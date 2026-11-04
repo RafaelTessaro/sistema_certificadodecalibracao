@@ -2,7 +2,7 @@
 // que vem do servidor. Separado para ser testado.
 
 import { PENDENCIA_POP } from '#shared/arquivos.ts'
-import { padroesDaCalibracao, PENDENCIA_TECNICO_EXCLUIDO, pendenciasAmbiente } from '#shared/dominio.ts'
+import { padroesDaCalibracao, PENDENCIAS_SO_DO_SERVIDOR, pendenciasAmbiente, regrasDoPopComoAviso } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Padrao } from '#shared/tipos.ts'
 import type { DetalheCalibracao } from '../../lib/api'
 import type { ContextoEtapa, IdEtapa } from './contexto'
@@ -36,6 +36,8 @@ export function estadoDoServidor(d: DetalheCalibracao) {
     folha: d.folhaCampo,
     numeroReservado: d.numeroReservado ?? null,
     pendencias: d.pendencias,
+    // Para conferir, sem impedir a emissão (ausentes numa resposta de antes desta versão)
+    avisos: d.avisos ?? [],
   }
 }
 
@@ -78,7 +80,8 @@ export const podeRecomporCargas = (padroesIds: string[], selecionados: Pick<Padr
  * As pendências que a tela mostra (e que ligam ou desligam a emissão): as da emissão calculadas aqui na hora, as do
  * cálculo e, com tudo gravado (`emDia`), também as do servidor, que confere de novo ao emitir: a tela nunca diz "Tudo
  * pronto" quando o servidor recusa. Com alteração por gravar, as do servidor são da versão anterior e ficam de fora;
- * a do técnico excluído só o servidor sabe (vale sempre), e a do POP quem diz é a consulta ao vivo (`semPop`).
+ * as que só o servidor sabe (o técnico excluído, o certificado revisado cancelado) valem sempre, e a do POP quem diz
+ * é a consulta ao vivo (`semPop`).
  */
 export function pendenciasDaTela(a: {
   locais: string[]
@@ -91,7 +94,7 @@ export function pendenciasDaTela(a: {
     ...new Set([
       ...a.locais,
       ...(a.semPop ? [PENDENCIA_POP] : []),
-      ...a.servidor.filter((p) => p === PENDENCIA_TECNICO_EXCLUIDO),
+      ...a.servidor.filter((p) => PENDENCIAS_SO_DO_SERVIDOR.includes(p)),
       ...(a.calc?.resultado.pendencias ?? []),
       ...(a.calc?.comoEncontrado?.pendencias.map((p) => `Como encontrado: ${p}`) ?? []),
       ...(a.emDia ? a.servidor.filter((p) => p !== PENDENCIA_POP) : []),
@@ -101,12 +104,20 @@ export function pendenciasDaTela(a: {
 
 /**
  * A etapa ganha o ✓ na lista de etapas. Padrões e ambiente: um jogo de pesos e nenhum padrão escolhido desativado
- * (impede a emissão: tire-o ou reative-o), as temperaturas e o que o cálculo pede do ar e da convecção.
+ * (impede a emissão: tire-o ou reative-o), as temperaturas e o que o cálculo pede do ar e da convecção. Na calibração
+ * nova (as regras do POP): a excentricidade só fica "não realizada" na balança suspensa (gancho), e o erro de indicação
+ * pede o retorno ao zero (POP 7.7 e 7.10).
  */
 export function etapaCompleta(
   e: IdEtapa,
-  { f, calc, selecionados }: Pick<ContextoEtapa, 'f' | 'calc' | 'selecionados'>,
+  {
+    f,
+    calc,
+    selecionados,
+    balanca,
+  }: Pick<ContextoEtapa, 'f' | 'calc' | 'selecionados'> & Partial<Pick<ContextoEtapa, 'balanca'>>,
 ): boolean {
+  const regrasDoPop = !regrasDoPopComoAviso(f)
   switch (e) {
     case 'identificacao':
       return !!f.dataCalibracao && !!f.tecnicoId && (f.local !== 'CLIENTE' || !!f.localEndereco.trim())
@@ -131,10 +142,14 @@ export function etapaCompleta(
       return repetibilidadeCompleta(calc?.resultado.repetibilidade ?? [])
     case 'excentricidade':
       return !f.excentricidade.aplicavel
-        ? !!f.excentricidade.motivo.trim()
+        ? !!f.excentricidade.motivo.trim() && (!regrasDoPop || !balanca || balanca.receptor === 'GANCHO')
         : !!calc && !calc.resultado.pendencias.some((p) => p.startsWith('Excentricidade'))
     case 'indicacao':
-      return f.indicacao.pontos.length > 0 && f.indicacao.pontos.every((p) => p.crescente !== null || p.decrescente !== null)
+      return (
+        f.indicacao.pontos.length > 0 &&
+        f.indicacao.pontos.every((p) => p.crescente !== null || p.decrescente !== null) &&
+        (!regrasDoPop || f.indicacao.retornoZero !== null)
+      )
     case 'conclusao':
       return !f.conformidade.solicitada || f.conformidade.criterio !== 'CLIENTE' || f.conformidade.toleranciaCliente > 0
     case 'revisao':

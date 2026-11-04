@@ -14,6 +14,7 @@ import {
   History,
   Loader2,
   Mail,
+  MailWarning,
   MoreHorizontal,
   Paperclip,
   Printer,
@@ -28,7 +29,7 @@ import {
 import { useMemo, useState, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { capacidadeTexto, LOCAIS, TIPOS_BALANCA } from '#shared/dominio.ts'
+import { capacidadeTexto, LIMITES, LOCAIS, TIPOS_BALANCA } from '#shared/dominio.ts'
 import type { Calibracao } from '#shared/tipos.ts'
 import { GraficoErro } from '../components/calibracao/GraficoErro'
 import { casasDe } from '../components/calibracao/util'
@@ -44,6 +45,7 @@ import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
 import { abrirFolhaCampo, textoReimprimir } from '../lib/folhaCampo'
 import { dataCurta, dataHora } from '../lib/format'
+import { revisaoEmAndamento } from '../lib/revisaoEmAndamento'
 import { usePode } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
@@ -82,7 +84,12 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
   const [pedido, setPedido] = useState<'revisar' | 'cancelar' | null>(null)
   const [criando, setCriando] = useState(false)
   const [versaoPdf] = useState(() => Date.now())
-  const revisaoAberta = revisoes.find((r) => r.status === 'RASCUNHO' || r.status === 'REVISAO')
+  const {
+    aberta: revisaoAberta,
+    faixa: faixaRevisao,
+    podeCorrigir,
+    cancelamentoBloqueado,
+  } = revisaoEmAndamento(k.status, revisoes)
   const substituta = revisoes.find((r) => r.status === 'EMITIDO' || r.status === 'SUBSTITUIDO' || r.status === 'CANCELADO')
   const emitido = k.status === 'EMITIDO'
   const urlPdf = `${api.urlPdf(k.id)}${api.urlPdf(k.id).includes('?') ? '&' : '?'}v=${k.versao}-${versaoPdf}`
@@ -113,7 +120,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
         ]
       : []),
   ]
-  if (emitido && !revisaoAberta)
+  if (podeCorrigir)
     itensMenu.push({
       label: 'Corrigir (emitir revisão)',
       icone: <FilePen className="h-4 w-4" />,
@@ -201,11 +208,19 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
             . Ele continua guardado, com a marca “substituído”.
           </Faixa>
         )}
-        {revisaoAberta && (
+        {revisaoAberta && faixaRevisao === 'continuar' && (
           <Faixa tom="warning" icone={<FilePen className="h-4 w-4" />}>
             Há uma revisão deste certificado em andamento.{' '}
             <Link to={`/calibracoes/${revisaoAberta.id}/editar`} className="font-semibold underline underline-offset-2">
               Continuar a revisão
+            </Link>
+          </Faixa>
+        )}
+        {revisaoAberta && faixaRevisao === 'excluir' && (
+          <Faixa tom="warning" icone={<FilePen className="h-4 w-4" />}>
+            Ficou aberta uma revisão deste certificado, que não pode mais ser emitida.{' '}
+            <Link to={`/calibracoes/${revisaoAberta.id}/editar`} className="font-semibold underline underline-offset-2">
+              Abrir para excluir
             </Link>
           </Faixa>
         )}
@@ -276,7 +291,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
                   <span className="tnum">{emissao.textos.procedimento}</span>
                   {pop?.arquivo && (
                     <a
-                      href={api.urlArquivo(pop.arquivo.sha256)}
+                      href={api.urlAnexo(pop.arquivo)}
                       target="_blank"
                       rel="noopener"
                       className="ml-2 inline-flex items-center gap-1 text-[13px] font-medium text-brand-ink hover:underline"
@@ -397,7 +412,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
                       </span>
                       {arquivo ? (
                         <a
-                          href={api.urlArquivo(arquivo.sha256)}
+                          href={api.urlAnexo(arquivo)}
                           target="_blank"
                           rel="noopener"
                           className="inline-flex shrink-0 items-center gap-1 font-medium text-brand-ink hover:underline"
@@ -450,6 +465,14 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
                       <p className="truncate font-medium text-ink" title={e.para}>
                         {e.para}
                       </p>
+                      {!!e.recusados?.length && (
+                        <p className="flex items-start gap-1 text-warning" title={e.recusados.join('\n')}>
+                          <MailWarning className="mt-0.5 h-3 w-3 shrink-0" />
+                          <span className="min-w-0 break-words">
+                            Recusado pelo servidor de e-mail (não recebeu): {e.recusados.join(', ')}
+                          </span>
+                        </p>
+                      )}
                       <p className="text-muted">
                         {dataHora(e.em)} · {e.usuarioNome}
                       </p>
@@ -490,6 +513,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
       <MotivoModal
         pedido={pedido}
         numero={k.numero}
+        revisaoAberta={cancelamentoBloqueado ? revisaoAberta : null}
         aoFechar={() => setPedido(null)}
         aoConfirmar={async (motivo) => {
           try {
@@ -643,11 +667,14 @@ function Resultados({ k, dados }: { k: Calibracao; dados: DetalheCalibracao }) {
 function MotivoModal({
   pedido,
   numero,
+  revisaoAberta,
   aoFechar,
   aoConfirmar,
 }: {
   pedido: 'revisar' | 'cancelar' | null
   numero: string
+  /** Revisão em andamento: o cancelamento espera ela ser emitida ou excluída (o servidor recusa). */
+  revisaoAberta: { id: string } | null
   aoFechar: () => void
   aoConfirmar: (motivo: string) => Promise<void>
 }) {
@@ -661,7 +688,8 @@ function MotivoModal({
   }
   const tipo = pedido ?? ultimo
   const revisar = tipo === 'revisar'
-  const valido = motivo.trim().length >= 5
+  const bloqueado = !revisar && !!revisaoAberta
+  const valido = motivo.trim().length >= 5 && !bloqueado
   return (
     <Modal
       aberto={!!pedido}
@@ -696,13 +724,32 @@ function MotivoModal({
         </>
       }
     >
+      {bloqueado && (
+        <p className="mb-4 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
+          Há uma revisão deste certificado em andamento. Emita a revisão ou exclua-a antes de cancelar.{' '}
+          <Link
+            to={`/calibracoes/${revisaoAberta!.id}/editar`}
+            onClick={aoFechar}
+            className="font-semibold underline underline-offset-2"
+          >
+            Abrir a revisão
+          </Link>
+        </p>
+      )}
       <Field
         label={revisar ? 'O que será corrigido' : 'Motivo do cancelamento'}
         hint={
           revisar ? 'Sai no certificado novo. Ex.: “Correção do número de série da balança”.' : 'Fica registrado no histórico.'
         }
       >
-        <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={3} maxLength={500} autoFocus />
+        <Textarea
+          value={motivo}
+          onChange={(e) => setMotivo(e.target.value)}
+          rows={3}
+          maxLength={LIMITES.motivo}
+          autoFocus={!bloqueado}
+          disabled={bloqueado}
+        />
       </Field>
     </Modal>
   )

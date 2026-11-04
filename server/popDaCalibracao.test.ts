@@ -7,7 +7,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { hojeLocalIso } from '#shared/dominio.ts'
 import type { Calibracao, VersaoPop } from '#shared/tipos.ts'
-import { cenarioCalibracao, criarAppComLogin, POP_TESTE, type AppComLogin } from './auxiliaresTeste.ts'
+import { ARQUIVOS_TESTE, cenarioCalibracao, criarAppComLogin, POP_TESTE, type AppComLogin } from './auxiliaresTeste.ts'
+import { abrirBanco } from './db.ts'
+import { Repositorio } from './repositorio.ts'
+import { transplantarRegistros } from './usuarios.ts'
 
 let t: AppComLogin
 let c: Awaited<ReturnType<typeof cenarioCalibracao>>
@@ -161,6 +164,37 @@ describe('POP do certificado: o usado na calibração', () => {
     expect(emitida.emissao?.pop ?? null).toBeNull()
   })
 
+  it('revisão com data antes da vigente, ou com número menor: recusada (400); o rascunho continua com a de antes', async () => {
+    await iniciar()
+    const k = await prontaEm('2026-10-01')
+    expect((await detalhe(k)).pop).toMatchObject({ revisao: '00' })
+    const registrar = (revisao: string, data: string, codigo = POP_TESTE.codigo) =>
+      t.chamar('POST', '/api/pop', { cookie: t.cookieAdmin, payload: { codigo, revisao, data } })
+    const antes = await registrar('01', '2025-11-04')
+    expect(antes.statusCode).toBe(400)
+    expect(antes.json().erro).toBe('A data da revisão precisa ser igual ou posterior à da rev. 00 (05/01/2026).')
+    expect((await detalhe(k)).pop).toMatchObject({ revisao: '00' })
+    // Fora de ordem: 05 e depois 03
+    expect((await registrar('05', '2026-02-01')).statusCode).toBe(201)
+    const menor = await registrar('03', '2026-03-01')
+    expect(menor.statusCode).toBe(400)
+    expect(menor.json().erro).toBe(`A revisão precisa ser maior que a rev. 05 do ${POP_TESTE.codigo}.`)
+    // A mesma data da vigente vale; outro código começa do 00
+    expect((await registrar('06', '2026-02-01')).statusCode).toBe(201)
+    expect((await registrar('00', '2026-02-01', 'POP-CAL-01')).statusCode).toBe(201)
+  })
+
+  it('a trazida das configurações (data da atualização) não impede registrar o POP com a data do documento', async () => {
+    await iniciar({ semPop: true })
+    t.ctx.db
+      .prepare(
+        `INSERT INTO pop_versoes (codigo, revisao, data, arquivo, observacao, criado_em, criado_por)
+         VALUES ('BALANÇAS-POP-123', '02', ?, NULL, '', ?, 'Atualização do sistema')`,
+      )
+      .run(hojeLocalIso(), new Date().toISOString())
+    expect((await registrarPop('00', '2026-10-28')).codigo).toBe(POP_TESTE.codigo)
+  })
+
   it('a revisão do POP com data no futuro é recusada', async () => {
     await iniciar()
     const r = await t.chamar('POST', '/api/pop', {
@@ -173,4 +207,95 @@ describe('POP do certificado: o usado na calibração', () => {
     // Hoje vale
     expect((await registrarPop('01', hojeLocalIso())).revisao).toBe('01')
   })
+})
+
+// Voltar uma cópia do banco feita antes de registrar a revisão do POP impressa numa folha de campo: a revisão vai
+// junto com a folha (o mesmo id e o arquivo), e a próxima revisão registrada na cópia nunca herda o id dela.
+describe('POP da folha de campo ao voltar uma cópia do banco', () => {
+  /** Rascunho com a folha impressa com a rev. 01, registrada depois da cópia; devolve a cópia, a calibração e a rev. 01. */
+  async function folhaComRevisaoDepoisDaCopia() {
+    await iniciar()
+    const k = await c.calibracaoPronta()
+    const copia = await t.ctx.backups.copiar('manual')
+    const arquivo = await c.enviarArquivo(ARQUIVOS_TESTE.docx('pop rev 01'), 'POP rev 01.docx', 'pop')
+    const r = await t.chamar('POST', '/api/pop', {
+      cookie: t.cookieAdmin,
+      payload: { codigo: POP_TESTE.codigo, revisao: '01', data: hojeLocalIso(), arquivo: arquivo.sha256 },
+    })
+    expect(r.statusCode, r.body).toBe(201)
+    const v1 = r.json().versao as VersaoPop
+    const folha = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
+    expect(folha.statusCode, folha.body).toBe(200)
+    expect(t.ctx.repo.popDaFolhaDaCalibracao(k.id)?.pop).toMatchObject({ id: v1.id, revisao: '01' })
+    return { k, copia, v1 }
+  }
+  const restauracoes = (db: ReturnType<typeof abrirBanco>) =>
+    (
+      db.prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' ORDER BY id").all() as Array<{ detalhe: string }>
+    ).map((r) => r.detalhe)
+
+  it('a revisão impressa na folha passa para a cópia (o mesmo id e o arquivo); a registrada depois recebe outro id', async () => {
+    const { k, copia, v1 } = await folhaComRevisaoDepoisDaCopia()
+    const destino = abrirBanco(copia)
+    try {
+      transplantarRegistros(t.ctx.db, destino)
+      const repo = new Repositorio(destino)
+      expect(repo.popDaFolhaDaCalibracao(k.id)?.pop).toMatchObject({
+        id: v1.id,
+        codigo: POP_TESTE.codigo,
+        revisao: '01',
+        arquivo: { sha256: v1.arquivo!.sha256 },
+      })
+      expect(restauracoes(destino)).toContain(
+        `a revisão do POP impressa nas folhas de campo que passaram (${POP_TESTE.codigo} rev. 01) continua registrada, como no banco atual`,
+      )
+      // A revisão registrada depois de voltar a cópia não herda o id: o certificado continua citando a da folha
+      const v2 = repo.registrarPop({ codigo: POP_TESTE.codigo, revisao: '02', data: hojeLocalIso() }, 'Teste')
+      expect(v2.id).toBeGreaterThan(v1.id)
+      expect(repo.popDaFolhaDaCalibracao(k.id)?.pop).toMatchObject({ id: v1.id, revisao: '01' })
+      // De novo: nada muda
+      const antes = destino.prepare('SELECT COUNT(*) AS n FROM auditoria').get()
+      transplantarRegistros(t.ctx.db, destino)
+      expect(destino.prepare('SELECT COUNT(*) AS n FROM pop_versoes').get()).toEqual({ n: 3 })
+      expect(destino.prepare('SELECT COUNT(*) AS n FROM auditoria').get()).toEqual(antes)
+    } finally {
+      destino.close()
+    }
+  }, 30_000)
+
+  it('o id já é de outra revisão na cópia: a folha fica com a mesma revisão registrada na cópia, ou com nenhuma', async () => {
+    const { k, copia, v1 } = await folhaComRevisaoDepoisDaCopia()
+    const agora = new Date().toISOString()
+    const inserir = (db: ReturnType<typeof abrirBanco>, id: number, revisao: string) =>
+      db
+        .prepare(
+          `INSERT INTO pop_versoes (id, codigo, revisao, data, arquivo, observacao, criado_em, criado_por)
+           VALUES (?, ?, ?, ?, NULL, '', ?, 'Teste')`,
+        )
+        .run(id, POP_TESTE.codigo, revisao, hojeLocalIso(), agora)
+    // A cópia já tem outra revisão com o id da rev. 01, e a rev. 01 com outro id: a folha fica com essa
+    const comRevisao = abrirBanco(copia)
+    const outra = `${copia}.outra.db`
+    try {
+      comRevisao.exec(`VACUUM INTO '${outra}'`)
+      inserir(comRevisao, v1.id, '05')
+      inserir(comRevisao, v1.id + 7, '01')
+      transplantarRegistros(t.ctx.db, comRevisao)
+      expect(new Repositorio(comRevisao).popDaFolhaDaCalibracao(k.id)?.pop).toMatchObject({ id: v1.id + 7, revisao: '01' })
+    } finally {
+      comRevisao.close()
+    }
+    // Sem a rev. 01 na cópia: a folha fica sem revisão (cai na que valia na data), e o registro de atividades diz
+    const semRevisao = abrirBanco(outra)
+    try {
+      inserir(semRevisao, v1.id, '05')
+      transplantarRegistros(t.ctx.db, semRevisao)
+      expect(new Repositorio(semRevisao).popDaFolhaDaCalibracao(k.id)).toBeNull()
+      expect(restauracoes(semRevisao)).toContain(
+        `a revisão do POP impressa na folha de campo ${(await detalhe(k)).folhaCampo.numero} (${POP_TESTE.codigo} rev. 01) não passou para a cópia (o id dela já é de outra revisão lá): o certificado cita a que valia na data da calibração`,
+      )
+    } finally {
+      semRevisao.close()
+    }
+  }, 30_000)
 })

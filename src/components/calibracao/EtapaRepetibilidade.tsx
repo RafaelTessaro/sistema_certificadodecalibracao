@@ -62,6 +62,8 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
         const r = resultados.get(ens.id)
         const setEns = (mudar: (e: EnsaioRepetibilidade) => EnsaioRepetibilidade) =>
           setEnsaios((l) => l.map((x) => (x.id === ens.id ? mudar(x) : x)))
+        // Leituras sem a carga (o campo apagado grava 0): não dá para conferi-las, e o ensaio não vale (POP 7.9)
+        const semCarga = !(ens.carga > 0) && ens.leituras.some((l) => l !== null)
         return (
           <Card key={ens.id}>
             <CardHeader
@@ -81,11 +83,16 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
             />
             {/* Carga e leituras com o mesmo rótulo (Field) e a mesma altura de campo: ficam na mesma linha */}
             <div className="grid grid-cols-1 gap-5 px-5 pb-5 lg:grid-cols-[200px_minmax(0,1fr)]">
-              <Field label="Carga aplicada" htmlFor={`rep-c-${ens.id}`}>
+              <Field
+                label="Carga aplicada"
+                htmlFor={`rep-c-${ens.id}`}
+                erro={semCarga ? 'Informe a carga do ensaio.' : undefined}
+              >
                 <CampoNumero
                   id={`rep-c-${ens.id}`}
                   valor={ens.carga}
                   aoMudar={(v) => setEns((e) => ({ ...e, carga: v ?? 0 }))}
+                  tom={semCarga ? 'erro' : 'normal'}
                   unidade={u}
                 />
               </Field>
@@ -105,8 +112,9 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
                           className="[&_input]:pl-8"
                           aoMudar={(x) => setEns((e) => ({ ...e, leituras: e.leituras.map((y, j) => (j === i ? x : y)) }))}
                           grade={gradeRepetibilidade(iEns, i)}
-                          // Fora do esperado (vírgula esquecida): a mesma regra da pendência do cálculo
-                          tom={leituraImplausivel(v, ens.carga, balanca) ? 'erro' : 'normal'}
+                          // Fora do esperado (vírgula esquecida): a mesma regra da pendência do cálculo (sem a carga,
+                          // a pendência é a da carga)
+                          tom={ens.carga > 0 && leituraImplausivel(v, ens.carga, balanca) ? 'erro' : 'normal'}
                           unidade={u}
                         />
                       </div>

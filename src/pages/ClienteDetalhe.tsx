@@ -303,6 +303,11 @@ export function ClienteDetalhe() {
                       <p className="truncate text-xs text-muted">
                         Para {e.para} · por {e.usuarioNome}
                       </p>
+                      {!!e.recusados?.length && (
+                        <p className="truncate text-xs text-warning" title={e.recusados.join('\n')}>
+                          Recusado pelo servidor de e-mail (não recebeu): {e.recusados.join(', ')}
+                        </p>
+                      )}
                     </div>
                     <span className="text-xs whitespace-nowrap text-muted">{dataHora(e.em)}</span>
                   </li>

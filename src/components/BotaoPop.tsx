@@ -20,7 +20,7 @@ export function BotaoPop({ className }: { className?: string }) {
         `O arquivo do ${textoPop(atual)} ainda não foi anexado`,
         'O administrador anexa o arquivo em Configurações → Certificado.',
       )
-    window.open(api.urlArquivo(atual.arquivo.sha256), '_blank', 'noopener')
+    window.open(api.urlAnexo(atual.arquivo), '_blank', 'noopener')
   }
 
   return (

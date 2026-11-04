@@ -3,6 +3,7 @@
 // na revisão), os valores do ambiente fora da faixa, as datas incoerentes, o técnico excluído e a balança cadastrada
 // em dobro.
 
+import { spawnSync } from 'node:child_process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
 import { BALANCA_VAZIA } from '#shared/dominio.ts'
@@ -20,6 +21,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await t.fechar()
 })
+
+const temPdftotext = !spawnSync('pdftotext', ['-v'], { stdio: 'ignore' }).error
 
 /** Espaços finos e inseparáveis dos números → espaço comum (para comparar textos). */
 const sem = (x: string) => x.replace(/[   ]/g, ' ')
@@ -54,7 +57,6 @@ describe('mínimos do POP bloqueiam a emissão', () => {
     const { calibracao, pendencias } = await salvar(pronta, (k) => ({
       ...k,
       repetibilidade: [{ id: 'r1', carga: 15, leituras: [15, 15.01] }],
-      excentricidade: { ...k.excentricidade, aplicavel: false, motivo: 'Prato pequeno', posicoes: [] },
       indicacao: {
         ...k.indicacao,
         pontos: k.indicacao.pontos.map((p) => (p.carga === 0 ? p : { ...p, crescente: null, decrescente: null })),
@@ -96,8 +98,10 @@ describe('mínimos do POP bloqueiam a emissão', () => {
     expect(r.statusCode, r.body).toBe(200)
     const emitida = r.json().calibracao as Calibracao
     // Gravado como na versão 1.0.2: sem o zero, 3 leituras de repetibilidade e só a descida
+    const { regrasDoPop: _marca, ...emissao } = emitida.emissao!
     const antigo: Calibracao = {
       ...emitida,
+      emissao,
       repetibilidade: [{ id: 'r1', carga: 15, leituras: [15, 15, 15.01] }],
       indicacao: {
         ...emitida.indicacao,
@@ -550,5 +554,249 @@ describe('balança com o nº de série de outra do mesmo cliente', () => {
       payload: { ...dobro, modelo: '9094 Plus', versao: dobro.versao },
     })
     expect(editada.statusCode, editada.body).toBe(200)
+  })
+})
+
+// ---- Balança que não pesa corretamente (POP 7.8), retorno ao zero e cargas acima de Max ---------------------
+
+describe('balança que não pesa corretamente não recebe certificado', () => {
+  const NAO_PESA =
+    'Erro de indicação, ponto de 30,00 kg: erro de +0,100 kg, maior que o EMA em serviço (±0,04 kg); a balança não pesa corretamente e não é calibrada (POP 7.8).'
+  const em30 = (leitura: number) => (k: CalibracaoInput) => ({
+    ...k,
+    indicacao: {
+      ...k.indicacao,
+      pontos: k.indicacao.pontos.map((p) => (p.carga === 30 ? { ...p, crescente: leitura, decrescente: leitura } : p)),
+    },
+  })
+
+  it('erro de 10 e em Max, com e sem a conformidade pedida: pendência e emissão recusada (409)', async () => {
+    const { calibracao, pendencias } = await salvar(await c.calibracaoPronta(), em30(30.1))
+    expect(pendencias.map(sem)).toEqual([NAO_PESA])
+    const negado = await emitir(calibracao)
+    expect(negado.statusCode).toBe(409)
+    expect(sem(negado.json().erro)).toBe(NAO_PESA)
+    const conforme = await salvar(calibracao, (k) => ({
+      ...k,
+      conformidade: { solicitada: true, criterio: 'PORTARIA_SERVICO', toleranciaCliente: 0, regra: 'SIMPLES' },
+    }))
+    expect(conforme.pendencias.map(sem)).toEqual([NAO_PESA])
+    expect((await emitir(conforme.calibracao)).statusCode).toBe(409)
+    // No limite (4 e, o EMA em serviço da Portaria 157 acima de 500 e), emite
+    const limite = await salvar(conforme.calibracao, em30(30.04))
+    expect(limite.pendencias).toEqual([])
+    expect((await emitir(limite.calibracao)).statusCode).toBe(200)
+  })
+
+  it('retorno ao zero não registrado, ou de 50 d: pendência', async () => {
+    const pronta = await c.calibracaoPronta()
+    const sem0 = await salvar(pronta, (k) => ({ ...k, indicacao: { ...k.indicacao, retornoZero: null } }))
+    expect(sem0.pendencias.map(sem)).toEqual([
+      'Erro de indicação: registre o retorno ao zero, a indicação sem carga depois de retirar toda a carga (POP 7.7).',
+    ])
+    expect((await emitir(sem0.calibracao)).statusCode).toBe(409)
+    const longe = await salvar(sem0.calibracao, (k) => ({ ...k, indicacao: { ...k.indicacao, retornoZero: 0.5 } }))
+    expect(longe.pendencias.map(sem)).toEqual([
+      'Erro de indicação: a balança não voltou ao zero (retorno de 0,50 kg; limite de ±0,02 kg); a balança não pesa corretamente e não é calibrada (POP 7.8).',
+    ])
+  })
+
+  it('ponto de 35 kg numa balança de 30 kg: pendência e emissão recusada', async () => {
+    const peca = (pesoId: string) => ({ padraoId: c.pesos.id, pesoId, quantidade: 1 })
+    const { calibracao, pendencias } = await salvar(await c.calibracaoPronta(), (k) => ({
+      ...k,
+      indicacao: {
+        ...k.indicacao,
+        pontos: [
+          ...k.indicacao.pontos,
+          {
+            id: 'e',
+            carga: 35,
+            pecas: [peca('p10a'), peca('p10b'), peca('p10c'), peca('p5')],
+            pecasManuais: true,
+            crescente: 35.01,
+            decrescente: 35.01,
+            nivelSubstituicao: 0,
+          },
+        ],
+      },
+    }))
+    expect(pendencias.map(sem)).toEqual([
+      'Erro de indicação, ponto de 35,00 kg: carga acima de Max (30,00 kg); confira a carga ou o Max da balança.',
+    ])
+    expect((await emitir(calibracao)).statusCode).toBe(409)
+  })
+})
+
+// ---- Excentricidade dispensada e balança sem identificação --------------------------------------------------
+
+describe('excentricidade "não realizada" só no gancho, com o motivo', () => {
+  const naoFeita = (motivo: string) => (k: CalibracaoInput) => ({
+    ...k,
+    excentricidade: { ...k.excentricidade, aplicavel: false, motivo, posicoes: [] },
+  })
+
+  it('plataforma retangular sem o ensaio (e sem motivo): pendências e emissão recusada', async () => {
+    const { calibracao, pendencias } = await salvar(await c.calibracaoPronta(), naoFeita(''))
+    expect(pendencias.map(sem)).toEqual([
+      'Excentricidade: o POP (7.10, Tabela 6) só dispensa o ensaio na balança suspensa (gancho); registre as leituras das posições.',
+      'Excentricidade: informe por que o ensaio não foi feito (sai no certificado).',
+    ])
+    expect((await emitir(calibracao)).statusCode).toBe(409)
+  })
+
+  it('balança suspensa (gancho) com o motivo: emite', async () => {
+    const r = await t.chamar('PUT', `/api/balancas/${c.balanca.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...c.balanca, receptor: 'GANCHO', versao: c.balanca.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    const semMotivo = await salvar(await c.calibracaoPronta(), naoFeita(''))
+    expect(semMotivo.pendencias.map(sem)).toEqual([
+      'Excentricidade: informe por que o ensaio não foi feito (sai no certificado).',
+    ])
+    const comMotivo = await salvar(semMotivo.calibracao, naoFeita('Balança suspensa: a carga se centraliza sozinha.'))
+    expect(comMotivo.pendencias).toEqual([])
+    expect((await emitir(comMotivo.calibracao)).statusCode).toBe(200)
+  })
+})
+
+describe('balança sem nº de série nem TAG não é identificável (POP 7.3)', () => {
+  it('emissão recusada; com a TAG no cadastro, emite', async () => {
+    const pronta = await c.calibracaoPronta()
+    const mudar = (extra: Partial<Balanca>) =>
+      t.chamar('PUT', `/api/balancas/${c.balanca.id}`, {
+        cookie: t.cookieAdmin,
+        payload: { ...t.ctx.repo.obterBalanca(c.balanca.id)!, ...extra, versao: t.ctx.repo.obterBalanca(c.balanca.id)!.versao },
+      })
+    expect((await mudar({ numeroSerie: '  ', identificacao: '' })).statusCode).toBe(200)
+    const pendencia =
+      'Balança sem nº de série nem identificação (TAG): identifique a balança no cadastro antes de emitir (POP 7.3).'
+    expect(await pendenciasDe(pronta)).toEqual([pendencia])
+    const negado = await emitir(pronta)
+    expect(negado.statusCode).toBe(409)
+    expect(negado.json().erro).toBe(pendencia)
+    expect((await mudar({ identificacao: 'BAL-07' })).statusCode).toBe(200)
+    expect(await pendenciasDe(pronta)).toEqual([])
+    expect((await emitir(pronta)).statusCode).toBe(200)
+  })
+})
+
+// ---- Padrão fora do intervalo de calibração do POP (Tabela 3: 24 meses) ---------------------------------------
+
+describe('padrão calibrado há mais de 24 meses', () => {
+  it('a próxima calibração digitada distante não vale: pendência e emissão recusada', async () => {
+    const velho = (
+      await c.criar('/api/padroes', { ...c.padraoPesos('JP-02'), dataCalibracao: '2022-03-10', validade: '2032-03-10' })
+    ).padrao as Padrao
+    const k = (
+      await salvar(await c.calibracaoPronta(), (x) => ({
+        ...x,
+        dataCalibracao: '2026-11-04',
+        padroesIds: [velho.id],
+        indicacao: {
+          ...x.indicacao,
+          pontos: x.indicacao.pontos.map((p) => ({ ...p, pecas: p.pecas.map((q) => ({ ...q, padraoId: velho.id })) })),
+        },
+      }))
+    ).calibracao
+    const pendencia = 'O padrão JP-02 foi calibrado em 10/03/2022, há mais de 24 meses desta calibração (POP, Tabela 3).'
+    expect(await pendenciasDe(k)).toEqual([pendencia])
+    const negado = await emitir(k)
+    expect(negado.statusCode).toBe(409)
+    expect(negado.json().erro).toBe(pendencia)
+  })
+})
+
+// ---- Revisão: as regras do POP quando o certificado revisado foi emitido com elas -----------------------------
+
+describe('revisão de certificado emitido com as regras do POP', () => {
+  const em20 = (leitura: number) => (k: CalibracaoInput) => ({
+    ...k,
+    indicacao: {
+      ...k.indicacao,
+      pontos: k.indicacao.pontos.map((p) => (p.carga === 20 ? { ...p, crescente: leitura } : p)),
+    },
+  })
+  const LEITURA = 'Erro de indicação, ponto de 20,00 kg: leitura 20 000,00 fora do esperado; confira a digitação.'
+
+  it('a emissão marca as regras; a revisão as segue: leitura absurda e mínimos são pendências (409)', async () => {
+    const emitida = await c.emitido()
+    expect(emitida.emissao!.regrasDoPop).toBe(true)
+    const rev = await revisar(emitida)
+    expect(rev.regrasDoPop).toBe(true)
+    const absurda = await salvar(rev, em20(20000))
+    expect(absurda.pendencias.map(sem)).toEqual([LEITURA])
+    expect((await emitir(absurda.calibracao)).statusCode).toBe(409)
+    const poucos = await salvar(absurda.calibracao, (k) => ({
+      ...k,
+      repetibilidade: [{ id: 'r1', carga: 15, leituras: [15, 15.01] }],
+      indicacao: { ...k.indicacao, pontos: k.indicacao.pontos.filter((p) => p.carga === 0 || p.carga === 30) },
+    }))
+    expect(poucos.pendencias.map(sem)).toEqual([
+      'Erro de indicação: 2 pontos lidos; o POP pede no mínimo 5, contando o zero (7.7).',
+      'Repetibilidade a 15,00 kg: 2 leituras; o mínimo é 5 (POP, Tabela 4; 3 só com carga ≥ 100 kg).',
+    ])
+    // A revisão da revisão continua com as regras
+    const certa = await salvar(poucos.calibracao, (k) => ({
+      ...k,
+      indicacao: emitida.indicacao,
+      repetibilidade: emitida.repetibilidade,
+    }))
+    const r1 = await emitir(certa.calibracao)
+    expect(r1.statusCode, r1.body).toBe(200)
+    expect(r1.json().calibracao.emissao.regrasDoPop).toBe(true)
+    const r2 = await revisar(r1.json().calibracao)
+    expect(r2.regrasDoPop).toBe(true)
+  })
+
+  it('certificado da 1.0.2 (sem a marca): os mínimos ficam avisos, mas a leitura absurda que a revisão trouxe é pendência', async () => {
+    const emitida = await c.emitido()
+    const { regrasDoPop: _marca, ...semMarca } = emitida.emissao!
+    t.ctx.db
+      .prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
+      .run(JSON.stringify({ ...emitida, emissao: semMarca }), emitida.id)
+    const rev = await revisar(emitida)
+    expect(rev.regrasDoPop).toBeUndefined()
+    const absurda = await salvar(rev, em20(20000))
+    expect(absurda.pendencias.map(sem)).toEqual([LEITURA])
+    expect((await emitir(absurda.calibracao)).statusCode).toBe(409)
+    // Os mínimos: como na época (avisos)
+    const poucos = await salvar(absurda.calibracao, (k) => ({
+      ...k,
+      repetibilidade: [{ id: 'r1', carga: 15, leituras: [15, 15.01] }],
+      indicacao: { ...emitida.indicacao, pontos: emitida.indicacao.pontos.filter((p) => p.carga === 0 || p.carga === 30) },
+    }))
+    expect(poucos.pendencias).toEqual([])
+  })
+})
+
+// ---- Motivo da revisão: até 500 caracteres, inteiro no certificado ---------------------------------------------
+
+describe('motivo da revisão', () => {
+  it('500 caracteres chegam inteiros ao certificado; 501, recusado (400)', async () => {
+    const emitida = await c.emitido()
+    const longo =
+      `Correção do nº de série da balança, que foi transcrito com erro. ${'Os resultados das medições não mudam. '.repeat(20)}`
+        .slice(0, 500)
+        .trimEnd()
+        .padEnd(500, 'x')
+    expect(longo).toHaveLength(500)
+    const recusado = await t.chamar('POST', `/api/calibracoes/${emitida.id}/revisar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: `${longo}y` },
+    })
+    expect(recusado.statusCode).toBe(400)
+    expect(recusado.json().erro).toBe('O motivo da revisão pode ter até 500 caracteres.')
+    const rev = await revisar(emitida, longo)
+    expect(rev.motivoRevisao).toBe(longo)
+    const r1 = await emitir(rev)
+    expect(r1.statusCode, r1.body).toBe(200)
+    if (!temPdftotext) return
+    const pdf = await t.chamar('GET', `/api/calibracoes/${rev.id}/pdf`, { cookie: t.cookieAdmin })
+    const bruto = spawnSync('pdftotext', ['-enc', 'UTF-8', '-', '-'], { input: pdf.rawPayload }).stdout.toString('utf8')
+    expect(sem(bruto).replace(/\s+/g, ' ')).toContain(longo.replace(/\s+/g, ' '))
+    // No máximo 3 páginas (o pdftotext separa as páginas com \f)
+    expect(bruto.split('\f').filter((x) => x.trim()).length).toBeLessThanOrEqual(3)
   })
 })

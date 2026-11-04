@@ -21,12 +21,13 @@ import {
 } from './ar.ts'
 import { arredondarResultado, casasDecimais, formatarNumero, limparRuido } from './arredondamento.ts'
 import { conveccaoRelevante, deltaMConveccaoMg, deltaTAposAclimatacao } from './conveccao.ts'
-import { emaInstrumento, faixaDoValor, faixasOrdenadas } from './ema.ts'
+import { CRITERIO_NAO_PESA_CORRETAMENTE, emaInstrumento, faixaDoValor, faixasOrdenadas } from './ema.ts'
 import { desvioPadrao, fatorAbrangencia, media } from './estatistica.ts'
 import { converterMassa } from './pesos.ts'
 import {
   cargaExcentricidade,
   excentricidadeAbaixoDoMinimo,
+  faixasAlcancadas,
   faixasSemRepetibilidade,
   minimoExcentricidade,
   ondeFaltaRepetibilidade,
@@ -81,6 +82,11 @@ interface Massa {
   emaFaltando: string[]
   /** Alguma peça sem incerteza (pelo nominal sem classe, ou pelo certificado sem U). */
   semIncerteza: boolean
+  /**
+   * Peças de jogo "valor do certificado" sem a U no cadastro e com correção: entram pelo nominal, e a correção do
+   * certificado fica de fora (`PecaCalculo.correcaoSemU`). Um texto por peça, para o aviso.
+   */
+  correcaoIgnorada: string[]
   /** Convecção: falta o ΔT pesos − ar (nem medido, nem pela aclimatação). */
   semDeltaT: boolean
   /** Convecção: ΔT acima de 20 K ou peça acima de 50 kg (fora da Tabela F2.1). */
@@ -139,19 +145,69 @@ const naoExcede = (valor: number, limite: number) => valor <= limite + TOL * Mat
 /**
  * Leitura fora do esperado para a carga, provável erro de digitação (vírgula esquecida, outra unidade): mais longe da
  * carga que 10 % dela ou, na carga pequena, que 2 e (lá só o arredondamento em d já passa de 10 %). O e é o da faixa
- * ou do intervalo da carga (sem e, o d). Carga zero (ou sem leitura) nunca é. A tela usa a mesma regra para pintar o
- * campo, e o cálculo a transforma em pendência na calibração nova (`EntradaCalculo.regrasDoPop`).
+ * ou do intervalo de `cargaFaixa` (a carga; na leitura decrescente das múltiplas faixas, a da faixa em que foi lida:
+ * `cargaDaFaixaDecrescente`); sem e, o d. Com carga zero, 2 e da 1ª faixa: o ponto com a carga esquecida e o zero
+ * digitado errado (o "zero antes" da excentricidade). Sem leitura, nunca. A tela usa a mesma regra para pintar o campo,
+ * e o cálculo a transforma em pendência na calibração nova (`EntradaCalculo.regrasDoPop`).
  */
 export function leituraImplausivel(
   leitura: number | null | undefined,
   carga: number,
   instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'>,
+  cargaFaixa = carga,
 ): boolean {
   const l = lida(leitura)
-  if (l === null || !(carga > 0)) return false
-  const faixa = instrumento.faixas.length ? faixaDoValor(carga, instrumento) : null
+  if (l === null || !Number.isFinite(carga) || carga < 0) return false
+  const faixa = instrumento.faixas.length ? faixaDoValor(Number.isFinite(cargaFaixa) ? cargaFaixa : carga, instrumento) : null
   const e = faixa ? (faixa.e > 0 ? faixa.e : faixa.d > 0 ? faixa.d : 0) : 0
   return !naoExcede(Math.abs(l - carga), Math.max(0.1 * carga, 2 * e))
+}
+
+/**
+ * Leituras de uma posição da excentricidade fora do esperado (a pendência do cálculo e a cor dos campos na tela): a
+ * indicação com a carga (métodos 1 e 3, com a carga informada; sem ela, a pendência é a da carga) e, no método 3 (o da
+ * classe I), o zero lido antes da posição. No método 2 a balança é tarada com a carga, e no 4 a referência é a
+ * leitura no centro: lá só o desvio conta.
+ */
+export function excentricidadeImplausivel(
+  exc: { carga: number; metodo: number },
+  posicao: { leitura: number | null; referencia: number | null },
+  instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'>,
+): { leitura: boolean; referencia: boolean } {
+  return {
+    leitura:
+      (exc.metodo === 1 || exc.metodo === 3) && exc.carga > 0 && leituraImplausivel(posicao.leitura, exc.carga, instrumento),
+    referencia: exc.metodo === 3 && leituraImplausivel(posicao.referencia, 0, instrumento),
+  }
+}
+
+/**
+ * Múltiplas faixas com a descida sem descarregar (crescente e decrescente, ou só decrescente, sem divisão de teste): a
+ * maior carga lida, cuja faixa vale para as leituras decrescentes (a troca para a faixa menor só acontece com o receptor
+ * vazio, OIML R76-1 4.10); null nos demais casos (cada leitura na faixa da carga). O cálculo e a tela usam esta.
+ */
+export function cargaDaDescida(
+  instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'>,
+  metodo: EntradaCalculo['indicacao']['metodo'],
+  divisaoTeste: number,
+  pontos: ReadonlyArray<{ carga: number; crescente: number | null; decrescente: number | null }>,
+): number | null {
+  const desceSemDescarregar =
+    instrumento.tipoFaixas === 'MULTIPLAS_FAIXAS' &&
+    instrumento.faixas.length > 1 &&
+    !(divisaoTeste > 0) &&
+    (metodo === 'CRESCENTE_DECRESCENTE' || metodo === 'DECRESCENTE')
+  if (!desceSemDescarregar) return null
+  const lidas = pontos.filter((p) => lida(p.crescente) !== null || lida(p.decrescente) !== null).map((p) => p.carga)
+  return lidas.length ? Math.max(...lidas) : null
+}
+
+/**
+ * Carga que decide a faixa (o d, o e e o EMA) da leitura decrescente de um ponto: com a descida sem descarregar
+ * (`cargaDaDescida`), a maior carga aplicada; no zero (o receptor vazio) e nos demais casos, a própria carga.
+ */
+export function cargaDaFaixaDecrescente(carga: number, cargaDescida: number | null, tol = 0): number {
+  return cargaDescida !== null && Math.abs(carga) > tol ? Math.max(carga, cargaDescida) : carga
 }
 
 // ---- Repetibilidade (cg-18 6.1) ----------------------------------------------------------------
@@ -294,6 +350,7 @@ function componentesMassa(pecas: readonly PecaCalculo[], ctx: Contexto): Massa {
   const semDensidade: string[] = []
   const densidadeImplausivel: Massa['densidadeImplausivel'] = []
   const emaFaltando: string[] = []
+  const correcaoIgnorada: string[] = []
   // O empuxo estimado usa o mpe relativo (Σ EMA / Σ nominal); o MEDIDO sem t, UR ou p já é pendência
   const empuxoEstimado = opcoes.empuxo === 'AJUSTADO' || opcoes.empuxo === 'NAO_AJUSTADO' || opcoes.empuxo === 'DELTA_T'
   const nomePeca = (p: PecaCalculo) => `peça de ${formatarNumero(p.nominal, casasDecimais(p.nominal))} ${unidade}`
@@ -305,6 +362,10 @@ function componentesMassa(pecas: readonly PecaCalculo[], ctx: Contexto): Massa {
     valor += (p.nominal + (p.usarCertificado ? p.correcao : 0)) * q
     const u = p.usarCertificado ? p.incerteza / (p.k > 0 ? p.k : 2) : p.ema / RAIZ3
     if (!(u > 0)) semIncerteza = true
+    if (!p.usarCertificado && p.correcaoSemU) {
+      const jogo = p.jogo?.trim()
+      correcaoIgnorada.push(`${nomePeca(p)}${jogo ? ` do jogo ${jogo}` : ''}`)
+    }
     uMassa += u * q
     const deriva = opcoes.deriva === 'KD' && p.incerteza > 0 ? opcoes.kD * p.incerteza : p.ema
     uDeriva += (deriva / RAIZ3) * q
@@ -376,6 +437,7 @@ function componentesMassa(pecas: readonly PecaCalculo[], ctx: Contexto): Massa {
     emaConhecido,
     emaFaltando: [...new Set(emaFaltando)],
     semIncerteza,
+    correcaoIgnorada,
     semDeltaT,
     conveccaoForaDaTabela,
     conveccaoAcimaEma,
@@ -403,8 +465,7 @@ const ehZero = (carga: number, ctx: Contexto) => Math.abs(carga) <= ctx.tol
  * só acontece com o receptor vazio (OIML R76-1 4.10): na descida sem descarregar, a leitura continua na faixa da maior
  * carga aplicada. O zero (receptor vazio) e os demais casos: a própria carga.
  */
-const cargaDaFaixaDescida = (carga: number, ctx: Contexto) =>
-  ctx.cargaDescida !== null && !ehZero(carga, ctx) ? Math.max(carga, ctx.cargaDescida) : carga
+const cargaDaFaixaDescida = (carga: number, ctx: Contexto) => cargaDaFaixaDecrescente(carga, ctx.cargaDescida, ctx.tol)
 
 /** u(I) = √(d0²/12 + d_I²/12 + s² + (u_rel,ecc·I)² + u²hist + u²tempo); no ponto zero só d0 e s (e a histerese da média). */
 function incertezaIndicacao(indicacao: number, carga: number, ctx: Contexto, uHist = 0, cargaFaixa = carga) {
@@ -607,14 +668,6 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   const max = faixas[faixas.length - 1].max
   const sub = entrada.indicacao.substituicao
   const metodo = entrada.indicacao.metodo
-  const desceSemDescarregar =
-    instrumento.tipoFaixas === 'MULTIPLAS_FAIXAS' &&
-    faixas.length > 1 &&
-    !(opcoes.divisaoTeste > 0) &&
-    (metodo === 'CRESCENTE_DECRESCENTE' || metodo === 'DECRESCENTE')
-  const cargasAplicadas = entrada.indicacao.pontos
-    .filter((p) => lida(p.crescente) !== null || lida(p.decrescente) !== null)
-    .map((p) => p.carga)
   const ctx: Contexto = {
     entrada,
     opcoes,
@@ -627,8 +680,27 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     tol: TOL * Math.max(Math.abs(max), Number.MIN_VALUE),
     ar: opcoes.empuxo === 'MEDIDO' && ar ? { rhoA: ar.densidade, uRhoA: ar.incerteza } : null,
     deltaTPeca,
-    cargaDescida: desceSemDescarregar && cargasAplicadas.length ? Math.max(...cargasAplicadas) : null,
+    cargaDescida: cargaDaDescida(instrumento, metodo, opcoes.divisaoTeste, entrada.indicacao.pontos),
   }
+
+  // POP 7.8: o limite de "não pesa corretamente" é o EMA em serviço da classe (na leitura decrescente das múltiplas
+  // faixas, o da faixa em que foi lida) ou, sem classe, a tolerância do cliente (pedida na conformidade); sem os dois,
+  // não há o que conferir
+  const toleranciaCliente =
+    conformidade.solicitada && conformidade.criterio === 'CLIENTE' && conformidade.toleranciaCliente > 0
+      ? conformidade.toleranciaCliente
+      : null
+  const limiteServico = (carga: number, cargaFaixa = carga): number | null => {
+    if (!instrumento.classe) return toleranciaCliente
+    const naFaixa =
+      cargaFaixa === carga
+        ? instrumento
+        : { ...instrumento, tipoFaixas: 'UNICA' as const, faixas: [faixaDoValor(cargaFaixa, instrumento)] }
+    return emaInstrumento(carga, naFaixa, CRITERIO_NAO_PESA_CORRETAMENTE)
+  }
+  const nomeLimite = instrumento.classe ? 'o EMA em serviço' : 'a tolerância do cliente'
+  const textoLimite = (limite: number) => `±${formatarNumero(limite, casasDecimais(limite))} ${unidade}`
+  const acimaDeMax = (carga: number) => carga > max * (1 + TOL)
 
   /** Carga nas casas de d (ou mais, se o valor tiver); `rotulo` acrescenta a unidade (para os avisos). */
   const textoCarga = (carga: number) =>
@@ -638,7 +710,8 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     leitura === null
       ? ''
       : formatarNumero(leitura, Math.max(casasDecimais(divisaoNaCarga(leitura, carga, ctx, cargaFaixa)), casasDecimais(leitura)))
-  const implausivel = (leitura: number | null, carga: number) => leituraImplausivel(leitura, carga, instrumento)
+  const implausivel = (leitura: number | null, carga: number, cargaFaixa = carga) =>
+    leituraImplausivel(leitura, carga, instrumento, cargaFaixa)
 
   const cadeia = prepararSubstituicao(ctx)
   const porMedia = opcoes.histerese === 'MEDIA'
@@ -648,8 +721,17 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   const classeInsuficiente: string[] = []
   /** Pontos em que a classe dos pesos não pôde ser conferida (sem EMA), sem a pendência do EMA. */
   const classeNaoConferida: string[] = []
-  /** Leituras fora do esperado: o texto do aviso (registro anterior) e o da pendência (calibração nova). */
-  const leiturasImplausiveis: Array<{ aviso: string; pendencia: string }> = []
+  /**
+   * Leituras fora do esperado: o texto do aviso (registro anterior) e o da pendência (calibração nova). `alterada`: na
+   * revisão de um certificado de antes das regras, a leitura que não estava nele (`EntradaCalculo.leiturasDoOriginal`).
+   */
+  const leiturasImplausiveis: Array<{ aviso: string; pendencia: string; alterada: boolean }> = []
+  const original = entrada.leiturasDoOriginal
+  const mudou = (antes: number | null | undefined, agora: number | null | undefined) => !!original && lida(antes) !== lida(agora)
+  /** Pontos com o erro maior que o EMA em serviço (POP 7.8): o maior erro do ponto, como reportado, e o limite. */
+  const foraDoEmaServico: Array<{ carga: number; erro: string; limite: number }> = []
+  /** Cargas acima de Max, em cada ensaio. */
+  const cargasAcimaDeMax: Array<{ ensaio: 'indicacao' | 'repetibilidade' | 'excentricidade'; carga: number }> = []
   /** Pontos lidos sem a leitura de subida (a subida é obrigatória, POP 7.7). */
   const semSubida: string[] = []
   const uMenorQueD: string[] = []
@@ -672,8 +754,14 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   let maiorCargaLida = -Infinity
   /** Algum ponto com carga acima de zero lido (só o zero lido não é ensaio de erro de indicação). */
   let cargaLida = false
+  /** Já houve um ponto sem carga lido antes deste (o zero; outro ponto lido sem carga é a carga esquecida). */
+  let zeroLidoAntes = false
+  /** Pontos lidos sem carga que não são o primeiro (calibração nova): o nº do ponto na tabela, para a pendência. */
+  const semCarga: number[] = []
+  /** Peças de jogo "valor do certificado" sem a U no cadastro, com a correção do certificado ignorada. */
+  const correcaoIgnorada: string[] = []
 
-  const pontos = entrada.indicacao.pontos.map((ponto): ResultadoPonto => {
+  const pontos = entrada.indicacao.pontos.map((ponto, iPonto): ResultadoPonto => {
     const nivel = cadeia ? Math.max(0, Math.floor(ponto.nivelSubstituicao || 0)) : 0
     const massa = componentesMassa(ponto.pecas, ctx)
     // Peças fora dos padrões escolhidos: sem a referência (a carga é a digitada), o motivo vira a pendência
@@ -682,21 +770,40 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     const desce = lida(ponto.decrescente)
     const temLeitura = sobe !== null || desce !== null
     const faixaDesce = cargaDaFaixaDescida(ponto.carga, ctx)
+    // Ponto acrescentado e lido com a carga esquecida (0) depois do zero: na calibração nova, a pendência pede a carga
+    // (sem ela, o erro seria a leitura inteira); dois zeros também não contam como dois pontos (POP 7.7). O zero
+    // apagado e acrescentado de novo no fim continua sendo o zero
+    const semCargaLido = temLeitura && ehZero(ponto.carga, ctx)
+    const zeroForaDoLugar = !legado && semCargaLido && zeroLidoAntes
+    if (semCargaLido) zeroLidoAntes = true
+    if (zeroForaDoLugar) semCarga.push(iPonto + 1)
     if (temLeitura) {
       pontosLidos++
       maiorCargaLida = Math.max(maiorCargaLida, ponto.carga)
       if (!ehZero(ponto.carga, ctx)) cargaLida = true
       if (sobe === null && metodo !== 'DECRESCENTE') semSubida.push(rotulo(ponto.carga))
-      // A leitura contra a carga feita: a digitada, quando os pesos não a somam (essa diferença já é pendência)
+      // A leitura contra a carga feita: a digitada, quando os pesos não a somam (essa diferença já é pendência). A
+      // decrescente, pelo e da faixa em que foi lida (múltiplas faixas, descida sem descarregar)
       const cargaFeita = ponto.cargaDigitada ?? ponto.carga
-      for (const l of [sobe, desce])
-        if (implausivel(l, cargaFeita))
+      const comCargaZero = ehZero(cargaFeita, ctx)
+      for (const [lado, l, faixa] of [
+        ['crescente', sobe, cargaFeita],
+        ['decrescente', desce, cargaDaFaixaDescida(cargaFeita, ctx)],
+      ] as const)
+        if (!zeroForaDoLugar && implausivel(l, cargaFeita, faixa))
           leiturasImplausiveis.push({
-            aviso: `${leituraTexto(l, cargaFeita)} em ${rotulo(cargaFeita)}`,
-            pendencia: `Erro de indicação, ponto de ${rotulo(cargaFeita)}: leitura ${leituraTexto(l, cargaFeita)} fora do esperado; confira a digitação.`,
+            aviso: `${leituraTexto(l, cargaFeita, faixa)} em ${rotulo(cargaFeita)}`,
+            pendencia: `Erro de indicação, ponto de ${rotulo(cargaFeita)}: leitura ${leituraTexto(l, cargaFeita, faixa)} ${
+              comCargaZero ? 'com carga zero; confira a carga do ponto ou a digitação.' : 'fora do esperado; confira a digitação.'
+            }`,
+            alterada: mudou(original?.indicacao[ponto.id]?.[lado], l),
           })
+      // Acima de Max (POP 7.7: as cargas vão até Max): uma carga digitada errada ou o Max errado no cadastro
+      const maiorCarga = Math.max(ponto.carga, cargaFeita)
+      if (acimaDeMax(maiorCarga)) cargasAcimaDeMax.push({ ensaio: 'indicacao', carga: maiorCarga })
       if (nivel === 0 && !massa.temPecas && !ehZero(ponto.carga, ctx) && !ponto.semPadrao) semPadroes.push(rotulo(ponto.carga))
       emaFaltando.push(...massa.emaFaltando)
+      correcaoIgnorada.push(...massa.correcaoIgnorada)
       // Sem incerteza nenhuma (u(δm_c) = 0): o EMA que falta já é a pendência; senão, o certificado sem U
       if (massa.temPecas && massa.semIncerteza && !massa.emaFaltando.length) semIncerteza.push(rotulo(ponto.carga))
       if (massa.semDeltaT) semDeltaT = true
@@ -792,6 +899,32 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     const arredondado = principal ? arredondarResultado(principal.erro, principal.U) : null
     const erroTexto = (o: Orcamento | null) => (o && principal ? arredondarResultado(o.erro, principal.U).erro : '')
 
+    // POP 7.8: erro de indicação maior que o EMA em serviço (sem classe, a tolerância do cliente): a balança não pesa
+    // corretamente. Cada leitura (subida e descida, também na opção MEDIA), com o erro como reportado (na casa de U) e
+    // sem somar U (a banda de guarda é só da conformidade); o valor no limite passa. A leitura fora do esperado
+    // (digitação) e o ponto cujos pesos não somam a carga já são pendências
+    const fora = { crescente: false, decrescente: false }
+    if (principal && ponto.cargaDigitada === undefined && !zeroForaDoLugar) {
+      let pior: { valor: number; texto: string; limite: number } | null = null
+      for (const [lado, o, leitura, faixa] of [
+        ['crescente', crescente, sobe, ponto.carga],
+        ['decrescente', decrescente, desce, faixaDesce],
+      ] as const) {
+        if (!o || implausivel(leitura, ponto.carga, faixa)) continue
+        const limite = limiteServico(ponto.carga, faixa)
+        const e = arredondarResultado(o.erro, principal.U)
+        if (limite === null || naoExcede(Math.abs(e.valorErro), limite)) continue
+        fora[lado] = true
+        if (!pior || Math.abs(e.valorErro) > Math.abs(pior.valor)) pior = { valor: e.valorErro, texto: e.erro, limite }
+      }
+      if (pior)
+        foraDoEmaServico.push({
+          carga: ponto.carga,
+          erro: `${pior.valor > 0 ? '+' : ''}${pior.texto} ${unidade}`,
+          limite: pior.limite,
+        })
+    }
+
     // Conformidade com os valores como reportados (E na casa de U, U com 2 algarismos). Múltiplas faixas: a leitura
     // decrescente pelo EMA da faixa em que foi lida (como balança de faixa única com essa faixa); a média, pelo da
     // subida (o menor)
@@ -834,6 +967,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       ema,
       ...(emaDecrescente !== null ? { emaDecrescente } : {}),
       conformidade: situacao,
+      ...(fora.crescente || fora.decrescente ? { foraDoEmaServico: fora } : {}),
       texto: {
         carga: textoCarga(ponto.carga),
         referencia: formatarNumero(referencia, arredondado ? arredondado.casas : casasDecimais(referencia)),
@@ -862,14 +996,17 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   if (entrada.excentricidade.aplicavel && !exc.valida)
     pendencias.push('Excentricidade: registre as leituras das posições (ou marque o ensaio como não aplicável).')
   // Mínimos do POP (7.7 e 7.9, Tabela 4) na calibração nova; no registro anterior, avisos (mais abaixo)
+  // Só as faixas que o erro de indicação alcançou (a calibração parcial acordada, POP 7.1). O ensaio sem carga não
+  // cobre intervalo nenhum, mas também não esconde os que faltam (a pendência dele é outra)
   const cargasRep = ctx.repeticoes.map((r) => r.carga).filter((c) => c > 0)
-  const semEnsaio = cargasRep.length ? faixasSemRepetibilidade(instrumento, cargasRep) : []
+  const semEnsaio = ctx.repeticoes.length ? faixasSemRepetibilidade(instrumento, cargasRep, cargaLida ? maiorCargaLida : 0) : []
   const textoSemEnsaio = () => {
     const { onde, nome } = ondeFaltaRepetibilidade(
       instrumento.tipoFaixas,
       semEnsaio.map((f) => `até ${rotulo(f.max)} (d = ${rotulo(f.d)})`),
     )
-    return `Repetibilidade: ${cargasRep.length} ${cargasRep.length === 1 ? 'ensaio' : 'ensaios'} para ${faixas.length} ${nome}s; falta ${onde}. O POP (7.9) pede um ensaio em cada ${nome} de d diferente.`
+    const alcancadas = faixasAlcancadas(instrumento, cargaLida ? maiorCargaLida : 0).length
+    return `Repetibilidade: ${cargasRep.length} ${cargasRep.length === 1 ? 'ensaio' : 'ensaios'} para ${alcancadas} ${nome}s; falta ${onde}. O POP (7.9) pede um ensaio em cada ${nome} de d diferente.`
   }
   if (!legado) {
     if (pontosLidos > 0 && !cargaLida)
@@ -898,6 +1035,44 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     }
     if (semEnsaio.length) pendencias.push(textoSemEnsaio())
   }
+  // Retorno ao zero (POP 7.7: registrado ao fim do erro de indicação; 7.8: a balança que não volta ao zero não pesa
+  // corretamente). O limite é o EMA em serviço na carga zero (2 e da 1ª faixa) ou, sem classe, a tolerância do cliente
+  const limiteZero = limiteServico(0)
+  const zeroFora = retornoZero !== null && limiteZero !== null && !naoExcede(Math.abs(retornoZero), limiteZero)
+  if (!legado && cargaLida) {
+    if (retornoZero === null)
+      pendencias.push(
+        'Erro de indicação: registre o retorno ao zero, a indicação sem carga depois de retirar toda a carga (POP 7.7).',
+      )
+    else if (zeroFora)
+      pendencias.push(
+        `Erro de indicação: a balança não voltou ao zero (retorno de ${leituraTexto(retornoZero, 0)} ${unidade}; limite de ${textoLimite(limiteZero!)}); a balança não pesa corretamente e não é calibrada (POP 7.8).`,
+      )
+  }
+  // Erro maior que o EMA em serviço (POP 7.8): uma pendência por ponto
+  if (!legado)
+    for (const f of foraDoEmaServico)
+      pendencias.push(
+        `Erro de indicação, ponto de ${rotulo(f.carga)}: erro de ${f.erro}, maior que ${nomeLimite} (${textoLimite(f.limite)}); a balança não pesa corretamente e não é calibrada (POP 7.8).`,
+      )
+  // Ponto lido sem nenhum peso padrão (a carga menor que a menor peça, as peças tiradas à mão): o E e o U sairiam sem
+  // padrão rastreável por trás. Na calibração nova, pendência; no registro de antes, o aviso (mais abaixo)
+  if (!legado)
+    for (const c of new Set(semPadroes))
+      pendencias.push(
+        `Erro de indicação, ponto de ${c}: nenhum peso padrão no ponto; escolha os pesos do ponto ou, nos padrões, um jogo que faça essa carga.`,
+      )
+  for (const n of semCarga)
+    pendencias.push(
+      `Erro de indicação: o ponto ${n} está sem carga; informe a carga do ponto (só o primeiro, o do zero, fica sem carga).`,
+    )
+  // Ensaio de repetibilidade com leituras e sem a carga (o campo apagado grava 0): as leituras não são conferidas
+  const semCargaRep = repetibilidade
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => r.n > 0 && !(r.carga > 0))
+    .map(({ i }) => `Repetibilidade: informe a carga do ensaio${repetibilidade.length > 1 ? ` ${i + 1}` : ''} (POP 7.9).`)
+  for (const r of repetibilidade)
+    if (r.n > 0 && acimaDeMax(r.carga)) cargasAcimaDeMax.push({ ensaio: 'repetibilidade', carga: r.carga })
   if (conformidade.solicitada && semEma)
     pendencias.push(
       conformidade.criterio === 'CLIENTE'
@@ -990,11 +1165,18 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       nivel: 'atencao',
       mensagem: `A maior carga ensaiada (${rotulo(maiorCargaLida)}) é menor que 90 % de Max (${rotulo(max)}): calibração em faixa parcial, que precisa constar no certificado.`,
     })
+  // Excentricidade (POP 7.10, Tabela 6): todas as posições, com a carga informada e até Max. Na calibração nova,
+  // pendências; no registro de antes, avisos
+  const excentricidadeIncompleta: string[] = []
   if (entrada.excentricidade.aplicavel) {
     const lEcc = entrada.excentricidade.carga
     const sugerida = cargaExcentricidade(max, unidade, instrumento.classe)
-    if (lEcc > max * (1 + TOL))
-      avisos.push({ nivel: 'atencao', mensagem: `Carga de excentricidade (${rotulo(lEcc)}) maior que Max.` })
+    const comLeitura = entrada.excentricidade.posicoes.some((p) => lida(p.leitura) !== null)
+    if (comLeitura && !(lEcc > 0)) excentricidadeIncompleta.push('Excentricidade: informe a carga usada no ensaio (POP 7.10).')
+    if (lEcc > max * (1 + TOL)) {
+      if (legado) avisos.push({ nivel: 'atencao', mensagem: `Carga de excentricidade (${rotulo(lEcc)}) maior que Max.` })
+      else cargasAcimaDeMax.push({ ensaio: 'excentricidade', carga: lEcc })
+    }
     // Abaixo do mínimo da Tabela 5 (a carga copiada de um certificado antigo, que arredondava para o mais próximo)
     else if (excentricidadeAbaixoDoMinimo(lEcc, max, unidade))
       avisos.push({
@@ -1007,35 +1189,91 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
         mensagem: `Carga de excentricidade (${rotulo(lEcc)}) muito diferente da sugerida (${rotulo(sugerida)}, DOQ-CGCRE-097 10.4.1).`,
       })
     const faltando = exc.resultado.desvios.filter((d) => d === null).length
-    if (exc.valida && faltando)
-      avisos.push({ nivel: 'atencao', mensagem: `Excentricidade: ${faltando} posição(ões) sem leitura.` })
-    if (entrada.excentricidade.metodo === 1 || entrada.excentricidade.metodo === 3)
-      for (const p of entrada.excentricidade.posicoes)
-        if (implausivel(lida(p.leitura), lEcc))
-          leiturasImplausiveis.push({
-            aviso: `${leituraTexto(p.leitura, lEcc)} na excentricidade (${p.rotulo})`,
-            pendencia: `Excentricidade (${p.rotulo}): leitura ${leituraTexto(p.leitura, lEcc)} fora do esperado com ${rotulo(lEcc)}; confira a digitação.`,
-          })
+    if (exc.valida && faltando) {
+      if (legado) avisos.push({ nivel: 'atencao', mensagem: `Excentricidade: ${faltando} posição(ões) sem leitura.` })
+      else
+        excentricidadeIncompleta.push(
+          `Excentricidade: ${faltando} ${faltando === 1 ? 'posição' : 'posições'} sem leitura; registre todas (POP 7.10).`,
+        )
+    }
+    // A indicação com a carga (métodos 1 e 3) e, no método 3 (classe I), o zero antes de cada posição: um zero errado
+    // (a carga digitada no lugar dele) muda o desvio de todas as posições e o U de todos os pontos
+    entrada.excentricidade.posicoes.forEach((p, i) => {
+      const fora = excentricidadeImplausivel(entrada.excentricidade, p, instrumento)
+      if (fora.leitura)
+        leiturasImplausiveis.push({
+          aviso: `${leituraTexto(p.leitura, lEcc)} na excentricidade (${p.rotulo})`,
+          pendencia: `Excentricidade (${p.rotulo}): leitura ${leituraTexto(p.leitura, lEcc)} fora do esperado com ${rotulo(lEcc)}; confira a digitação.`,
+          alterada: mudou(original?.excentricidade[i], p.leitura),
+        })
+      if (fora.referencia)
+        leiturasImplausiveis.push({
+          aviso: `${leituraTexto(p.referencia, 0)} no zero antes da excentricidade (${p.rotulo})`,
+          pendencia: `Excentricidade (${p.rotulo}): zero antes ${leituraTexto(p.referencia, 0)} fora do esperado; confira a digitação.`,
+          alterada: !!original?.referenciasExcentricidade && mudou(original.referenciasExcentricidade[i], p.referencia),
+        })
+    })
   }
+  // Sem a carga (o campo apagado grava 0), a pendência é a da carga: as leituras não são conferidas
   for (const r of entrada.repetibilidade)
-    for (const l of r.leituras)
-      if (implausivel(lida(l), r.carga))
+    r.leituras.forEach((l, i) => {
+      if (r.carga > 0 && implausivel(lida(l), r.carga))
         leiturasImplausiveis.push({
           aviso: `${leituraTexto(l, r.carga)} na repetibilidade a ${rotulo(r.carga)}`,
           pendencia: `Repetibilidade a ${rotulo(r.carga)}: leitura ${leituraTexto(l, r.carga)} fora do esperado; confira a digitação.`,
+          alterada: mudou(original?.repetibilidade[r.id]?.[i], l),
         })
+    })
   // Calibração nova: cada leitura é uma pendência (a balança que não pesa certo não é calibrada, POP 7.8); no registro
-  // anterior, o aviso de antes
-  if (legado && leiturasImplausiveis.length)
+  // anterior, o aviso de antes, menos a leitura que a revisão mudou (a revisão não traz leitura absurda nova)
+  const implausiveisComoAviso = legado ? leiturasImplausiveis.filter((x) => !x.alterada) : []
+  if (implausiveisComoAviso.length)
     avisos.push({
       nivel: 'erro',
-      mensagem: `Leitura(s) mais de 10 % fora da carga, provável erro de digitação: ${lista(leiturasImplausiveis.map((x) => x.aviso))}.`,
+      mensagem: `Leitura(s) mais de 10 % fora da carga, provável erro de digitação: ${lista(implausiveisComoAviso.map((x) => x.aviso))}.`,
     })
-  else if (!legado) pendencias.push(...new Set(leiturasImplausiveis.map((x) => x.pendencia)))
-  if (semPadroes.length)
+  pendencias.push(...new Set(leiturasImplausiveis.filter((x) => !legado || x.alterada).map((x) => x.pendencia)))
+  // Os demais dados que faltam ou não fecham: pendências na calibração nova; avisos no registro de antes
+  const textoAcimaDeMax = ({ ensaio, carga }: (typeof cargasAcimaDeMax)[number]) => {
+    const confira = `acima de Max (${rotulo(max)}); confira a carga ou o Max da balança.`
+    if (ensaio === 'excentricidade') return `Excentricidade: carga de ${rotulo(carga)} ${confira}`
+    if (ensaio === 'repetibilidade') return `Repetibilidade a ${rotulo(carga)}: carga ${confira}`
+    return `Erro de indicação, ponto de ${rotulo(carga)}: carga ${confira}`
+  }
+  if (!legado) {
+    pendencias.push(...semCargaRep, ...excentricidadeIncompleta, ...cargasAcimaDeMax.map(textoAcimaDeMax))
+  } else {
+    for (const mensagem of [...semCargaRep, ...excentricidadeIncompleta]) avisos.push({ nivel: 'atencao', mensagem })
+    if (cargasAcimaDeMax.length)
+      avisos.push({
+        nivel: 'atencao',
+        mensagem: `Carga acima de Max (${rotulo(max)}) em ${lista(
+          cargasAcimaDeMax.map((x) => `${rotulo(x.carga)}${x.ensaio === 'repetibilidade' ? ' (repetibilidade)' : ''}`),
+        )}; confira a carga ou o Max da balança.`,
+      })
+    if (foraDoEmaServico.length)
+      avisos.push({
+        nivel: 'atencao',
+        mensagem: `Erro maior que ${nomeLimite} em ${lista(foraDoEmaServico.map((f) => rotulo(f.carga)))}: pelo POP (7.8), a balança não pesa corretamente.`,
+      })
+    if (zeroFora)
+      avisos.push({
+        nivel: 'atencao',
+        mensagem: `Retorno ao zero de ${leituraTexto(retornoZero, 0)} ${unidade}, maior que ${nomeLimite} (${textoLimite(limiteZero!)}): pelo POP (7.8), a balança não pesa corretamente.`,
+      })
+  }
+  if (legado && semPadroes.length)
     avisos.push({
       nivel: 'atencao',
       mensagem: `Carga sem padrões em ${lista(semPadroes)}: a referência é a carga digitada, sem a incerteza dos pesos.`,
+    })
+  // Peça de jogo "valor do certificado" sem a U no cadastro: entra pelo nominal, sem a correção do certificado (na
+  // classe I, a etapa Revisão também dá a pendência: POP 6.1)
+  if (substituicaoLida && cadeia) correcaoIgnorada.push(...cadeia.massa.correcaoIgnorada)
+  if (correcaoIgnorada.length)
+    avisos.push({
+      nivel: 'atencao',
+      mensagem: `Correção do certificado ignorada em ${listaE([...new Set(correcaoIgnorada)])}: peça sem a U no cadastro entra pelo valor nominal. Complete a U no cadastro do padrão.`,
     })
   if (classeNaoConferida.length)
     avisos.push({

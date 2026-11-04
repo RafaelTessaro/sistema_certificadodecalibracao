@@ -319,6 +319,25 @@ describe('faixasSemRepetibilidade (POP 7.9: um ensaio em cada intervalo ou faixa
     expect(faixasSemRepetibilidade({ tipoFaixas: 'UNICA', faixas: multi.faixas }, [1])).toEqual([])
   })
 
+  it('calibração parcial (POP 7.1): só as faixas ou intervalos que o erro de indicação alcançou', () => {
+    const faixas = [
+      { max: 6, e: 0.001, d: 0.001 },
+      { max: 15, e: 0.005, d: 0.005 },
+    ]
+    const multiplas = { tipoFaixas: 'MULTIPLAS_FAIXAS' as const, faixas }
+    expect(faixasSemRepetibilidade(multiplas, [5], 6)).toEqual([])
+    expect(faixasSemRepetibilidade(multiplas, [5], 12)).toEqual([{ max: 15, e: 0.005, d: 0.005 }])
+    const intervalos = { tipoFaixas: 'MULTI_INTERVALO' as const, faixas }
+    expect(faixasSemRepetibilidade(intervalos, [5], 6)).toEqual([])
+    expect(faixasSemRepetibilidade(intervalos, [5], 6.5)).toEqual([{ max: 15, e: 0.005, d: 0.005 }])
+    // Sem a maior carga (ou 0: só o planejamento, antes das leituras): todas, como antes
+    expect(faixasSemRepetibilidade(multiplas, [5])).toEqual([{ max: 15, e: 0.005, d: 0.005 }])
+    expect(faixasSemRepetibilidade(multiplas, [5], 0)).toEqual([{ max: 15, e: 0.005, d: 0.005 }])
+    // Um d repetido acima do alcance não esconde o de baixo: 6 kg (2 g), 15 kg (10 g) e 33 kg (10 g), até 12 kg
+    expect(faixasSemRepetibilidade(multi, [4.8], 12)).toEqual([{ max: 15, e: 0.01, d: 0.01 }])
+    expect(faixasSemRepetibilidade(multi, [4.8], 5)).toEqual([])
+  })
+
   it('o texto do aviso: intervalo ou faixa, no singular ou no plural', () => {
     expect(ondeFaltaRepetibilidade('MULTI_INTERVALO', ['até 6 kg'])).toEqual({ onde: 'no intervalo até 6 kg', nome: 'intervalo' })
     expect(ondeFaltaRepetibilidade('MULTI_INTERVALO', ['até 6 kg', 'até 15 kg', 'até 33 kg']).onde).toBe(

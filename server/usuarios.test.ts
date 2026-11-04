@@ -202,6 +202,81 @@ describe('entrar', () => {
   })
 })
 
+describe('tentativas simultâneas (rajada)', () => {
+  /** O scrypt demora: todos os pedidos da rajada chegam antes de a 1ª senha ser conferida. */
+  function scryptLento(ms = 40) {
+    const original = senha.conferirSenha
+    return vi.spyOn(senha, 'conferirSenha').mockImplementation(async (s, h) => {
+      await new Promise((ok) => setTimeout(ok, ms))
+      return original(s, h)
+    })
+  }
+  const contar = (status: number[]) => status.reduce<Record<number, number>>((n, s) => ({ ...n, [s]: (n[s] ?? 0) + 1 }), {})
+  const palpites = (certa: string) => [...Array.from({ length: 29 }, (_, i) => `senha-errada-${i}`), certa]
+
+  it('30 senhas ao mesmo tempo do mesmo IP: só 5 são conferidas, as outras dão 429; a certa no fim da rajada não entra', async () => {
+    const espiao = scryptLento()
+    const ip = '192.168.0.50'
+    const respostas = await Promise.all(palpites(SENHA_COMUM).map((s) => t.entrar('comum', s, { remoteAddress: ip })))
+    expect(contar(respostas.map((r) => r.status))).toEqual({ 401: 5, 429: 25 })
+    expect(respostas.at(-1)!.status).toBe(429)
+    expect(respostas.every((r) => !r.cookie)).toBe(true)
+    expect(espiao).toHaveBeenCalledTimes(5)
+    expect(auditoria('LOGIN_FALHOU').filter((r) => r.ip === ip)).toHaveLength(5)
+    expect(auditoria('BLOQUEIO')).toHaveLength(1)
+    // Depois da rajada, em série, continua bloqueado; de outro computador, entra
+    expect((await t.entrar('comum', SENHA_COMUM, { remoteAddress: ip })).status).toBe(429)
+    expect((await t.entrar('comum', SENHA_COMUM, { remoteAddress: '192.168.0.51' })).status).toBe(200)
+  })
+
+  it('logins diferentes ao mesmo tempo do mesmo IP: no máximo 20 conferidos (o teto do computador)', async () => {
+    scryptLento()
+    const ip = '192.168.0.60'
+    const respostas = await Promise.all(
+      Array.from({ length: 40 }, (_, i) => t.entrar(`login${i}`, 'senha-errada-aqui', { remoteAddress: ip })),
+    )
+    expect(contar(respostas.map((r) => r.status))).toEqual({ 401: 20, 429: 20 })
+    expect(respostas.find((r) => r.status === 429)!.resposta.json()).toMatchObject({ motivo: 'computador' })
+    expect(auditoria('LOGIN_FALHOU').filter((r) => r.ip === ip)).toHaveLength(20)
+  })
+
+  it('o mesmo login ao mesmo tempo de vários IPs: no máximo 50 conferidos', async () => {
+    scryptLento()
+    const respostas = await Promise.all(
+      Array.from({ length: 60 }, (_, i) =>
+        t.entrar('comum', 'senha-errada-aqui', { remoteAddress: `10.0.${Math.floor(i / 4)}.${(i % 4) + 1}` }),
+      ),
+    )
+    expect(contar(respostas.map((r) => r.status))).toEqual({ 401: 50, 429: 10 })
+    expect((await t.entrar('comum', SENHA_COMUM, { remoteAddress: '10.0.99.1' })).status).toBe(429)
+  })
+
+  it('duas entradas certas ao mesmo tempo (clique duplo) continuam entrando', async () => {
+    scryptLento()
+    const [a, b] = await Promise.all([t.entrar('comum', SENHA_COMUM), t.entrar('comum', SENHA_COMUM)])
+    expect([a.status, b.status]).toEqual([200, 200])
+  })
+
+  it('troca da própria senha: 30 senhas atuais ao mesmo tempo, só 5 conferidas; a certa no fim não troca a senha', async () => {
+    const espiao = scryptLento()
+    const respostas = await Promise.all(
+      palpites(SENHA_COMUM).map((s) =>
+        t.chamar('PUT', '/api/minha-senha', {
+          cookie: t.cookieComum,
+          payload: { senhaAtual: s, senhaNova: 'frase-nova-do-atacante' },
+        }),
+      ),
+    )
+    expect(contar(respostas.map((r) => r.statusCode))).toEqual({ 400: 5, 429: 25 })
+    expect(respostas.at(-1)!.statusCode).toBe(429)
+    expect(espiao).toHaveBeenCalledTimes(5)
+    expect(auditoria('SENHA_TROCADA').filter((r) => r.usuario_id === t.comumId)).toHaveLength(1) // só a do cadastro
+    espiao.mockRestore()
+    expect((await t.entrar('comum', 'frase-nova-do-atacante', { remoteAddress: '192.168.0.70' })).status).toBe(401)
+    expect((await t.entrar('comum', SENHA_COMUM, { remoteAddress: '192.168.0.71' })).status).toBe(200)
+  })
+})
+
 describe('sessão', () => {
   let agora: number
   beforeEach(() => {

@@ -5,6 +5,7 @@
 
 import { Ban, FileX2, Loader2 } from 'lucide-react'
 import { useState } from 'react'
+import { LIMITES } from '#shared/dominio.ts'
 import type { NumeroReservado } from '#shared/tipos.ts'
 import { api } from '../lib/api'
 import { useConsulta } from '../lib/consulta'
@@ -171,7 +172,7 @@ function DescartarModal({ numero, aoFechar }: { numero: NumeroReservado | null; 
       }
     >
       <Field label="Motivo" hint="Fica registrado, e aparece na lista dos números não utilizados.">
-        <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={3} maxLength={500} autoFocus />
+        <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={3} maxLength={LIMITES.motivo} autoFocus />
       </Field>
     </Modal>
   )

@@ -7,9 +7,10 @@ import type { Configuracoes, Vencimento } from '#shared/tipos.ts'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
+import { mostrarEnvio } from '../lib/envioEmail'
 import { usePode } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
-import { avisarErro, toast } from '../store/ui'
+import { avisarErro } from '../store/ui'
 import { PrazoBadge } from './Selos'
 import { Button } from './ui/Button'
 import { Field, Input, Textarea } from './ui/Form'
@@ -184,7 +185,7 @@ function FormLembrete({
         texto,
       })
       useTempoReal.getState().mudou('calibracao')
-      toast.sucesso('Lembrete enviado', `Para ${r.para.join(', ')}`)
+      mostrarEnvio(r, { titulo: 'Lembrete enviado' })
       aoFechar()
     } catch (err) {
       avisarErro('Não foi possível enviar o lembrete', err)

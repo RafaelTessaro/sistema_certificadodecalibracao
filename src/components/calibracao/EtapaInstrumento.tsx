@@ -6,6 +6,7 @@ import {
   capacidadeTexto,
   divisaoLegivel,
   FINALIDADES,
+  LIMITES,
   numeroBr,
   parteSeparada,
   RECEPTORES,
@@ -127,6 +128,7 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
                     <Input
                       id="k-ajuste"
                       value={f.ajuste.descricao}
+                      maxLength={LIMITES.texto}
                       onChange={(ev) => alterar((s) => ({ ...s, ajuste: { ...s.ajuste, descricao: ev.target.value } }))}
                       placeholder="Ex.: função CAL feita pelo cliente"
                     />
@@ -186,6 +188,7 @@ export function RegistroDeAntes({ f, alterar }: Pick<ContextoEtapa, 'f' | 'alter
               <Input
                 id="k-ajuste-anterior"
                 value={f.ajuste.descricao}
+                maxLength={LIMITES.texto}
                 onChange={(ev) => alterar((s) => ({ ...s, ajuste: { ...s.ajuste, descricao: ev.target.value } }))}
               />
             </Field>

@@ -9,15 +9,17 @@ import {
   LIMITES,
   massaLegivel,
   densidadePesosPlausivel,
+  MESES_MAX_CALIBRACAO_PADRAO,
   normalizarPadrao,
   numero,
   numeroBr,
   PADRAO_VAZIO,
+  proximaAlemDoPop,
   somarMeses,
   textoDensidadeImplausivel,
 } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
-import { emaPeso, linhaTabelaE1 } from '#shared/metrologia/index.ts'
+import { linhaTabelaE1 } from '#shared/metrologia/index.ts'
 import type { ClassePeso, Padrao, PadraoInput, PesoPadrao, TipoPadrao, UsoPesos } from '#shared/tipos.ts'
 import { api, ErroApi } from '../lib/api'
 import { cn } from '../lib/cn'
@@ -25,6 +27,17 @@ import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
 import { CampoNumerico, LinhaInterruptor, SecaoFormulario } from './BalancaFormModal'
 import { CampoArquivo } from './CampoArquivo'
+import {
+  avisosDasPecas,
+  campoInvalido,
+  conferirPeca,
+  gramasDe,
+  lerCampo,
+  paraGramas,
+  type PesoTexto,
+  UNIDADES_PESO,
+  type UnidadePeso,
+} from './pecasPadrao'
 import { ValidadePadraoBadge } from './Selos'
 import { Button } from './ui/Button'
 import { confirmar } from './ui/Feedback'
@@ -60,21 +73,7 @@ const EXEMPLO_DESCRICAO: Record<TipoPadrao, string> = {
 }
 const MATERIAIS = ['Aço inoxidável', 'Ferro fundido', 'Latão', 'Latão cromado']
 
-type UnidadePeso = 'mg' | 'g' | 'kg'
-const UNIDADES_PESO: UnidadePeso[] = ['mg', 'g', 'kg']
-
 // ---- Estado do formulário --------------------------------------------------------------
-
-/** Peça como digitada (texto). O nominal é gravado sempre em gramas; a unidade é só da tela. */
-interface PesoTexto {
-  id: string
-  marca: string
-  nominal: string
-  unidade: UnidadePeso
-  correcao: string
-  incerteza: string
-  k: string
-}
 
 type FormPadrao = Omit<PadraoInput, 'pesos' | 'densidade' | 'incertezaDensidade'> & {
   pesos: PesoTexto[]
@@ -87,12 +86,8 @@ function textoDe(n: number, zero = false): string {
   if (!Number.isFinite(n) || (n === 0 && !zero)) return ''
   return Number(n.toPrecision(12)).toLocaleString('pt-BR', { useGrouping: false, maximumFractionDigits: 12 })
 }
-const lerCampo = (t: string) => (t.trim() ? numero(t) : 0)
-const campoInvalido = (t: string) => t.trim() !== '' && Number.isNaN(numero(t))
 
 const unidadeDe = (gramas: number): UnidadePeso => (gramas >= 1000 ? 'kg' : gramas >= 1 ? 'g' : 'mg')
-const paraGramas = (valor: number, u: UnidadePeso) => Number((valor * GRAMAS[u]).toPrecision(12))
-const gramasDe = (p: PesoTexto) => paraGramas(lerCampo(p.nominal), p.unidade)
 
 function pesoParaTexto(p: PesoPadrao): PesoTexto {
   const unidade = unidadeDe(p.nominal)
@@ -144,18 +139,6 @@ function paraEntrada(f: FormPadrao): PadraoInput {
       : [],
     incertezaTexto: ehPesos ? '' : f.incertezaTexto,
   }
-}
-
-/** Situação de uma peça frente à classe (OIML R111): U ≤ EMA/3 e |correção| ≤ EMA − U. */
-function conferirPeca(p: PesoTexto, classe: ClassePeso | '') {
-  const g = gramasDe(p)
-  const ema = g > 0 && classe ? emaPeso(g, classe) : null
-  const u = lerCampo(p.incerteza)
-  const c = lerCampo(p.correcao)
-  const uAlta = ema !== null && u > 0 && u > ema / 3 + 1e-9
-  // Correção em branco conta como 0; aí só a incerteza decide (aviso acima)
-  const correcaoAlta = ema !== null && p.correcao.trim() !== '' && !Number.isNaN(c) && Math.abs(c) > ema - u + 1e-9
-  return { gramas: g, ema, u, c, uAlta, correcaoAlta }
 }
 
 /** Descrição sugerida para o jogo: "Jogo de pesos de 1 kg a 20 kg (8 peças)". */
@@ -350,7 +333,7 @@ function FormularioPadrao({
   // ---- Derivados ----
   // A densidade gravada antes da conferência da unidade não impede gravar o resto (o servidor faz igual)
   const { valor, erros } = normalizarPadrao(paraEntrada(f), { densidadeGravada: padrao?.densidade })
-  const conferencias = f.pesos.map((p) => conferirPeca(p, f.classe))
+  const conferencias = f.pesos.map((p) => conferirPeca(p, f.classe, f.uso))
   const numerosInvalidos =
     campoInvalido(f.densidade) ||
     campoInvalido(f.incertezaDensidade) ||
@@ -442,6 +425,8 @@ function FormularioPadrao({
   }
 
   const dataCalOk = dataIsoValida(f.dataCalibracao)
+  // A próxima calibração além do intervalo do POP (Tabela 3: 24 meses): o ano digitado errado. Só avisa
+  const alemDoPop = proximaAlemDoPop(f)
 
   return (
     <form id="form-padrao" ref={formRef} onSubmit={salvar} className="flex flex-col gap-7 pb-1" noValidate>
@@ -502,6 +487,7 @@ function FormularioPadrao({
         >
           <Input
             id={`${ids}-desc`}
+            maxLength={LIMITES.descricaoPadrao}
             value={f.descricao}
             onChange={(e) => set('descricao', e.target.value)}
             placeholder={EXEMPLO_DESCRICAO[f.tipo]}
@@ -545,6 +531,7 @@ function FormularioPadrao({
         <Field label="Laboratório" htmlFor={`${ids}-lab`} className="sm:col-span-2">
           <Input
             id={`${ids}-lab`}
+            maxLength={LIMITES.laboratorio}
             value={f.laboratorio}
             onChange={(e) => set('laboratorio', e.target.value)}
             placeholder="Quem calibrou o padrão"
@@ -592,7 +579,11 @@ function FormularioPadrao({
           }
           erro={erroValidade}
           hint={
-            dataIsoValida(f.validade) ? (
+            alemDoPop ? (
+              <span className="font-medium text-warning">
+                Passa de {MESES_MAX_CALIBRACAO_PADRAO} meses da calibração (POP, Tabela 3). Confira o ano.
+              </span>
+            ) : dataIsoValida(f.validade) ? (
               <span className="flex flex-wrap items-center gap-1.5">
                 <ValidadePadraoBadge validade={f.validade} />
                 Prazo interno da empresa.
@@ -954,17 +945,7 @@ function TabelaPecas({
   }
 
   const total = conferencias.reduce((s, c) => s + (c.gramas > 0 ? c.gramas : 0), 0)
-  const avisos = conferencias.flatMap((c, i) => {
-    const nome = pesos[i].marca.trim() || (c.gramas > 0 ? massaLegivel(c.gramas) : `Peça ${i + 1}`)
-    const r: string[] = []
-    if (c.uAlta && c.ema !== null)
-      r.push(`${nome}: a incerteza (U = ${numeroBr(c.u, 3)} mg) passa de 1/3 do EMA da classe (${numeroBr(c.ema / 3, 3)} mg).`)
-    if (c.correcaoAlta && c.ema !== null)
-      r.push(
-        `${nome}: a correção (${numeroBr(c.c, 3)} mg) passa do limite da classe ${classe} (EMA − U = ${numeroBr(c.ema - c.u, 3)} mg). A peça pode estar fora da classe.`,
-      )
-    return r
-  })
+  const avisos = avisosDasPecas(pesos, conferencias, classe)
 
   return (
     <SecaoFormulario
@@ -1089,7 +1070,7 @@ function TabelaPecas({
                           valor={p.incerteza}
                           aoMudar={(v) => mudar(i, 'incerteza', v)}
                           invalido={campoInvalido(p.incerteza)}
-                          atencao={c.uAlta}
+                          atencao={c.uAlta || c.semU}
                           placeholder="0"
                           className={cn(uso === 'NOMINAL' && 'opacity-70')}
                         />

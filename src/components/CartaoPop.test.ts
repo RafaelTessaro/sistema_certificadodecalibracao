@@ -125,6 +125,14 @@ describe('registrar nova revisão do POP', () => {
     expect(janela(null)).not.toContain('ainda não tem o arquivo')
   })
 
+  it('a data vai da vigente até hoje (antes, ela encobriria a vigente; POP registrado fora de ordem)', () => {
+    const vigente = versao('00', { vigente: true, arquivo: ARQUIVO, data: '2026-01-05' })
+    const t = html(createElement(RegistrarPopModal, { aberto: true, aoFechar: () => {}, atual: vigente, versoes: [vigente] }))
+    expect(t).toMatch(/id="pop-data"[^>]*min="2026-01-05"/)
+    // Sem as revisões (o primeiro registro): sem o mínimo
+    expect(janela(null)).not.toMatch(/id="pop-data"[^>]*min=/)
+  })
+
   it('a data vai até hoje, e a janela diz que a calibração com folha continua com a revisão da folha', () => {
     const t = janela(versao('00', { vigente: true, arquivo: ARQUIVO }))
     expect(t).toMatch(new RegExp(`id="pop-data"[^>]*max="${hojeISO()}"`))

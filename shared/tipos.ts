@@ -562,6 +562,12 @@ export interface Calibracao {
    */
   calculoLegado?: boolean
   /**
+   * Revisão de um certificado emitido com as regras do POP (`EmissaoCertificado.regrasDoPop`): a revisão também as
+   * segue (os mínimos e as leituras fora do esperado são pendências; ver `regrasDoPopComoAviso` em dominio.ts). Quem
+   * define é o servidor, ao criar a revisão; ausente = não (a revisão de um certificado de antes delas).
+   */
+  regrasDoPop?: boolean
+  /**
    * Revisão: os padrões como foram congelados na emissão do certificado que ela substitui (o certificado e as
    * correções da época, mesmo que o padrão tenha sido calibrado de novo ou desativado depois; ver
    * `padroesDaCalibracao` em dominio.ts). Quem define é o servidor, ao criar a revisão; ausente = não é revisão.
@@ -681,6 +687,12 @@ export interface EmissaoCertificado {
    * `textos.procedimento`. Ausente ou null = certificado de antes das revisões do POP.
    */
   pop?: PopEmitido | null
+  /**
+   * Calculado com as regras do POP (os mínimos, as leituras fora do esperado e a balança que não pesa corretamente
+   * como pendências): a revisão dele também as segue (`Calibracao.regrasDoPop`). Ausente = emitido antes delas (1.0.2
+   * ou anterior) ou sem elas (a revisão de um desses).
+   */
+  regrasDoPop?: boolean
 }
 
 export interface Signatario {
@@ -791,8 +803,13 @@ export interface Vencimento {
   proximaCalibracao: string
   /** Dias até a próxima (negativo = vencida). */
   dias: number
-  /** Último lembrete enviado (ISO) ou ''. */
+  /**
+   * Último lembrete enviado que incluiu esta balança, depois da emissão do último certificado dela (ISO), ou ''. Os
+   * lembretes de antes desta versão não guardavam as balanças e não contam aqui (contam em `ultimoLembreteCliente`).
+   */
   lembreteEm: string
+  /** Último lembrete enviado ao cliente (ISO), com esta balança ou não, ou ''. */
+  ultimoLembreteCliente?: string
 }
 
 /** Folha de campo impressa: o registro de dados brutos levado ao cliente (nº FC-AAAA-NNNNN em toda página). */
@@ -826,6 +843,27 @@ export interface Envio {
   em: string
   /** Nomes dos arquivos anexados (envios a partir desta versão). */
   anexos?: string[]
+  /** Lembrete: os ids das balanças que foram no e-mail ([] nos lembretes de antes desta versão). */
+  balancas?: string[]
+  /**
+   * Endereços que o servidor de e-mail recusou (não receberam; `para` tem só os que receberam). [] nos envios de antes
+   * desta versão, que guardavam todos os digitados em `para`.
+   */
+  recusados?: string[]
+}
+
+/** Endereço que o servidor de e-mail recusou no envio, com o código da resposta (ex.: 550; null = sem código). */
+export interface DestinatarioRecusado {
+  endereco: string
+  codigo: number | null
+}
+
+/** Resposta de um envio de e-mail: `para` = quem o servidor aceitou; `recusados` = os que ele recusou. */
+export interface ResultadoEmail {
+  ok: true
+  para: string[]
+  recusados: DestinatarioRecusado[]
+  id: string
 }
 
 // ---- Usuários e sessão -------------------------------------------------------------

@@ -69,7 +69,30 @@ export const LIMITES = {
   padroesPorCalibracao: 20,
   /** Assinatura digitalizada (data URL PNG). */
   assinatura: 300_000,
+  /** Motivo da revisão e do cancelamento (o da revisão sai no certificado novo). */
+  motivo: 500,
+  /** Por que a excentricidade não foi feita (sai no certificado). */
+  motivoExcentricidade: 200,
+  /** Portaria de aprovação e local de instalação da balança (saem no certificado). */
+  portariaAprovacao: 120,
+  localInstalacao: 120,
+  /** Descrição e laboratório do padrão (saem no certificado). */
+  descricaoPadrao: 160,
+  laboratorio: 160,
 }
+
+/** Intervalo máximo de calibração dos padrões, em meses (POP, Tabela 3: pesos, termo-higrômetro, barômetro, termômetro). */
+export const MESES_MAX_CALIBRACAO_PADRAO = 24
+
+/**
+ * A próxima calibração digitada no padrão passa do intervalo do POP (Tabela 3: 24 meses depois da calibração)? Quase
+ * sempre o ano errado (2032 em vez de 2024). Só um aviso no cadastro (os cadastros antigos continuam editáveis); a
+ * emissão confere pela data da calibração do padrão (`pendenciasEmissao`).
+ */
+export const proximaAlemDoPop = (p: { dataCalibracao: string; validade: string }): boolean =>
+  dataIsoValida(p.dataCalibracao) &&
+  dataIsoValida(p.validade) &&
+  p.validade > somarMeses(p.dataCalibracao, MESES_MAX_CALIBRACAO_PADRAO)
 
 // ---- Utilitários de entrada --------------------------------------------------------
 
@@ -457,6 +480,21 @@ export function calculoLegado(k: {
   return k.calculoLegado === true || (!!k.emissao && k.opcoes.conveccao === undefined)
 }
 
+/**
+ * Os mínimos do POP (pontos, subida, leituras e ensaios da repetibilidade), as leituras fora do esperado e a balança
+ * que não pesa corretamente ficam só como avisos (sem `EntradaCalculo.regrasDoPop`)? Sim no registro de antes da
+ * classe I (`calculoLegado`), no "como encontrado" (registro anterior, antes do ajuste) e na revisão de um certificado
+ * emitido antes dessas regras (a mesma visita: as leituras não podem ser refeitas). A revisão de um certificado emitido
+ * com elas (`regrasDoPop`, marcada pelo servidor) as segue, como a calibração nova: são pendências.
+ */
+export function regrasDoPopComoAviso(
+  k: Pick<CalibracaoInput, 'opcoes'> &
+    Partial<Pick<CalibracaoInput, 'calculoLegado' | 'substituiId' | 'regrasDoPop'>> & { emissao?: unknown },
+  momento: 'FINAL' | 'COMO_ENCONTRADO' = 'FINAL',
+): boolean {
+  return momento === 'COMO_ENCONTRADO' || calculoLegado(k) || (!!k.substituiId && k.regrasDoPop !== true)
+}
+
 /** As opções da classe I diferem destas (o botão "Aplicar" da Conclusão)? Compara só empuxo e convecção. */
 export function faltamOpcoesDaClasse(o: OpcoesCalculo, classe: ClasseExatidao | null | undefined): boolean {
   const certo = opcoesDaClasse(o, classe)
@@ -732,6 +770,44 @@ export function textoBuscaBalanca(
     b.plataformaFabricante,
     b.plataformaModelo,
     b.plataformaSerie,
+  )
+}
+
+/**
+ * O texto da busca de uma calibração (a coluna `busca`): o nº, a OS, o cliente e a balança (a cópia congelada na
+ * emissão ou o cadastro atual), sem acentos e em minúsculas.
+ */
+export function textoBuscaCalibracao(
+  k: { numero: string; ordemServico: string },
+  cliente: Partial<Pick<ClienteInput, 'nome' | 'razaoSocial' | 'documento'>> | null | undefined,
+  balanca:
+    | (Partial<
+        Pick<
+          Balanca,
+          | 'fabricante'
+          | 'modelo'
+          | 'numeroSerie'
+          | 'identificacao'
+          | 'plataformaFabricante'
+          | 'plataformaModelo'
+          | 'plataformaSerie'
+        >
+      > &
+        IndicadorLegado)
+    | null
+    | undefined,
+): string {
+  return textoBusca(
+    k.numero,
+    k.ordemServico,
+    cliente?.nome,
+    cliente?.razaoSocial,
+    cliente?.documento,
+    balanca?.fabricante,
+    balanca?.modelo,
+    balanca?.numeroSerie,
+    balanca && parteSeparada(balanca)?.serie,
+    balanca?.identificacao,
   )
 }
 
@@ -1078,12 +1154,12 @@ export function normalizarBalanca(entrada: unknown): Resultado<BalancaInput> {
       faixas,
       min,
       classe,
-      portariaAprovacao: texto(r.portariaAprovacao, 120),
+      portariaAprovacao: texto(r.portariaAprovacao, LIMITES.portariaAprovacao),
       receptor,
       apoios: inteiro(r.apoios, 64, 0) || (receptor === 'RETANGULAR' ? 4 : 0),
       dimensoes: texto(r.dimensoes, 60),
       finalidade,
-      localInstalacao: texto(r.localInstalacao, 120),
+      localInstalacao: texto(r.localInstalacao, LIMITES.localInstalacao),
       anoFabricacao: texto(r.anoFabricacao, 10),
       observacoes: multilinha(r.observacoes),
       ativo: booleano(r.ativo, true),
@@ -1167,7 +1243,7 @@ export function normalizarPadrao(entrada: unknown, opcoes: { densidadeGravada?: 
     valor: {
       tipo,
       identificacao,
-      descricao: texto(r.descricao, 160),
+      descricao: texto(r.descricao, LIMITES.descricaoPadrao),
       fabricante: texto(r.fabricante, 80),
       modelo: texto(r.modelo, 80),
       numeroSerie: texto(r.numeroSerie, 80),
@@ -1178,7 +1254,7 @@ export function normalizarPadrao(entrada: unknown, opcoes: { densidadeGravada?: 
       uso,
       pesos: pesos.sort((a, b) => b.nominal - a.nominal),
       certificado: texto(r.certificado, 80),
-      laboratorio: texto(r.laboratorio, 160),
+      laboratorio: texto(r.laboratorio, LIMITES.laboratorio),
       acreditacao: texto(r.acreditacao, 40),
       dataCalibracao,
       validade,
@@ -1581,7 +1657,7 @@ function normalizarExcentricidade(v: unknown): EnsaioExcentricidade {
   const r = obj(v)
   return {
     aplicavel: booleano(r.aplicavel, true),
-    motivo: texto(r.motivo, 200),
+    motivo: texto(r.motivo, LIMITES.motivoExcentricidade),
     carga: positivo(r.carga),
     metodo: umDe(numero(r.metodo), [1, 2, 3, 4] as const, 1),
     posicoes: (Array.isArray(r.posicoes) ? r.posicoes : []).slice(0, LIMITES.posicoes).map((p) => {
@@ -1792,7 +1868,7 @@ export function normalizarCalibracao(entrada: unknown): Resultado<CalibracaoInpu
       opinioes: multilinha(r.opinioes),
       anotacoesInternas: multilinha(r.anotacoesInternas),
       substituiId: texto(r.substituiId, 100),
-      motivoRevisao: texto(r.motivoRevisao, 300),
+      motivoRevisao: texto(r.motivoRevisao, LIMITES.motivo),
     },
     erros,
   }
@@ -1897,10 +1973,34 @@ export function verificacoesAntesDeCalibrar(
 }
 
 /**
+ * A balança é identificável (POP 7.3; ISO/IEC 17025, 7.8.2.1): tem o nº de série, a identificação no cliente (TAG) ou
+ * a série da plataforma separada (sai no certificado). Sem nenhum dos três, o certificado não liga o item calibrado.
+ * O cadastro gravado por uma versão antiga pode não ter algum dos campos.
+ */
+export const balancaIdentificada = (b: Partial<Pick<Balanca, 'numeroSerie' | 'identificacao'>> & { plataformaSerie?: string }) =>
+  [b.numeroSerie, b.identificacao, b.plataformaSerie].some((x) => !!x?.trim())
+
+/**
  * A conta do técnico da calibração foi excluída (o servidor confere; a desativada continua existindo e vale): o
  * certificado sairia com "Executado por" em branco.
  */
 export const PENDENCIA_TECNICO_EXCLUIDO = 'O técnico desta calibração foi excluído: escolha quem executou.'
+
+/**
+ * Revisão cujo certificado revisado não está mais emitido (cancelado antes da trava do cancelamento, que hoje pede
+ * emitir ou excluir a revisão antes): ela não pode mais ser emitida. O servidor confere (`pendenciasDa`).
+ */
+export const PENDENCIA_REVISADO_CANCELADO =
+  'O certificado que esta revisão substitui foi cancelado: a revisão não pode mais ser emitida. Exclua-a.'
+export const PENDENCIA_REVISADO_NAO_EMITIDO =
+  'O certificado que esta revisão substitui não está mais emitido: a revisão não pode ser emitida. Exclua-a.'
+
+/** As pendências que só o servidor sabe e que valem mesmo com alteração por gravar na tela (`pendenciasDaTela`). */
+export const PENDENCIAS_SO_DO_SERVIDOR: readonly string[] = [
+  PENDENCIA_TECNICO_EXCLUIDO,
+  PENDENCIA_REVISADO_CANCELADO,
+  PENDENCIA_REVISADO_NAO_EMITIDO,
+]
 
 /**
  * O que falta para emitir o certificado (bloqueios): o cadastro, os padrões (como valem na data da calibração,
@@ -1908,11 +2008,55 @@ export const PENDENCIA_TECNICO_EXCLUIDO = 'O técnico desta calibração foi exc
  * esperado, os pesos) vêm do motor (`calcularCalibracao`) e o servidor junta as duas (`pendenciasDa`); os avisos do
  * cálculo (ex.: faixa parcial) aparecem à parte e não bloqueiam.
  */
+/**
+ * Peças de jogos "valor do certificado" sem a U no cadastro usadas nos pontos lidos dos ensaios (e nas etapas de
+ * substituição deles): elas entram pelo valor nominal, sem a correção do certificado (`pecaParaCalculo`). Por jogo, na
+ * ordem dos padrões, com os nominais (g) distintos, do maior para o menor, e quantas peças são.
+ */
+export function pecasSemUDoCertificado(
+  ensaios: ReadonlyArray<EnsaioIndicacao | null | undefined>,
+  padroes: readonly Padrao[],
+): Array<{ padrao: Padrao; nominais: number[]; pecas: number }> {
+  const usadas = new Map<string, Set<string>>()
+  const usar = (pecas: EnsaioIndicacao['substituicao']['pecas']) => {
+    for (const r of pecas) usadas.set(r.padraoId, (usadas.get(r.padraoId) ?? new Set()).add(r.pesoId))
+  }
+  for (const e of ensaios) {
+    if (!e) continue
+    const lidos = e.pontos.filter((p) => p.crescente !== null || p.decrescente !== null)
+    for (const p of lidos) usar(p.pecas)
+    if (e.substituicao.ativa && lidos.some((p) => p.nivelSubstituicao > 0)) usar(e.substituicao.pecas)
+  }
+  return padroes.flatMap((padrao) => {
+    const ids = usadas.get(padrao.id)
+    if (padrao.tipo !== 'PESOS' || padrao.uso !== 'CERTIFICADO' || !ids) return []
+    const semU = padrao.pesos.filter((w) => ids.has(w.id) && !(w.incerteza > 0))
+    if (!semU.length) return []
+    return [{ padrao, nominais: [...new Set(semU.map((w) => w.nominal))].sort((a, b) => b - a), pecas: semU.length }]
+  })
+}
+
+/** "peça de 100 g" / "peças de 100 g e 50 g" (as peças de `pecasSemUDoCertificado`). */
+export function textoPecas(x: { nominais: number[]; pecas: number }): string {
+  const nomes = x.nominais.map(massaLegivel)
+  const lista = nomes.length > 1 ? `${nomes.slice(0, -1).join(', ')} e ${nomes.at(-1)}` : (nomes[0] ?? '')
+  return `${x.pecas > 1 ? 'peças' : 'peça'} de ${lista}`
+}
+
 export function pendenciasEmissao(
   c: CalibracaoInput,
-  contexto: { padroes: Padrao[]; hoje: string; temPesos: boolean; classe?: ClasseExatidao },
+  contexto: {
+    padroes: Padrao[]
+    hoje: string
+    temPesos: boolean
+    classe?: ClasseExatidao
+    /** A balança (o cadastro de hoje, o que sai no certificado); sem ela, a identificação e o receptor não são conferidos. */
+    balanca?: Pick<Balanca, 'receptor'> & Parameters<typeof balancaIdentificada>[0]
+  },
 ): string[] {
   const p: string[] = []
+  /** As regras do POP valem (calibração nova, ou revisão de um certificado emitido com elas): ver `regrasDoPopComoAviso`. */
+  const regrasDoPop = !regrasDoPopComoAviso(c)
   if (!dataIsoValida(c.dataCalibracao)) p.push('Informe a data da calibração.')
   else if (c.dataCalibracao > contexto.hoje) p.push('A data da calibração não pode ser futura.')
   if (!c.tecnicoId) p.push('Informe o técnico que executou a calibração.')
@@ -1932,6 +2076,17 @@ export function pendenciasEmissao(
     if (dataIsoValida(c.dataCalibracao) && dataIsoValida(pad.dataCalibracao) && pad.dataCalibracao > c.dataCalibracao)
       p.push(
         `O padrão ${pad.identificacao} foi calibrado em ${formatarDataBr(pad.dataCalibracao)}, depois desta calibração: o certificado dele não valia no dia.`,
+      )
+    // Fora do intervalo da Tabela 3 do POP (24 meses), mesmo com a próxima calibração digitada distante (2032 no lugar
+    // de 2024). A revisão de um certificado de antes das regras fica como na época
+    else if (
+      regrasDoPop &&
+      dataIsoValida(c.dataCalibracao) &&
+      dataIsoValida(pad.dataCalibracao) &&
+      c.dataCalibracao > somarMeses(pad.dataCalibracao, MESES_MAX_CALIBRACAO_PADRAO)
+    )
+      p.push(
+        `O padrão ${pad.identificacao} foi calibrado em ${formatarDataBr(pad.dataCalibracao)}, há mais de ${MESES_MAX_CALIBRACAO_PADRAO} meses desta calibração (POP, Tabela 3).`,
       )
     if (!pad.certificado) p.push(`O padrão ${pad.identificacao} está sem o número do certificado de calibração.`)
     // A declaração de rastreabilidade do certificado diz que os padrões foram calibrados por laboratório acreditado
@@ -1965,6 +2120,11 @@ export function pendenciasEmissao(
           `Balança classe I: use o jogo ${pad.identificacao} pelo valor do certificado (cadastro do padrão; POP 6.1; OIML R 111-1, 5.3.2).`,
         )
     }
+    // A peça sem a U no cadastro entraria pelo nominal, sem a correção do certificado (na classe I, mais de 1 d)
+    for (const x of pecasSemUDoCertificado([c.indicacao, c.comoEncontrado], jogos))
+      p.push(
+        `Balança classe I: o jogo ${x.padrao.identificacao} está sem a incerteza (U) do certificado ${x.pecas > 1 ? 'das' : 'da'} ${textoPecas(x)}; complete o cadastro do padrão (POP 6.1).`,
+      )
     // O ΔT medido sai no certificado: o termômetro de duas entradas (padrão "Outro", POP 6.2) entra na lista
     if (typeof amb.deltaTPesos === 'number' && !contexto.padroes.some((x) => x.tipo === 'OUTRO'))
       p.push('Balança classe I com o ΔT pesos − ar medido: escolha nos padrões o termômetro de duas entradas.')
@@ -1975,6 +2135,20 @@ export function pendenciasEmissao(
   }
   // A densidade e u(ρ) dos jogos (empuxo pela densidade do ar medida) quem confere é o cálculo, peça a peça, em
   // todo ensaio que a usa: no final e no "como encontrado" da classe I ajustada logo antes (`opcoesComoEncontrado`)
+  // Item não identificável não é calibrado (POP 7.3; ISO/IEC 17025, 7.8.2.1): a série, a TAG ou a série da plataforma
+  // (sai na linha da plataforma separada). Vale também na revisão: a emissão usa o cadastro de hoje, e a TAG vai nele
+  const b = contexto.balanca
+  if (b && !balancaIdentificada(b))
+    p.push('Balança sem nº de série nem identificação (TAG): identifique a balança no cadastro antes de emitir (POP 7.3).')
+  // Excentricidade dispensada: o POP (7.10, Tabela 6) só a dispensa na balança suspensa (gancho), com o motivo, que
+  // sai no certificado. Sem o ensaio, a parcela dele some da incerteza
+  if (regrasDoPop && !c.excentricidade.aplicavel) {
+    if (b && b.receptor !== 'GANCHO')
+      p.push(
+        'Excentricidade: o POP (7.10, Tabela 6) só dispensa o ensaio na balança suspensa (gancho); registre as leituras das posições.',
+      )
+    if (!c.excentricidade.motivo.trim()) p.push('Excentricidade: informe por que o ensaio não foi feito (sai no certificado).')
+  }
   if (c.local === 'CLIENTE' && !c.localEndereco.trim()) p.push('Informe o endereço onde a calibração foi feita.')
   if (c.ajuste.realizado === 'EXTERNO' && !c.ajuste.descricao.trim()) p.push('Descreva o ajuste externo (peso usado).')
   if (c.reparo.houve && !c.ordemServico.trim()) p.push('Houve reparo: informe o número da ordem de serviço.')

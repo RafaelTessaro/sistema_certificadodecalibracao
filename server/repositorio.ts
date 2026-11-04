@@ -21,6 +21,7 @@ import {
   formatarNumeroCertificado,
   hojeLocalIso,
   lerNumeroCertificado,
+  LIMITES,
   nomeArquivoCertificado,
   normalizarBalanca,
   normalizarCalibracao,
@@ -28,12 +29,21 @@ import {
   normalizarConfig,
   normalizarPadrao,
   numeroDaRevisao,
-  parteSeparada,
   textoBusca,
   textoBuscaBalanca,
+  textoBuscaCalibracao,
   versoesAnterioresApos,
 } from '#shared/dominio.ts'
-import { normalizarPop, textoPop, tipoDoMime, TIPOS_DA_FINALIDADE, type FinalidadeArquivo } from '#shared/arquivos.ts'
+import {
+  nomeComExtensaoDoTipo,
+  nomeDoArquivoGuardado,
+  normalizarPop,
+  ordemDoPop,
+  textoPop,
+  tipoDoMime,
+  TIPOS_DA_FINALIDADE,
+  type FinalidadeArquivo,
+} from '#shared/arquivos.ts'
 import { somenteDigitos, normalizarCnpj } from '#shared/documentos.ts'
 import { novoId } from '#shared/id.ts'
 import type {
@@ -208,8 +218,8 @@ function palavrasChaveDoPdf(pdf: Buffer): string | null {
 
 type Linha = { dados: string }
 
-/** Nomes dos anexos gravados com o envio (JSON); [] nos envios antigos. */
-function anexosDoEnvio(v: string | undefined): string[] {
+/** Lista de textos gravada com o envio (JSON: os nomes dos anexos, as balanças do lembrete); [] nos envios antigos. */
+function listaDoEnvio(v: string | undefined): string[] {
   if (!v) return []
   try {
     const lista = JSON.parse(v)
@@ -228,6 +238,9 @@ const conflito = (oQue: string) =>
   new ErroApi(409, `Outra pessoa alterou ${oQue} enquanto você editava. Recarregue a página para ver a versão atual.`, {
     codigo: 'CONFLITO',
   })
+
+/** O certificado com a revisão em andamento não é cancelado (`Repositorio.cancelar`). */
+export const MSG_CANCELAR_COM_REVISAO = 'Há uma revisão deste certificado em andamento: emita-a ou exclua-a antes de cancelar.'
 
 /** Versão enviada pela tela (obrigatória nas alterações). */
 function versaoDe(entrada: unknown): number | undefined {
@@ -385,7 +398,8 @@ export class Repositorio {
     const mesmo = atual?.sha256 === ref.sha256 && !!atual.enviadoEm
     return {
       sha256: info.sha256,
-      nome: ref.nome || info.nome,
+      // A extensão do nome é a do tipo guardado (a tela mostra o mesmo nome que o download)
+      nome: nomeComExtensaoDoTipo(ref.nome || info.nome, tipo),
       tamanho: info.tamanho,
       tipo: info.tipo,
       enviadoEm: mesmo ? atual!.enviadoEm : this.agora().toISOString(),
@@ -413,7 +427,7 @@ export class Repositorio {
         l.arquivo && l.arquivo_nome !== null
           ? {
               sha256: String(l.arquivo),
-              nome: String(l.arquivo_nome),
+              nome: nomeDoArquivoGuardado(String(l.arquivo_nome), String(l.arquivo_tipo)),
               tamanho: Number(l.arquivo_tamanho),
               tipo: String(l.arquivo_tipo),
               enviadoEm: String(l.arquivo_em),
@@ -440,9 +454,13 @@ export class Repositorio {
     return transacao(this.db, () => {
       // Maiúsculas e minúsculas não contam, com acento ("Ç" = "ç", que o NOCASE do SQLite não iguala)
       const chave = (c: string) => c.normalize('NFC').toLocaleUpperCase('pt-BR')
-      const repetida = this.versoesPop().some((v) => chave(v.codigo) === chave(valor.codigo) && v.revisao === valor.revisao)
+      const versoes = this.versoesPop()
+      const repetida = versoes.some((v) => chave(v.codigo) === chave(valor.codigo) && v.revisao === valor.revisao)
       if (repetida)
         throw new ErroApi(409, `A revisão ${valor.revisao} do ${valor.codigo} já está registrada. Confira o número da revisão.`)
+      // Fora de ordem (data antes da vigente, número menor): encobriria a vigente nas calibrações (`popNaData`)
+      const { erros } = ordemDoPop(valor, versoes)
+      if (erros.length) throw new ErroApi(400, erros[0], { erros })
       const arquivo = valor.arquivo
         ? this.conferirArquivo({ sha256: valor.arquivo, nome: '', tamanho: 0, tipo: '', enviadoEm: '' }, 'pop', null, 'do POP')
         : null
@@ -487,8 +505,16 @@ export class Repositorio {
     const params: string[] = []
     if (!filtro.inativos) condicoes.push('c.ativo = 1')
     for (const t of termos) {
-      condicoes.push("(c.busca LIKE ? ESCAPE '\\' OR c.documento LIKE ?)")
-      params.push(`%${t.replace(/[\\%_]/g, '\\$&')}%`, `%${doc.length >= 3 ? doc : '\u0000'}%`)
+      const termo = `%${t.replace(/[\\%_]/g, '\\$&')}%`
+      // O CPF/CNPJ só entra com 3 algarismos ou mais. Nunca usar '\u0000' como "padrão que não casa": o LIKE
+      // do SQLite lê o padrão só até o NUL, e '%\u0000%' vira '%' (casa com todos os clientes).
+      if (doc.length >= 3) {
+        condicoes.push("(c.busca LIKE ? ESCAPE '\\' OR c.documento LIKE ?)")
+        params.push(termo, `%${doc}%`)
+      } else {
+        condicoes.push("c.busca LIKE ? ESCAPE '\\'")
+        params.push(termo)
+      }
     }
     const linhas = this.db
       .prepare(
@@ -741,25 +767,33 @@ export class Repositorio {
    * indicação (as cargas e leituras vão para a nova unidade: 6000 g → 6 kg). Tudo numa gravação só de cada
    * rascunho, para o JSON e as colunas não ficarem diferentes. A versão sobe: uma tela com o rascunho antigo
    * aberto recebe o aviso de que ele mudou, em vez de gravar por cima o cliente ou os números de antes. Os
-   * certificados emitidos têm a cópia congelada da balança e não mudam.
+   * certificados emitidos têm a cópia congelada da balança e não mudam. A revisão em andamento só acompanha a
+   * unidade: ela corrige um certificado já emitido e continua com o cliente e o endereço dele (`verificarLigacoes`).
    */
   private acompanharAbertas(antes: Balanca, depois: Balanca) {
     const ids = this.db
       .prepare("SELECT id FROM calibracoes WHERE balanca_id = ? AND status IN ('RASCUNHO','REVISAO')")
       .all(depois.id) as Array<{ id: string }>
     const trocouCliente = antes.clienteId !== depois.clienteId
+    const trocouUnidade = antes.unidade !== depois.unidade
     const clienteAntigo = trocouCliente ? this.obterCliente(antes.clienteId) : undefined
     const clienteNovo = trocouCliente ? this.obterCliente(depois.clienteId) : undefined
     for (const { id } of ids) {
       const atual = this.obterCalibracao(id)
       if (!atual) continue
+      const revisao = !!atual.substituiId
+      if (revisao && !trocouUnidade) continue
       const k = calibracaoEmOutraUnidade(atual, antes.unidade, depois.unidade)
       const enderecoAntigo = clienteAntigo && k.localEndereco === enderecoCliente(clienteAntigo)
       this.gravarCalibracao(
         {
           ...k,
-          clienteId: depois.clienteId,
-          localEndereco: enderecoAntigo && clienteNovo ? enderecoCliente(clienteNovo) : k.localEndereco,
+          ...(revisao
+            ? {}
+            : {
+                clienteId: depois.clienteId,
+                localEndereco: enderecoAntigo && clienteNovo ? enderecoCliente(clienteNovo) : k.localEndereco,
+              }),
           versao: atual.versao + 1,
           atualizadoEm: depois.atualizadoEm,
         },
@@ -1057,7 +1091,7 @@ export class Repositorio {
   criarCalibracao(entrada: unknown, autor: { id: string; nome: string }): Calibracao {
     const valor = validar(normalizarCalibracao(entrada))
     return transacao(this.db, () => {
-      this.verificarLigacoes(valor)
+      this.verificarLigacoes(valor, valor.substituiId)
       const em = this.agora().toISOString()
       const k: Calibracao = {
         ...valor,
@@ -1087,6 +1121,9 @@ export class Repositorio {
         k.revisao = original.revisao + 1
         // Certificado emitido antes do cálculo da classe I (ou revisão dele): a revisão mantém o cálculo da época
         if (calculoLegado(original)) k.calculoLegado = true
+        // Emitido com as regras do POP: a revisão também as segue (os mínimos e as leituras fora do esperado são
+        // pendências; `regrasDoPopComoAviso`). O de antes delas (1.0.2 ou anterior) fica como na época
+        else if (original.emissao?.regrasDoPop === true) k.regrasDoPop = true
         // Os padrões como foram congelados na emissão (o certificado e as correções da época), mesmo que tenham sido
         // calibrados de novo ou desativados depois (`padroesDaCalibracao`)
         if (original.emissao?.padroes.length) k.padroesCongelados = original.emissao.padroes
@@ -1106,7 +1143,8 @@ export class Repositorio {
         throw new ErroApi(409, 'Este certificado já foi emitido e não pode mais ser alterado. Para corrigir, faça uma revisão.')
       const versao = versaoDe(entrada)
       if (versao !== undefined && versao !== atual.versao) throw conflito('esta calibração')
-      this.verificarLigacoes(valor)
+      // A revisão é a do certificado gravado, nunca a que o corpo do PUT diz
+      this.verificarLigacoes(valor, atual.substituiId)
       const k: Calibracao = {
         ...atual,
         ...valor,
@@ -1276,11 +1314,14 @@ export class Repositorio {
 
   /**
    * O nº com que a revisão em andamento sai: o do certificado revisado, como saiu nele, com o -R dela
-   * (`numeroDaRevisao`; ver `emitir`); null se não é revisão ou o revisado não existe mais.
+   * (`numeroDaRevisao`; ver `emitir`); null se não é revisão ou o revisado não existe mais ou não está mais
+   * emitido (cancelado antes da trava de `cancelar`: a revisão não sai, e a tela não mostra um nº que não vem).
    */
   numeroPrevistoDaRevisao(k: Pick<Calibracao, 'substituiId' | 'revisao'>): string | null {
     const original = k.substituiId ? this.obterCalibracao(k.substituiId) : undefined
-    return original?.numero ? numeroDaRevisao(original.numero, original.revisao, k.revisao) : null
+    return original?.numero && original.status === 'EMITIDO'
+      ? numeroDaRevisao(original.numero, original.revisao, k.revisao)
+      : null
   }
 
   /**
@@ -1309,11 +1350,15 @@ export class Repositorio {
       if (!atual) throw new ErroApi(404, 'Calibração não encontrada.')
       if (atual.status !== 'EMITIDO') throw new ErroApi(409, 'Só um certificado emitido pode ser cancelado.')
       if (versao !== undefined && versao !== atual.versao) throw conflito('este certificado')
+      // A revisão em andamento não sairia mais (o que ela substitui deixa de estar emitido) e o que foi digitado
+      // nela se perderia: primeiro emite ou exclui a revisão (decisão de quem cancela, nunca apagada sem pedir)
+      if (this.db.prepare("SELECT 1 FROM calibracoes WHERE substitui_id = ? AND status IN ('RASCUNHO','REVISAO')").get(id))
+        throw new ErroApi(409, MSG_CANCELAR_COM_REVISAO)
       const em = this.agora().toISOString()
       const k: Calibracao = {
         ...atual,
         status: 'CANCELADO',
-        cancelamento: { motivo: texto.slice(0, 500), por: autor.nome, em },
+        cancelamento: { motivo: texto.slice(0, LIMITES.motivo), por: autor.nome, em },
         versao: atual.versao + 1,
         atualizadoEm: em,
       }
@@ -1323,28 +1368,26 @@ export class Repositorio {
     })
   }
 
-  private verificarLigacoes(k: CalibracaoInput) {
+  /**
+   * A balança e o cliente existem e combinam. Na revisão (`substituiId`, o do certificado gravado ou o conferido em
+   * `criarCalibracao`), são os do certificado revisado, mesmo que a balança tenha passado para outro cliente depois
+   * (a revisão corrige aquele certificado: sai em nome do mesmo cliente); fora dela, a balança é do cliente.
+   */
+  private verificarLigacoes(k: CalibracaoInput, substituiId: string) {
     const balanca = this.obterBalanca(k.balancaId)
     if (!balanca) throw new ErroApi(400, 'Balança não encontrada. Escolha a balança de novo.')
-    if (balanca.clienteId !== k.clienteId) throw new ErroApi(400, 'A balança escolhida é de outro cliente.')
+    const revisado = substituiId ? this.obterCalibracao(substituiId) : undefined
+    if (revisado) {
+      if (k.balancaId !== revisado.balancaId || k.clienteId !== revisado.clienteId)
+        throw new ErroApi(400, 'A revisão é do mesmo cliente e da mesma balança do certificado revisado.')
+    } else if (balanca.clienteId !== k.clienteId) throw new ErroApi(400, 'A balança escolhida é de outro cliente.')
     if (!this.obterCliente(k.clienteId)) throw new ErroApi(400, 'Cliente não encontrado.')
   }
 
   private gravarCalibracao(k: Calibracao, nova: boolean) {
     const cliente = k.emissao?.cliente ?? this.obterCliente(k.clienteId)
     const balanca = k.emissao?.balanca ?? this.obterBalanca(k.balancaId)
-    const busca = textoBusca(
-      k.numero,
-      k.ordemServico,
-      cliente?.nome,
-      cliente?.razaoSocial,
-      cliente?.documento,
-      balanca?.fabricante,
-      balanca?.modelo,
-      balanca?.numeroSerie,
-      balanca && parteSeparada(balanca)?.serie,
-      balanca?.identificacao,
-    )
+    const busca = textoBuscaCalibracao(k, cliente, balanca)
     const colunas = {
       status: k.status,
       ano: k.ano,
@@ -2561,8 +2604,9 @@ export class Repositorio {
     transacao(this.db, () => {
       this.db
         .prepare(
-          `INSERT INTO envios (id, calibracao_id, cliente_id, tipo, para, assunto, usuario_id, usuario_nome, em, anexos)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO envios (id, calibracao_id, cliente_id, tipo, para, assunto, usuario_id, usuario_nome, em, anexos, balancas,
+                              recusados)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           novoId(),
@@ -2575,6 +2619,8 @@ export class Repositorio {
           e.usuarioNome,
           this.agora().toISOString(),
           e.anexos?.length ? JSON.stringify(e.anexos) : '',
+          e.balancas?.length ? JSON.stringify(e.balancas) : '',
+          e.recusados?.length ? JSON.stringify(e.recusados) : '',
         )
       this.mudou('calibracao', e.calibracaoId || undefined)
     })
@@ -2603,7 +2649,9 @@ export class Repositorio {
       assunto: l.assunto,
       usuarioNome: l.usuario_nome,
       em: l.em,
-      anexos: anexosDoEnvio(l.anexos),
+      anexos: listaDoEnvio(l.anexos),
+      balancas: listaDoEnvio(l.balancas),
+      recusados: listaDoEnvio(l.recusados),
     }))
   }
 
@@ -2611,7 +2659,10 @@ export class Repositorio {
 
   /**
    * Balanças ativas cuja última calibração emitida tem a próxima calibração combinada com o
-   * cliente: vencidas e as que vencem nos próximos `dias` (ou todas, com `dias` = Infinity).
+   * cliente: vencidas e as que vencem nos próximos `dias` (ou todas, com `dias` = Infinity). O lembrete da balança
+   * é o último que a incluiu (as balanças guardadas com o envio) depois da emissão do último certificado dela,
+   * comparando os instantes (o lembrete do mesmo dia, antes da emissão, era do certificado anterior); o do cliente,
+   * o último enviado a ele (também os de antes desta versão, que não guardavam as balanças).
    */
   vencimentos(dias: number): Vencimento[] {
     const hoje = this.hoje()
@@ -2619,12 +2670,18 @@ export class Repositorio {
       .prepare(
         `SELECT b.id AS balanca_id, b.dados AS balanca, c.id AS cliente_id, c.dados AS cliente,
                 k.id AS calibracao_id, k.numero, k.data_calibracao, k.proxima,
-                (SELECT MAX(e.em) FROM envios e WHERE e.tipo = 'LEMBRETE' AND e.cliente_id = c.id AND e.em >= k.data_emissao) AS lembrete
+                (SELECT MAX(e.em) FROM envios e
+                  WHERE e.tipo = 'LEMBRETE' AND e.cliente_id = c.id
+                    AND e.em >= COALESCE(json_extract(k.dados, '$.emissao.emitidoEm'), k.data_emissao)
+                    AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(e.balancas) THEN e.balancas ELSE '[]' END) j
+                                 WHERE j.value = b.id)) AS lembrete,
+                (SELECT MAX(e.em) FROM envios e WHERE e.tipo = 'LEMBRETE' AND e.cliente_id = c.id) AS lembrete_cliente
          FROM balancas b
          JOIN clientes c ON c.id = b.cliente_id
          JOIN calibracoes k ON k.id = (
            SELECT x.id FROM calibracoes x WHERE x.balanca_id = b.id AND x.status = 'EMITIDO'
-           ORDER BY x.data_calibracao DESC, x.data_emissao DESC LIMIT 1)
+           ORDER BY x.data_calibracao DESC, x.data_emissao DESC,
+                    COALESCE(json_extract(x.dados, '$.emissao.emitidoEm'), '') DESC LIMIT 1)
          WHERE b.ativo = 1 AND c.ativo = 1 AND k.proxima <> ''
          ORDER BY k.proxima`,
       )
@@ -2647,6 +2704,7 @@ export class Repositorio {
           proximaCalibracao: l.proxima!,
           dias: diasEntre(hoje, l.proxima!),
           lembreteEm: l.lembrete ?? '',
+          ultimoLembreteCliente: l.lembrete_cliente ?? '',
         }
       })
       .filter((v) => v.dias <= dias)

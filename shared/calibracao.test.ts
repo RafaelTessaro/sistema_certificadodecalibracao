@@ -5,6 +5,7 @@ import {
   calcularCalibracao,
   cargaDasPecas,
   entradaDoCalculo,
+  leiturasOriginais,
   montarCarga,
   montarPonto,
   opcoesComoEncontrado,
@@ -248,7 +249,7 @@ const analitica: Balanca = {
 function calibracaoClasseI(extra: Partial<CalibracaoInput> = {}): CalibracaoInput {
   const indicacao: EnsaioIndicacao = {
     metodo: 'DESCONTINUO',
-    retornoZero: null,
+    retornoZero: 0,
     substituicao: { ativa: false, pecas: [], etapas: [] },
     pontos: [
       { id: 'z', carga: 0, pecas: [], pecasManuais: false, crescente: 0, decrescente: null, nivelSubstituicao: 0 },
@@ -710,15 +711,8 @@ describe('montagem das cargas pela classe dos pesos', () => {
 
 describe('jogo sem a classe R111 (EMA desconhecido)', () => {
   const k = () =>
-    calibracaoDe(
-      [0, 10, 20, 30]
-        .map((c) => pontoDe(`p${c}`, c, c ? montarCarga(c, 'kg', [semClasse]).pecas : [], c))
-        .concat(
-          // O 5º ponto do POP (7.7), sem pesos (só o aviso "carga sem padrões")
-          pontoDe('p25', 25, [], 25),
-        ),
-    )
-  const semClasse = jogoDe('x', 'JP-X', [20_000, 10_000], { classe: '' })
+    calibracaoDe([0, 5, 10, 20, 30].map((c) => pontoDe(`p${c}`, c, c ? montarCarga(c, 'kg', [semClasse]).pecas : [], c)))
+  const semClasse = jogoDe('x', 'JP-X', [20_000, 10_000, 5000], { classe: '' })
   const pendencia =
     'Pesos sem EMA conhecido (OIML R 111): o jogo JP-X está sem a classe. O EMA entra na incerteza dos pesos (deriva, empuxo ou valor nominal); confira a classe no cadastro do padrão.'
 
@@ -773,5 +767,136 @@ describe('mínimos do POP na calibração nova (e o registro de antes)', () => {
     expect(metodosCarregamentoParaEscolher('CRESCENTE_DECRESCENTE')).toEqual(['CRESCENTE_DECRESCENTE', 'DESCONTINUO', 'CONTINUO'])
     expect(metodosCarregamentoParaEscolher()).not.toContain('DECRESCENTE')
     expect(metodosCarregamentoParaEscolher('DECRESCENTE')).toContain('DECRESCENTE')
+  })
+})
+
+describe('revisão: as regras do POP valem quando o certificado revisado foi emitido com elas', () => {
+  it('sem a marca (certificado da 1.0.2 ou anterior): avisos; com a marca: pendências; legado e "como encontrado": avisos', () => {
+    const k = { opcoes: { ...calibracaoVazia().opcoes, conveccao: 'NAO_CONSIDERAR' as const } }
+    expect(regrasDoPopComoAviso(k)).toBe(false)
+    expect(regrasDoPopComoAviso({ ...k, substituiId: 'orig' })).toBe(true)
+    expect(regrasDoPopComoAviso({ ...k, substituiId: 'orig', regrasDoPop: true })).toBe(false)
+    expect(regrasDoPopComoAviso({ ...k, substituiId: 'orig', regrasDoPop: true }, 'COMO_ENCONTRADO')).toBe(true)
+    expect(regrasDoPopComoAviso({ ...k, substituiId: 'orig', calculoLegado: true })).toBe(true)
+  })
+})
+
+describe('revisão de um certificado de antes das regras: a leitura absurda que a revisão trouxe é pendência', () => {
+  const J = jogoDe('j', 'JP-J', [20_000, 10_000, 5000, 2000, 1000])
+  const cinco = (leitura20: number) =>
+    calibracaoDe(
+      [0, 5, 10, 20, 30].map((c) =>
+        pontoDe(`p${c}`, c, c ? montarCarga(c, 'kg', [J]).pecas : [], c === 20 ? leitura20 : c, { pecasManuais: false }),
+      ),
+    )
+  const original = cinco(20)
+  const revisao = { ...cinco(20000), substituiId: 'orig' }
+  const PENDENCIA = 'Erro de indicação, ponto de 20,00 kg: leitura 20 000,00 fora do esperado; confira a digitação.'
+  const sem = (t: string) => t.replace(/[   ]/g, ' ')
+
+  it('com as leituras do certificado revisado: a mudada é pendência; a que já estava nele, aviso', () => {
+    expect(leiturasOriginais(original).indicacao.p20).toEqual({ crescente: 20, decrescente: 20 })
+    expect(calcularCalibracao(revisao, balanca30, [J], original).resultado.pendencias.map(sem)).toEqual([PENDENCIA])
+    // Sem o original (a tela, que não o tem): só o aviso, e o servidor confere
+    expect(calcularCalibracao(revisao, balanca30, [J]).resultado.pendencias).toEqual([])
+    // A mesma leitura já estava no certificado revisado: aviso
+    expect(calcularCalibracao(revisao, balanca30, [J], cinco(20000)).resultado.pendencias).toEqual([])
+    // Na calibração nova, pendência sempre
+    expect(calcularCalibracao(cinco(20000), balanca30, [J]).resultado.pendencias.map(sem)).toEqual([PENDENCIA])
+  })
+})
+
+// ---- Ponto sem nenhum peso padrão: a carga só digitada não vai para o certificado sem rastreabilidade ----
+
+describe('ponto lido sem nenhum peso padrão', () => {
+  /** O jogo da calibração pronta: 10, 10, 10 e 5 kg (a menor peça é de 5 kg). */
+  const J = jogoDe('j', 'JP-J', [10_000, 10_000, 10_000, 5000])
+  const SEM_PESO = (carga: string) =>
+    `Erro de indicação, ponto de ${carga}: nenhum peso padrão no ponto; escolha os pesos do ponto ou, nos padrões, um jogo que faça essa carga.`
+  const automatico = (carga: number, leitura: number | null = carga) =>
+    pontoDe(`p${carga}`, carga, montarPonto(carga, 0, 0, 'kg', [J], balanca30).pecas, leitura, { pecasManuais: false })
+  const pendenciasDe = (k: CalibracaoInput) =>
+    calcularCalibracao(k, balanca30, [J]).resultado.pendencias.map((t) => t.replace(/[   ]/g, ' '))
+
+  it('carga menor que a menor peça do jogo (2 kg com peças de 5 e 10 kg): a montagem fica vazia e o ponto é pendência', () => {
+    expect(montarPonto(2, 0, 0, 'kg', [J], balanca30)).toEqual({ pecas: [], diferenca: -2 })
+    const k = calibracaoDe([0, 2, 10, 20, 30].map((c) => automatico(c, c === 2 ? 2.01 : c)))
+    expect(pendenciasDe(k)).toEqual([SEM_PESO('2,00 kg')])
+    // O ponto continua na tela (a referência é a carga digitada), mas a emissão fica parada
+    expect(calcularCalibracao(k, balanca30, [J]).resultado.pontos[1].referencia).toBe(2)
+  })
+
+  it('peças tiradas à mão do ponto ("Usar estas peças" com a lista vazia): pendência', () => {
+    const pontos = [0, 5, 10, 20, 30].map((c) => automatico(c))
+    pontos[2] = { ...pontos[2], pecas: [], pecasManuais: true }
+    expect(pendenciasDe(calibracaoDe(pontos))).toEqual([SEM_PESO('10,00 kg')])
+  })
+
+  it('revisão de certificado de antes das regras e registro antigo: só o aviso "Carga sem padrões"', () => {
+    const pontos = [0, 5, 10, 20, 30].map((c) => automatico(c))
+    pontos[2] = { ...pontos[2], pecas: [], pecasManuais: true }
+    for (const k of [
+      { ...calibracaoDe(pontos), substituiId: 'orig' },
+      { ...calibracaoDe(pontos), calculoLegado: true },
+    ]) {
+      const { resultado } = calcularCalibracao(k, balanca30, [J])
+      expect(resultado.pendencias).toEqual([])
+      expect(resultado.avisos.map((a) => a.mensagem).join('\n')).toMatch(/Carga sem padrões em 10,00 kg/)
+    }
+  })
+})
+
+// ---- Peça de jogo "valor do certificado" sem a U no cadastro ------------------------------------------
+
+describe('peça sem a U num jogo pelo valor do certificado', () => {
+  /** Jogo E2 com a peça de 100 g de correção −0,12 mg e U em branco (0). */
+  const E2 = jogoDe('e', 'JP-E2', [100, 50, 20], { classe: 'E2' })
+  E2.pesos[0] = { ...E2.pesos[0], correcao: -0.12, incerteza: 0 }
+
+  it('entra pelo nominal (como sempre), mas leva a correção ignorada para o aviso', () => {
+    const p = pecaParaCalculo(E2, E2.pesos[0], 'g')
+    expect(p).toMatchObject({ usarCertificado: false, correcao: 0, incerteza: 0, correcaoSemU: -0.00012 })
+    // Com a U, pelo certificado (sem a marca); pelo nominal de propósito, também sem a marca
+    expect(pecaParaCalculo(E2, E2.pesos[1], 'g')).toMatchObject({ usarCertificado: true })
+    expect(pecaParaCalculo(E2, E2.pesos[1], 'g').correcaoSemU).toBeUndefined()
+    expect(pecaParaCalculo({ ...E2, uso: 'NOMINAL' }, E2.pesos[0], 'g').correcaoSemU).toBeUndefined()
+  })
+
+  it('classe III com a peça usada: aviso de atenção, e o cálculo pelo nominal continua', () => {
+    const b = { ...balanca30, unidade: 'g' as const, faixas: [{ max: 300, e: 0.1, d: 0.1 }] }
+    const pontos = [0, 20, 50, 100, 170].map((c) =>
+      pontoDe(`p${c}`, c, c ? montarCarga(c, 'g', [E2]).pecas : [], c, { pecasManuais: false }),
+    )
+    const k = { ...calibracaoDe(pontos), repetibilidade: [{ id: 'r', carga: 150, leituras: [150, 150, 150.1, 150, 150] }] }
+    const { resultado } = calcularCalibracao(k, b, [E2])
+    expect(resultado.avisos.map((a) => `${a.nivel}: ${a.mensagem}`)).toContain(
+      'atencao: Correção do certificado ignorada em peça de 100 g do jogo JP-E2: peça sem a U no cadastro entra pelo valor nominal. Complete a U no cadastro do padrão.',
+    )
+    // O valor de referência é o nominal (sem a correção de −0,12 mg)
+    expect(resultado.pontos[3].referencia).toBe(100)
+    // Sem a peça de 100 g nos pontos, nada
+    const semEla = { ...k, indicacao: { ...k.indicacao, pontos: pontos.slice(0, 3) } }
+    expect(
+      calcularCalibracao(semEla, b, [E2])
+        .resultado.avisos.map((a) => a.mensagem)
+        .join('\n'),
+    ).not.toMatch(/Correção do certificado ignorada/)
+  })
+})
+
+describe('revisão: o zero antes da excentricidade (método 3) também vem do certificado revisado', () => {
+  it('leiturasOriginais leva as referências das posições', () => {
+    const k = calibracaoDe([])
+    k.excentricidade = {
+      aplicavel: true,
+      motivo: '',
+      carga: 10,
+      metodo: 3,
+      posicoes: [
+        { rotulo: 'Centro', leitura: 10, referencia: 0 },
+        { rotulo: 'A', leitura: 10.01, referencia: null },
+      ],
+    }
+    expect(leiturasOriginais(k).referenciasExcentricidade).toEqual([0, null])
   })
 })

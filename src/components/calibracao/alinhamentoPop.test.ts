@@ -174,6 +174,45 @@ describe('Excentricidade: método fixo pela classe (POP 7.10)', () => {
     expect(t).toContain('na classe I, o zero é conferido antes de cada posição')
   })
 
+  it('classe I: o "zero antes" fora do esperado (a carga digitada no lugar dele) fica em vermelho, como a pendência', () => {
+    const classeI = { ...balanca, classe: 'I', unidade: 'g', faixas: [{ max: 220, e: 0.001, d: 0.0001 }] } as Balanca
+    const k = calibracaoVazia(undefined, 'I')
+    const f: CalibracaoInput = {
+      ...k,
+      excentricidade: {
+        ...k.excentricidade,
+        carga: 100,
+        metodo: 3,
+        posicoes: [
+          { rotulo: 'Centro', leitura: 100, referencia: 0 },
+          { rotulo: 'Frente', leitura: 100.0001, referencia: 100.0001 },
+        ],
+      },
+    }
+    const t = html(EtapaExcentricidade, contexto(f, classeI))
+    /** As classes do campo pelo rótulo (a cor do tom). */
+    const campo = (rotulo: string) => t.match(new RegExp(`<input[^>]*aria-label="${rotulo}"[^>]*>`))?.[0] ?? ''
+    expect(campo('Referência da posição 2')).toContain('border-danger')
+    expect(campo('Referência da posição 1')).not.toContain('border-danger')
+    expect(campo('Indicação na posição 2')).not.toContain('border-danger')
+  })
+
+  it('repetibilidade sem a carga: as leituras não ficam vermelhas (a pendência é a da carga); com ela, a vírgula errada fica', () => {
+    const k = calibracaoVazia(undefined, 'III')
+    const campo = (t: string, rotulo: string) => t.match(new RegExp(`<input[^>]*aria-label="${rotulo}"[^>]*>`))?.[0] ?? ''
+    const semCarga = html(
+      EtapaRepetibilidade,
+      contexto({ ...k, repetibilidade: [{ id: 'r', carga: 0, leituras: [15, 15, 15, 15, 15] }] }),
+    )
+    expect(campo(semCarga, 'Leitura 1')).not.toContain('border-danger')
+    const comCarga = html(
+      EtapaRepetibilidade,
+      contexto({ ...k, repetibilidade: [{ id: 'r', carga: 15, leituras: [1500, 15, 15, 15, 15] }] }),
+    )
+    expect(campo(comCarga, 'Leitura 1')).toContain('border-danger')
+    expect(campo(comCarga, 'Leitura 2')).not.toContain('border-danger')
+  })
+
   it('registro de antes com outro método: mostra o dele, avisa e deixa alterar', () => {
     const k = calibracaoVazia(undefined, 'III')
     const f: CalibracaoInput = {
@@ -237,5 +276,24 @@ describe('Padrões e ambiente: o termo-higrômetro (POP 6.2)', () => {
     expect(html(EtapaPadroes, contexto(comTemperatura(['th']), balanca, [th], [th]))).not.toContain('POP 6.2')
     // Sem temperatura ainda: nada
     expect(html(EtapaPadroes, contexto(calibracaoVazia(undefined, 'III'), balanca, [th]))).not.toContain('POP 6.2')
+  })
+})
+
+describe('dados que o POP exige na calibração nova: a carga da repetibilidade e o retorno ao zero', () => {
+  const lido = (x: string) => x.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+
+  it('repetibilidade com leituras e sem a carga: o campo pede a carga', () => {
+    const f = { ...calibracaoVazia(undefined, 'III'), repetibilidade: [{ id: 'r', carga: 0, leituras: [15, 15, 15, 15, 15] }] }
+    expect(lido(html(EtapaRepetibilidade, contexto(f)))).toContain('Informe a carga do ensaio.')
+    const comCarga = { ...f, repetibilidade: [{ ...f.repetibilidade[0], carga: 15 }] }
+    expect(lido(html(EtapaRepetibilidade, contexto(comCarga)))).not.toContain('Informe a carga do ensaio.')
+  })
+
+  it('retorno ao zero: obrigatório na calibração nova (POP 7.7); opcional na revisão de um certificado de antes', () => {
+    const f = calibracaoVazia(undefined, 'III')
+    expect(lido(html(EtapaIndicacao, contexto(f)))).toContain('Indicação depois de retirar toda a carga (POP 7.7).')
+    expect(lido(html(EtapaIndicacao, contexto({ ...f, substituiId: 'orig' })))).toContain(
+      'Indicação depois de retirar toda a carga (opcional)',
+    )
   })
 })

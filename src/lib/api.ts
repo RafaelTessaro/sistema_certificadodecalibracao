@@ -27,6 +27,7 @@ import type {
   PadraoInput,
   RegistroAuditoria,
   RespostaLogin,
+  ResultadoEmail,
   ResultadoSenha,
   ResumoPainel,
   StatusCalibracao,
@@ -88,6 +89,11 @@ export interface DetalheCalibracao {
   envios: Envio[]
   /** O que falta para emitir (vazio = pode emitir). */
   pendencias: string[]
+  /**
+   * Para conferir, sem impedir a emissão (ex.: a folha de campo saiu com outra revisão do POP que a da data da
+   * calibração). Ausente numa resposta de antes desta versão.
+   */
+  avisos?: string[]
   /** Revisões feitas a partir deste certificado (a que o substituiu e a que está em andamento). */
   revisoes: Array<{ id: string; numero: string; status: StatusCalibracao }>
   /** Folha de campo já impressa desta calibração (null = ainda não). */
@@ -295,12 +301,16 @@ export const api = {
   calibracao: (id: string) => requisitar<DetalheCalibracao>('GET', `/api/calibracoes/${enc(id)}`),
   criarCalibracao: (dados: Partial<CalibracaoInput>) => requisitar<{ calibracao: Calibracao }>('POST', '/api/calibracoes', dados),
   salvarCalibracao: (id: string, dados: CalibracaoInput, versao?: number) =>
-    requisitar<{ calibracao: Calibracao; pendencias: string[] }>('PUT', `/api/calibracoes/${enc(id)}`, { ...dados, versao }),
+    requisitar<{ calibracao: Calibracao; pendencias: string[]; avisos?: string[] }>('PUT', `/api/calibracoes/${enc(id)}`, {
+      ...dados,
+      versao,
+    }),
   excluirCalibracao: (id: string) => requisitar<void>('DELETE', `/api/calibracoes/${enc(id)}`),
   mudarSituacao: (id: string, status: 'RASCUNHO' | 'REVISAO', versao?: number) =>
     requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/situacao`, { status, versao }),
+  /** `aviso`: emitido, mas o PDF não pôde ser gravado na hora (é gerado ao abrir). */
   emitir: (id: string, dados: { signatarioId?: string; versao?: number }) =>
-    requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/emitir`, dados, 60_000),
+    requisitar<{ calibracao: Calibracao; aviso?: string }>('POST', `/api/calibracoes/${enc(id)}/emitir`, dados, 60_000),
   cancelar: (id: string, motivo: string, versao?: number) =>
     requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/cancelar`, { motivo, versao }),
   revisar: (id: string, motivo: string) =>
@@ -359,9 +369,9 @@ export const api = {
   anexosEmail: (id: string) => requisitar<AnexosEmail>('GET', `/api/calibracoes/${enc(id)}/anexos`, undefined, 60_000),
   /** `anexos`: os ids marcados (o PDF do certificado vai sempre). */
   enviarCertificado: (id: string, dados: { para: string; assunto: string; texto: string; anexos?: string[] }) =>
-    requisitar<{ ok: true; para: string[]; anexos: string[] }>('POST', `/api/calibracoes/${enc(id)}/email`, dados, 180_000),
+    requisitar<ResultadoEmail & { anexos: string[] }>('POST', `/api/calibracoes/${enc(id)}/email`, dados, 180_000),
   enviarLembrete: (dados: { clienteId: string; balancas: string[]; para: string; assunto: string; texto: string }) =>
-    requisitar<{ ok: true; para: string[] }>('POST', '/api/lembretes', dados, 120_000),
+    requisitar<ResultadoEmail>('POST', '/api/lembretes', dados, 120_000),
   verificar: (codigo: string) => requisitar<VerificacaoCertificado>('GET', `/api/verificar/${enc(codigo)}`),
 
   // ---- Arquivos guardados e POP ----
@@ -395,9 +405,15 @@ export const api = {
       clearTimeout(timer)
     }
   },
-  /** Abre (PDF, imagem) ou baixa (Word, ou `baixar`) um arquivo guardado; `nome` troca o nome do arquivo baixado. */
+  /**
+   * Abre (PDF, imagem) ou baixa (Word, ou `baixar`) um arquivo guardado; `nome` troca o nome do arquivo baixado
+   * (o servidor mantém a extensão do tipo do arquivo).
+   */
   urlArquivo: (sha256: string, o: { baixar?: boolean; nome?: string } = {}) =>
     `/api/arquivos/${enc(sha256)}${consulta({ baixar: o.baixar ? 1 : '', nome: o.nome })}`,
+  /** Link de um arquivo anexado, com o nome da referência (o mesmo conteúdo pode ter outro nome em outro cadastro). */
+  urlAnexo: (ref: Pick<ArquivoAnexo, 'sha256' | 'nome'>, o: { baixar?: boolean } = {}) =>
+    api.urlArquivo(ref.sha256, { ...o, nome: ref.nome }),
   pop: () => requisitar<DadosPop>('GET', '/api/pop'),
   registrarPop: (e: { codigo: string; revisao: string; data: string; arquivo: string; observacao: string }) =>
     requisitar<{ versao: VersaoPop }>('POST', '/api/pop', e),
@@ -415,7 +431,7 @@ export const api = {
   configEmail: () => requisitar<ConfigEmail>('GET', '/api/email/config'),
   salvarConfigEmail: (c: ConfigEmailEntrada) => requisitar<ConfigEmail>('PUT', '/api/email/config', c),
   esquecerConfigEmail: () => requisitar<void>('DELETE', '/api/email/config'),
-  testarEmail: (para: string) => requisitar<{ ok: true }>('POST', '/api/email/teste', { para }, 60_000),
+  testarEmail: (para: string) => requisitar<ResultadoEmail>('POST', '/api/email/teste', { para }, 60_000),
 
   backups: () => requisitar<{ backups: InfoBackup[]; pasta: string }>('GET', '/api/backups'),
   copiaAgora: () => requisitar<{ arquivo: string }>('POST', '/api/backups', undefined, 120_000),

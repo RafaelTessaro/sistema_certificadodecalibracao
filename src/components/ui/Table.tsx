@@ -1,6 +1,7 @@
 import { motion } from 'motion/react'
 import type { HTMLAttributes, ReactNode, TdHTMLAttributes, ThHTMLAttributes } from 'react'
 import { cn } from '../../lib/cn'
+import { deveAbrirPelaTecla } from './linhaTeclado'
 
 export function Tabela({ children, className }: { children: ReactNode; className?: string }) {
   return (
@@ -38,7 +39,10 @@ export function Td({ className, alinhar, ...props }: TdHTMLAttributes<HTMLTableC
   )
 }
 
-/** Linha com entrada escalonada suave e destaque ao passar o mouse. */
+/**
+ * Linha com entrada escalonada suave e destaque ao passar o mouse. Com `aoClicar`, abre também pelo teclado: recebe o
+ * foco (Tab, com o contorno visível) e abre com Enter ou Espaço (`deveAbrirPelaTecla`).
+ */
 export function Linha({
   indice = 0,
   aoClicar,
@@ -51,7 +55,22 @@ export function Linha({
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(indice, 14) * 0.022, duration: 0.25, ease: 'easeOut' }}
       onClick={aoClicar}
-      className={cn('group/linha transition-colors duration-100', aoClicar && 'cursor-pointer hover:bg-surface-2/70', className)}
+      tabIndex={aoClicar ? 0 : undefined}
+      onKeyDown={
+        aoClicar
+          ? (e) => {
+              if (!deveAbrirPelaTecla({ ...e, key: e.key, naPropriaLinha: e.target === e.currentTarget })) return
+              e.preventDefault()
+              aoClicar()
+            }
+          : undefined
+      }
+      className={cn(
+        'group/linha transition-colors duration-100',
+        aoClicar &&
+          'cursor-pointer hover:bg-surface-2/70 focus-visible:bg-surface-2/70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand',
+        className,
+      )}
     >
       {children}
     </motion.tr>

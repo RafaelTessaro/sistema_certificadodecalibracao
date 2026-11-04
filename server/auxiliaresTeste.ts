@@ -125,6 +125,9 @@ export const ARQUIVOS_TESTE = {
     Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from(`[Content_Types].xml word/document.xml ${texto}`)]),
 }
 
+/** Último dia em que o jogo do cenário (calibrado em 10/01/2026) pode ser usado: 24 meses (POP, Tabela 3). */
+const ULTIMO_DIA_DO_JOGO = '2028-01-10'
+
 export async function cenarioCalibracao(t: AppComLogin) {
   const r = await t.chamar('PUT', `/api/usuarios/${t.adminId}`, { cookie: t.cookieAdmin, payload: { signatario: true } })
   if (r.statusCode !== 200) throw new Error(`signatário: ${r.body}`)
@@ -194,15 +197,28 @@ export async function cenarioCalibracao(t: AppComLogin) {
   const pesos: Padrao = (await criar('/api/padroes', padraoPesos('JP-01'))).padrao
   const peca = (pesoId: string) => ({ padraoId: pesos.id, pesoId, quantidade: 1 })
 
-  /** Rascunho preenchido (com os padrões indicados além do jogo JP-01), pronto para emitir. */
-  async function calibracaoPronta(outrosPadroes: string[] = [], cookie = t.cookieAdmin): Promise<Calibracao> {
-    const { calibracao: k } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: balanca.id }, cookie)) as {
+  /**
+   * Rascunho preenchido (com os padrões indicados além do jogo JP-01), pronto para emitir. `daBalanca`: outra balança
+   * de 30 kg × 10 g (com o cliente dela); sem ela, a TL-2231 do Mercado Bom Preço.
+   */
+  async function calibracaoPronta(
+    outrosPadroes: string[] = [],
+    cookie = t.cookieAdmin,
+    daBalanca: Pick<Balanca, 'id' | 'clienteId'> = balanca,
+  ): Promise<Calibracao> {
+    const { calibracao: k } = (await criar(
+      '/api/calibracoes',
+      { clienteId: daBalanca.clienteId, balancaId: daBalanca.id },
+      cookie,
+    )) as {
       calibracao: Calibracao
     }
     // Com o barômetro entre os padrões, a pressão medida com ele (a emissão confere os dois)
     const comBarometro = outrosPadroes.some((id) => t.ctx.repo.obterPadrao(id)?.tipo === 'BAROMETRO')
     const dados: CalibracaoInput = {
       ...k,
+      // A calibração é de hoje, dentro dos 24 meses do jogo JP-01 (calibrado em 10/01/2026; POP, Tabela 3)
+      dataCalibracao: k.dataCalibracao > ULTIMO_DIA_DO_JOGO ? ULTIMO_DIA_DO_JOGO : k.dataCalibracao,
       padroesIds: [pesos.id, ...outrosPadroes],
       ambiente: {
         temperaturaInicial: 22.1,
@@ -262,8 +278,11 @@ export async function cenarioCalibracao(t: AppComLogin) {
     t.chamar('POST', `/api/calibracoes/${k.id}/emitir`, { cookie, payload: { versao: k.versao } })
 
   /** Emite e devolve o certificado (lança se não emitir). */
-  async function emitido(outrosPadroes: string[] = []): Promise<Calibracao> {
-    const r = await emitir(await calibracaoPronta(outrosPadroes))
+  async function emitido(
+    outrosPadroes: string[] = [],
+    daBalanca: Pick<Balanca, 'id' | 'clienteId'> = balanca,
+  ): Promise<Calibracao> {
+    const r = await emitir(await calibracaoPronta(outrosPadroes, t.cookieAdmin, daBalanca))
     if (r.statusCode !== 200) throw new Error(`emissão: ${r.statusCode} ${r.body}`)
     return r.json().calibracao
   }

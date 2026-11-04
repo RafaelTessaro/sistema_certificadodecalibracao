@@ -5,6 +5,9 @@
 // Migração 8: os nºs de certificado reservados na impressão da folha de campo (e o nº impresso em cada folha).
 // Migração 9: a revisão aberta antes do cálculo da classe I, de um certificado emitido antes dele, fica legada.
 // Migração 10: a revisão do POP impressa em cada folha de campo (a vigente na primeira impressão).
+// Migração 11: a revisão em andamento levada para o novo dono da balança volta para o cliente do certificado revisado.
+// Migração 12: as balanças de cada lembrete de calibração (vazio nos de antes).
+// Migração 13: os endereços que o servidor de e-mail recusou em cada envio (vazio nos de antes).
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
@@ -16,7 +19,7 @@ import { detalheTrocaIndicador, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 10
+const ULTIMA = 13
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -694,5 +697,169 @@ describe('migração 10: a revisão do POP impressa em cada folha de campo', () 
     migrar(db)
     expect(versao(db)).toBe(ULTIMA)
     expect(popDasFolhas(db).map((f) => f.pop_id)).toEqual([null, 1, 1])
+  })
+})
+
+describe('migração 11: a revisão em andamento volta para o cliente do certificado revisado', () => {
+  const ENDERECO_NOVO = { logradouro: 'Rua 2', numero: '20', complemento: '', bairro: '', cidade: 'Limeira', uf: 'SP', cep: '' }
+  /**
+   * Banco na versão 10: o certificado k1 do cliente c1 e a revisão k2 dele, que a troca do dono da balança (antes
+   * desta versão) levou para o cliente c2, com o endereço dele; e o rascunho comum k3, que passou junto (é o certo).
+   */
+  function bancoV10() {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 10)
+    const cliente = db.prepare(
+      `INSERT INTO clientes (id, tipo, documento, nome, busca, ativo, dados, versao, criado_em, atualizado_em)
+       VALUES (?, 'PJ', '', ?, '', 1, ?, 1, ?, ?)`,
+    )
+    cliente.run('c1', 'Mercado Bom Preço', JSON.stringify({ id: 'c1', nome: 'Mercado Bom Preço' }), EM, EM)
+    cliente.run('c2', 'Padaria Nova', JSON.stringify({ id: 'c2', nome: 'Padaria Nova', ...ENDERECO_NOVO }), EM, EM)
+    inserirBalanca(db, 'b1', { numeroSerie: 'TL-2231', fabricante: 'Toledo', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
+    db.prepare("UPDATE balancas SET cliente_id = 'c2', dados = json_set(dados, '$.clienteId', 'c2') WHERE id = 'b1'").run()
+    const inserir = db.prepare(
+      `INSERT INTO calibracoes (id, status, numero, cliente_id, balanca_id, substitui_id, busca, dados, versao, criado_em, atualizado_em)
+       VALUES (?, ?, ?, ?, 'b1', ?, ?, ?, ?, ?, ?)`,
+    )
+    const original = {
+      id: 'k1',
+      status: 'EMITIDO',
+      numero: 'CC-2026-00001',
+      clienteId: 'c1',
+      balancaId: 'b1',
+      localEndereco: 'Avenida 1, 100 – Rio Claro/SP',
+    }
+    const revisao = {
+      id: 'k2',
+      status: 'RASCUNHO',
+      numero: '',
+      clienteId: 'c2',
+      balancaId: 'b1',
+      substituiId: 'k1',
+      ordemServico: 'OS 4471',
+      localEndereco: 'Rua 2, 20 – Limeira/SP',
+      versao: 4,
+    }
+    const rascunho = { ...revisao, id: 'k3', substituiId: '', versao: 2 }
+    inserir.run(
+      'k1',
+      'EMITIDO',
+      original.numero,
+      'c1',
+      '',
+      'cc-2026-00001 mercado bom preco',
+      JSON.stringify(original),
+      1,
+      EM,
+      EM,
+    )
+    inserir.run('k2', 'RASCUNHO', '', 'c2', 'k1', 'os 4471 padaria nova toledo tl-2231', JSON.stringify(revisao), 4, EM, EM)
+    inserir.run('k3', 'RASCUNHO', '', 'c2', '', 'os 4471 padaria nova toledo tl-2231', JSON.stringify(rascunho), 2, EM, EM)
+    return db
+  }
+  const linhaCalibracao = (db: DatabaseSync, id: string) => {
+    const l = db.prepare('SELECT cliente_id, busca, dados, versao FROM calibracoes WHERE id = ?').get(id) as {
+      cliente_id: string
+      busca: string
+      dados: string
+      versao: number
+    }
+    return { ...l, dados: JSON.parse(l.dados) as Calibracao }
+  }
+
+  it('a revisão volta para o cliente e o endereço do certificado revisado; o rascunho comum fica com o novo dono', () => {
+    const db = bancoV10()
+    const k3 = linhaCalibracao(db, 'k3')
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    const k2 = linhaCalibracao(db, 'k2')
+    expect(k2.cliente_id).toBe('c1')
+    expect(k2.dados).toMatchObject({ clienteId: 'c1', localEndereco: 'Avenida 1, 100 – Rio Claro/SP', versao: 5 })
+    // A versão sobe (a tela aberta com a revisão antiga não grava por cima) e a busca acha pelo cliente certo
+    expect(k2.versao).toBe(5)
+    expect(k2.busca).toBe('os 4471 mercado bom preco toledo tl-2231')
+    expect(linhaCalibracao(db, 'k3')).toEqual(k3)
+    expect(
+      registros(db)
+        .filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
+        .map((r) => r.detalhe),
+    ).toEqual([
+      'A revisão aberta voltou para o cliente do certificado revisado (a balança tinha passado para outro cliente). Certificado: CC-2026-00001.',
+    ])
+  })
+
+  it('o endereço digitado na revisão (não o do novo dono) fica', () => {
+    const db = bancoV10()
+    db.prepare("UPDATE calibracoes SET dados = json_set(dados, '$.localEndereco', 'Filial Centro') WHERE id = 'k2'").run()
+    migrar(db)
+    expect(linhaCalibracao(db, 'k2').dados).toMatchObject({ clienteId: 'c1', localEndereco: 'Filial Centro' })
+  })
+
+  it('pode ser repetida sem mexer de novo nem registrar de novo', () => {
+    const db = bancoV10()
+    migrar(db)
+    const depois = linhaCalibracao(db, 'k2')
+    db.exec('PRAGMA user_version = 10')
+    migrar(db)
+    expect(linhaCalibracao(db, 'k2')).toEqual(depois)
+    expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(1)
+  })
+})
+
+describe('migração 12: as balanças de cada lembrete de calibração', () => {
+  function bancoV11() {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 11)
+    db.prepare(
+      `INSERT INTO envios (id, calibracao_id, cliente_id, tipo, para, assunto, usuario_id, usuario_nome, em)
+       VALUES ('e1', '', 'c1', 'LEMBRETE', 'a@b.com', 'Calibração', 'u1', 'Ana', ?)`,
+    ).run(EM)
+    return db
+  }
+  const envios = (db: DatabaseSync) => db.prepare('SELECT id, balancas FROM envios ORDER BY id').all()
+
+  it('acrescenta a coluna; o lembrete de antes fica sem balanças', () => {
+    const db = bancoV11()
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(envios(db)).toEqual([{ id: 'e1', balancas: '' }])
+  })
+
+  it('pode ser repetida sem falhar nem perder o que foi gravado', () => {
+    const db = bancoV11()
+    migrar(db)
+    db.prepare(`UPDATE envios SET balancas = '["b1"]' WHERE id = 'e1'`).run()
+    db.exec('PRAGMA user_version = 11')
+    migrar(db)
+    expect(envios(db)).toEqual([{ id: 'e1', balancas: '["b1"]' }])
+  })
+})
+
+describe('migração 13: os endereços recusados de cada envio', () => {
+  function bancoV12() {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 12)
+    db.prepare(
+      `INSERT INTO envios (id, calibracao_id, cliente_id, tipo, para, assunto, usuario_id, usuario_nome, em)
+       VALUES ('e1', 'k1', 'c1', 'CERTIFICADO', 'a@b.com, c@d.com', 'Certificado', 'u1', 'Ana', ?)`,
+    ).run(EM)
+    return db
+  }
+  const envios = (db: DatabaseSync) => db.prepare('SELECT id, para, recusados FROM envios ORDER BY id').all()
+
+  it('acrescenta a coluna; o envio de antes fica como estava, sem recusados', () => {
+    const db = bancoV12()
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(envios(db)).toEqual([{ id: 'e1', para: 'a@b.com, c@d.com', recusados: '' }])
+  })
+
+  it('pode ser repetida sem falhar nem perder o que foi gravado', () => {
+    const db = bancoV12()
+    migrar(db)
+    db.prepare(`UPDATE envios SET para = 'c@d.com', recusados = '["a@b.com"]' WHERE id = 'e1'`).run()
+    db.exec('PRAGMA user_version = 12')
+    migrar(db)
+    expect(envios(db)).toEqual([{ id: 'e1', para: 'c@d.com', recusados: '["a@b.com"]' }])
   })
 })

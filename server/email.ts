@@ -4,6 +4,7 @@
 
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { domainToASCII } from 'node:url'
 import type { FastifyInstance } from 'fastify'
 import nodemailer, { type Transporter } from 'nodemailer'
 import {
@@ -15,6 +16,7 @@ import {
 } from '#shared/arquivos.ts'
 import { emailValido } from '#shared/dominio.ts'
 import { pode } from '#shared/permissoes.ts'
+import type { DestinatarioRecusado, ResultadoEmail } from '#shared/tipos.ts'
 import type { Contexto } from './contexto.ts'
 import { ErroApi } from './erros.ts'
 
@@ -77,6 +79,19 @@ export const LIMITES_EMAIL = {
 }
 
 const bytesDe = (a: AnexoEmail) => (typeof a.conteudo === 'string' ? Math.floor((a.conteudo.length * 3) / 4) : a.conteudo.length)
+
+/**
+ * O mínimo que a mensagem ocupa: os anexos em base64, com a quebra de linha a cada 76 caracteres (o cabeçalho e o texto
+ * vêm além). Vai no envelope (SIZE): o servidor que anuncia um limite menor recusa antes de receber tudo. Por ser o
+ * mínimo, nunca recusa uma mensagem que caberia.
+ */
+export function tamanhoMinimoMensagem(anexos: AnexoEmail[]): number {
+  return anexos.reduce((soma, a) => {
+    const bytes = typeof a.conteudo === 'string' ? Buffer.byteLength(a.conteudo, 'base64') : a.conteudo.length
+    const base64 = 4 * Math.ceil(bytes / 3)
+    return soma + base64 + 2 * Math.ceil(base64 / 76)
+  }, 0)
+}
 
 /** Recusa (413/400) anexos demais ou grandes demais para um e-mail só. */
 export function conferirAnexos(anexos: Array<{ tamanho: number }>) {
@@ -213,15 +228,42 @@ export const criarTransporteSmtp: CriarTransporte = (c) =>
     socketTimeout: 30_000,
   })
 
+/** A mensagem recusada pelo tamanho (o limite do servidor de e-mail é menor que o do sistema). */
+export const MSG_EMAIL_GRANDE_DEMAIS =
+  'O servidor de e-mail recusou a mensagem pelo tamanho (o limite dele é menor que o do sistema). Desmarque certificados dos padrões e envie-os num segundo e-mail.'
+
+interface ErroSmtp {
+  code?: string
+  responseCode?: number
+  response?: string
+  command?: string
+  message?: string
+}
+
+/**
+ * Recusa pelo tamanho: no fim do DATA (552 5.3.4), no MAIL FROM com o SIZE declarado acima do limite, ou pelo limite
+ * anunciado no EHLO (o nodemailer recusa antes de transmitir: "Message size larger than allowed"). Nunca no RCPT TO:
+ * lá o 552 é a caixa do destinatário cheia.
+ */
+function recusaPeloTamanho(erro: ErroSmtp): boolean {
+  if (erro.command === 'RCPT TO') return false
+  const texto = `${erro.response ?? ''} ${erro.message ?? ''}`
+  if (erro.code === 'EMESSAGE')
+    return erro.responseCode === 552 || /\b5\.3\.4\b|\bsize\b|exceed|larger than allowed|too (?:big|large)/i.test(texto)
+  return erro.command === 'MAIL FROM' && (erro.responseCode === 552 || /\b5\.3\.4\b/.test(texto))
+}
+
 /** Erro do SMTP em português, com a dica mais comum para cada caso. */
 export function mensagemErroEmail(e: unknown): string {
-  const erro = e as { code?: string; responseCode?: number; message?: string }
+  const erro = e as ErroSmtp
   if (erro.code === 'EAUTH' || erro.responseCode === 535 || erro.responseCode === 534) {
     return 'O servidor de e-mail recusou o usuário ou a senha. No Gmail e no Outlook, use uma "senha de app" (não a senha normal da conta).'
   }
   if (['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'EDNS', 'ECONNREFUSED', 'ENOTFOUND'].includes(erro.code ?? '')) {
     return 'Não foi possível conectar ao servidor de e-mail. Confira o servidor, a porta, o tipo de segurança e a internet do servidor.'
   }
+  // Antes do endereço: com o SIZE declarado, o 552 do tamanho pode vir no MAIL FROM (EENVELOPE)
+  if (recusaPeloTamanho(erro)) return MSG_EMAIL_GRANDE_DEMAIS
   if (erro.code === 'EENVELOPE' || erro.responseCode === 550 || erro.responseCode === 553) {
     return 'O servidor de e-mail recusou o endereço de destino ou de remetente.'
   }
@@ -232,11 +274,61 @@ export function mensagemErroEmail(e: unknown): string {
   return `Não foi possível enviar o e-mail (${erro.code ?? 'erro desconhecido'}). Veja os detalhes no registro do servidor.`
 }
 
+/** Endereço como o nodemailer devolve em `accepted`/`rejected` (texto ou `{ address }`). */
+const enderecoDe = (x: unknown): string =>
+  typeof x === 'string'
+    ? x
+    : x && typeof x === 'object' && typeof (x as { address?: unknown }).address === 'string'
+      ? (x as { address: string }).address
+      : ''
+
+/** Para comparar endereços: minúsculas e o domínio em ASCII (o envelope leva o domínio com acento em punycode). */
+function chaveEndereco(endereco: string): string {
+  const s = endereco.trim().toLowerCase()
+  const i = s.lastIndexOf('@')
+  if (i < 0) return s
+  const dominio = s.slice(i + 1)
+  return `${s.slice(0, i)}@${domainToASCII(dominio) || dominio}`
+}
+
+/**
+ * Quem recebeu e quem o servidor de e-mail recusou (no RCPT TO: endereço que não existe, domínio errado…). O servidor
+ * que recusa só parte dos destinatários não dá erro: o nodemailer envia para os outros e lista os recusados
+ * (`rejected`, com a resposta de cada um em `rejectedErrors`). `para`: os digitados, sem os recusados; `recusados`: com
+ * o código da resposta (ex.: 550), sem o texto do servidor (fica só no registro do servidor).
+ */
+export function destinatariosDoEnvio(
+  para: string[],
+  info: { accepted?: unknown; rejected?: unknown; rejectedErrors?: unknown },
+): { para: string[]; recusados: DestinatarioRecusado[] } {
+  const rejeitados = (Array.isArray(info.rejected) ? info.rejected : []).map(enderecoDe).filter(Boolean)
+  const codigos = new Map<string, number>()
+  for (const e of Array.isArray(info.rejectedErrors) ? info.rejectedErrors : []) {
+    const r = (e ?? {}) as { recipient?: unknown; responseCode?: unknown }
+    const endereco = enderecoDe(r.recipient)
+    if (endereco && typeof r.responseCode === 'number') codigos.set(chaveEndereco(endereco), r.responseCode)
+  }
+  const chaves = new Set(rejeitados.map(chaveEndereco))
+  const digitados = new Set(para.map(chaveEndereco))
+  const recusados = [
+    ...para.filter((p) => chaves.has(chaveEndereco(p))),
+    ...rejeitados.filter((r) => !digitados.has(chaveEndereco(r))),
+  ]
+  return {
+    para: para.filter((p) => !chaves.has(chaveEndereco(p))),
+    recusados: recusados.map((endereco) => ({ endereco, codigo: codigos.get(chaveEndereco(endereco)) ?? null })),
+  }
+}
+
 export function criarModuloEmail(ctx: Contexto, criarTransporte: CriarTransporte = criarTransporteSmtp) {
   /** Horários (ms) dos envios da última hora. */
   let envios: number[] = []
 
-  async function enviar(msg: MensagemEmail) {
+  /**
+   * Envia a mensagem. `para` na resposta: só quem o servidor aceitou; `recusados`: os que ele recusou (a tela avisa, e o
+   * histórico guarda os dois à parte). Todos recusados: 502 (o nodemailer dá erro).
+   */
+  async function enviar(msg: MensagemEmail): Promise<ResultadoEmail> {
     const c = lerConfigEmail(ctx)
     if (!configPublica(c).configurado) {
       throw new ErroApi(409, 'O envio de e-mail ainda não foi configurado. Configure em Configurações → E-mail.')
@@ -253,6 +345,9 @@ export function criarModuloEmail(ctx: Contexto, criarTransporte: CriarTransporte
       const info = await criarTransporte(c).sendMail({
         from: c.remetenteNome ? { name: c.remetenteNome, address: c.remetenteEmail } : c.remetenteEmail,
         to: msg.para,
+        // O mesmo envelope que o nodemailer montaria, com o tamanho mínimo da mensagem: o servidor que anuncia um limite
+        // menor (SIZE) é recusado antes de transmitir os anexos
+        envelope: { from: c.remetenteEmail, to: msg.para, size: tamanhoMinimoMensagem(msg.anexos) },
         subject: msg.assunto,
         text: msg.texto,
         attachments: msg.anexos.map((a) => ({
@@ -261,8 +356,20 @@ export function criarModuloEmail(ctx: Contexto, criarTransporte: CriarTransporte
           content: typeof a.conteudo === 'string' ? Buffer.from(a.conteudo, 'base64') : a.conteudo,
         })),
       })
-      return { ok: true as const, para: msg.para, id: String(info.messageId ?? '') }
+      const { para, recusados } = destinatariosDoEnvio(msg.para, info)
+      if (recusados.length) {
+        const respostas = Array.isArray(info.rejectedErrors)
+          ? info.rejectedErrors.map((e: { response?: string }) => e.response ?? '')
+          : []
+        ctx.log.warn(
+          { recusados: recusados.map((r) => r.endereco), respostas },
+          'destinatários recusados pelo servidor de e-mail',
+        )
+      }
+      if (!para.length) throw new ErroApi(502, 'O servidor de e-mail recusou todos os endereços de destino.')
+      return { ok: true as const, para, recusados, id: String(info.messageId ?? '') }
     } catch (e) {
+      if (e instanceof ErroApi) throw e
       ctx.log.warn({ err: e }, 'falha ao enviar e-mail')
       throw new ErroApi(502, mensagemErroEmail(e))
     }

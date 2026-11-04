@@ -5,6 +5,7 @@ import {
   cargaDaEtapa,
   descreverPecas,
   diferencaDoPonto,
+  leiturasDoMetodo,
   pecasSemPadrao,
   pontosSugeridos,
 } from '#shared/calibracao.ts'
@@ -14,9 +15,10 @@ import {
   METODOS_CARREGAMENTO,
   metodosCarregamentoParaEscolher,
   registroAnterior,
+  regrasDoPopComoAviso,
 } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
-import { formatarNumero } from '#shared/metrologia/index.ts'
+import { cargaDaDescida, formatarNumero } from '#shared/metrologia/index.ts'
 import type { ResultadoCalculo, ResultadoPonto } from '#shared/metrologia/tipos.ts'
 import type { EnsaioIndicacao, MetodoCarregamento, Padrao, PecaCarga, PontoIndicacao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
@@ -124,6 +126,9 @@ export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicaca
   const resultado = antes ? calc?.comoEncontrado : calc?.resultado
   const setEnsaio = (mudar: (e: EnsaioIndicacao) => EnsaioIndicacao) => alterar((s) => mudarEnsaioDaAba(s, aba, mudar))
   const rodoviaria = ehRodoviaria(balanca)
+  // Na calibração nova (as regras do POP), o retorno ao zero é obrigatório; no "como encontrado" e no registro de antes,
+  // opcional, como na época
+  const obrigatorio = !antes && !regrasDoPopComoAviso(f)
 
   return (
     <>
@@ -144,7 +149,11 @@ export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicaca
       <Card>
         <CardHeader
           titulo={antes ? 'Retorno ao zero antes do ajuste' : 'Retorno ao zero'}
-          descricao="Indicação depois de retirar toda a carga (opcional)"
+          descricao={
+            obrigatorio
+              ? 'Indicação depois de retirar toda a carga (POP 7.7). A balança que não volta ao zero não é calibrada (7.8).'
+              : 'Indicação depois de retirar toda a carga (opcional)'
+          }
         />
         <div className="px-5 pb-5">
           <CampoNumero
@@ -190,6 +199,13 @@ function TabelaPontos({
   const soDecrescente = ensaio.metodo === 'DECRESCENTE'
   const comConformidade = f.conformidade.solicitada
   const substituicao = ensaio.substituicao.ativa
+  // Múltiplas faixas com a descida sem descarregar: a faixa das leituras decrescentes (a mesma conta do cálculo)
+  const cargaDescida = cargaDaDescida(
+    balanca,
+    ensaio.metodo,
+    f.opcoes.divisaoTeste,
+    ensaio.pontos.map((p) => ({ carga: p.carga, ...leiturasDoMetodo(p, ensaio.metodo) })),
+  )
 
   const setPontos = (mudar: (l: PontoIndicacao[]) => PontoIndicacao[]) => setEnsaio((e) => ({ ...e, pontos: mudar(e.pontos) }))
   const setPonto = (id: string, mudar: (p: PontoIndicacao) => PontoIndicacao) =>
@@ -393,7 +409,7 @@ function TabelaPontos({
                           aoMudar={(v) => setPonto(p.id, (x) => ({ ...x, crescente: v }))}
                           aria-label={`Indicação crescente do ponto ${i + 1}`}
                           grade={{ grupo, lin: i, col: 1 }}
-                          tom={tomLeitura(p, r, 'crescente', balanca)}
+                          tom={tomLeitura(p, r, 'crescente', balanca, cargaDescida)}
                           unidade={u}
                         />
                       </td>
@@ -408,7 +424,7 @@ function TabelaPontos({
                           aria-label={`Indicação decrescente do ponto ${i + 1}`}
                           // Na descida, a ordem natural é do último ponto para o primeiro
                           grade={{ grupo, lin: ensaio.pontos.length - i, col: 2 }}
-                          tom={tomLeitura(p, r, 'decrescente', balanca)}
+                          tom={tomLeitura(p, r, 'decrescente', balanca, cargaDescida)}
                           unidade={u}
                         />
                       </td>
