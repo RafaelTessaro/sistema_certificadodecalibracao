@@ -343,7 +343,7 @@ export const METODOS_CARREGAMENTO: Record<MetodoCarregamento, { label: string; d
     descricao: 'Sobe até Max e desce, sem descarregar. Mostra a histerese.',
   },
   DESCONTINUO: { label: 'Crescente com descarga', descricao: 'Descarrega entre um ponto e outro.' },
-  CONTINUO: { label: 'Crescente contínuo', descricao: 'Sobe sem descarregar. Comum em rodoviárias.' },
+  CONTINUO: { label: 'Crescente contínuo', descricao: 'Sobe sem descarregar.' },
   DECRESCENTE: { label: 'Decrescente', descricao: 'Parte de Max e vai descarregando (tremonhas, silos).' },
 }
 
