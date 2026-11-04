@@ -1,7 +1,14 @@
-import { deltaTMaximo, ehRodoviaria, metodoExcentricidadePadrao, temLeiturasExcentricidade } from '#shared/dominio.ts'
+import {
+  dataIsoValida,
+  deltaTMaximo,
+  ehRodoviaria,
+  metodoExcentricidadePadrao,
+  somarMeses,
+  temLeiturasExcentricidade,
+} from '#shared/dominio.ts'
 import { casasDecimais, leituraImplausivel } from '#shared/metrologia/index.ts'
 import type { ResultadoPonto } from '#shared/metrologia/tipos.ts'
-import type { Balanca, CalibracaoInput, ClasseExatidao, PontoIndicacao } from '#shared/tipos.ts'
+import type { Balanca, CalibracaoInput, ClasseExatidao, Padrao, PontoIndicacao } from '#shared/tipos.ts'
 
 /** Maior capacidade da balança. */
 export const maxDe = (b: Pick<Balanca, 'faixas'>) => Math.max(0, ...b.faixas.map((f) => f.max))
@@ -69,6 +76,13 @@ export const repetibilidadeCompleta = (ensaios: ReadonlyArray<{ carga: number; n
   ensaios.some((r) => r.n >= 2) && ensaios.every((r) => r.n > 0 || !(r.carga > 0))
 
 /**
+ * Posição da leitura `i` do ensaio `iEns` na navegação de planilha: todos os ensaios num grupo só, um ensaio por
+ * coluna. O Enter na última leitura de um ensaio vai para a 1ª do seguinte (quem digita as leituras da folha em
+ * sequência não emenda as do ensaio 2 na última do ensaio 1).
+ */
+export const gradeRepetibilidade = (iEns: number, i: number) => ({ grupo: 'rep', lin: i, col: iEns })
+
+/**
  * Cor do campo da leitura: fora do esperado para a carga (provável erro de digitação: vírgula esquecida, outra unidade;
  * a mesma regra da pendência do cálculo, `leituraImplausivel`), erro; fora do EMA, atenção.
  */
@@ -82,4 +96,39 @@ export function tomLeitura(
   if (leituraImplausivel(p[lado], p.carga, balanca)) return 'erro'
   if (r?.[lado] && r.conformidade === 'NAO_CONFORME') return 'atencao'
   return 'normal'
+}
+
+/**
+ * Os cartões da etapa Padrões: cada padrão do cadastro (os ativos) e, no lugar dos escolhidos, a versão que vale para
+ * a calibração (`selecionados`: o certificado do dia; na revisão, o da emissão original). O escolhido que não está
+ * mais na lista (desativado depois da emissão, na revisão) entra no fim, para poder ser tirado.
+ */
+export function cartoesDosPadroes(padroes: Padrao[], selecionados: Padrao[]): Padrao[] {
+  return [
+    ...padroes.map((p) => selecionados.find((s) => s.id === p.id) ?? p),
+    ...selecionados.filter((s) => !padroes.some((p) => p.id === s.id)),
+  ]
+}
+
+/** O padrão foi calibrado depois da data da calibração (o certificado dele não valia no dia)? */
+export const calibradoDepois = (p: Pick<Padrao, 'dataCalibracao'>, dataCalibracao: string) =>
+  dataIsoValida(p.dataCalibracao) && dataIsoValida(dataCalibracao) && p.dataCalibracao > dataCalibracao
+
+/**
+ * A próxima calibração quando a data da calibração muda: se ela era a calculada pela data antiga (o padrão da
+ * empresa, 6, 12 ou 24 meses depois), passa a contar da nova; a digitada à mão fica como está.
+ */
+export function proximaAcompanhando(proxima: string, dataAntiga: string, dataNova: string, mesesPadrao: number): string {
+  if (!proxima || !dataIsoValida(dataAntiga) || !dataIsoValida(dataNova)) return proxima
+  const meses = [...new Set([mesesPadrao, 12, 6, 24])].filter((n) => n > 0)
+  const n = meses.find((m) => somarMeses(dataAntiga, m) === proxima)
+  return n ? somarMeses(dataNova, n) : proxima
+}
+
+/** O dia seguinte (para o mínimo da próxima calibração: depois da data da calibração). */
+export function diaSeguinte(iso: string): string {
+  if (!dataIsoValida(iso)) return ''
+  const d = new Date(`${iso}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + 1)
+  return d.toISOString().slice(0, 10)
 }

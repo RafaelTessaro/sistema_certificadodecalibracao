@@ -168,8 +168,8 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
               </Button>
             )}
             <Menu
-              gatilho={(abrir) => (
-                <Button tamanho="icon" onClick={abrir} aria-label="Mais ações" disabled={criando}>
+              gatilho={(props) => (
+                <Button tamanho="icon" {...props} aria-label="Mais ações" disabled={criando}>
                   {criando ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreHorizontal className="h-4 w-4" />}
                 </Button>
               )}

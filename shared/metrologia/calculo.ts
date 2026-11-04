@@ -872,7 +872,8 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     return `Repetibilidade: ${cargasRep.length} ${cargasRep.length === 1 ? 'ensaio' : 'ensaios'} para ${faixas.length} ${nome}s; falta ${onde}. O POP (7.9) pede um ensaio em cada ${nome} de d diferente.`
   }
   if (!legado) {
-    if (pontosLidos > 0 && !cargaLida) pendencias.push('Erro de indicação: registre as leituras das cargas acima de zero (POP 7.7).')
+    if (pontosLidos > 0 && !cargaLida)
+      pendencias.push('Erro de indicação: registre as leituras das cargas acima de zero (POP 7.7).')
     else if (pontosLidos > 0 && pontosLidos < 5)
       pendencias.push(
         `Erro de indicação: ${pontosLidos} ${pontosLidos === 1 ? 'ponto lido' : 'pontos lidos'}; o POP pede no mínimo 5, contando o zero (7.7).`,

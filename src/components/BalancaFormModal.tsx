@@ -49,11 +49,13 @@ import type {
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
+import { serieRepetidaDoErro } from '../lib/consultas'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
 import { ClienteFormModal } from './ClienteFormModal'
 import { Button } from './ui/Button'
 import { Combobox, type OpcaoCombo } from './ui/Combobox'
+import { confirmar } from './ui/Feedback'
 import { Field, Input, NumberInput, Select, Textarea } from './ui/Form'
 import { Avatar, Segmented } from './ui/Misc'
 import { Modal } from './ui/Modal'
@@ -186,7 +188,8 @@ export function BalancaFormModal({
   balanca?: Balanca
   /** Cliente já escolhido (cadastro a partir da tela do cliente): fica fixo no cadastro novo. */
   clienteId?: string
-  aoSalvar?: (b: Balanca) => void
+  /** Depois de gravar; a janela fica em "Salvando…" até a promessa terminar (ex.: o editor recarregando o rascunho). */
+  aoSalvar?: (b: Balanca) => void | Promise<void>
 }) {
   const [salvando, setSalvando] = useState(false)
   // Enquanto a janela se fecha, continua mostrando a balança e o cliente de antes (a página pode já ter limpado)
@@ -249,7 +252,7 @@ function FormularioBalanca({
   clienteId?: string
   fixo: boolean
   clientes: ClienteResumo[] | undefined
-  aoSalvar?: (b: Balanca) => void
+  aoSalvar?: (b: Balanca) => void | Promise<void>
   aoFechar: () => void
   setSalvando: (v: boolean) => void
 }) {
@@ -370,16 +373,30 @@ function FormularioBalanca({
       return
     }
     setSalvando(true)
+    await gravar(false)
+  }
+  /** Grava; com o nº de série de outra balança do cliente, pergunta se é outra balança mesmo (`confirmarSerie`). */
+  const gravar = async (confirmarSerie: boolean): Promise<void> => {
     try {
-      const r = balanca ? await api.atualizarBalanca(balanca.id, valor, versaoBase) : await api.criarBalanca(valor)
+      const r = balanca
+        ? await api.atualizarBalanca(balanca.id, valor, versaoBase, confirmarSerie)
+        : await api.criarBalanca(valor, confirmarSerie)
       useTempoReal.getState().mudou('balanca')
       const nome = [r.balanca.fabricante, r.balanca.modelo].filter(Boolean).join(' ') || TIPOS_BALANCA[r.balanca.tipo]
       toast.sucesso(balanca ? 'Balança atualizada' : 'Balança cadastrada', `${nome} · ${capacidadeTexto(r.balanca)}`)
       setVersaoBase(r.balanca.versao)
-      aoSalvar?.(r.balanca)
+      await aoSalvar?.(r.balanca)
       aoFechar()
     } catch (err) {
-      avisarErro('Não foi possível salvar a balança', err)
+      const repetida = serieRepetidaDoErro(err)
+      if (repetida && !confirmarSerie) {
+        const ok = await confirmar({
+          titulo: 'Nº de série já cadastrado',
+          descricao: `${repetida.mensagem} A mesma balança em dois cadastros divide o histórico dela. Só continue se for outra balança.`,
+          confirmar: balanca ? 'Salvar assim mesmo' : 'Cadastrar assim mesmo',
+        })
+        if (ok) return gravar(true)
+      } else avisarErro('Não foi possível salvar a balança', err)
     } finally {
       setSalvando(false)
     }

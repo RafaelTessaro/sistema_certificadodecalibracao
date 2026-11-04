@@ -1,13 +1,13 @@
 import { Minus, Plus, Repeat, Trash2, Wand2 } from 'lucide-react'
 import { novoId } from '#shared/id.ts'
-import { formatarNumero, repetibilidadesSugeridas } from '#shared/metrologia/index.ts'
+import { formatarNumero, leituraImplausivel, repetibilidadesSugeridas } from '#shared/metrologia/index.ts'
 import type { EnsaioRepetibilidade } from '#shared/tipos.ts'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Field } from '../ui/Form'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
-import { casasDe, dicaRepetibilidade, proximosEnsaiosRepetibilidade } from './util'
+import { casasDe, dicaRepetibilidade, gradeRepetibilidade, proximosEnsaiosRepetibilidade } from './util'
 
 export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa) {
   const u = balanca.unidade
@@ -104,7 +104,9 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
                           aria-label={`Leitura ${i + 1}`}
                           className="[&_input]:pl-8"
                           aoMudar={(x) => setEns((e) => ({ ...e, leituras: e.leituras.map((y, j) => (j === i ? x : y)) }))}
-                          grade={{ grupo: `rep-${ens.id}`, lin: i, col: 0 }}
+                          grade={gradeRepetibilidade(iEns, i)}
+                          // Fora do esperado (vírgula esquecida): a mesma regra da pendência do cálculo
+                          tom={leituraImplausivel(v, ens.carga, balanca) ? 'erro' : 'normal'}
                           unidade={u}
                         />
                       </div>

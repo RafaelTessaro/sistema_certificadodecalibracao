@@ -2,7 +2,7 @@
 // converte os pesos padrão para a unidade da balança e monta a entrada do cálculo.
 // Usado no navegador (cálculo ao vivo) e no servidor (emissão e PDF).
 
-import { calculoLegado, CLASSES_PESO, massaLegivel } from './dominio.ts'
+import { calculoLegado, CLASSES_PESO, massaLegivel, valorAmbiente } from './dominio.ts'
 import { calcular, emaInstrumento, emaPeso, sugerirPontos } from './metrologia/index.ts'
 import type { ArCalculo, EntradaCalculo, PecaCalculo, ResultadoCalculo, TermicaCalculo } from './metrologia/tipos.ts'
 import type {
@@ -291,23 +291,30 @@ const mediaDe = (x: number | null | undefined, y: number | null | undefined): nu
   return a !== null && b !== null ? (a + b) / 2 : (a ?? b)
 }
 
-/** Ar do local para o motor: médias de t e UR (início e fim) e a pressão; null sem o registro do ambiente. */
+/**
+ * Ar do local para o motor: médias de t e UR (início e fim) e a pressão; null sem o registro do ambiente. O valor
+ * fora da faixa (`FAIXAS_AMBIENTE`: 81 °C, 92,7 hPa digitado em kPa) conta como não registrado; a pendência diz qual.
+ */
 export function arDoAmbiente(a: CondicoesAmbientais | undefined | null, ajustadaAntes: boolean): ArCalculo | null {
   if (!a) return null
   return {
-    temperatura: mediaDe(a.temperaturaInicial, a.temperaturaFinal),
-    umidade: mediaDe(a.umidadeInicial, a.umidadeFinal),
-    pressao: lido(a.pressao),
+    temperatura: mediaDe(valorAmbiente(a.temperaturaInicial, 'temperatura'), valorAmbiente(a.temperaturaFinal, 'temperatura')),
+    umidade: mediaDe(valorAmbiente(a.umidadeInicial, 'umidade'), valorAmbiente(a.umidadeFinal, 'umidade')),
+    pressao: valorAmbiente(a.pressao, 'pressao'),
     ajustadaAntes,
   }
 }
 
-/** ΔT pesos − ar para o motor (medido, ou a aclimatação); null quando nenhum dos dois foi registrado. */
+/**
+ * ΔT pesos − ar para o motor (medido, ou a aclimatação); null quando nenhum dos dois foi registrado (ou está fora da
+ * faixa, como no ar).
+ */
 export function termicaDoAmbiente(a: CondicoesAmbientais | undefined | null): TermicaCalculo | null {
-  const deltaT = lido(a?.deltaTPesos)
+  const deltaT = valorAmbiente(lido(a?.deltaTPesos), 'deltaTPesos')
   const ac = a?.aclimatacao
-  const aclimatacao =
-    ac && lido(ac.deltaT0) !== null && lido(ac.minutos) !== null ? { deltaT0: ac.deltaT0, minutos: ac.minutos } : null
+  const deltaT0 = valorAmbiente(lido(ac?.deltaT0), 'deltaT0')
+  const minutos = valorAmbiente(lido(ac?.minutos), 'minutos')
+  const aclimatacao = deltaT0 !== null && minutos !== null ? { deltaT0, minutos } : null
   return deltaT === null && !aclimatacao ? null : { deltaT, aclimatacao }
 }
 

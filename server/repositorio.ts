@@ -29,6 +29,7 @@ import {
   parteSeparada,
   textoBusca,
   textoBuscaBalanca,
+  versoesAnterioresApos,
 } from '#shared/dominio.ts'
 import { normalizarPop, textoPop, tipoDoMime, TIPOS_DA_FINALIDADE, type FinalidadeArquivo } from '#shared/arquivos.ts'
 import { somenteDigitos, normalizarCnpj } from '#shared/documentos.ts'
@@ -36,6 +37,7 @@ import { novoId } from '#shared/id.ts'
 import type {
   ArquivoAnexo,
   Balanca,
+  BalancaInput,
   BalancaResumo,
   Calibracao,
   CalibracaoInput,
@@ -218,6 +220,10 @@ function versaoDe(entrada: unknown): number | undefined {
 
 /** Documento só com números e letras (para comparar CPF/CNPJ com e sem máscara). */
 const chaveDocumento = (doc: string) => normalizarCnpj(doc) || somenteDigitos(doc)
+/** Nº de série para comparar: sem espaços, pontos, hífens e barras, em maiúsculas ("tl-2231 " = "TL 2231"). */
+const chaveSerie = (serie: string) => serie.replace(/[\s.\-/]+/g, '').toUpperCase()
+/** Texto para comparar: sem espaços nas pontas nem repetidos, em maiúsculas. */
+const chaveTexto = (t: string) => t.trim().replace(/\s+/g, ' ').toUpperCase()
 
 export interface FiltroCalibracoes {
   status?: StatusCalibracao | 'ABERTAS' | ''
@@ -623,10 +629,51 @@ export class Repositorio {
     }))
   }
 
+  /**
+   * Outra balança do mesmo cliente (ativa ou não) com o mesmo nº de série, comparado sem espaços, pontos, hífens e
+   * barras e sem diferença de maiúsculas ("tl-2231 " é "TL 2231"), e do mesmo fabricante quando as duas o têm.
+   * Sem nº de série, nenhuma (muitas balanças não têm).
+   */
+  balancaPorSerie(b: Pick<Balanca, 'clienteId' | 'numeroSerie' | 'fabricante'>, exceto = ''): Balanca | undefined {
+    const serie = chaveSerie(b.numeroSerie)
+    if (!serie) return undefined
+    const fabricante = chaveTexto(b.fabricante)
+    const linhas = this.db
+      .prepare('SELECT dados FROM balancas WHERE cliente_id = ? AND id <> ?')
+      .all(b.clienteId, exceto) as Linha[]
+    return linhas
+      .map((l) => JSON.parse(l.dados) as Balanca)
+      .find(
+        (x) =>
+          chaveSerie(x.numeroSerie) === serie &&
+          (!fabricante || !chaveTexto(x.fabricante) || chaveTexto(x.fabricante) === fabricante),
+      )
+  }
+
+  /**
+   * A mesma balança cadastrada em dobro divide o histórico (o cadastro antigo fica "vencido" para sempre e a
+   * calibração nova não aproveita o plano da anterior): recusa com 409 (código SERIE_REPETIDA e a existente, para a
+   * tela oferecer abri-la), a não ser com `confirmarSerie: true` (quem cadastra confirma que é outra balança).
+   */
+  private conferirSerie(valor: BalancaInput, entrada: unknown, exceto = '') {
+    if ((entrada as { confirmarSerie?: unknown } | null)?.confirmarSerie === true) return
+    const repetida = this.balancaPorSerie(valor, exceto)
+    if (!repetida) return
+    const descricao = [descricaoBalanca(repetida), repetida.numeroSerie && `nº ${repetida.numeroSerie}`]
+      .filter(Boolean)
+      .join(', ')
+    throw new ErroApi(
+      409,
+      `Já existe uma balança com este nº de série neste cliente: ${descricao}${repetida.ativo ? '' : ' (desativada: reative-a em vez de cadastrar de novo)'}.`,
+      { codigo: 'SERIE_REPETIDA', id: repetida.id, descricao, ativo: repetida.ativo },
+    )
+  }
+
   criarBalanca(entrada: unknown): Balanca {
     const valor = validar(normalizarBalanca(entrada))
     return transacao(this.db, () => {
       if (!this.obterCliente(valor.clienteId)) throw new ErroApi(400, 'Cliente não encontrado. Escolha o cliente de novo.')
+      this.conferirSerie(valor, entrada)
       const em = this.agora().toISOString()
       const balanca: Balanca = { ...valor, id: novoId(), versao: 1, criadoEm: em, atualizadoEm: em }
       this.gravarBalanca(balanca, true)
@@ -643,6 +690,13 @@ export class Repositorio {
       const versao = versaoDe(entrada)
       if (versao !== undefined && versao !== atual.versao) throw conflito('esta balança')
       if (!this.obterCliente(valor.clienteId)) throw new ErroApi(400, 'Cliente não encontrado. Escolha o cliente de novo.')
+      // Só quando o nº, o fabricante ou o cliente mudam: um par já repetido (de um backup antigo) continua editável
+      if (
+        chaveSerie(valor.numeroSerie) !== chaveSerie(atual.numeroSerie) ||
+        chaveTexto(valor.fabricante) !== chaveTexto(atual.fabricante) ||
+        valor.clienteId !== atual.clienteId
+      )
+        this.conferirSerie(valor, entrada, id)
       const balanca: Balanca = { ...atual, ...valor, versao: atual.versao + 1, atualizadoEm: this.agora().toISOString() }
       this.gravarBalanca(balanca, false)
       if (valor.clienteId !== atual.clienteId || valor.unidade !== atual.unidade) this.acompanharAbertas(atual, balanca)
@@ -774,11 +828,15 @@ export class Repositorio {
           { codigo: 'ARQUIVO_DO_CERTIFICADO_ANTERIOR' },
         )
       const anteriores = certificadosAnterioresApos(atual, valor.certificado)
+      // Calibrado de novo (outro nº): os dados do certificado de antes ficam guardados, para as calibrações feitas
+      // antes da recalibração continuarem com o certificado e as correções do dia (`padraoNaData`)
+      const versoes = versoesAnterioresApos(atual, valor.certificado)
       const padrao: Padrao = {
         ...atual,
         ...valor,
         certificadoArquivo,
         ...(anteriores.length ? { certificadosAnteriores: anteriores } : {}),
+        ...(versoes.length ? { versoesAnteriores: versoes } : {}),
         versao: atual.versao + 1,
         atualizadoEm: this.agora().toISOString(),
       }
@@ -999,6 +1057,9 @@ export class Repositorio {
         k.revisao = original.revisao + 1
         // Certificado emitido antes do cálculo da classe I (ou revisão dele): a revisão mantém o cálculo da época
         if (calculoLegado(original)) k.calculoLegado = true
+        // Os padrões como foram congelados na emissão (o certificado e as correções da época), mesmo que tenham sido
+        // calibrados de novo ou desativados depois (`padroesDaCalibracao`)
+        if (original.emissao?.padroes.length) k.padroesCongelados = original.emissao.padroes
       }
       this.gravarCalibracao(k, true)
       this.mudou('calibracao', k.id)

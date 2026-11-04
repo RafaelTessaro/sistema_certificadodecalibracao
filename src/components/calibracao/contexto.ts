@@ -17,7 +17,7 @@ export interface ContextoEtapa {
   alterar: (mudar: (f: CalibracaoInput) => CalibracaoInput) => void
   balanca: Balanca
   cliente: Cliente
-  /** Todos os padrões ativos (para escolher). */
+  /** Os padrões para escolher: os ativos e os desativados que esta calibração ainda tem (com o selo, para tirá-los). */
   padroes: Padrao[]
   /** Os padrões escolhidos nesta calibração. */
   selecionados: Padrao[]

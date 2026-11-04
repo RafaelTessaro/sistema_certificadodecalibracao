@@ -47,6 +47,7 @@ import type {
   Unidade,
   UsoPesos,
   Verificacao,
+  VersaoPadrao,
 } from './tipos.ts'
 
 export interface Resultado<T> {
@@ -85,8 +86,15 @@ export function numero(v: unknown): number {
   if (typeof v !== 'string') return NaN
   let s = v.trim().replace(/\s/g, '')
   if (!s) return NaN
-  // "1.234,5" (milhar com ponto) → 1234.5 ; "1234,5" → 1234.5 ; "1234.5" → 1234.5
-  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.')
+  // "1.234,5" (milhar com ponto, em grupos de 3) → 1234.5 ; "1234,5" → 1234.5 ; "1234.5" → 1234.5. Qualquer outra
+  // mistura ("1,234.5", "10,0.5", "15,,005") é ambígua: NaN, nunca um número parecido
+  if (s.includes(',')) {
+    if (/^[+-]?\d{1,3}(\.\d{3})+,\d*$/.test(s)) s = s.replace(/\./g, '').replace(',', '.')
+    else if (/^[+-]?\d*,\d*$/.test(s)) s = s.replace(',', '.')
+    else return NaN
+  }
+  // Só algarismos, um separador decimal e o sinal (nada de "1e5", "0x10" ou "Infinity")
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(s)) return NaN
   const n = Number(s)
   return Number.isFinite(n) ? n : NaN
 }
@@ -1215,6 +1223,86 @@ export function certificadosAnterioresApos(
   ].slice(0, MAX_CERTIFICADOS_ANTERIORES)
 }
 
+/** Quantas versões anteriores (os dados de cada certificado) o cadastro de um padrão guarda. */
+export const MAX_VERSOES_ANTERIORES = 30
+
+/** Os dados do certificado atual do padrão (o que `versoesAnteriores` guarda). */
+export function versaoDoPadrao(p: Padrao): VersaoPadrao {
+  return {
+    certificado: p.certificado,
+    laboratorio: p.laboratorio,
+    acreditacao: p.acreditacao,
+    dataCalibracao: p.dataCalibracao,
+    validade: p.validade,
+    classe: p.classe,
+    material: p.material,
+    densidade: p.densidade,
+    ...(p.incertezaDensidade !== undefined ? { incertezaDensidade: p.incertezaDensidade } : {}),
+    uso: p.uso,
+    pesos: p.pesos,
+    incertezaTexto: p.incertezaTexto,
+    certificadoArquivo: p.certificadoArquivo ?? null,
+  }
+}
+
+/**
+ * `versoesAnteriores` depois de uma alteração do padrão: quando o nº do certificado muda (o padrão foi calibrado de
+ * novo), os dados do certificado de antes entram no começo (no lugar de uma versão antiga do mesmo nº, e sem uma do
+ * nº novo). Preencher um nº que estava vazio ou mudar só espaços e maiúsculas não conta.
+ */
+export function versoesAnterioresApos(antes: Padrao, certificadoNovo: string): VersaoPadrao[] {
+  const lista = antes.versoesAnteriores ?? []
+  const [chave, nova] = [chaveCertificado(antes.certificado), chaveCertificado(certificadoNovo)]
+  if (!chave || chave === nova) return lista
+  return [
+    versaoDoPadrao(antes),
+    ...lista.filter((v) => chaveCertificado(v.certificado) !== chave && chaveCertificado(v.certificado) !== nova),
+  ].slice(0, MAX_VERSOES_ANTERIORES)
+}
+
+/**
+ * O padrão como estava na data de uma calibração: o cadastro de hoje, se ele foi calibrado até essa data; senão, a
+ * versão anterior mais nova calibrada até ela (`versoesAnteriores`: o certificado, as datas e os valores das peças),
+ * com o resto do cadastro de hoje (identificação, descrição, situação). Sem nenhuma, o de hoje (calibrado depois da
+ * calibração: a pendência de `pendenciasEmissao` bloqueia a emissão).
+ */
+export function padraoNaData(p: Padrao, data: string): Padrao {
+  if (!dataIsoValida(data) || !dataIsoValida(p.dataCalibracao) || p.dataCalibracao <= data) return p
+  let versao: VersaoPadrao | undefined
+  for (const v of p.versoesAnteriores ?? [])
+    if (dataIsoValida(v.dataCalibracao) && v.dataCalibracao <= data && (!versao || v.dataCalibracao > versao.dataCalibracao))
+      versao = v
+  return versao
+    ? { ...p, ...versao, incertezaDensidade: versao.incertezaDensidade, certificadoArquivo: versao.certificadoArquivo ?? null }
+    : p
+}
+
+/**
+ * Os padrões de uma calibração (`padroesIds`), cada um como vale para ela. Na revisão, o congelado na emissão do
+ * certificado que ela substitui (`padroesCongelados`), mesmo desativado depois (é a mesma visita); o cadastro de hoje
+ * só quando ele ainda é o mesmo certificado (nº e data: a correção de um dado digitado errado). Nos demais (e no
+ * padrão incluído na revisão), o cadastro na data da calibração (`padraoNaData`). `cadastro`: o padrão de hoje pelo
+ * id (undefined: não existe, ou não está entre os carregados).
+ */
+export function padroesDaCalibracao(
+  k: Pick<CalibracaoInput, 'padroesIds' | 'dataCalibracao'> & { padroesCongelados?: Padrao[] },
+  cadastro: (id: string) => Padrao | undefined,
+): Padrao[] {
+  const out: Padrao[] = []
+  for (const id of k.padroesIds) {
+    const atual = cadastro(id)
+    const congelado = k.padroesCongelados?.find((p) => p.id === id)
+    if (congelado) {
+      const mesmoCertificado =
+        !!atual &&
+        chaveCertificado(atual.certificado) === chaveCertificado(congelado.certificado) &&
+        atual.dataCalibracao === congelado.dataCalibracao
+      out.push({ ...(mesmoCertificado ? atual : congelado), ativo: true })
+    } else if (atual) out.push(padraoNaData(atual, k.dataCalibracao))
+  }
+  return out
+}
+
 /** Resumo das peças de um jogo: "1 × 10 kg, 4 × 5 kg, 2 × 2 kg". */
 export function resumoPesos(pesos: PesoPadrao[]): string {
   const grupos = new Map<number, number>()
@@ -1493,19 +1581,68 @@ export function normalizarOpcoes(v: unknown, base: OpcoesCalculo = OPCOES_CALCUL
   }
 }
 
-const numOuNuloAmb = (v: unknown, min: number, max: number) => {
-  const n = numeroOuNulo(v)
-  return n === null || n < min || n > max ? null : n
+/**
+ * Faixas aceitas dos valores do ambiente (a tela, a pendência e o cálculo usam as mesmas). Fora delas o valor é
+ * gravado como foi digitado (não some ao recarregar), a emissão fica com a pendência que diz qual valor conferir
+ * (`pendenciasAmbiente`) e o cálculo o trata como não registrado (`valorAmbiente`).
+ */
+export const FAIXAS_AMBIENTE = {
+  temperatura: { min: -40, max: 80, unidade: '°C' },
+  umidade: { min: 0, max: 100, unidade: '%' },
+  pressao: { min: 300, max: 1200, unidade: 'hPa' },
+  deltaTPesos: { min: -30, max: 30, unidade: '°C' },
+  /** Aclimatação: diferença pesos − ar na chegada (pesos mais frios dão ΔT0 negativo; o cálculo usa |ΔT0|). */
+  deltaT0: { min: -40, max: 40, unidade: '°C' },
+  /** Aclimatação: tempo dos pesos no local, em minutos (até 48 h). */
+  minutos: { min: 0, max: 2880, unidade: 'min' },
+} as const satisfies Record<string, { min: number; max: number; unidade: string }>
+export type FaixaAmbiente = keyof typeof FAIXAS_AMBIENTE
+
+/** O valor está fora da faixa aceita? (null = não registrado, não está fora). */
+export const foraDaFaixaAmbiente = (v: number | null | undefined, faixa: FaixaAmbiente): boolean =>
+  typeof v === 'number' && (!Number.isFinite(v) || v < FAIXAS_AMBIENTE[faixa].min || v > FAIXAS_AMBIENTE[faixa].max)
+
+/** O valor para o cálculo: fora da faixa (ou não registrado), null. */
+export const valorAmbiente = (v: number | null | undefined, faixa: FaixaAmbiente): number | null =>
+  typeof v === 'number' && !foraDaFaixaAmbiente(v, faixa) ? v : null
+
+/** "−40 °C a 80 °C" (o sinal de menos tipográfico). */
+const textoFaixa = (faixa: FaixaAmbiente) => {
+  const { min, max, unidade } = FAIXAS_AMBIENTE[faixa]
+  const n = (x: number) => `${x < 0 ? '−' : ''}${Math.abs(x)} ${unidade}`
+  return `${n(min)} a ${n(max)}`
+}
+
+/** As pendências dos valores do ambiente fora da faixa (gravados como foram digitados). */
+export function pendenciasAmbiente(amb: Partial<CondicoesAmbientais>): string[] {
+  const p: string[] = []
+  const conferir = (rotulo: string, v: number | null | undefined, faixa: FaixaAmbiente) => {
+    if (!foraDaFaixaAmbiente(v, faixa)) return
+    if (faixa === 'pressao' && typeof v === 'number' && v >= 30 && v <= 120)
+      p.push(
+        `Pressão de ${numeroBr(v)} hPa fora da faixa (${textoFaixa(faixa)}): a pressão é em hPa (${numeroBr(v)} kPa = ${numeroBr(v * 10)} hPa).`,
+      )
+    else p.push(`${rotulo} fora da faixa (${textoFaixa(faixa)}): confira o valor digitado.`)
+  }
+  conferir('Temperatura no início', amb.temperaturaInicial, 'temperatura')
+  conferir('Temperatura no fim', amb.temperaturaFinal, 'temperatura')
+  conferir('Umidade no início', amb.umidadeInicial, 'umidade')
+  conferir('Umidade no fim', amb.umidadeFinal, 'umidade')
+  conferir('Pressão', amb.pressao, 'pressao')
+  conferir('Diferença de temperatura pesos − ar', amb.deltaTPesos, 'deltaTPesos')
+  conferir('Aclimatação dos pesos: diferença na chegada', amb.aclimatacao?.deltaT0, 'deltaT0')
+  conferir('Aclimatação dos pesos: tempo no local', amb.aclimatacao?.minutos, 'minutos')
+  return p
 }
 
 /**
- * Aclimatação dos pesos (sem a medição do ΔT pesos − ar): diferença na chegada em [−40, 40] °C (pesos que chegam
- * mais frios dão ΔT0 negativo; o cálculo usa |ΔT0|) e minutos no local em [0, 2 880]; senão null.
+ * Aclimatação dos pesos (sem a medição do ΔT pesos − ar): a diferença na chegada e os minutos no local, como foram
+ * digitados (fora de `FAIXAS_AMBIENTE` é pendência); sem um dos dois, null.
  */
 function normalizarAclimatacao(v: unknown): { deltaT0: number; minutos: number } | null {
   const r = obj(v)
-  const deltaT0 = numOuNuloAmb(r.deltaT0, -40, 40)
-  const minutos = numOuNuloAmb(r.minutos, 0, 2880)
+  const deltaT0 = numeroOuNulo(r.deltaT0)
+  const minutos = numeroOuNulo(r.minutos)
   return deltaT0 === null || minutos === null ? null : { deltaT0, minutos }
 }
 
@@ -1564,7 +1701,13 @@ export function normalizarCalibracao(entrada: unknown): Resultado<CalibracaoInpu
   const rep = obj(r.reparo)
   const dataCalibracao = data(r.dataCalibracao)
   if (r.dataCalibracao && !dataCalibracao) erros.push('Data da calibração inválida.')
+  // Datas digitadas erradas (ano 2206, 31/02) não somem em silêncio: o certificado sairia sem a data pedida
   const proxima = data(r.proximaCalibracao)
+  if (r.proximaCalibracao && !proxima) erros.push('Data da próxima calibração inválida.')
+  const local = umDe(r.local, ['CLIENTE', 'LABORATORIO'] as const, 'CLIENTE')
+  // O recebimento do item só existe na calibração no laboratório (nas instalações do cliente, não sai no certificado)
+  const recebimento = local === 'LABORATORIO' ? data(r.dataRecebimento) : ''
+  if (local === 'LABORATORIO' && r.dataRecebimento && !recebimento) erros.push('Data de recebimento do item inválida.')
   const ajusteRealizado = umDe(r.ajuste === undefined ? 'NAO' : aj.realizado, ['NAO', 'INTERNO', 'EXTERNO'] as const, 'NAO')
   return {
     valor: {
@@ -1573,19 +1716,20 @@ export function normalizarCalibracao(entrada: unknown): Resultado<CalibracaoInpu
       ordemServico: texto(r.ordemServico, 40),
       dataCalibracao,
       dataEmissao: data(r.dataEmissao),
-      dataRecebimento: data(r.dataRecebimento),
-      local: umDe(r.local, ['CLIENTE', 'LABORATORIO'] as const, 'CLIENTE'),
+      dataRecebimento: recebimento,
+      local,
       localEndereco: texto(r.localEndereco, 300),
       tecnicoId: texto(r.tecnicoId, 100),
       signatarioId: texto(r.signatarioId, 100),
       padroesIds: ids(r.padroesIds, LIMITES.padroesPorCalibracao),
+      // Como foram digitados: fora de FAIXAS_AMBIENTE é pendência (`pendenciasAmbiente`), não some
       ambiente: {
-        temperaturaInicial: numOuNuloAmb(amb.temperaturaInicial, -40, 80),
-        temperaturaFinal: numOuNuloAmb(amb.temperaturaFinal, -40, 80),
-        umidadeInicial: numOuNuloAmb(amb.umidadeInicial, 0, 100),
-        umidadeFinal: numOuNuloAmb(amb.umidadeFinal, 0, 100),
-        pressao: numOuNuloAmb(amb.pressao, 300, 1200),
-        deltaTPesos: numOuNuloAmb(amb.deltaTPesos, -30, 30),
+        temperaturaInicial: numeroOuNulo(amb.temperaturaInicial),
+        temperaturaFinal: numeroOuNulo(amb.temperaturaFinal),
+        umidadeInicial: numeroOuNulo(amb.umidadeInicial),
+        umidadeFinal: numeroOuNulo(amb.umidadeFinal),
+        pressao: numeroOuNulo(amb.pressao),
+        deltaTPesos: numeroOuNulo(amb.deltaTPesos),
         aclimatacao: normalizarAclimatacao(amb.aclimatacao),
       },
       preliminar: {
@@ -1609,7 +1753,8 @@ export function normalizarCalibracao(entrada: unknown): Resultado<CalibracaoInpu
         regra: umDe(conf.regra, ['SIMPLES', 'BANDA_GUARDA'] as const, 'BANDA_GUARDA'),
       },
       proximaCalibracao: proxima,
-      proximaNoCertificado: booleano(r.proximaNoCertificado) && !!proxima,
+      // Sem a data, a marca fica: a pendência pede a data (não sai do certificado em silêncio)
+      proximaNoCertificado: booleano(r.proximaNoCertificado),
       reparo: {
         houve: booleano(rep.houve),
         descricao: texto(rep.descricao, 300),
@@ -1726,8 +1871,16 @@ export function verificacoesAntesDeCalibrar(
 }
 
 /**
- * O que falta para emitir o certificado (bloqueios). Os avisos do cálculo (ex.: poucas leituras)
- * aparecem à parte e não bloqueiam.
+ * A conta do técnico da calibração foi excluída (o servidor confere; a desativada continua existindo e vale): o
+ * certificado sairia com "Executado por" em branco.
+ */
+export const PENDENCIA_TECNICO_EXCLUIDO = 'O técnico desta calibração foi excluído: escolha quem executou.'
+
+/**
+ * O que falta para emitir o certificado (bloqueios): o cadastro, os padrões (como valem na data da calibração,
+ * `padroesDaCalibracao`), o ambiente e as datas. As pendências do cálculo (os mínimos do POP, as leituras fora do
+ * esperado, os pesos) vêm do motor (`calcularCalibracao`) e o servidor junta as duas (`pendenciasDa`); os avisos do
+ * cálculo (ex.: faixa parcial) aparecem à parte e não bloqueiam.
  */
 export function pendenciasEmissao(
   c: CalibracaoInput,
@@ -1740,10 +1893,20 @@ export function pendenciasEmissao(
   if (!c.padroesIds.length) p.push('Escolha os padrões utilizados.')
   if (!contexto.temPesos) p.push('Escolha pelo menos um jogo de pesos padrão.')
   for (const pad of contexto.padroes) {
-    if (!pad.ativo) p.push(`O padrão ${pad.identificacao} está desativado.`)
+    // Desativado depois de escolhido (na revisão, o congelado na emissão vale: `padroesDaCalibracao`)
+    if (!pad.ativo)
+      p.push(
+        `O padrão ${pad.identificacao} está desativado: tire-o desta calibração (etapa Padrões e ambiente) ou reative-o em Padrões.`,
+      )
     if (!pad.validade) p.push(`O padrão ${pad.identificacao} está sem a data da próxima calibração.`)
     else if (dataIsoValida(c.dataCalibracao) && pad.validade < c.dataCalibracao)
       p.push(`O padrão ${pad.identificacao} estava vencido na data da calibração (${formatarDataBr(pad.validade)}).`)
+    // Calibrado depois (o cadastro de hoje, sem a versão do dia em `versoesAnteriores`): o certificado citaria o
+    // certificado e as correções novas. No mesmo dia, vale
+    if (dataIsoValida(c.dataCalibracao) && dataIsoValida(pad.dataCalibracao) && pad.dataCalibracao > c.dataCalibracao)
+      p.push(
+        `O padrão ${pad.identificacao} foi calibrado em ${formatarDataBr(pad.dataCalibracao)}, depois desta calibração: o certificado dele não valia no dia.`,
+      )
     if (!pad.certificado) p.push(`O padrão ${pad.identificacao} está sem o número do certificado de calibração.`)
     // A declaração de rastreabilidade do certificado diz que os padrões foram calibrados por laboratório acreditado
     if (!pad.acreditacao?.trim())
@@ -1752,6 +1915,7 @@ export function pendenciasEmissao(
   const amb = c.ambiente
   if (amb.temperaturaInicial === null || amb.temperaturaFinal === null)
     p.push('Registre a temperatura no início e no fim da calibração.')
+  p.push(...pendenciasAmbiente(amb))
   // A pressão sai no certificado com o barômetro que a mediu (rastreável); o barômetro listado foi usado
   const barometros = contexto.padroes.filter((x) => x.tipo === 'BAROMETRO').map((x) => x.identificacao)
   if (amb.pressao !== null && !barometros.length)
@@ -1791,6 +1955,13 @@ export function pendenciasEmissao(
   if (c.conformidade.solicitada && c.conformidade.criterio === 'CLIENTE' && !(c.conformidade.toleranciaCliente > 0))
     p.push('Informe a tolerância do cliente para a declaração de conformidade.')
   if (c.proximaNoCertificado && !c.proximaCalibracao) p.push('Informe a data da próxima calibração pedida pelo cliente.')
+  // Datas incoerentes (vão para o certificado; a próxima também para os vencimentos e lembretes)
+  if (dataIsoValida(c.dataCalibracao)) {
+    if (dataIsoValida(c.proximaCalibracao) && c.proximaCalibracao <= c.dataCalibracao)
+      p.push('A próxima calibração precisa ser depois da data da calibração.')
+    if (c.local === 'LABORATORIO' && dataIsoValida(c.dataRecebimento) && c.dataRecebimento > c.dataCalibracao)
+      p.push('O recebimento do item não pode ser depois da data da calibração.')
+  }
   return p
 }
 

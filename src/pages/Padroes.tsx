@@ -429,8 +429,8 @@ function CartaoPadrao({
         </div>
         <div className="relative z-10 -mt-1 -mr-2">
           <Menu
-            gatilho={(abrir) => (
-              <Button variante="ghost" tamanho="icon-sm" onClick={abrir} aria-label={`Ações de ${p.identificacao}`}>
+            gatilho={(props) => (
+              <Button variante="ghost" tamanho="icon-sm" {...props} aria-label={`Ações de ${p.identificacao}`}>
                 <Ellipsis className="h-4 w-4" />
               </Button>
             )}

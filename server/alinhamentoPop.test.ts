@@ -133,7 +133,9 @@ describe('registro de antes do POP (legado)', () => {
     const k = await legado()
     const lido = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json()
     expect(lido.calibracao.ajuste).toEqual({ realizado: 'EXTERNO', descricao: 'span com 20 kg' })
-    expect(lido.calibracao.comoEncontrado.pontos.map((p: { crescente: number }) => p.crescente)).toEqual([0.02, 5.02, 10.02, 20.02, 30.03])
+    expect(lido.calibracao.comoEncontrado.pontos.map((p: { crescente: number }) => p.crescente)).toEqual([
+      0.02, 5.02, 10.02, 20.02, 30.03,
+    ])
     expect(lido.calibracao.reparo).toMatchObject({ houve: true, marcaReparo: 'MR-1' })
     expect(lido.calibracao.preliminar.preCarga).toBe('NAO')
     expect(lido.pendencias).toEqual([])

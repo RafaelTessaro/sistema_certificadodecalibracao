@@ -23,7 +23,6 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { PENDENCIA_POP } from '#shared/arquivos.ts'
 import { capacidadeTexto, pendenciasEmissao, TIPOS_BALANCA } from '#shared/dominio.ts'
 import type {
   Balanca,
@@ -38,6 +37,14 @@ import type {
 import { BalancaFormModal } from '../components/BalancaFormModal'
 import { recomporCargas } from '../components/calibracao/cargas'
 import type { ContextoEtapa, IdEtapa } from '../components/calibracao/contexto'
+import {
+  balancaMudaRascunho,
+  estadoDoServidor,
+  etapaCompleta,
+  padroesDoEditor,
+  pendenciasDaTela,
+  podeRecomporCargas,
+} from '../components/calibracao/editor'
 import { EtapaConclusao } from '../components/calibracao/EtapaConclusao'
 import { EtapaExcentricidade } from '../components/calibracao/EtapaExcentricidade'
 import { EtapaIdentificacao } from '../components/calibracao/EtapaIdentificacao'
@@ -47,7 +54,7 @@ import { EtapaPadroes } from '../components/calibracao/EtapaPadroes'
 import { EtapaRepetibilidade } from '../components/calibracao/EtapaRepetibilidade'
 import { EtapaRevisao } from '../components/calibracao/EtapaRevisao'
 import { PainelResultados } from '../components/calibracao/PainelResultados'
-import { comMetodoDaClasse, repetibilidadeCompleta } from '../components/calibracao/util'
+import { comMetodoDaClasse } from '../components/calibracao/util'
 import { ClienteFormModal } from '../components/ClienteFormModal'
 import { BotaoPop } from '../components/BotaoPop'
 import { type EscolhaFolha, FolhaCampoModal } from '../components/FolhaCampoModal'
@@ -63,6 +70,7 @@ import { EmptyState, PageHeader } from '../components/ui/Misc'
 import { api, ErroApi, type MembroEquipe } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
+import { criarFilaGravacao } from '../lib/filaGravacao'
 import { abrirFolhaCampo, TEXTO_FOLHA_NOVA, textoReimprimir } from '../lib/folhaCampo'
 import { dataCurta, hojeISO } from '../lib/format'
 import { avisoNumeroDaFolha } from '../lib/numeros'
@@ -318,32 +326,13 @@ const ETAPAS: Array<{ id: IdEtapa; titulo: string; icone: ReactNode }> = [
   { id: 'revisao', titulo: 'Revisão e emissão', icone: <FileCheck2 className="h-4 w-4" /> },
 ]
 
-/** Só os dados de entrada (o que a tela edita) de uma calibração gravada. */
-function entradaDe(k: Calibracao): CalibracaoInput {
-  const {
-    id: _id,
-    versao: _v,
-    status: _s,
-    numero: _n,
-    ano: _a,
-    sequencia: _q,
-    revisao: _r,
-    emissao: _e,
-    cancelamento: _c,
-    criadoPor: _p,
-    criadoEm: _ce,
-    atualizadoEm: _ae,
-    ...entrada
-  } = k
-  return entrada
-}
-
 type EstadoSalvo = 'salvo' | 'pendente' | 'salvando' | 'erro'
 
 interface Carregado {
   calibracao: Calibracao
   cliente: Cliente
   balanca: Balanca
+  /** O cadastro inteiro, com os desativados (um padrão escolhido pode ter sido desativado depois: `padroesDoEditor`). */
   padroes: Padrao[]
   config: Configuracoes
   equipe: MembroEquipe[]
@@ -373,7 +362,7 @@ function EditorCalibracao({ id }: { id: string }) {
   // Carga inicial (uma vez): a edição não é recarregada pelo tempo real para não perder o que se digita
   useEffect(() => {
     let ativo = true
-    Promise.all([api.calibracao(id), api.padroes(), api.config(), api.equipe()])
+    Promise.all([api.calibracao(id), api.padroes(true), api.config(), api.equipe()])
       .then(([d, p, c, e]) => {
         if (!ativo) return
         const k = d.calibracao
@@ -382,7 +371,8 @@ function EditorCalibracao({ id }: { id: string }) {
           return
         }
         if (!d.cliente || !d.balanca) throw new Error('O cliente ou a balança desta calibração não existe mais.')
-        versao.current = k.versao
+        const inicial = estadoDoServidor(d)
+        versao.current = inicial.versao
         setDados({
           calibracao: k,
           cliente: d.cliente,
@@ -391,10 +381,10 @@ function EditorCalibracao({ id }: { id: string }) {
           config: c.config,
           equipe: e.equipe,
         })
-        setF(entradaDe(k))
-        setFolha(d.folhaCampo)
-        setNumeroReservado(d.numeroReservado ?? null)
-        setPendenciasServidor(d.pendencias)
+        setF(inicial.f)
+        setFolha(inicial.folha)
+        setNumeroReservado(inicial.numeroReservado)
+        setPendenciasServidor(inicial.pendencias)
         // Retoma na primeira etapa ainda sem dados
         if (k.indicacao.pontos.some((x) => x.crescente !== null)) setEtapa('revisao')
         else if (k.repetibilidade.length) setEtapa('excentricidade')
@@ -431,8 +421,10 @@ function EditorCalibracao({ id }: { id: string }) {
   }, [carregou, folha, atualizarFolha])
 
   const balanca = dados?.balanca
-  const selecionados = useMemo(
-    () => (f && dados ? f.padroesIds.map((pid) => dados.padroes.find((p) => p.id === pid)).filter((p): p is Padrao => !!p) : []),
+  // Como valem para esta calibração (como no servidor): o cadastro na data dela, o desativado depois de escolhido (com
+  // a pendência) e, na revisão, os da emissão original. Para escolher: os ativos e os desativados ainda escolhidos
+  const { selecionados, paraEscolher } = useMemo(
+    () => (f && dados ? padroesDoEditor(dados.padroes, f) : { selecionados: [], paraEscolher: [] }),
     [f, dados],
   )
 
@@ -448,10 +440,11 @@ function EditorCalibracao({ id }: { id: string }) {
     })
   }, [])
 
-  // Pesos escolhidos mudaram: refaz a montagem automática das cargas
+  // Pesos escolhidos mudaram: refaz a montagem automática das cargas (não com um jogo escolhido desativado ou que
+  // não existe mais: a montagem apagaria as peças dele de todos os pontos)
   const chavePadroes = f?.padroesIds.join(',') ?? ''
   useEffect(() => {
-    if (!balanca) return
+    if (!balanca || !f || !podeRecomporCargas(f.padroesIds, selecionados)) return
     alterar((atual) =>
       recomporCargas(
         atual,
@@ -462,32 +455,42 @@ function EditorCalibracao({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chavePadroes, balanca])
 
-  const salvar = useCallback(async (): Promise<boolean> => {
-    const atual = fRef.current
-    if (!atual || !sujo.current) return true
-    sujo.current = false
-    setSalvo('salvando')
-    try {
-      const r = await api.salvarCalibracao(id, atual, versao.current)
-      versao.current = r.calibracao.versao
-      setPendenciasServidor(r.pendencias)
-      setSalvo(sujo.current ? 'pendente' : 'salvo')
-      useTempoReal.getState().mudou('calibracao')
-      return true
-    } catch (e) {
-      sujo.current = true
-      setSalvo('erro')
-      if (e instanceof ErroApi && e.status === 409) {
-        const recarregar = await confirmar({
-          titulo: 'Outra pessoa alterou esta calibração',
-          descricao: 'Para não misturar as alterações, recarregue a página. O que você digitou agora pode se perder.',
-          confirmar: 'Recarregar',
-        })
-        if (recarregar) location.reload()
-      } else if (!(e instanceof ErroApi && e.status === 401)) avisarErro('Não foi possível salvar o rascunho', e)
-      return false
-    }
-  }, [id])
+  // Uma gravação de cada vez: chamada com outra no ar, espera ela e grava o que ficou pendente com a versão nova (dois
+  // PUT com a mesma versão davam um falso "outra pessoa alterou"). Emitir, mudar a situação e imprimir a folha esperam
+  const [fila] = useState(() =>
+    criarFilaGravacao(
+      async () => {
+        const atual = fRef.current
+        if (!atual) return true
+        sujo.current = false
+        setSalvo('salvando')
+        try {
+          const r = await api.salvarCalibracao(id, atual, versao.current)
+          versao.current = r.calibracao.versao
+          setPendenciasServidor(r.pendencias)
+          setSalvo(sujo.current ? 'pendente' : 'salvo')
+          useTempoReal.getState().mudou('calibracao')
+          return true
+        } catch (e) {
+          sujo.current = true
+          setSalvo('erro')
+          if (e instanceof ErroApi && e.status === 409) {
+            const outraPessoa = e.dados.codigo === 'CONFLITO'
+            void confirmar({
+              titulo: outraPessoa ? 'Outra pessoa alterou esta calibração' : 'Não foi possível salvar o rascunho',
+              descricao: outraPessoa
+                ? 'Para não misturar as alterações, recarregue a página. O que você digitou agora pode se perder.'
+                : `${e.message} Recarregue a página.`,
+              confirmar: 'Recarregar',
+            }).then((recarregar) => recarregar && location.reload())
+          } else if (!(e instanceof ErroApi && e.status === 401)) avisarErro('Não foi possível salvar o rascunho', e)
+          return false
+        }
+      },
+      () => !!fRef.current && sujo.current,
+    ),
+  )
+  const salvar = fila.salvar
 
   // Gravação automática 1 s depois da última alteração
   useEffect(() => {
@@ -517,7 +520,8 @@ function EditorCalibracao({ id }: { id: string }) {
     }
   }, [f, balanca, selecionados])
 
-  // Pendências calculadas aqui na hora (o servidor confere de novo ao emitir)
+  // Pendências calculadas aqui na hora e, com tudo gravado, também as do servidor (que confere de novo ao emitir)
+  const emDia = salvo === 'salvo'
   const pendencias = useMemo(() => {
     if (!f || !dados) return pendenciasServidor
     const locais = pendenciasEmissao(f, {
@@ -526,16 +530,9 @@ function EditorCalibracao({ id }: { id: string }) {
       temPesos: selecionados.some((p) => p.tipo === 'PESOS'),
       classe: balanca?.classe,
     })
-    return [
-      ...new Set([
-        ...locais,
-        // Sem POP registrado (o servidor também confere): o código e a revisão saem em toda página
-        ...(pop && !pop.atual ? [PENDENCIA_POP] : []),
-        ...(calc?.resultado.pendencias ?? []),
-        ...(calc?.comoEncontrado?.pendencias.map((p) => `Como encontrado: ${p}`) ?? []),
-      ]),
-    ]
-  }, [f, dados, selecionados, calc, pendenciasServidor, pop, balanca])
+    // Sem POP registrado (o servidor também confere): o código e a revisão saem em toda página
+    return pendenciasDaTela({ locais, calc, semPop: !!pop && !pop.atual, servidor: pendenciasServidor, emDia })
+  }, [f, dados, selecionados, calc, pendenciasServidor, pop, balanca, emDia])
 
   if (erro)
     return (
@@ -584,19 +581,55 @@ function EditorCalibracao({ id }: { id: string }) {
     alterar,
     balanca,
     cliente: dados.cliente,
-    padroes: dados.padroes,
+    padroes: paraEscolher,
     selecionados,
     calc,
     config: dados.config,
     equipe: dados.equipe,
     status: dados.calibracao.status,
-    editarBalanca: () => setEditandoBalanca(true),
+    editarBalanca: () => void editarBalanca(),
     folhaCampo: folha,
     vincularFolha,
     novaFolha: () => setEscolhaFolha('nova'),
   }
   const indice = ETAPAS.findIndex((e) => e.id === etapa)
   const completa = (e: IdEtapa) => etapaCompleta(e, ctx)
+
+  // Grava antes o que está pendente (e espera a gravação no ar): a balança com outra unidade ou outro cliente muda o
+  // rascunho no servidor, e a tela o recarrega depois (`aposSalvarBalanca`)
+  const editarBalanca = async () => {
+    if (await salvar()) setEditandoBalanca(true)
+  }
+
+  // Outra unidade ou outro cliente: o servidor converteu este rascunho e subiu a versão; recarrega os números, a versão
+  // e o cliente (senão a tela mostraria 12 g onde é 12 kg e a próxima gravação daria um falso conflito)
+  const aposSalvarBalanca = async (b: Balanca) => {
+    const antes = balanca
+    if (balancaMudaRascunho(antes, b)) {
+      try {
+        const d = await api.calibracao(id)
+        const e = estadoDoServidor(d)
+        versao.current = e.versao
+        sujo.current = false
+        setF(e.f)
+        setFolha(e.folha)
+        setNumeroReservado(e.numeroReservado)
+        setPendenciasServidor(e.pendencias)
+        setSalvo('salvo')
+        setDados((x) => (x ? { ...x, balanca: d.balanca ?? b, cliente: d.cliente ?? x.cliente, calibracao: d.calibracao } : x))
+      } catch {
+        setDados((x) => (x ? { ...x, balanca: b } : x))
+        void confirmar({
+          titulo: 'Recarregue a calibração',
+          descricao:
+            'A balança mudou de unidade ou de cliente e este rascunho foi convertido, mas não foi possível buscá-lo de novo. Recarregue a página antes de continuar.',
+          confirmar: 'Recarregar',
+        }).then((recarregar) => recarregar && location.reload())
+        return
+      }
+    } else setDados((x) => (x ? { ...x, balanca: b } : x))
+    if (b.classe !== antes.classe) alterar((s) => comMetodoDaClasse(s, b.classe))
+  }
 
   const irPara = (e: IdEtapa) => {
     setEtapa(e)
@@ -677,6 +710,8 @@ function EditorCalibracao({ id }: { id: string }) {
     if (!ok) return
     try {
       sujo.current = false
+      // Uma gravação no ar chegaria depois da exclusão (erro à toa): espera ela, sem gravar mais nada
+      await salvar()
       await api.excluirCalibracao(id)
       useTempoReal.getState().mudou('calibracao')
       toast.sucesso('Rascunho excluído')
@@ -873,10 +908,7 @@ function EditorCalibracao({ id }: { id: string }) {
         aberto={editandoBalanca}
         aoFechar={() => setEditandoBalanca(false)}
         balanca={balanca}
-        aoSalvar={(b) => {
-          setDados((d) => (d ? { ...d, balanca: b } : d))
-          if (b.classe !== balanca.classe) alterar((s) => comMetodoDaClasse(s, b.classe))
-        }}
+        aoSalvar={aposSalvarBalanca}
       />
       <Modal
         aberto={!!previa}
@@ -903,40 +935,6 @@ function EditorCalibracao({ id }: { id: string }) {
       </Modal>
     </>
   )
-}
-
-function etapaCompleta(e: IdEtapa, { f, calc, selecionados }: ContextoEtapa): boolean {
-  switch (e) {
-    case 'identificacao':
-      return !!f.dataCalibracao && !!f.tecnicoId && (f.local !== 'CLIENTE' || !!f.localEndereco.trim())
-    case 'instrumento':
-      return f.ajuste.realizado !== 'EXTERNO' || !!f.ajuste.descricao.trim()
-    case 'padroes': {
-      const a = f.ambiente
-      // Empuxo pela densidade do ar medida (classe I): a umidade e a pressão também; convecção: o ΔT pesos − ar
-      const ar = f.opcoes.empuxo !== 'MEDIDO' || ((a.umidadeInicial ?? a.umidadeFinal) !== null && a.pressao !== null)
-      const conveccao = f.opcoes.conveccao !== 'CALCULAR' || (a.deltaTPesos ?? null) !== null || !!a.aclimatacao
-      return (
-        selecionados.some((p) => p.tipo === 'PESOS') &&
-        a.temperaturaInicial !== null &&
-        a.temperaturaFinal !== null &&
-        ar &&
-        conveccao
-      )
-    }
-    case 'repetibilidade':
-      return repetibilidadeCompleta(calc?.resultado.repetibilidade ?? [])
-    case 'excentricidade':
-      return !f.excentricidade.aplicavel
-        ? !!f.excentricidade.motivo.trim()
-        : !!calc && !calc.resultado.pendencias.some((p) => p.startsWith('Excentricidade'))
-    case 'indicacao':
-      return f.indicacao.pontos.length > 0 && f.indicacao.pontos.every((p) => p.crescente !== null || p.decrescente !== null)
-    case 'conclusao':
-      return !f.conformidade.solicitada || f.conformidade.criterio !== 'CLIENTE' || f.conformidade.toleranciaCliente > 0
-    case 'revisao':
-      return false
-  }
 }
 
 function IndicadorSalvo({ estado, aoTentar }: { estado: EstadoSalvo; aoTentar: () => void }) {

@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useRef, useState, type InputHTMLAttributes, type KeyboardEvent } from 'react'
 import { numero as lerNumero } from '#shared/dominio.ts'
 import { cn } from '../../lib/cn'
+import { alvoNaGrade, valorDoTexto } from './digitacao'
 
 /** Número para mostrar no campo: vírgula decimal, sem notação científica nem ruído binário. */
 export function numeroParaTexto(v: number | null | undefined): string {
@@ -18,9 +19,7 @@ function moverNaGrade(e: KeyboardEvent<HTMLInputElement>) {
   const el = e.currentTarget
   const grade = el.dataset.grade
   if (!grade) return
-  const lin = Number(el.dataset.lin)
-  const col = Number(el.dataset.col)
-  let passo = 0
+  let passo: 1 | -1 | 0 = 0
   if (e.key === 'Enter' || e.key === 'ArrowDown') passo = e.shiftKey && e.key === 'Enter' ? -1 : 1
   else if (e.key === 'ArrowUp') passo = -1
   if (!passo) return
@@ -28,18 +27,8 @@ function moverNaGrade(e: KeyboardEvent<HTMLInputElement>) {
   const campos = [...document.querySelectorAll<HTMLInputElement>(`input[data-grade="${CSS.escape(grade)}"]`)].filter(
     (c) => !c.disabled,
   )
-  // Mesma coluna, próxima linha; no fim da coluna, vai para o topo da coluna seguinte (como o técnico lê)
-  const mesmaColuna = campos
-    .filter((c) => Number(c.dataset.col) === col)
-    .sort((a, b) => Number(a.dataset.lin) - Number(b.dataset.lin))
-  const i = mesmaColuna.findIndex((c) => Number(c.dataset.lin) === lin)
-  let alvo = mesmaColuna[i + passo]
-  if (!alvo && passo > 0) {
-    const proxima = campos
-      .filter((c) => Number(c.dataset.col) > col)
-      .sort((a, b) => Number(a.dataset.col) - Number(b.dataset.col) || Number(a.dataset.lin) - Number(b.dataset.lin))
-    alvo = proxima[0]
-  }
+  const posicao = (c: HTMLInputElement) => ({ lin: Number(c.dataset.lin), col: Number(c.dataset.col) })
+  const alvo = campos[alvoNaGrade(campos.map(posicao), posicao(el), passo, e.key === 'Enter' && e.shiftKey)]
   if (alvo) {
     alvo.focus()
     alvo.select()
@@ -60,7 +49,7 @@ export interface CampoNumeroProps extends Omit<InputHTMLAttributes<HTMLInputElem
 
 /**
  * Campo numérico para leituras: aceita vírgula ou ponto, guarda o texto enquanto a pessoa digita
- * (ex.: "10," no meio da digitação) e devolve o número (ou `null` vazio).
+ * (ex.: "10," no meio da digitação) e devolve o número (ou `null`: vazio ou inválido, em vermelho).
  */
 export const CampoNumero = forwardRef<HTMLInputElement, CampoNumeroProps>(function CampoNumero(
   { valor, aoMudar, unidade, grade, tom = 'normal', compacto, className, onKeyDown, onBlur, ...props },
@@ -69,12 +58,10 @@ export const CampoNumero = forwardRef<HTMLInputElement, CampoNumeroProps>(functi
   const [texto, setTexto] = useState(() => numeroParaTexto(valor))
   const focado = useRef(false)
 
-  // Valor mudou por fora (sugestão, recarga): atualiza o texto se a pessoa não estiver digitando
+  // Valor mudou por fora (sugestão, recarga): atualiza o texto se a pessoa não estiver digitando (o texto inválido,
+  // gravado como vazio, fica para ser corrigido)
   useEffect(() => {
-    if (focado.current) return
-    const atual = lerNumero(texto)
-    const igual = (valor === null && texto.trim() === '') || (valor !== null && atual === valor)
-    if (!igual) setTexto(numeroParaTexto(valor))
+    if (!focado.current && valorDoTexto(texto) !== valor) setTexto(numeroParaTexto(valor))
   }, [valor, texto])
 
   const invalido = texto.trim() !== '' && Number.isNaN(lerNumero(texto))
@@ -87,6 +74,7 @@ export const CampoNumero = forwardRef<HTMLInputElement, CampoNumeroProps>(functi
         autoComplete="off"
         spellCheck={false}
         value={texto}
+        aria-invalid={invalido || undefined}
         data-grade={grade?.grupo}
         data-lin={grade?.lin}
         data-col={grade?.col}
@@ -102,13 +90,11 @@ export const CampoNumero = forwardRef<HTMLInputElement, CampoNumeroProps>(functi
           onBlur?.(e)
         }}
         onChange={(e) => {
-          const t = e.target.value.replace(/[^\d,.\-\s]/g, '')
+          // Nada é apagado do que foi digitado (uma letra no lugar do 0 deixa o campo vermelho, não muda o número)
+          const t = e.target.value
           setTexto(t)
-          if (t.trim() === '') aoMudar(null)
-          else {
-            const n = lerNumero(t)
-            if (!Number.isNaN(n)) aoMudar(n)
-          }
+          const v = valorDoTexto(t)
+          if (v !== valor) aoMudar(v)
         }}
         onKeyDown={(e) => {
           moverNaGrade(e)

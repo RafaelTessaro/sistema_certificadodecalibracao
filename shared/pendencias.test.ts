@@ -4,14 +4,20 @@
 // medida, também no "como encontrado" da classe I ajustada logo antes.
 
 import { describe, expect, it } from 'vitest'
-import { calcularCalibracao } from './calibracao.ts'
+import { arDoAmbiente, calcularCalibracao, termicaDoAmbiente } from './calibracao.ts'
 import {
+  AMBIENTE_VAZIO,
   BALANCA_VAZIA,
   calibracaoVazia,
+  normalizarCalibracao,
   OPCOES_CALCULO_PADRAO,
   opcoesDaClasse,
   PADRAO_VAZIO,
+  padraoNaData,
+  padroesDaCalibracao,
+  pendenciasAmbiente,
   pendenciasEmissao,
+  versoesAnterioresApos,
 } from './dominio.ts'
 import type { Balanca, CalibracaoInput, ClasseExatidao, EnsaioIndicacao, Padrao } from './tipos.ts'
 
@@ -245,11 +251,13 @@ describe('densidade dos jogos no empuxo pela densidade do ar medida (pendência 
         nivelSubstituicao: 0,
       },
       // Os 5 pontos do POP (7.7), contando o zero
-      ...([
-        ['p20', 20, 20.0001],
-        ['p50', 50, 50.0001],
-        ['p100', 100, 100.0001],
-      ] as const).map(([peso, carga, leitura]) => ({
+      ...(
+        [
+          ['p20', 20, 20.0001],
+          ['p50', 50, 50.0001],
+          ['p100', 100, 100.0001],
+        ] as const
+      ).map(([peso, carga, leitura]) => ({
         id: peso,
         carga,
         pecas: [{ padraoId: 'JP-E2', pesoId: peso, quantidade: 1 }],
@@ -324,5 +332,165 @@ describe('densidade dos jogos no empuxo pela densidade do ar medida (pendência 
     expect(
       todas(jogo({ densidade: 0, incertezaDensidade: 0 }), { ...ajustadaAntes, conveccao: 'NAO_CONSIDERAR' }, legado),
     ).toEqual([])
+  })
+})
+
+// ---- Padrões como valiam no dia da calibração -----------------------------------------------------------------
+
+describe('padrão calibrado depois da data da calibração', () => {
+  const base = (x: Partial<Padrao> = {}) => {
+    const k: CalibracaoInput = {
+      ...calibracaoVazia(),
+      dataCalibracao: '2026-03-02',
+      tecnicoId: 't1',
+      localEndereco: 'Rua A, 1 – Rio Claro/SP',
+      padroesIds: ['JP-01'],
+      ambiente: { ...AMBIENTE_VAZIO, temperaturaInicial: 22, temperaturaFinal: 23 },
+    }
+    return pendenciasEmissao(k, { padroes: [pesos, padrao(x)].slice(1), hoje: '2026-10-28', temPesos: true })
+  }
+
+  it('depois: pendência (o certificado citaria o certificado novo); no mesmo dia ou sem a data, nada', () => {
+    expect(base({ dataCalibracao: '2026-06-15', validade: '2027-06-15' })).toEqual([
+      'O padrão JP-01 foi calibrado em 15/06/2026, depois desta calibração: o certificado dele não valia no dia.',
+    ])
+    expect(base({ dataCalibracao: '2026-03-02' })).toEqual([])
+    expect(base({ dataCalibracao: '' })).toEqual([])
+  })
+
+  const jogo = padrao({
+    certificado: 'LAB-B/2026',
+    dataCalibracao: '2026-06-15',
+    validade: '2027-06-15',
+    pesos: [{ id: 'w', marca: '', nominal: 10000, correcao: 300, incerteza: 160, k: 2 }],
+  })
+  const antigo = {
+    ...jogo,
+    certificado: 'LAB-A/2025',
+    dataCalibracao: '2025-06-10',
+    validade: '2026-06-10',
+    pesos: [{ id: 'w', marca: '', nominal: 10000, correcao: 40, incerteza: 160, k: 2 }],
+  }
+
+  it('a recalibração guarda os dados do certificado de antes; a calibração feita antes dela usa esses dados', () => {
+    const versoes = versoesAnterioresApos(antigo, 'LAB-B/2026')
+    expect(versoes).toHaveLength(1)
+    expect(versoes[0]).toMatchObject({ certificado: 'LAB-A/2025', dataCalibracao: '2025-06-10', validade: '2026-06-10' })
+    // O mesmo nº (só espaços e maiúsculas) não é recalibração
+    expect(versoesAnterioresApos(antigo, ' lab-a/2025')).toEqual([])
+    const comHistorico = { ...jogo, versoesAnteriores: versoes }
+    expect(padraoNaData(comHistorico, '2026-03-02')).toMatchObject({ certificado: 'LAB-A/2025', identificacao: 'JP-01' })
+    expect(padraoNaData(comHistorico, '2026-03-02').pesos[0].correcao).toBe(40)
+    // No dia da recalibração e depois: o atual; antes de todas as versões: o atual (e a pendência)
+    expect(padraoNaData(comHistorico, '2026-06-15').certificado).toBe('LAB-B/2026')
+    expect(padraoNaData(comHistorico, '2025-01-01').certificado).toBe('LAB-B/2026')
+    // Duas recalibrações: a versão mais nova até a data
+    const tres = {
+      ...jogo,
+      certificado: 'LAB-C/2027',
+      dataCalibracao: '2027-06-20',
+      versoesAnteriores: versoesAnterioresApos(comHistorico, 'LAB-C/2027'),
+    }
+    expect(tres.versoesAnteriores.map((v) => v.certificado)).toEqual(['LAB-B/2026', 'LAB-A/2025'])
+    expect(padraoNaData(tres, '2026-03-02').certificado).toBe('LAB-A/2025')
+    expect(padraoNaData(tres, '2026-12-01').certificado).toBe('LAB-B/2026')
+  })
+
+  it('revisão: os padrões congelados na emissão (mesmo desativados); o de hoje só se é o mesmo certificado', () => {
+    const congelado = { ...antigo, id: 'JP-01' }
+    const k = { padroesIds: ['JP-01'], dataCalibracao: '2026-03-02', padroesCongelados: [congelado] }
+    expect(padroesDaCalibracao(k, () => jogo)[0]).toMatchObject({ certificado: 'LAB-A/2025', ativo: true })
+    expect(padroesDaCalibracao(k, () => undefined)[0]).toMatchObject({ certificado: 'LAB-A/2025', ativo: true })
+    const corrigido = { ...antigo, ativo: false, pesos: [{ ...antigo.pesos[0], correcao: 45 }] }
+    expect(padroesDaCalibracao(k, () => corrigido)[0]).toMatchObject({ ativo: true, pesos: [{ correcao: 45 }] })
+    // Sem congelado (rascunho comum): o cadastro na data; padrão que não existe sai
+    expect(
+      padroesDaCalibracao({ padroesIds: ['JP-01', 'x'], dataCalibracao: '2026-03-02' }, (id) => (id === 'x' ? undefined : jogo)),
+    ).toEqual([jogo])
+  })
+})
+
+// ---- Ambiente fora da faixa e datas ---------------------------------------------------------------------------
+
+describe('ambiente fora da faixa', () => {
+  it('cada valor fora da faixa vira uma pendência que diz qual; dentro (e nas bordas), nada', () => {
+    expect(
+      pendenciasAmbiente({
+        temperaturaInicial: -41,
+        temperaturaFinal: 80,
+        umidadeInicial: 0,
+        umidadeFinal: 100.5,
+        pressao: 92.7,
+        deltaTPesos: -30,
+        aclimatacao: { deltaT0: 41, minutos: -1 },
+      }),
+    ).toEqual([
+      'Temperatura no início fora da faixa (−40 °C a 80 °C): confira o valor digitado.',
+      'Umidade no fim fora da faixa (0 % a 100 %): confira o valor digitado.',
+      'Pressão de 92,7 hPa fora da faixa (300 hPa a 1200 hPa): a pressão é em hPa (92,7 kPa = 927 hPa).',
+      'Aclimatação dos pesos: diferença na chegada fora da faixa (−40 °C a 40 °C): confira o valor digitado.',
+      'Aclimatação dos pesos: tempo no local fora da faixa (0 min a 2880 min): confira o valor digitado.',
+    ])
+    expect(pendenciasAmbiente({ pressao: 1500 })).toEqual([
+      'Pressão fora da faixa (300 hPa a 1200 hPa): confira o valor digitado.',
+    ])
+    expect(pendenciasAmbiente({ ...AMBIENTE_VAZIO, temperaturaInicial: 22, pressao: 300 })).toEqual([])
+  })
+
+  it('o cálculo trata o valor fora da faixa como não registrado (sem densidade do ar absurda)', () => {
+    const amb = {
+      ...AMBIENTE_VAZIO,
+      temperaturaInicial: 22,
+      temperaturaFinal: 225,
+      umidadeInicial: 55,
+      umidadeFinal: 550,
+      pressao: 92.7,
+    }
+    expect(arDoAmbiente(amb, false)).toEqual({ temperatura: 22, umidade: 55, pressao: null, ajustadaAntes: false })
+    expect(termicaDoAmbiente({ ...AMBIENTE_VAZIO, deltaTPesos: 31 })).toBeNull()
+    expect(termicaDoAmbiente({ ...AMBIENTE_VAZIO, aclimatacao: { deltaT0: 5, minutos: 3000 } })).toBeNull()
+  })
+})
+
+describe('datas incoerentes', () => {
+  const k = (x: Partial<CalibracaoInput>): CalibracaoInput => ({
+    ...calibracaoVazia(),
+    dataCalibracao: '2026-10-20',
+    tecnicoId: 't1',
+    localEndereco: 'Rua A, 1 – Rio Claro/SP',
+    padroesIds: ['JP-01'],
+    ambiente: { ...AMBIENTE_VAZIO, temperaturaInicial: 22, temperaturaFinal: 23 },
+    ...x,
+  })
+  const pend = (x: Partial<CalibracaoInput>) => pendenciasEmissao(k(x), { padroes: [pesos], hoje: '2026-10-28', temPesos: true })
+
+  it('próxima calibração antes ou no dia da calibração: pendência (esteja ou não no certificado)', () => {
+    const PROXIMA = 'A próxima calibração precisa ser depois da data da calibração.'
+    expect(pend({ proximaCalibracao: '2025-10-20', proximaNoCertificado: true })).toEqual([PROXIMA])
+    expect(pend({ proximaCalibracao: '2026-10-20' })).toEqual([PROXIMA])
+    expect(pend({ proximaCalibracao: '2026-10-21' })).toEqual([])
+    expect(pend({ proximaCalibracao: '' })).toEqual([])
+  })
+
+  it('recebimento do item depois da calibração (no laboratório): pendência; no dia ou antes, nada', () => {
+    const RECEBIMENTO = 'O recebimento do item não pode ser depois da data da calibração.'
+    expect(pend({ local: 'LABORATORIO', dataRecebimento: '2026-12-01' })).toEqual([RECEBIMENTO])
+    expect(pend({ local: 'LABORATORIO', dataRecebimento: '2026-10-20' })).toEqual([])
+    expect(pend({ local: 'LABORATORIO', dataRecebimento: '2026-10-01' })).toEqual([])
+  })
+
+  it('ao gravar: data inválida é erro (não some), a marca "no certificado" fica e o recebimento só no laboratório', () => {
+    const norm = (x: Record<string, unknown>) =>
+      normalizarCalibracao({ ...calibracaoVazia(), clienteId: 'c', balancaId: 'b', ...x })
+    expect(norm({ proximaCalibracao: '2206-11-03' }).erros).toEqual(['Data da próxima calibração inválida.'])
+    expect(norm({ proximaCalibracao: '', proximaNoCertificado: true }).valor.proximaNoCertificado).toBe(true)
+    expect(norm({ local: 'LABORATORIO', dataRecebimento: '2026-02-31' }).erros).toEqual(['Data de recebimento do item inválida.'])
+    expect(norm({ local: 'LABORATORIO', dataRecebimento: '2026-10-01' }).valor.dataRecebimento).toBe('2026-10-01')
+    expect(norm({ local: 'CLIENTE', dataRecebimento: '2026-10-01' }).valor.dataRecebimento).toBe('')
+    // Os valores do ambiente como digitados
+    expect(norm({ ambiente: { pressao: '92,7', temperaturaFinal: 81 } }).valor.ambiente).toMatchObject({
+      pressao: 92.7,
+      temperaturaFinal: 81,
+    })
   })
 })

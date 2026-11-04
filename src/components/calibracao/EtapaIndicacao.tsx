@@ -518,7 +518,6 @@ function ErroPonto({ r, metodo, histerese }: { r: ResultadoPonto; metodo: Metodo
   return <span className="pt-0.5">{sobe || desce || '—'}</span>
 }
 
-
 /** Escolha manual das peças de um ponto. */
 function PecasModal({
   ponto,

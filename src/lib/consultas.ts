@@ -247,6 +247,22 @@ export function duplicadoDoErro(e: unknown): { id: string; nome: string } | null
   return { id: e.dados.id, nome: typeof e.dados.nome === 'string' ? e.dados.nome : '' }
 }
 
+/**
+ * Balança já cadastrada no cliente com o mesmo nº de série, quando o servidor recusou com 409 (SERIE_REPETIDA):
+ * a existente, para a tela oferecer cadastrar assim mesmo (outra balança com o mesmo nº). O 409 de conflito de
+ * versão devolve `null`.
+ */
+export function serieRepetidaDoErro(e: unknown): { id: string; descricao: string; ativo: boolean; mensagem: string } | null {
+  if (!(e instanceof ErroApi) || e.status !== 409 || e.dados.codigo !== 'SERIE_REPETIDA') return null
+  if (typeof e.dados.id !== 'string') return null
+  return {
+    id: e.dados.id,
+    descricao: typeof e.dados.descricao === 'string' ? e.dados.descricao : '',
+    ativo: e.dados.ativo !== false,
+    mensagem: e.message,
+  }
+}
+
 // ---- Rótulos do cadastro -------------------------------------------------------
 
 export const ROTULO_TIPO_CLIENTE: Record<TipoCliente, string> = {

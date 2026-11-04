@@ -12,6 +12,8 @@ import {
   formatarNumeroCertificado,
   hojeLocalIso,
   nomeArquivoCertificado,
+  padroesDaCalibracao,
+  PENDENCIA_TECNICO_EXCLUIDO,
   pendenciasEmissao,
 } from '#shared/dominio.ts'
 import type {
@@ -46,9 +48,15 @@ const signatarioDe = (u: Usuario | undefined): Signatario => ({
   assinatura: u?.assinatura ?? '',
 })
 
-/** Padrões usados (versão atual do cadastro). */
-export function padroesDa(ctx: Contexto, k: Pick<CalibracaoInput, 'padroesIds'>): Padrao[] {
-  return k.padroesIds.map((id) => ctx.repo.obterPadrao(id)).filter((p): p is Padrao => !!p)
+/**
+ * Padrões usados, como valem para a calibração (`padroesDaCalibracao`): o cadastro na data da calibração (a versão
+ * de antes de uma recalibração posterior) e, na revisão, os congelados na emissão original.
+ */
+export function padroesDa(
+  ctx: Contexto,
+  k: Pick<CalibracaoInput, 'padroesIds' | 'dataCalibracao'> & { padroesCongelados?: Padrao[] },
+): Padrao[] {
+  return padroesDaCalibracao(k, (id) => ctx.repo.obterPadrao(id))
 }
 
 /** Sem POP registrado não há o que pôr no certificado (o código e a revisão saem em toda página). */
@@ -67,6 +75,8 @@ export function pendenciasDa(ctx: Contexto, k: Calibracao): string[] {
     temPesos: padroes.some((x) => x.tipo === 'PESOS'),
     classe: balanca.classe,
   })
+  // Técnico com a conta excluída (desativada continua valendo): o certificado sairia sem quem executou
+  if (k.tecnicoId && !ctx.usuarios.obter(k.tecnicoId)) p.push(PENDENCIA_TECNICO_EXCLUIDO)
   if (!ctx.repo.popVigente()) p.push(PENDENCIA_POP)
   try {
     const { resultado, comoEncontrado } = calcularCalibracao(k, balanca, padroes)
@@ -101,7 +111,7 @@ export function montarEmissao(
     balanca,
     // O arquivo do certificado de cada padrão fica congelado junto (null = não havia arquivo anexado); os
     // arquivos dos certificados anteriores do padrão, não
-    padroes: padroesDa(ctx, k).map(({ certificadosAnteriores: _anteriores, ...p }) => ({
+    padroes: padroesDa(ctx, k).map(({ certificadosAnteriores: _anteriores, versoesAnteriores: _versoes, ...p }) => ({
       ...p,
       certificadoArquivo: p.certificadoArquivo ?? null,
     })),

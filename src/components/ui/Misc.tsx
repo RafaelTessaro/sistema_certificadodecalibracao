@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent as TeclaReact, t
 import { createPortal } from 'react-dom'
 import { cn } from '../../lib/cn'
 import { iniciais } from '../../lib/format'
+import { proximoIndice, rolagemMoveAncora } from './menuTeclado'
 
 export function PageHeader({
   titulo,
@@ -252,15 +253,42 @@ export function AnimatedNumber({ valor, formatar }: { valor: number; formatar: (
   return <motion.span>{texto}</motion.span>
 }
 
-/** Menu suspenso (renderizado em portal para não ser cortado por tabelas com rolagem). */
+/** Item do menu suspenso. */
+export interface ItemMenu {
+  label: string
+  icone?: ReactNode
+  aoClicar: () => void
+  perigo?: boolean
+  /** Ação proibida: aparece desabilitada, com o motivo logo abaixo do nome (e ao passar o mouse). */
+  motivo?: string
+}
+
+/** O que o gatilho do menu recebe: espalhe no botão (`<Button {...props}>`), para o clique, o teclado e o ARIA. */
+export interface PropsGatilhoMenu {
+  id: string
+  onClick: () => void
+  onKeyDown: (e: TeclaReact<HTMLElement>) => void
+  'aria-haspopup': 'menu'
+  'aria-expanded': boolean
+  'aria-controls'?: string
+}
+
+/**
+ * Menu suspenso (renderizado em portal para não ser cortado por tabelas com rolagem). Pelo teclado (WAI-ARIA, menu
+ * button): Enter, Espaço ou ↓ no gatilho abrem com o foco no 1º item (↑, no último); ↑ ↓ Home End andam entre os
+ * itens, pulando os desabilitados; Esc fecha e devolve o foco ao gatilho; Tab fecha e segue a partir do gatilho.
+ */
 export function Menu({
   gatilho,
   itens,
   alinhar = 'right',
+  classePainel,
 }: {
-  gatilho: (abrir: () => void, aberto: boolean) => ReactNode
-  itens: Array<{ label: string; icone?: ReactNode; aoClicar: () => void; perigo?: boolean } | 'sep'>
+  gatilho: (props: PropsGatilhoMenu, aberto: boolean) => ReactNode
+  itens: Array<ItemMenu | 'sep'>
   alinhar?: 'left' | 'right'
+  /** Classes a mais do painel (ex.: a largura). */
+  classePainel?: string
 }) {
   const [pos, setPos] = useState<{
     top: number
@@ -272,14 +300,32 @@ export function Menu({
   } | null>(null)
   const ancora = useRef<HTMLDivElement>(null)
   const painel = useRef<HTMLDivElement>(null)
+  /** O item que recebe o foco ao abrir: o primeiro (clique, Enter, ↓) ou o último (↑). */
+  const focoAoAbrir = useRef<'primeiro' | 'ultimo'>('primeiro')
+  const abertoEm = useRef(0)
+  const idGatilho = useId()
+  const idPainel = useId()
   const aberto = pos !== null
 
-  const abrir = () => {
-    if (aberto) return setPos(null)
+  const botoes = () => [...(painel.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])]
+  const focarItem = (qual: 'primeiro' | 'ultimo') => {
+    const lista = botoes()
+    const habilitados = lista.filter((b) => !b.disabled)
+    const alvo = qual === 'ultimo' ? habilitados.at(-1) : habilitados[0]
+    ;(alvo ?? painel.current)?.focus({ preventScroll: true })
+  }
+  const fechar = (devolverFoco: boolean) => {
+    setPos(null)
+    if (devolverFoco) document.getElementById(idGatilho)?.focus({ preventScroll: true })
+  }
+  const abrir = (foco: 'primeiro' | 'ultimo') => {
+    if (aberto) return focarItem(foco)
     const r = ancora.current?.getBoundingClientRect()
     if (!r) return
-    // Cada item tem ~38 px e cada separador ~9 px, mais o respiro do painel
-    const altura = itens.reduce((s, it) => s + (it === 'sep' ? 9 : 38), 10)
+    focoAoAbrir.current = foco
+    abertoEm.current = Date.now()
+    // Cada item tem ~38 px (com o motivo, ~54) e cada separador ~9 px, mais o respiro do painel
+    const altura = itens.reduce((s, it) => s + (it === 'sep' ? 9 : it.motivo ? 54 : 38), 10)
     const abaixo = window.innerHeight - r.bottom - 12
     const acima = r.top - 12
     const paraCima = altura > abaixo && acima > abaixo
@@ -291,82 +337,161 @@ export function Menu({
     })
   }
 
+  // Aberto: o foco vai para o item (sem rolar a página, que fecharia o menu)
+  useEffect(() => {
+    if (aberto) focarItem(focoAoAbrir.current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aberto])
+
   useEffect(() => {
     if (!aberto) return
-    const fora = (e: MouseEvent) => {
-      const alvo = e.target as Node
-      if (!ancora.current?.contains(alvo) && !painel.current?.contains(alvo)) setPos(null)
-    }
-    const fechar = () => setPos(null)
-    // Rolar a página fecha o menu (ele não acompanha); rolar o próprio menu, não
+    const dentro = (alvo: EventTarget | null) =>
+      alvo instanceof Node && (!!ancora.current?.contains(alvo) || !!painel.current?.contains(alvo))
+    const fora = (e: MouseEvent) => !dentro(e.target) && setPos(null)
+    // O foco saiu do menu e do gatilho (outra janela, um atalho): fecha
+    const focoFora = (e: FocusEvent) => !dentro(e.target) && setPos(null)
+    const redimensionou = () => setPos(null)
+    // O painel fica fixo na tela: fecha quando o gatilho se move (rolou a página ou um elemento que o contém). A
+    // rolagem logo depois de abrir (o foco no item, num navegador sem preventScroll) não conta
     const rolou = (e: Event) => {
-      if (!(e.target instanceof Node && painel.current?.contains(e.target))) setPos(null)
+      if (Date.now() - abertoEm.current > 150 && rolagemMoveAncora(e.target, ancora.current)) setPos(null)
     }
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setPos(null)
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      setPos(null)
+      if (dentro(document.activeElement) || document.activeElement === document.body)
+        document.getElementById(idGatilho)?.focus({ preventScroll: true })
+    }
     document.addEventListener('mousedown', fora)
+    document.addEventListener('focusin', focoFora)
     document.addEventListener('keydown', esc)
-    window.addEventListener('resize', fechar)
+    window.addEventListener('resize', redimensionou)
     document.addEventListener('scroll', rolou, true)
     return () => {
       document.removeEventListener('mousedown', fora)
+      document.removeEventListener('focusin', focoFora)
       document.removeEventListener('keydown', esc)
-      window.removeEventListener('resize', fechar)
+      window.removeEventListener('resize', redimensionou)
       document.removeEventListener('scroll', rolou, true)
     }
-  }, [aberto])
+  }, [aberto, idGatilho])
+
+  const teclaNoPainel = (e: TeclaReact<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      return fechar(true)
+    }
+    // Tab: o foco volta ao gatilho e o navegador segue dali (sem preventDefault), na ordem da página
+    if (e.key === 'Tab') return fechar(true)
+    const lista = botoes()
+    const i = proximoIndice(
+      lista.indexOf(document.activeElement as HTMLButtonElement),
+      e.key,
+      lista.map((b) => b.disabled),
+    )
+    if (i === null) return
+    e.preventDefault()
+    if (i >= 0) lista[i].focus({ preventScroll: true })
+  }
+
+  const propsGatilho: PropsGatilhoMenu = {
+    id: idGatilho,
+    onClick: () => (aberto ? fechar(false) : abrir('primeiro')),
+    // ↓ e ↑ abrem (e não rolam a página, o que fecharia o menu)
+    onKeyDown: (e) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+      e.preventDefault()
+      abrir(e.key === 'ArrowUp' ? 'ultimo' : 'primeiro')
+    },
+    'aria-haspopup': 'menu',
+    'aria-expanded': aberto,
+    ...(aberto ? { 'aria-controls': idPainel } : {}),
+  }
 
   return (
     <div ref={ancora} className="relative inline-flex">
-      {gatilho(abrir, aberto)}
-      {createPortal(
-        <AnimatePresence>
-          {pos && (
-            <motion.div
-              ref={painel}
-              initial={{ opacity: 0, y: pos.paraCima ? 4 : -4, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.1 } }}
-              transition={{ duration: 0.14 }}
-              style={{
-                position: 'fixed',
-                top: pos.top,
-                left: pos.left,
-                right: pos.right,
-                maxHeight: pos.maxAltura,
-                translate: pos.paraCima ? '0 -100%' : undefined,
-              }}
-              className={cn(
-                'z-[70] min-w-[190px] overflow-y-auto overscroll-contain rounded-xl border border-line bg-surface p-1 shadow-float',
-                pos.paraCima ? 'origin-bottom' : 'origin-top',
-              )}
-            >
-              {itens.map((it, i) =>
-                it === 'sep' ? (
-                  <div key={i} className="my-1 h-px bg-line" />
-                ) : (
-                  <button
-                    type="button"
-                    key={it.label}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setPos(null)
-                      it.aoClicar()
-                    }}
-                    className={cn(
-                      'flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium transition-colors',
-                      it.perigo ? 'text-danger hover:bg-danger-soft' : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
-                    )}
-                  >
-                    {it.icone}
-                    {it.label}
-                  </button>
-                ),
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>,
-        document.body,
-      )}
+      {gatilho(propsGatilho, aberto)}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <AnimatePresence>
+            {pos && (
+              <motion.div
+                ref={painel}
+                id={idPainel}
+                role="menu"
+                aria-orientation="vertical"
+                aria-labelledby={idGatilho}
+                tabIndex={-1}
+                onKeyDown={teclaNoPainel}
+                initial={{ opacity: 0, y: pos.paraCima ? 4 : -4, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.1 } }}
+                transition={{ duration: 0.14 }}
+                style={{
+                  position: 'fixed',
+                  top: pos.top,
+                  left: pos.left,
+                  right: pos.right,
+                  maxHeight: pos.maxAltura,
+                  translate: pos.paraCima ? '0 -100%' : undefined,
+                }}
+                className={cn(
+                  'z-[70] min-w-[190px] overflow-y-auto overscroll-contain rounded-xl border border-line bg-surface p-1 shadow-float outline-none',
+                  pos.paraCima ? 'origin-bottom' : 'origin-top',
+                  classePainel,
+                )}
+              >
+                {itens.map((it, i) =>
+                  it === 'sep' ? (
+                    <div key={i} role="separator" className="my-1 h-px bg-line" />
+                  ) : (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      tabIndex={-1}
+                      key={it.label}
+                      disabled={!!it.motivo}
+                      title={it.motivo}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (it.motivo) return
+                        // O foco volta ao gatilho antes da ação (uma janela que ela abra o devolve a ele ao fechar)
+                        fechar(true)
+                        it.aoClicar()
+                      }}
+                      className={cn(
+                        'flex w-full gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium transition-colors outline-none',
+                        it.motivo ? 'items-start' : 'items-center',
+                        it.motivo
+                          ? 'cursor-not-allowed text-muted'
+                          : it.perigo
+                            ? 'cursor-pointer text-danger hover:bg-danger-soft focus-visible:bg-danger-soft'
+                            : 'cursor-pointer text-ink-2 hover:bg-surface-2 hover:text-ink focus-visible:bg-surface-2 focus-visible:text-ink',
+                      )}
+                    >
+                      {it.motivo ? (
+                        <>
+                          <span className="mt-px flex shrink-0 opacity-60">{it.icone}</span>
+                          <span className="min-w-0">
+                            <span className="block">{it.label}</span>
+                            <span className="mt-0.5 block text-[11.5px] leading-snug font-normal">{it.motivo}</span>
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          {it.icone}
+                          {it.label}
+                        </>
+                      )}
+                    </button>
+                  ),
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body,
+        )}
     </div>
   )
 }

@@ -17,6 +17,7 @@ import { Card, CardHeader } from '../ui/Card'
 import { Field, Input, Select, Textarea } from '../ui/Form'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
+import { diaSeguinte } from './util'
 
 export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
   const conf = f.conformidade
@@ -109,6 +110,8 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
               <Input
                 id="k-prox"
                 type="date"
+                min={diaSeguinte(f.dataCalibracao) || undefined}
+                max="2100-12-31"
                 value={f.proximaCalibracao}
                 onChange={(e) => alterar((s) => ({ ...s, proximaCalibracao: e.target.value }))}
               />

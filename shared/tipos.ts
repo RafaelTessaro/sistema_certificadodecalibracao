@@ -238,7 +238,32 @@ export interface Padrao {
    * foi trocado antes da nova calibração). Do mais recente para o mais antigo. Ausente = nenhum.
    */
   certificadosAnteriores?: Array<{ certificado: string; arquivo: ArquivoAnexo }>
+  /**
+   * Os dados de cada certificado anterior do padrão (o último de cada nº), guardados pelo servidor quando o nº muda
+   * (o padrão foi calibrado de novo): o rascunho de uma calibração feita antes da recalibração continua com o
+   * certificado e as correções que valiam no dia (`padraoNaData`). Do mais recente para o mais antigo. Ausente =
+   * nenhum (as recalibrações registradas antes desta versão não guardaram).
+   */
+  versoesAnteriores?: VersaoPadrao[]
 }
+
+/** O que muda no cadastro do padrão a cada calibração dele (o certificado, as datas e os valores das peças). */
+export type VersaoPadrao = Pick<
+  Padrao,
+  | 'certificado'
+  | 'laboratorio'
+  | 'acreditacao'
+  | 'dataCalibracao'
+  | 'validade'
+  | 'classe'
+  | 'material'
+  | 'densidade'
+  | 'incertezaDensidade'
+  | 'uso'
+  | 'pesos'
+  | 'incertezaTexto'
+  | 'certificadoArquivo'
+>
 
 export type PadraoInput = Omit<Padrao, 'id' | 'versao' | 'criadoEm' | 'atualizadoEm'>
 
@@ -536,6 +561,12 @@ export interface Calibracao {
    * servidor, ao criar a revisão; ausente = não.
    */
   calculoLegado?: boolean
+  /**
+   * Revisão: os padrões como foram congelados na emissão do certificado que ela substitui (o certificado e as
+   * correções da época, mesmo que o padrão tenha sido calibrado de novo ou desativado depois; ver
+   * `padroesDaCalibracao` em dominio.ts). Quem define é o servidor, ao criar a revisão; ausente = não é revisão.
+   */
+  padroesCongelados?: Padrao[]
   /** Cancelamento: motivo, quem e quando. */
   cancelamento: { motivo: string; por: string; em: string } | null
   /** Ao emitir: dados congelados (o certificado sai sempre igual) e o código de autenticidade. */

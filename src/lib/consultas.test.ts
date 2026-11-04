@@ -7,6 +7,7 @@ import {
   camposDoCnpj,
   camposMantidos,
   duplicadoDoErro,
+  serieRepetidaDoErro,
   erroDeConsulta,
   mesclarCep,
   mesclarConsulta,
@@ -214,6 +215,24 @@ describe('CNPJ/CPF duplicado', () => {
     expect(duplicadoDoErro(new ErroApi(409, 'Conflito', { atual: { id: 'a', versao: 2 } }))).toBeNull()
     expect(duplicadoDoErro(new ErroApi(400, 'x', { codigo: 'DOCUMENTO_REPETIDO', id: 'a' }))).toBeNull()
     expect(duplicadoDoErro(new Error('x'))).toBeNull()
+  })
+
+  it('balança com o nº de série de outra do cliente: a existente, para confirmar se é outra balança', () => {
+    const erro = new ErroApi(409, 'Já existe uma balança com este nº de série neste cliente: Toledo 9094, nº TL-2231.', {
+      codigo: 'SERIE_REPETIDA',
+      id: 'b1',
+      descricao: 'Toledo 9094, nº TL-2231',
+      ativo: false,
+    })
+    expect(serieRepetidaDoErro(erro)).toEqual({
+      id: 'b1',
+      descricao: 'Toledo 9094, nº TL-2231',
+      ativo: false,
+      mensagem: 'Já existe uma balança com este nº de série neste cliente: Toledo 9094, nº TL-2231.',
+    })
+    expect(serieRepetidaDoErro(new ErroApi(409, 'Conflito', { atual: { id: 'b1', versao: 2 } }))).toBeNull()
+    expect(serieRepetidaDoErro(new ErroApi(409, 'x', { codigo: 'DOCUMENTO_REPETIDO', id: 'a' }))).toBeNull()
+    expect(serieRepetidaDoErro(new Error('x'))).toBeNull()
   })
 })
 

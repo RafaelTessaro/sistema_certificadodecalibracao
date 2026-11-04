@@ -40,19 +40,21 @@ describe('normalização dos campos novos', () => {
     })
   })
 
-  it('ambiente: ΔT pesos − ar medido (−30 a 30 °C) e a aclimatação (ΔT0 de −40 a 40 °C, 0 a 2 880 min)', () => {
+  it('ambiente: ΔT pesos − ar medido (−30 a 30 °C) e a aclimatação (ΔT0 de −40 a 40 °C, 0 a 2 880 min); fora, como digitado', () => {
     const amb = (ambiente: object) =>
       normalizarCalibracao({ ...calibracaoVazia(), clienteId: 'c', balancaId: 'b', ambiente }).valor.ambiente
     expect(AMBIENTE_VAZIO).toMatchObject({ deltaTPesos: null, aclimatacao: null })
     expect(amb({ deltaTPesos: '0,4' }).deltaTPesos).toBe(0.4)
     expect(amb({ deltaTPesos: -1.2 }).deltaTPesos).toBe(-1.2)
-    expect(amb({ deltaTPesos: 31 }).deltaTPesos).toBeNull()
+    // Fora da faixa: gravado como digitado (a pendência diz qual conferir; o cálculo o trata como não registrado)
+    expect(amb({ deltaTPesos: 31 }).deltaTPesos).toBe(31)
     expect(amb({ deltaTPesos: 0 }).deltaTPesos).toBe(0)
     expect(amb({ aclimatacao: { deltaT0: -6, minutos: 90 } }).aclimatacao).toEqual({ deltaT0: -6, minutos: 90 })
     expect(amb({ aclimatacao: { deltaT0: '5', minutos: '0' } }).aclimatacao).toEqual({ deltaT0: 5, minutos: 0 })
     expect(amb({ aclimatacao: { deltaT0: 5 } }).aclimatacao).toBeNull()
-    expect(amb({ aclimatacao: { deltaT0: 50, minutos: 10 } }).aclimatacao).toBeNull()
-    expect(amb({ aclimatacao: { deltaT0: 5, minutos: 3000 } }).aclimatacao).toBeNull()
+    expect(amb({ aclimatacao: { deltaT0: 50, minutos: 10 } }).aclimatacao).toEqual({ deltaT0: 50, minutos: 10 })
+    expect(amb({ aclimatacao: { deltaT0: 5, minutos: 3000 } }).aclimatacao).toEqual({ deltaT0: 5, minutos: 3000 })
+    expect(amb({ aclimatacao: { deltaT0: 'x', minutos: 10 } }).aclimatacao).toBeNull()
     // Registro antigo
     expect(amb({ temperaturaInicial: 20 })).toMatchObject({ temperaturaInicial: 20, deltaTPesos: null, aclimatacao: null })
   })

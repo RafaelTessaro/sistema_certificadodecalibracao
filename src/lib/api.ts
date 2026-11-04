@@ -255,9 +255,15 @@ export const api = {
   balancas: (f: { clienteId?: string; busca?: string; inativas?: boolean } = {}) =>
     requisitar<{ balancas: BalancaResumo[] }>('GET', `/api/balancas${consulta({ ...f, inativas: f.inativas ? 1 : '' })}`),
   balanca: (id: string) => requisitar<DetalheBalanca>('GET', `/api/balancas/${enc(id)}`),
-  criarBalanca: (dados: BalancaInput) => requisitar<{ balanca: Balanca }>('POST', '/api/balancas', dados),
-  atualizarBalanca: (id: string, dados: BalancaInput, versao?: number) =>
-    requisitar<{ balanca: Balanca }>('PUT', `/api/balancas/${enc(id)}`, { ...dados, versao }),
+  /** `confirmarSerie`: cadastrar mesmo com o nº de série de outra balança do cliente (o servidor recusa sem ele). */
+  criarBalanca: (dados: BalancaInput, confirmarSerie = false) =>
+    requisitar<{ balanca: Balanca }>('POST', '/api/balancas', confirmarSerie ? { ...dados, confirmarSerie } : dados),
+  atualizarBalanca: (id: string, dados: BalancaInput, versao?: number, confirmarSerie = false) =>
+    requisitar<{ balanca: Balanca }>('PUT', `/api/balancas/${enc(id)}`, {
+      ...dados,
+      versao,
+      ...(confirmarSerie ? { confirmarSerie } : {}),
+    }),
   excluirBalanca: (id: string) => requisitar<void>('DELETE', `/api/balancas/${enc(id)}`),
 
   // ---- Padrões ----

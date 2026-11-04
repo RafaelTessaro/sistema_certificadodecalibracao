@@ -4,8 +4,11 @@ import { Link } from 'react-router-dom'
 import {
   deltaTMaximo,
   deltaTPesosMaximo,
+  type FaixaAmbiente,
+  foraDaFaixaAmbiente,
   formatarDataBr,
   massaLegivel,
+  pendenciasAmbiente,
   pressaoObrigatoria,
   resumoPesos,
   situacaoValidade,
@@ -17,12 +20,13 @@ import type { CondicoesAmbientais, Padrao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { hojeISO } from '../../lib/format'
 import { ValidadePadraoBadge } from '../Selos'
+import { Badge } from '../ui/Badge'
 import { Card, CardHeader } from '../ui/Card'
 import { Field } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
-import { textoDeltaT } from './util'
+import { calibradoDepois, cartoesDosPadroes, textoDeltaT } from './util'
 
 export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanca, calc }: ContextoEtapa) {
   const escolhidos = new Set(f.padroesIds)
@@ -45,8 +49,13 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
   // Convecção (diferença de temperatura pesos − ar): sempre na classe I, e quando a opção do cálculo pede
   const comConveccao = balanca.classe === 'I' || f.opcoes.conveccao === 'CALCULAR'
   const densidadeAr = calc?.resultado.ar ?? null
-  const pesos = padroes.filter((p) => p.tipo === 'PESOS')
-  const instrumentos = padroes.filter((p) => p.tipo !== 'PESOS')
+  // Os escolhidos como valem para esta calibração (o certificado do dia; na revisão, o da emissão original, mesmo
+  // desativado depois), e os demais como estão no cadastro
+  const lista = cartoesDosPadroes(padroes, selecionados)
+  const pesos = lista.filter((p) => p.tipo === 'PESOS')
+  const instrumentos = lista.filter((p) => p.tipo !== 'PESOS')
+  // Valor fora da faixa (81 °C, 92,7 hPa digitado em kPa): fica como foi digitado, em vermelho, e impede a emissão
+  const foraDaFaixa = pendenciasAmbiente(amb)
   // POP 6.2: o termo-higrômetro em todas as calibrações (a temperatura e a umidade saem no certificado com ele)
   const semTermoHigrometro =
     (amb.temperaturaInicial !== null || amb.temperaturaFinal !== null) && !selecionados.some((p) => p.tipo === 'TERMOHIGROMETRO')
@@ -137,6 +146,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
                     id="amb-ti"
                     valor={amb.temperaturaInicial}
                     aoMudar={(v) => setAmb('temperaturaInicial', v)}
+                    tom={tomFaixa(amb.temperaturaInicial, 'temperatura')}
                     unidade="°C"
                     grade={{ grupo: 'amb', lin: 0, col: 0 }}
                   />
@@ -146,6 +156,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
                     id="amb-tf"
                     valor={amb.temperaturaFinal}
                     aoMudar={(v) => setAmb('temperaturaFinal', v)}
+                    tom={tomFaixa(amb.temperaturaFinal, 'temperatura')}
                     unidade="°C"
                     grade={{ grupo: 'amb', lin: 1, col: 0 }}
                   />
@@ -157,6 +168,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
                     id="amb-ui"
                     valor={amb.umidadeInicial}
                     aoMudar={(v) => setAmb('umidadeInicial', v)}
+                    tom={tomFaixa(amb.umidadeInicial, 'umidade')}
                     unidade="%"
                     grade={{ grupo: 'amb', lin: 0, col: 1 }}
                   />
@@ -166,6 +178,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
                     id="amb-uf"
                     valor={amb.umidadeFinal}
                     aoMudar={(v) => setAmb('umidadeFinal', v)}
+                    tom={tomFaixa(amb.umidadeFinal, 'umidade')}
                     unidade="%"
                     grade={{ grupo: 'amb', lin: 1, col: 1 }}
                   />
@@ -183,6 +196,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
                     }
                     valor={amb.pressao}
                     aoMudar={(v) => setAmb('pressao', v)}
+                    tom={tomFaixa(amb.pressao, 'pressao')}
                     unidade="hPa"
                     grade={{ grupo: 'amb', lin: 0, col: 2 }}
                   />
@@ -196,6 +210,16 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
               <span className="tnum font-medium text-ink-2">{formatarNumero(densidadeAr.densidade, 3)} kg/m³</span> (cg-18,
               A1.1-1)
             </p>
+          )}
+          {foraDaFaixa.length > 0 && (
+            <ul className="flex flex-col gap-2">
+              {foraDaFaixa.map((m) => (
+                <li key={m} className="flex items-start gap-2 rounded-xl bg-danger-soft px-3.5 py-2.5 text-[13px] text-danger">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                  {m}
+                </li>
+              ))}
+            </ul>
           )}
           {semTermoHigrometro && (
             <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
@@ -305,7 +329,7 @@ function GrupoConveccao({
               valor={medido}
               aoMudar={(v) => aoMudar((a) => ({ ...a, deltaTPesos: v, aclimatacao: null }))}
               unidade="°C"
-              tom={acimaMedido ? 'atencao' : 'normal'}
+              tom={foraDaFaixaAmbiente(medido, 'deltaTPesos') ? 'erro' : acimaMedido ? 'atencao' : 'normal'}
             />
           </Field>
           {acimaMedido && (
@@ -319,10 +343,22 @@ function GrupoConveccao({
         <div className="flex flex-col gap-3">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Diferença na chegada" htmlFor="amb-acl-dt">
-              <CampoNumero id="amb-acl-dt" valor={acl.deltaT0} aoMudar={(v) => mudarAcl('deltaT0', v)} unidade="°C" />
+              <CampoNumero
+                id="amb-acl-dt"
+                valor={acl.deltaT0}
+                aoMudar={(v) => mudarAcl('deltaT0', v)}
+                unidade="°C"
+                tom={tomFaixa(acl.deltaT0, 'deltaT0')}
+              />
             </Field>
             <Field label="Pesos no local até o 1º ensaio" htmlFor="amb-acl-min">
-              <CampoNumero id="amb-acl-min" valor={acl.minutos} aoMudar={(v) => mudarAcl('minutos', v)} unidade="min" />
+              <CampoNumero
+                id="amb-acl-min"
+                valor={acl.minutos}
+                aoMudar={(v) => mudarAcl('minutos', v)}
+                unidade="min"
+                tom={tomFaixa(acl.minutos, 'minutos')}
+              />
             </Field>
           </div>
           <p className="text-xs text-muted">
@@ -345,6 +381,9 @@ function GrupoConveccao({
     </fieldset>
   )
 }
+
+/** Campo do ambiente fora da faixa aceita (`FAIXAS_AMBIENTE`): em vermelho. */
+const tomFaixa = (v: number | null | undefined, faixa: FaixaAmbiente) => (foraDaFaixaAmbiente(v, faixa) ? 'erro' : 'normal')
 
 /** Uma casa decimal, com vírgula (ex.: 0,7). */
 const numeroCurto = (v: number) => String(Math.round(v * 10) / 10).replace('.', ',')
@@ -397,6 +436,7 @@ function CartaoPadrao({
 }) {
   const situacao = situacaoValidade(p.validade, dataRef, dias)
   const vencido = situacao === 'VENCIDO' || situacao === 'SEM_DATA'
+  const depois = calibradoDepois(p, dataRef)
   const Icone = p.tipo === 'PESOS' ? Weight : p.tipo === 'TERMOHIGROMETRO' ? Droplets : Gauge
   return (
     <button
@@ -424,7 +464,7 @@ function CartaoPadrao({
           {p.classe && (
             <span className="rounded-md bg-surface-3 px-1.5 py-0.5 text-[11px] font-semibold text-ink-2">{p.classe}</span>
           )}
-          <ValidadePadraoBadge validade={p.validade} diasAviso={dias} />
+          {p.ativo ? <ValidadePadraoBadge validade={p.validade} diasAviso={dias} /> : <Badge tom="neutral">Desativado</Badge>}
         </span>
         <span className="mt-0.5 block truncate text-[13px] text-ink-2" title={p.descricao || undefined}>
           {p.descricao || TIPOS_PADRAO[p.tipo]}
@@ -437,10 +477,22 @@ function CartaoPadrao({
         <span className="mt-1 block text-xs text-muted">
           Cert. {p.certificado || '—'} · próxima calibração {p.validade ? formatarDataBr(p.validade) : 'sem data'}
         </span>
+        {marcado && !p.ativo && (
+          <span className="mt-2 flex items-start gap-1.5 text-xs font-medium text-danger">
+            <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+            Desativado: impede a emissão. Desmarque-o aqui ou reative-o em Padrões
+          </span>
+        )}
         {marcado && vencido && (
           <span className="mt-2 flex items-center gap-1.5 text-xs font-medium text-danger">
             <TriangleAlert className="h-3.5 w-3.5" />
             {situacao === 'SEM_DATA' ? 'Sem a data da próxima calibração' : 'Vencido na data da calibração'}: impede a emissão
+          </span>
+        )}
+        {marcado && depois && (
+          <span className="mt-2 flex items-start gap-1.5 text-xs font-medium text-danger">
+            <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+            Calibrado em {formatarDataBr(p.dataCalibracao)}, depois desta calibração: impede a emissão
           </span>
         )}
       </span>

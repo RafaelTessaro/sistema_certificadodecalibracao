@@ -10,6 +10,7 @@ import { Card, CardHeader } from '../ui/Card'
 import { Field, Input, Select, Textarea } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
 import type { ContextoEtapa } from './contexto'
+import { proximaAcompanhando } from './util'
 
 export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaCampo, vincularFolha, novaFolha }: ContextoEtapa) {
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => alterar((s) => ({ ...s, [k]: v }))
@@ -17,6 +18,8 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
     alterar((s) => ({
       ...s,
       local,
+      // O recebimento do item só existe no laboratório (nas instalações do cliente, não sai no certificado)
+      dataRecebimento: local === 'LABORATORIO' ? s.dataRecebimento : '',
       // Sugere o endereço certo; o que foi digitado à mão para outro endereço continua
       localEndereco:
         !s.localEndereco || s.localEndereco === enderecoCliente(cliente) || s.localEndereco === enderecoEmpresa(config.empresa)
@@ -68,14 +71,31 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
             />
           </Field>
           <Field label="Data da calibração" htmlFor="k-data" className="sm:col-span-2">
-            <Input id="k-data" type="date" value={f.dataCalibracao} onChange={(e) => set('dataCalibracao', e.target.value)} />
+            <Input
+              id="k-data"
+              type="date"
+              value={f.dataCalibracao}
+              onChange={(e) => {
+                const data = e.target.value
+                // A próxima calculada pela data (o padrão da empresa, 6, 12 ou 24 meses) acompanha a data nova
+                alterar((s) => ({
+                  ...s,
+                  dataCalibracao: data,
+                  proximaCalibracao: proximaAcompanhando(s.proximaCalibracao, s.dataCalibracao, data, config.mesesProximaPadrao),
+                }))
+              }}
+            />
           </Field>
           {/* Só o nome na lista (cabe na coluna); o cargo de quem foi escolhido aparece embaixo */}
           <Field
             label="Técnico que executou"
             htmlFor="k-tec"
             className="sm:col-span-2"
-            hint={equipe.find((u) => u.id === f.tecnicoId)?.cargo || undefined}
+            hint={
+              f.tecnicoId && !equipe.some((u) => u.id === f.tecnicoId)
+                ? 'Quem executou não está na equipe ativa (conta desativada ou excluída). Se foi excluída, escolha de novo.'
+                : equipe.find((u) => u.id === f.tecnicoId)?.cargo || undefined
+            }
           >
             <Select id="k-tec" value={f.tecnicoId} onChange={(e) => set('tecnicoId', e.target.value)}>
               <option value="">Escolha…</option>
@@ -119,6 +139,7 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
               <Input
                 id="k-receb"
                 type="date"
+                max={f.dataCalibracao || undefined}
                 value={f.dataRecebimento}
                 onChange={(e) => set('dataRecebimento', e.target.value)}
               />

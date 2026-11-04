@@ -22,12 +22,10 @@ export function MenuUsuario({ recolhido, compacto }: { recolhido?: boolean; comp
     <div className={soIniciais ? 'flex' : 'flex flex-col'}>
       <Menu
         alinhar={compacto ? 'right' : 'left'}
-        gatilho={(abrir, aberto) => (
+        gatilho={(props, aberto) => (
           <button
             type="button"
-            onClick={abrir}
-            aria-haspopup="menu"
-            aria-expanded={aberto}
+            {...props}
             aria-label={soIniciais ? `${descricao}. Abrir o menu do usuário` : undefined}
             title={soIniciais ? descricao : undefined}
             className={cn(

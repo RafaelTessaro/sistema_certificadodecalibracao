@@ -81,10 +81,9 @@ export function comPecasDosPadroes<T extends Pick<CalibracaoInput, 'indicacao'>>
  * antes passa para o método da classe, POP 7.7) e as leituras com a divisão normal (o modo de serviço, POP 7.6, é
  * combinado com o cliente a cada visita: copiado, daria uma incerteza menor sem ninguém ver).
  */
-export function planoConformeAoPop<T extends Pick<CalibracaoInput, 'excentricidade' | 'opcoes'> & Partial<Pick<CalibracaoInput, 'indicacao'>>>(
-  k: T,
-  classe: ClasseExatidao | null | undefined,
-): T {
+export function planoConformeAoPop<
+  T extends Pick<CalibracaoInput, 'excentricidade' | 'opcoes'> & Partial<Pick<CalibracaoInput, 'indicacao'>>,
+>(k: T, classe: ClasseExatidao | null | undefined): T {
   return {
     ...k,
     excentricidade: { ...k.excentricidade, metodo: metodoExcentricidadePadrao(classe) },

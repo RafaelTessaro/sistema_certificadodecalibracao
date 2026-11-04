@@ -361,8 +361,8 @@ export function Balancas() {
                   </Td>
                   <Td onClick={(e) => e.stopPropagation()}>
                     <Menu
-                      gatilho={(abrir) => (
-                        <Button variante="ghost" tamanho="icon-sm" onClick={abrir} aria-label={`Ações de ${nomeBalanca(b)}`}>
+                      gatilho={(props) => (
+                        <Button variante="ghost" tamanho="icon-sm" {...props} aria-label={`Ações de ${nomeBalanca(b)}`}>
                           <Ellipsis className="h-4 w-4" />
                         </Button>
                       )}

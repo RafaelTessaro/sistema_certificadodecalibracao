@@ -4,6 +4,7 @@ import { METODOS_EXCENTRICIDADE, metodoExcentricidadeForaDoPop, metodoExcentrici
 import {
   cargaExcentricidade,
   formatarNumero,
+  leituraImplausivel,
   posicoesExcentricidade,
   REGRA_CARGA_EXCENTRICIDADE,
 } from '#shared/metrologia/index.ts'
@@ -239,6 +240,12 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                                 set((x) => ({ ...x, posicoes: x.posicoes.map((y, j) => (j === i ? { ...y, leitura: v } : y)) }))
                               }
                               grade={{ grupo: 'ecc', lin: i, col: 1 }}
+                              // Fora do esperado com a carga (métodos 1 e 3): a mesma regra da pendência do cálculo
+                              tom={
+                                (ecc.metodo === 1 || ecc.metodo === 3) && leituraImplausivel(p.leitura, ecc.carga, balanca)
+                                  ? 'erro'
+                                  : 'normal'
+                              }
                               unidade={u}
                             />
                           </td>

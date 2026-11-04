@@ -1,0 +1,302 @@
+// Editor da calibração: os padrões escolhidos que foram desativados depois continuam aparecendo (com o selo, para
+// poderem ser tirados), as pendências da tela batem com as do servidor e a montagem das cargas não apaga as peças
+// de um jogo que continua escolhido. E o rascunho recarregado quando a balança muda de unidade ou de cliente.
+
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { MemoryRouter } from 'react-router-dom'
+import { describe, expect, it } from 'vitest'
+import { PENDENCIA_POP } from '#shared/arquivos.ts'
+import {
+  BALANCA_VAZIA,
+  calibracaoVazia,
+  CLIENTE_VAZIO,
+  CONFIG_PADRAO,
+  PADRAO_VAZIO,
+  PENDENCIA_TECNICO_EXCLUIDO,
+  pendenciasEmissao,
+} from '#shared/dominio.ts'
+import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao, PontoIndicacao } from '#shared/tipos.ts'
+import type { DetalheCalibracao } from '../../lib/api'
+import { recomporCargas } from './cargas'
+import type { ContextoEtapa } from './contexto'
+import {
+  balancaMudaRascunho,
+  estadoDoServidor,
+  etapaCompleta,
+  padroesDoEditor,
+  pendenciasDaTela,
+  podeRecomporCargas,
+} from './editor'
+import { EtapaPadroes } from './EtapaPadroes'
+
+const padrao = (x: Partial<Padrao>): Padrao =>
+  ({
+    ...PADRAO_VAZIO,
+    id: x.identificacao ?? 'p',
+    versao: 1,
+    identificacao: 'JP-M1',
+    tipo: 'PESOS',
+    ativo: true,
+    certificado: 'LAB-1/2026',
+    laboratorio: 'Laboratório Exemplo',
+    acreditacao: 'CAL 0123',
+    dataCalibracao: '2026-01-10',
+    validade: '2099-01-01',
+    criadoEm: '',
+    atualizadoEm: '',
+    ...x,
+  }) as Padrao
+
+const jogo = padrao({
+  identificacao: 'JP-M1',
+  classe: 'M1',
+  pesos: [10_000, 10_000, 10_000, 5000, 2000, 2000, 1000, 500].map((g, i) => ({
+    id: `w${i}`,
+    marca: '',
+    nominal: g,
+    correcao: 0,
+    incerteza: 160,
+    k: 2,
+  })),
+})
+const e2 = padrao({ identificacao: 'E2-01', classe: 'E2', uso: 'CERTIFICADO' })
+const th = padrao({ identificacao: 'TH-01', tipo: 'TERMOHIGROMETRO' })
+const br = padrao({ identificacao: 'BR-01', tipo: 'BAROMETRO' })
+const td = padrao({ identificacao: 'TD-01', tipo: 'OUTRO' })
+const desativado = (p: Padrao) => ({ ...p, ativo: false })
+
+const rascunho = (padroes: Padrao[], mudar: (k: CalibracaoInput) => CalibracaoInput = (k) => k): CalibracaoInput =>
+  mudar({
+    ...calibracaoVazia(),
+    dataCalibracao: '2026-10-20',
+    tecnicoId: 't1',
+    localEndereco: 'Rua A, 1 – Rio Claro/SP',
+    padroesIds: padroes.map((p) => p.id),
+    ambiente: { temperaturaInicial: 22, temperaturaFinal: 22.4, umidadeInicial: 50, umidadeFinal: 51, pressao: null },
+  })
+
+const balanca = { ...BALANCA_VAZIA, id: 'b1', classe: 'III', faixas: [{ max: 30, e: 0.01, d: 0.01 }] } as Balanca
+
+describe('padrões do editor: o escolhido e desativado depois continua na calibração', () => {
+  it('os desativados escolhidos entram (selecionados e cartões); os desativados não escolhidos, não', () => {
+    const outro = desativado(padrao({ identificacao: 'JP-VELHO' }))
+    const cadastro = [jogo, desativado(th), outro]
+    const { selecionados, paraEscolher } = padroesDoEditor(cadastro, rascunho([jogo, th]))
+    expect(selecionados.map((p) => [p.identificacao, p.ativo])).toEqual([
+      ['JP-M1', true],
+      ['TH-01', false],
+    ])
+    expect(paraEscolher.map((p) => p.identificacao)).toEqual(['JP-M1', 'TH-01'])
+    // Tirado da calibração, some da lista (não é oferecido de novo)
+    const tirado = padroesDoEditor(cadastro, rascunho([jogo]))
+    expect(tirado.paraEscolher.map((p) => p.identificacao)).toEqual(['JP-M1'])
+  })
+
+  it('pendências da tela como as do servidor: "desativado", e nada de "Tudo pronto"', () => {
+    const f = rascunho([jogo, th])
+    const { selecionados } = padroesDoEditor([jogo, desativado(th)], f)
+    const p = pendenciasEmissao(f, { padroes: selecionados, hoje: '2026-10-28', temPesos: true, classe: 'III' })
+    expect(p).toEqual([
+      'O padrão TH-01 está desativado: tire-o desta calibração (etapa Padrões e ambiente) ou reative-o em Padrões.',
+    ])
+  })
+
+  it('classe I com o TD-01 desativado: "desativado", não a pendência errada "escolha o termômetro de duas entradas"', () => {
+    const f = rascunho([e2, th, br, td], (k) => ({
+      ...k,
+      ambiente: { ...k.ambiente, pressao: 941.5, deltaTPesos: 0.3 },
+      opcoes: { ...k.opcoes, empuxo: 'MEDIDO', conveccao: 'CALCULAR' },
+    }))
+    const { selecionados } = padroesDoEditor([e2, th, br, desativado(td)], f)
+    const p = pendenciasEmissao(f, { padroes: selecionados, hoje: '2026-10-28', temPesos: true, classe: 'I' })
+    expect(p.some((x) => x.startsWith('O padrão TD-01 está desativado'))).toBe(true)
+    expect(p.some((x) => x.includes('termômetro de duas entradas'))).toBe(false)
+  })
+
+  it('revisão: o padrão congelado na emissão vale, mesmo desativado depois (sem selo nem pendência)', () => {
+    const f = rascunho([jogo, th], (k) => ({ ...k, padroesCongelados: [jogo, th] }) as CalibracaoInput)
+    const { selecionados, paraEscolher } = padroesDoEditor([desativado(jogo), th], f)
+    expect(selecionados.every((p) => p.ativo)).toBe(true)
+    expect(paraEscolher.map((p) => p.identificacao)).toEqual(['JP-M1', 'TH-01'])
+    expect(pendenciasEmissao(f, { padroes: selecionados, hoje: '2026-10-28', temPesos: true, classe: 'III' })).toEqual([])
+  })
+
+  it('a etapa Padrões mostra o escolhido desativado, marcado e com o selo, para poder tirá-lo', () => {
+    const f = rascunho([jogo, th])
+    const { selecionados, paraEscolher } = padroesDoEditor([jogo, desativado(th)], f)
+    const ctx: ContextoEtapa = {
+      f,
+      alterar: () => {},
+      balanca,
+      cliente: { ...CLIENTE_VAZIO, id: 'c1' } as Cliente,
+      padroes: paraEscolher,
+      selecionados,
+      calc: null,
+      config: CONFIG_PADRAO,
+      equipe: [],
+      status: 'RASCUNHO',
+      editarBalanca: () => {},
+      folhaCampo: null,
+      vincularFolha: async () => true,
+      novaFolha: () => {},
+    }
+    const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(EtapaPadroes, ctx)))
+    const cartao = html.match(
+      /<button[^>]*aria-pressed="true"[^>]*>(?:(?!<\/button>).)*TH-01(?:(?!<\/button>).)*<\/button>/s,
+    )?.[0]
+    expect(cartao).toBeTruthy()
+    const texto = cartao!.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+    expect(texto).toContain('Desativado')
+    expect(texto).toContain('impede a emissão')
+    // Escolhido, o termo-higrômetro não pede para ser cadastrado
+    expect(html).not.toContain('Cadastre em Padrões o termo-higrômetro')
+  })
+})
+
+describe('etapa Padrões e ambiente na lista de etapas', () => {
+  it('com um padrão escolhido desativado, não ganha o ✓ (a emissão é recusada)', () => {
+    const f = rascunho([jogo, th])
+    const ok = padroesDoEditor([jogo, th], f).selecionados
+    expect(etapaCompleta('padroes', { f, calc: null, selecionados: ok })).toBe(true)
+    const comDesativado = padroesDoEditor([jogo, desativado(th)], f).selecionados
+    expect(etapaCompleta('padroes', { f, calc: null, selecionados: comDesativado })).toBe(false)
+  })
+})
+
+describe('montagem das cargas ao abrir o editor', () => {
+  const ponto = (carga: number): PontoIndicacao => ({
+    id: `p${carga}`,
+    carga,
+    pecas: [],
+    pecasManuais: false,
+    crescente: null,
+    decrescente: null,
+    nivelSubstituicao: 0,
+  })
+  const montado = recomporCargas(
+    rascunho([jogo, th], (k) => ({ ...k, indicacao: { ...k.indicacao, pontos: [0, 5, 12.5, 20, 30].map(ponto) } })),
+    balanca,
+    [jogo],
+  )
+  const pecasPorPonto = (k: CalibracaoInput) => k.indicacao.pontos.map((p) => p.pecas.reduce((s, x) => s + x.quantidade, 0))
+
+  it('jogo desativado e ainda escolhido: não recompõe (a montagem não usa jogo desativado e apagaria as peças)', () => {
+    expect(
+      pecasPorPonto(montado)
+        .slice(1)
+        .every((n) => n > 0),
+    ).toBe(true)
+    const { selecionados } = padroesDoEditor([desativado(jogo), th], montado)
+    expect(podeRecomporCargas(montado.padroesIds, selecionados)).toBe(false)
+    // O que acontecia ao abrir o editor: as peças de todos os pontos apagadas e gravadas sozinhas
+    const pesos = selecionados.filter((p) => p.tipo === 'PESOS')
+    expect(pecasPorPonto(recomporCargas(montado, balanca, pesos)).every((n) => n === 0)).toBe(true)
+  })
+
+  it('revisão com o jogo congelado na emissão (desativado depois): recompõe com ele e as peças ficam', () => {
+    const revisao = { ...montado, padroesCongelados: [jogo, th] } as CalibracaoInput
+    const { selecionados } = padroesDoEditor([desativado(jogo), th], revisao)
+    expect(podeRecomporCargas(revisao.padroesIds, selecionados)).toBe(true)
+    expect(
+      recomporCargas(
+        revisao,
+        balanca,
+        selecionados.filter((p) => p.tipo === 'PESOS'),
+      ),
+    ).toBe(revisao)
+  })
+
+  it('escolhido que não se acha (excluído do cadastro): não recompõe', () => {
+    const { selecionados } = padroesDoEditor([th], montado)
+    expect(podeRecomporCargas(montado.padroesIds, selecionados)).toBe(false)
+    expect(pecasPorPonto(recomporCargas(montado, balanca, [])).every((n) => n === 0)).toBe(true)
+  })
+
+  it('todos achados e ativos: recompõe', () => {
+    const { selecionados } = padroesDoEditor([jogo, th], montado)
+    expect(podeRecomporCargas(montado.padroesIds, selecionados)).toBe(true)
+  })
+})
+
+describe('pendências da tela', () => {
+  const base = { locais: ['Local A.'], calc: null, semPop: false }
+
+  it('com tudo gravado, junta as do servidor (a tela nunca diz "Tudo pronto" quando o servidor recusa)', () => {
+    const servidor = ['O padrão TD-01 está desativado.', 'Local A.']
+    expect(pendenciasDaTela({ ...base, servidor, emDia: true })).toEqual(['Local A.', 'O padrão TD-01 está desativado.'])
+  })
+
+  it('com alteração por gravar, só as locais (as do servidor são da versão anterior)', () => {
+    expect(pendenciasDaTela({ ...base, servidor: ['Antiga.'], emDia: false })).toEqual(['Local A.'])
+    // O técnico excluído só o servidor sabe: vale sempre
+    expect(pendenciasDaTela({ ...base, servidor: [PENDENCIA_TECNICO_EXCLUIDO], emDia: false })).toEqual([
+      'Local A.',
+      PENDENCIA_TECNICO_EXCLUIDO,
+    ])
+  })
+
+  it('o POP quem diz é a consulta ao vivo (registrado em outra aba, a do servidor ficou velha)', () => {
+    expect(pendenciasDaTela({ ...base, servidor: [PENDENCIA_POP], emDia: true })).toEqual(['Local A.'])
+    expect(pendenciasDaTela({ ...base, semPop: true, servidor: [], emDia: true })).toEqual(['Local A.', PENDENCIA_POP])
+  })
+
+  it('as do cálculo e as do "como encontrado"', () => {
+    const calc = {
+      resultado: { pendencias: ['Cálculo.'] },
+      comoEncontrado: { pendencias: ['Leitura.'] },
+    } as unknown as Parameters<typeof pendenciasDaTela>[0]['calc']
+    expect(pendenciasDaTela({ ...base, calc, servidor: [], emDia: true })).toEqual([
+      'Local A.',
+      'Cálculo.',
+      'Como encontrado: Leitura.',
+    ])
+  })
+})
+
+describe('balança corrigida dentro do editor', () => {
+  const b = { ...balanca, unidade: 'kg', clienteId: 'c1' } as Balanca
+
+  it('trocar a unidade ou o cliente muda o rascunho no servidor: o editor recarrega', () => {
+    expect(balancaMudaRascunho(b, { ...b, unidade: 'g' })).toBe(true)
+    expect(balancaMudaRascunho(b, { ...b, clienteId: 'c2' })).toBe(true)
+    expect(balancaMudaRascunho(b, { ...b, modelo: 'Outro', classe: 'II' } as Balanca)).toBe(false)
+  })
+
+  it('o estado recarregado: os números convertidos, a versão nova e o cliente novo', () => {
+    const k = {
+      ...rascunho([jogo]),
+      clienteId: 'c2',
+      repetibilidade: [{ id: 'r', carga: 12000, leituras: [12000, 12010, null] }],
+      id: 'k1',
+      versao: 7,
+      status: 'RASCUNHO',
+      numero: '',
+      ano: null,
+      sequencia: null,
+      revisao: 0,
+      emissao: null,
+      cancelamento: null,
+      criadoPor: 'Ana',
+      criadoEm: '',
+      atualizadoEm: '',
+    } as unknown as Calibracao
+    const d = {
+      calibracao: k,
+      cliente: { ...CLIENTE_VAZIO, id: 'c2' },
+      balanca: { ...b, unidade: 'g', clienteId: 'c2' },
+      padroes: [],
+      pendencias: ['Uma.'],
+      folhaCampo: null,
+      numeroReservado: null,
+    } as unknown as DetalheCalibracao
+    const e = estadoDoServidor(d)
+    expect(e.versao).toBe(7)
+    expect(e.f.clienteId).toBe('c2')
+    expect(e.f.repetibilidade[0].carga).toBe(12000)
+    expect(e.pendencias).toEqual(['Uma.'])
+    expect(e.numeroReservado).toBeNull()
+    // Só os dados de entrada: a versão vai à parte (no PUT)
+    expect('versao' in e.f || 'id' in e.f || 'status' in e.f).toBe(false)
+  })
+})
