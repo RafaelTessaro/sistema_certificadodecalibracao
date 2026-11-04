@@ -20,5 +20,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', 'shared/**/*.test.ts', 'server/**/*.test.ts'],
+    // Vários testes geram PDFs de verdade (certificado e folha de campo): na máquina do CI levam mais de 5 s
+    testTimeout: 30_000,
   },
 })
