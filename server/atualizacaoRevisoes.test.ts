@@ -99,10 +99,13 @@ describe('migração 15: a revisão aberta antes da 1.0.3 (sem os padrões conge
     gravarComo(comoNa102)
     return rev
   }
-  /** O banco volta à versão 14 e sobe de novo (a atualização para esta versão). */
+  /**
+   * O banco volta à versão 14 e sobe até a 15 (a atualização para a 1.0.4, só a migração 15: a 16, que marca a descida
+   * das calibrações já medidas, tem os testes dela em db.test.ts).
+   */
   const atualizar = () => {
     t.ctx.db.exec('PRAGMA user_version = 14')
-    migrar(t.ctx.db)
+    migrar(t.ctx.db, 15)
   }
   const obterPadrao = (id: string) => t.ctx.repo.obterPadrao(id) as Padrao
 

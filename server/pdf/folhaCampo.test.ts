@@ -9,7 +9,7 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { AJUSTES, calibracaoVazia, padroesSemHistorico } from '#shared/dominio.ts'
+import { AJUSTES, calibracaoVazia, METODOS_CARREGAMENTO, padroesSemHistorico, ROTULO_METODO_INDICACAO } from '#shared/dominio.ts'
 import { AVISO_ETIQUETA, FORMULARIO_FOLHA_CAMPO } from '#shared/folhaCampo.ts'
 import type { Padrao } from '#shared/tipos.ts'
 import { A4, BASE_RODAPE, MODULO, pdfmake, TOPO_CABECALHO } from './base.ts'
@@ -17,6 +17,7 @@ import {
   folhaClasseI,
   folhaEmBranco,
   folhaEmBrancoOitoPadroes,
+  folhaEmBrancoSemPadroes,
   folhaMultiIntervalo,
   folhaPlataforma,
   folhaRodoviaria,
@@ -38,11 +39,12 @@ import {
   LEMBRETE_AMBIENTE_FIM,
   METODO_EXCENTRICIDADE_FOLHA,
   montar,
+  ROTULO_METODO_FOLHA,
   nomeArquivoFolhaCampo,
   ONDE_ANOTAR,
   TITULO_ANOTACOES,
 } from './folhaCampo.ts'
-import { exemploClasseI, POP_EXEMPLO } from './exemplosCertificado.ts'
+import { exemploBancada, exemploClasseI, POP_EXEMPLO } from './exemplosCertificado.ts'
 
 const temPdftotext = !spawnSync('pdftotext', ['-v'], { stdio: 'ignore' }).error
 
@@ -166,6 +168,7 @@ const EXEMPLOS: Array<{ nome: string; dados: () => DadosFolhaCampo; maxPaginas: 
   { nome: 'em branco com 8 padrões', dados: folhaEmBrancoOitoPadroes, maxPaginas: 2 },
   { nome: 'rodoviária multi-intervalo 80 t, 11 pontos e 7 etapas', dados: () => folhaRodoviariaMultiIntervalo(), maxPaginas: 3 },
   { nome: 'analítica classe I 220 g × 0,1 mg (sem histórico)', dados: folhaClasseI, maxPaginas: 2 },
+  { nome: 'em branco sem nenhum padrão cadastrado', dados: folhaEmBrancoSemPadroes, maxPaginas: 2 },
 ]
 
 const gerados = new Map<string, Promise<Buffer>>()
@@ -318,12 +321,12 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
         }
       }
       visitar((definicaoFolhaCampo(dados()) as { content: unknown }).content)
-      // O local (2) e o método (3, sem o "Decrescente"); na em branco, também a classe, as faixas e o receptor
-      expect(quadrados.length).toBeGreaterThanOrEqual(5)
+      // O local (2; o método não tem opções: é fixo pela classe); na em branco, também a classe, as faixas e o receptor
+      expect(quadrados.length).toBeGreaterThanOrEqual(2)
       expect(quadrados.filter((q) => q.color !== '#FFFFFF')).toEqual([])
     }
-    // A plataforma prevê o local e o método
-    expect(jsonDe(folhaPlataforma()).split('"  PREVISTO"').length - 1).toBe(2)
+    // A plataforma prevê só o local
+    expect(jsonDe(folhaPlataforma()).split('"  PREVISTO"').length - 1).toBe(1)
   })
 
   it.each(EXEMPLOS)('nenhuma parte de passo abre uma página sem o título do passo: $nome', async (e) => {
@@ -370,7 +373,7 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
   it('rodapé: o código e a revisão do formulário e o POP configurado (sem POP, nada no lugar); sem rubrica nem data', () => {
     const rodape = (d: DadosFolhaCampo) => JSON.stringify((definicaoFolhaCampo(d) as { footer: () => unknown }).footer())
     const comPop = rodape({ ...folhaPlataforma(), procedimento: 'BALANÇAS-POP-123 rev. 00' })
-    expect(FORMULARIO_FOLHA_CAMPO.revisao).toBe('03')
+    expect(FORMULARIO_FOLHA_CAMPO.revisao).toBe('04')
     expect(comPop).toContain(`${FORMULARIO_FOLHA_CAMPO.codigo} rev. ${FORMULARIO_FOLHA_CAMPO.revisao}`)
     expect(comPop).toContain('"POP BALANÇAS-POP-123 rev. 00"')
     expect(comPop).not.toContain('PT-CAL-01')
@@ -392,10 +395,15 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     // Cada passo diz a etapa do sistema onde é digitado: as etapas têm de existir com esse nome na tela
     const tela = readFileSync(new URL('../../src/pages/CalibracaoForm.tsx', import.meta.url), 'utf8')
     for (const etapa of Object.values(ETAPAS_SISTEMA)) expect(tela).toContain(`titulo: '${etapa.replace(/^\d · /, '')}'`)
-    // O método do erro de indicação e o zero antes de cada posição da excentricidade (classe I), como na tela
+    // O método de carregamento (fixo pela classe: a folha só o imprime, com o rótulo e o nome da tela) e o zero antes de
+    // cada posição da excentricidade (classe I), como na tela
     const indicacao = readFileSync(new URL('../../src/components/calibracao/EtapaIndicacao.tsx', import.meta.url), 'utf8')
-    expect(indicacao).toContain('label="Como as cargas foram aplicadas"')
-    expect(jsonDe(folhaPlataforma())).toContain('"Como as cargas foram aplicadas"')
+    expect(ROTULO_METODO_FOLHA).toBe(ROTULO_METODO_INDICACAO)
+    expect(ROTULO_METODO_FOLHA).toBe('Como aplicar as cargas')
+    expect(indicacao).toContain('{ROTULO_METODO_INDICACAO}')
+    expect(jsonDe(folhaPlataforma())).toContain(`"${ROTULO_METODO_FOLHA}"`)
+    expect(jsonDe(folhaPlataforma())).toContain(`"${METODOS_CARREGAMENTO.CRESCENTE_DECRESCENTE.label}"`)
+    expect(jsonDe(folhaClasseI())).toContain(`"${METODOS_CARREGAMENTO.DESCONTINUO.label}"`)
     const excentricidade = readFileSync(
       new URL('../../src/components/calibracao/EtapaExcentricidade.tsx', import.meta.url),
       'utf8',
@@ -469,8 +477,9 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
       expect(t).toContain(`"${METODO_EXCENTRICIDADE_FOLHA.demais}"`)
       // Repetibilidade: quantas vezes nos nº em cima das caixas (5; 3 com 100 kg ou mais); as outras, opcionais (com 10,
       // k = 2)
-      for (const x of ['4ª · < 100 kg', '5ª · < 100 kg', '6ª · opcional', '7ª · opcional', '10ª · opcional', '12ª · opcional'])
+      for (const x of ['4ª\\n< 100 kg', '5ª\\n< 100 kg', '6ª\\nopcional', '7ª\\nopcional', '10ª\\nopcional'])
         expect(t).toContain(x)
+      expect(t).not.toContain('11ª')
     }
   })
 
@@ -483,7 +492,6 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     expect(m.paginas).toBe(2)
     expect(m.faltando).toEqual([])
     // O passo 6 (a carga ao lado das duas faixas de leituras, 1ª a 12ª) fica inteiro na página 2
-    expect(m.marcas.get('passo-6')?.pagina).toBe(2)
     expect(m.marcas.get('fim:passo-6')?.pagina).toBe(2)
     expect(m.marcas.has('parte-6-1')).toBe(false)
     // A conformidade pedida fica só no sistema
@@ -495,7 +503,7 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     expect((await montar(folhaPlataforma())).marcas.has('parte-6-1')).toBe(false)
   })
 
-  it('erro de indicação: um grupo de leituras (↑ e ↓), sem a faixa; a coluna que o método não usa, mais estreita', () => {
+  it('erro de indicação: um grupo de leituras, sem a faixa; só as colunas que o método fixo usa (↑ e ↓, ou só ↑)', () => {
     const colunas = (d: DadosFolhaCampo) => {
       const [tabela] = nosQue((definicaoFolhaCampo(d) as { content: unknown }).content, (x) =>
         JSON.stringify((x.table as { body?: unknown[][] } | undefined)?.body?.[0] ?? '').includes('Indicação ↑'),
@@ -510,14 +518,28 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     expect(p.larguras[3]).toBe(p.larguras[4])
     expect(p.larguras[3]).toBeGreaterThanOrEqual(96)
     expect(p.cabecalho).toContain('Indicação ↓')
-    // Classe I (crescente com descarga): a ↓ mais estreita (o método pode mudar no local)
+    // Em branco (classes II a IIII): as duas
+    expect(colunas(folhaEmBranco()).cabecalho).toContain('Indicação ↓')
+    // Classe I (crescente com descarga): só a ↑ (o método é fixo: não muda no local), larga; os pesos ficam com o resto
     const c = colunas(folhaClasseI())
-    expect(c.larguras[4]).toBeLessThan(c.larguras[3] as number)
+    expect(c.larguras).toHaveLength(4)
+    expect(c.cabecalho).not.toContain('Indicação ↓')
+    expect(c.larguras[3]).toBe(p.larguras[3])
     // Rodoviária: as substituições numa coluna a mais
     expect(colunas(folhaRodoviaria()).larguras).toHaveLength(6)
-    // O retorno ao zero numa linha só, com uma caixa para escrever
+    // O retorno ao zero numa linha só, com uma caixa para escrever (nas colunas das leituras)
     const json = jsonDe(folhaPlataforma())
     expect(json.match(/RETORNO AO ZERO/g)).toHaveLength(1)
+    for (const [d, leituras] of [
+      [folhaPlataforma(), 2],
+      [folhaClasseI(), 1],
+    ] as const) {
+      const [tabela] = nosQue((definicaoFolhaCampo(d) as { content: unknown }).content, (x) =>
+        JSON.stringify((x.table as { body?: unknown[][] } | undefined)?.body ?? '').includes('RETORNO AO ZERO'),
+      )
+      const ultima = (tabela.table as { body: Array<Array<{ colSpan?: number }>> }).body.at(-1)!
+      expect(ultima.find((x, i) => i > 0 && x.colSpan)?.colSpan ?? 1).toBe(leituras)
+    }
   })
 
   it('instrução curta na barra do título, depois do nome; a longa na linha de baixo; o ambiente sem instrução', () => {
@@ -533,9 +555,20 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     expect(barra('EXCENTRICIDADE')).toContain(`"${METODO_EXCENTRICIDADE_FOLHA.demais}"`)
     expect(barra('EXCENTRICIDADE')).toContain(', na ordem do desenho (frente: indicador).')
     expect(barra('AMBIENTE')).not.toContain('\u2002 ')
-    // Longa (a do passo 5): embaixo do título
-    expect(barra('ERRO DE INDICAÇÃO')).not.toContain('Zere vazia e aplique')
-    expect(JSON.stringify(doc.content)).toContain('Zere vazia e aplique as cargas na ordem da tabela (')
+    // A do passo 5 também (como aplicar as cargas vai na linha do método, logo abaixo)
+    expect(barra('ERRO DE INDICAÇÃO')).toContain('Zere vazia e aplique as cargas na ordem da tabela; anote a indicação estável.')
+    // Longa (a do passo 5 da folha em branco, com as cargas): embaixo do título
+    const branco = definicaoFolhaCampo(folhaEmBranco()) as { content: unknown }
+    const barraBranco = JSON.stringify(
+      nosQue(branco.content, (x) => {
+        const t = x.table as { body?: unknown[][] } | undefined
+        return t?.body?.length === 1 && JSON.stringify(t.body[0][1] ?? '').includes('"ERRO DE INDICAÇÃO"')
+      })[0],
+    )
+    expect(barraBranco).not.toContain('Cargas: ')
+    expect(JSON.stringify(branco.content)).toContain(
+      '" e em 500e e 2000e (classe III). Zere vazia, aplique as cargas e anote a indicação estável."',
+    )
   })
 
   it('excentricidade: o método numa frase fixa (classe I: zero antes de cada posição) e a linha do zero só na classe I', () => {
@@ -621,11 +654,14 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect([...posicoes].sort((a, b) => a - b)).toEqual(posicoes)
     for (const etapa of Object.values(ETAPAS_SISTEMA)) expect(t).toContain(etapa)
     for (const x of REMOVIDOS) expect(semAjusteDaClasseI(t), x).not.toContain(x)
-    expect(t).toContain('Como as cargas foram aplicadas')
-    expect(t).toContain('Início do ensaio')
+    // O método numa linha fixa (sem opções de marcar nem a hora do início do ensaio); a repetibilidade sem o zero depois
+    // de retirar, sem os pesos e sem a hora; a excentricidade sem os pesos usados e sem a hora
+    expect(t).toContain(ROTULO_METODO_FOLHA)
+    expect(t).not.toMatch(/Início do ensaio|PREVISTO Crescente|Crescente \S+ PREVISTO/)
     expect(t).toContain('Indicação ↑')
-    expect(t).toContain('Indicação ↓')
-    expect(t).toContain('Zero após retirar')
+    expect(t).not.toMatch(/Zero após retirar|Com a carga|Pesos \(não precisa ser padrão\)|Pesos ou carga usada/)
+    expect(t).toContain('Hora de início')
+    expect(t).toContain('Hora de término')
     // Retorno ao zero na própria tabela de pontos (nunca solto no alto de outra página)
     expect(t).toContain('RETORNO AO ZERO')
     for (const p of paginasDe(texto).filter((x) => x.includes('RETORNO AO ZERO'))) expect(p).toContain('ERRO DE INDICAÇÃO')
@@ -655,6 +691,26 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t.replace(AVISO_ETIQUETA, '')).not.toMatch(/validade/i)
   }
 
+  it.each(EXEMPLOS)(
+    '$nome: a hora só na chegada (2), no ambiente (4) e no término (8); nos ensaios (5, 6 e 7), nenhuma (classe I: a do ajuste interno)',
+    async (e) => {
+      const t = corrido(textoDoPdf(await pdfDe(e)))
+      const trecho = (de: string, ate: string) => t.slice(t.indexOf(de), t.indexOf(ate, t.indexOf(de)))
+      expect(trecho('2 CHEGADA AO CLIENTE', '4 AMBIENTE')).toMatch(/Hora de início ____:____/)
+      expect(trecho('4 AMBIENTE', '5 ERRO DE INDICAÇÃO')).toMatch(/Ambiente Hora Temperatura/)
+      expect(trecho('8 ASSINATURAS', 'ANOTAÇÕES — ')).toContain('Hora de término')
+      // Do passo 5 ao 7: sem "Início do ensaio" nem a hora da repetibilidade e da excentricidade (o sistema não as guarda)
+      const ensaios = trecho('5 ERRO DE INDICAÇÃO', '8 ASSINATURAS')
+      expect(ensaios).not.toContain('Início do ensaio')
+      const horas = [...ensaios.matchAll(/\bHora\b/g)]
+      if (e.dados === folhaClasseI) {
+        // A do ajuste interno de rotina, feito antes dos ensaios (o POP, 7.6, pede o registro com a hora)
+        expect(horas).toHaveLength(1)
+        expect(ensaios).toMatch(/Ajuste interno \(CAL\) feito antes dos ensaios .{0,120}Hora ____:____/)
+      } else expect(horas, e.nome).toHaveLength(0)
+    },
+  )
+
   it('plataforma 300 kg: cadastro para conferir, pontos e pesos do último certificado; o passo 5 inteiro na frente', async () => {
     const e = EXEMPLOS[0]
     const texto = textoDoPdf(await pdfDe(e))
@@ -662,8 +718,10 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     // Duas páginas (frente e verso): na frente, os passos 1 a 5 (o erro de indicação cabe inteiro nela, com a tabela);
     // no verso, a repetibilidade, a excentricidade, as assinaturas e as Anotações
     expect(paginas).toHaveLength(2)
-    expect(corrido(paginas[0])).toMatch(/4 AMBIENTE .*5 ERRO DE INDICAÇÃO NO SISTEMA .*RETORNO AO ZERO/)
-    expect(corrido(paginas[1])).toMatch(/Página 2 de 2 6 REPETIBILIDADE NO SISTEMA/)
+    // (a repetibilidade, sem a linha do zero depois de retirar, cabe no pé da frente: o verso fica para a excentricidade, as
+    // assinaturas e as Anotações)
+    expect(corrido(paginas[0])).toMatch(/4 AMBIENTE .*5 ERRO DE INDICAÇÃO .*RETORNO AO ZERO .*6 REPETIBILIDADE/)
+    expect(corrido(paginas[1])).toMatch(/Página 2 de 2 7 EXCENTRICIDADE/)
     expect(texto).not.toMatch(/\(CONTINUAÇÃO\)|na próxima página/)
     conferirComum(texto)
     const t = corrido(texto)
@@ -715,16 +773,21 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).not.toContain('299,80 a 300,20')
     expect(t).not.toContain('Portaria Inmetro 157/2022')
     expect(t).toMatch(/Nº Carga \(kg\) Pesos padrão Indicação ↑ \(kg\) Indicação ↓ \(kg\) 1 0,00 sem carga \(zero\)/)
-    expect(t).toMatch(/Crescente e decrescente\s+PREVISTO/)
-    // Os métodos que o sistema oferece, sem o "Decrescente" (o rascunho não está com ele)
-    expect(t).toMatch(/Crescente e decrescente PREVISTO Crescente com descarga Crescente contínuo/)
-    expect(t).not.toMatch(/\bDecrescente\b/)
+    // O método fixo pela classe (POP 7.7), numa linha impressa, sem opções; a instrução curta, na barra do título
+    expect(t).toContain('5 ERRO DE INDICAÇÃO Zere vazia e aplique as cargas na ordem da tabela; anote a indicação estável.')
+    expect(t).toContain(
+      'Como aplicar as cargas Crescente e decrescente: suba até a maior ↑ e desça ↓, sem zerar no meio. Ao trocar peças, na subida não passe da carga; na descida, não fique abaixo dela · pelo POP (7.7), nesta classe',
+    )
+    expect(t).not.toMatch(/Crescente com descarga|Crescente contínuo|\bDecrescente\b/)
     // Repetibilidade com 150 kg (5 leituras previstas, mínimo 3) e excentricidade com 100 kg em 5 posições,
     // as cargas nas casas de d, na célula da carga, ao lado das leituras
     const rep = t.slice(t.indexOf('6 REPETIBILIDADE'), t.indexOf('7 EXCENTRICIDADE'))
     expect(rep).toMatch(/150,00 Carga \(kg\)|Carga \(kg\) 150,00/)
     expect(rep).toContain('no centro, 5 vezes (mín. 3)')
     expect(rep).toContain('6ª · opcional')
+    // Uma linha só de leituras: zera antes de cada vez; o zero que não voltou, em Anotações
+    expect(rep.match(/Indicação \(kg\)/g)).toHaveLength(1)
+    expect(rep).toContain('Zere antes de cada vez, aplique e anote a indicação; zero que não voltou: em Anotações.')
     const ecc = t.slice(t.indexOf('7 EXCENTRICIDADE'), t.indexOf('8 ASSINATURAS'))
     expect(ecc).toMatch(/100,00 Carga \(kg\)|Carga \(kg\) 100,00/)
     expect(ecc).not.toContain('Zero antes')
@@ -771,9 +834,12 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain('10ª 11ª · opcional 12ª · opcional')
     // O rascunho como o POST o monta (sem copiar os padrões do certificado): o TD-01 ("Outro") entra no passo 1
     expect(folhaClasseI().calibracao!.padroesIds).toContain('pad-td01')
-    // POP 7.7: cada carga com o menor número de peças, aplicada a partir do zero ("crescente com descarga")
-    expect(t).toMatch(/Como as cargas foram aplicadas Início do ensaio Crescente e decrescente Crescente com descarga PREVISTO/)
-    expect(t).toContain('retire tudo e confira o zero entre uma carga e outra')
+    // POP 7.7: cada carga com o menor número de peças, aplicada a partir do zero ("crescente com descarga"), na linha
+    // fixa do método (sem opções); só a coluna ↑
+    expect(t).toContain(
+      'Como aplicar as cargas Crescente com descarga: retire tudo e confira o zero entre uma carga e outra · pelo POP (7.7), nesta classe',
+    )
+    expect(t).not.toMatch(/Crescente e decrescente|Crescente contínuo|Indicação ↓/)
     // Repetibilidade com uma peça só, entre metade de Max e Max: 200 g
     expect(t).toMatch(/Carga \(g\) 200,0000 .{0,60}200 g/)
     // Excentricidade: uma peça só de no mínimo 1/3 de Max (100 g), a meio raio, com o zero antes de cada posição
@@ -787,16 +853,15 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
   it('balcão multi-intervalo: pontos sugeridos pelo sistema e a divisão de cada intervalo', async () => {
     const texto = textoDoPdf(await pdfDe(EXEMPLOS[1]))
     const paginas = conferirPaginas(texto, 'FC-2026-00043', 'OS-2026-0519')
-    // O balcão (10 pontos e um ensaio de repetibilidade por intervalo) também fica em duas páginas (frente e verso), com
-    // os ensaios no verso: o título, o método, a nota e a tabela juntos, sem título de continuação
+    // O balcão (10 pontos e um ensaio de repetibilidade por intervalo) também fica em duas páginas (frente e verso): o
+    // passo 5 inteiro na frente (o título, o método, a nota e a tabela juntos, sem título de continuação); no verso, os
+    // outros ensaios, as assinaturas e as Anotações
     expect(paginas).toHaveLength(2)
-    expect(corrido(paginas[0])).not.toContain('ERRO DE INDICAÇÃO')
-    for (const x of ['5 ERRO DE INDICAÇÃO NO SISTEMA', 'Pesos diferentes dos impressos', '33,00', 'RETORNO AO ZERO'])
-      expect(corrido(paginas[1])).toContain(x)
+    for (const x of ['5 ERRO DE INDICAÇÃO', 'Pesos diferentes dos impressos', '33,00', 'RETORNO AO ZERO'])
+      expect(corrido(paginas[0])).toContain(x)
+    expect(corrido(paginas[1])).toMatch(/Página 2 de 2 6 REPETIBILIDADE/)
     expect(texto).not.toContain('(CONTINUAÇÃO)')
-    // Sem o aviso das tabelas (elas vão com o título); a frente acaba com a linha de continuação
-    expect(texto).not.toMatch(/Tabelas? (dos pontos )?na próxima página/)
-    expect(corrido(paginas[0])).toContain('Continua na próxima página: passos 5 a 8 e, no fim da folha, Anotações.')
+    expect(texto).not.toMatch(/Tabelas? (dos pontos )?na próxima página|Continua na próxima página/)
     conferirComum(texto)
     const t = corrido(texto)
     expect(t).toContain('pontos, cargas e posições sugeridos pelo sistema')
@@ -810,8 +875,8 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     // Min (40 g) entre as cargas
     expect(t).toMatch(/0,040 .{0,20}2 × 20 g/)
     // Repetibilidade: um ensaio por intervalo (POP 7.9), numa tabela só, sem cabeçalho (como o ensaio único): o nº, a
-    // carga nas casas de d do intervalo de cada uma (16,5 kg: d = 10 g), os pesos e quantas vezes na célula cinza; a
-    // hora ao lado; as leituras com a carga e o zero, 6 colunas (5 previstas: a 6ª, opcional), com a hora e o nº de cada
+    // carga nas casas de d do intervalo de cada uma (16,5 kg: d = 10 g), os pesos e quantas vezes na célula cinza; as
+    // leituras (sem o zero depois de retirar e sem a hora), 6 colunas (5 previstas: a 6ª, opcional), com o nº de cada
     // leitura numa linha miúda em cima de todos os ensaios
     const rep = t.slice(t.indexOf('6 REPETIBILIDADE'), t.indexOf('7 EXCENTRICIDADE'))
     for (const [n, carga] of [
@@ -821,11 +886,11 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     ])
       // (o pdftotext às vezes põe a carga, em letra maior, antes do rótulo)
       expect(rep).toMatch(new RegExp(`${n} · Carga \\(kg\\) ${carga}|${carga} ${n} · Carga \\(kg\\)`))
-    expect(rep.match(/Com a carga \(kg\)/g)).toHaveLength(3)
-    expect(rep.match(/Zero após retirar \(kg\)/g)).toHaveLength(3)
+    expect(rep.match(/Indicação \(kg\)/g)).toHaveLength(3)
+    expect(rep).not.toMatch(/Zero após retirar|\bHora\b/)
     expect(rep.match(/no centro, 5 vezes \(mín. 5\)/g)).toHaveLength(3)
     expect(rep.match(/6ª · opcional/g)).toHaveLength(1)
-    expect(rep).toMatch(/Hora 1ª 2ª 3ª 4ª 5ª 6ª · opcional/)
+    expect(rep).toMatch(/Anotações\. NO SISTEMA 4 · Repetibilidade 1ª 2ª 3ª 4ª 5ª 6ª · opcional/)
     expect(rep).toContain('2 × 2 kg + 500 g + 200 g + 100 g')
     // Excentricidade: no mínimo 1/3 de Max (11 kg), num valor redondo acima (na tabela das posições)
     expect(t).toMatch(/Carga \(kg\) ?15,000/)
@@ -841,16 +906,16 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
       /Etapa Pesos padrão .{0,20}Indicação com os pesos \(kg\) Indicação com a substituição \(kg\) Material da substituição \/ obs\./,
     )
     expect(t).toMatch(/Pesos padrão .{0,150}por cima/)
-    expect(t).toMatch(/Crescente contínuo\s+PREVISTO/)
-    // A coluna ↓ vai também (estreita): o método pode mudar no local
+    // O método fixo pela classe (III), também com substituição: crescente e decrescente, com as duas colunas
+    expect(t).toContain('Como aplicar as cargas Crescente e decrescente')
+    expect(t).not.toMatch(/Crescente contínuo|[Ss]ó crescente/)
     expect(t).toContain('Indicação ↓')
     // As etapas uma vez só, sem "depois do ajuste"
     expect(t.match(/[Ee]m cada etapa, anote a indicação/g)).toHaveLength(1)
-    expect(t).toContain('Só crescente: para descer, seria preciso tirar o material.')
-    // Pontos e etapas de substituição, preenchidos intercalados, na mesma página
-    const comEtapas = paginas.find((p) => p.includes('Cargas de substituição —'))!
-    expect(corrido(comEtapas)).toMatch(/40 000 +3 +20 × 500 kg/)
-    expect(corrido(comEtapas)).toContain('ERRO DE INDICAÇÃO')
+    // Os pontos na página do título do passo; as etapas (outra parte do passo), no alto do verso
+    const comPontos = paginas.find((p) => p.includes('RETORNO AO ZERO'))!
+    expect(corrido(comPontos)).toMatch(/40 000 +3 +20 × 500 kg/)
+    expect(corrido(comPontos)).toContain('5 ERRO DE INDICAÇÃO Zere')
     expect(paginas).toHaveLength(2)
     for (const p of ['Início (ida)', 'Meio (ida)', 'Fim (ida)', 'Início (volta)', 'Meio (volta)', 'Fim (volta)'])
       expect(t).toContain(p)
@@ -886,12 +951,12 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t.slice(t.indexOf('7 EXCENTRICIDADE'), t.indexOf('8 ASSINATURAS'))).toMatch(/faltam [\d,]+ kg/)
   })
 
-  it('excentricidade com outro método no sistema (classes II a IIII): a folha prevê o 1 e avisa antes de sair', async () => {
+  it('excentricidade com outro método no sistema (classes II a IIII): a folha prevê o do POP e avisa antes de sair, pelos nomes', async () => {
     const d = folhaPlataforma()
     d.calibracao = { ...d.calibracao!, excentricidade: { ...d.calibracao!.excentricidade, metodo: 2 } }
     const t = corrido(textoDoPdf(await gerarFolhaCampoPdf(d)))
     expect(t).toContain(
-      'Excentricidade: a folha prevê o método 1 (zera vazia e desloca a carga pelas posições) e o sistema está com o método 2; acerte no sistema.',
+      'Excentricidade: a folha prevê “Zere vazia e desloque a carga pelas posições” (POP 7.10), e o sistema está com “Tara com a carga no centro e desloca”; acerte no sistema.',
     )
     expect(t).toContain(METODO_EXCENTRICIDADE_FOLHA.demais)
   })
@@ -992,12 +1057,48 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(m.marcas.get('fim:passo-5')?.pagina).toBe(2)
     const paginas = paginasDe(textoDoPdf(m.pdf))
     const verso = corrido(paginas[1])
-    expect(verso).toMatch(/5 ERRO DE INDICAÇÃO .*Como as cargas foram aplicadas Início do ensaio Crescente e decrescente/)
+    // A linha fixa do método: o das classes II a IIII (a classe I tem a folha da balança cadastrada)
+    expect(verso).toMatch(
+      /5 ERRO DE INDICAÇÃO .*Como aplicar as cargas Crescente e decrescente: suba até a maior ↑ e desça ↓, sem zerar no meio\. Ao trocar peças, na subida não passe da carga; na descida, não fique abaixo dela · pelo POP \(7\.7\), nas classes II a IIII e sem classe/,
+    )
     // Em branco, sem as cargas de substituição (o POP não cobre rodoviárias)
-    expect(verso).toContain('Zere, aplique e anote a indicação.')
+    expect(verso).toContain('Zere vazia, aplique as cargas e anote a indicação estável.')
     expect(verso).not.toContain('Com cargas de substituição')
     expect(verso).toContain('RETORNO AO ZERO')
     expect(verso).not.toMatch(/\(CONTINUAÇÃO\)|na próxima página/)
+  })
+
+  it('"crescente e decrescente": a descida fechada (com um traço) no zero e em Max; as outras cargas e a reserva, abertas', async () => {
+    // Plataforma: 8 cargas, o zero e Max (300 kg) com a descida fechada (POP 7.7: exceto a de Max; a do zero é o retorno)
+    const plataforma = corrido(textoDoPdf(await pdfDe(EXEMPLOS[0])))
+    expect(plataforma).toContain('1 0,00 sem carga (zero) — 2 1,00 1 kg 3 10,00 10 kg')
+    expect(plataforma).toContain('7 200,00 10 × 20 kg 8 300,00 15 × 20 kg — RETORNO AO ZERO')
+    expect(plataforma.match(/ — /g)?.length).toBeGreaterThanOrEqual(2)
+    // Multi-intervalo: o mesmo, com Max de 33 kg
+    const multi = corrido(textoDoPdf(await pdfDe(EXEMPLOS[1])))
+    expect(multi).toContain('1 0,000 sem carga (zero) — 2 0,040')
+    expect(multi).toMatch(/10 33,00 20 kg \+ 10 kg \+ 2 kg \+ 1 kg — RETORNO AO ZERO/)
+    // Em branco: só o zero (a linha de Max é a que o técnico escrever)
+    const branco = corrido(paginasDe(textoDoPdf(await pdfDe(EXEMPLOS[3])))[1])
+    expect(branco).toMatch(/Indicação ↑ Indicação ↓ 1 0 sem carga \(zero\) — 2 3 4 5 6 7 8 9 RETORNO AO ZERO/)
+    // Classe I ("crescente com descarga"): só a subida, sem a coluna da descida
+    const classeI = corrido(textoDoPdf(await pdfDe(EXEMPLOS[7])))
+    expect(classeI).not.toContain('Indicação ↓')
+  })
+
+  it('"crescente e decrescente" com os pontos parando abaixo de Max: a descida da maior carga planejada fica aberta (a linha "+" pode ter uma carga acima)', async () => {
+    // Balcão 6/15/33 kg com os pontos do certificado de exemplo (0, 5, 10, 15, 20 e 30 kg): 91 % de Max, sem aviso, e
+    // duas linhas "+" de reserva. Se o técnico aplicar 33 kg numa delas, a virada passa para lá e 30 kg precisa da descida
+    const d = folhaMultiIntervalo()
+    const pontos = exemploBancada().calibracao.indicacao.pontos.map((p) => ({ ...p, crescente: null, decrescente: null }))
+    d.calibracao = { ...d.calibracao!, indicacao: { ...d.calibracao!.indicacao, pontos } }
+    expect(pontos.map((p) => p.carga)).toEqual([0, 5, 10, 15, 20, 30])
+    const t = corrido(textoDoPdf(await gerarFolhaCampoPdf(d)))
+    const tabela = t.slice(t.indexOf('Indicação ↓ (kg)'), t.indexOf('RETORNO AO ZERO'))
+    // Só o zero fechado (a descida dele é o retorno ao zero); 30 kg e as duas linhas "+", abertas
+    expect(tabela.match(/—/g)).toHaveLength(1)
+    expect(tabela).toMatch(/1 0,000 sem carga \(zero\) — 2 5,000/)
+    expect(tabela.trim()).toMatch(/6 30,00 20 kg \+ 10 kg \+ \+$/)
   })
 
   it('padrão vencido também sem plano (folha em branco ou só do cliente): VENCIDO e aviso antes de sair', async () => {
@@ -1045,12 +1146,15 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     )
     expect(t).toContain('prato redondo')
     expect(t).toContain(
-      '0, Min (se marcada), 25, 50, 75 e 100 % de Max e em 500e e 2000e (classe III). Zere, aplique e anote a indicação.',
+      '0, Min (se marcada), 25, 50, 75 e 100 % de Max e em 500e e 2000e (classe III). Zere vazia, aplique as cargas e anote a indicação estável.',
     )
     // Sem o EMA: a coluna e a caixa que o explicavam saíram da folha
     expect(t).not.toMatch(/\bEMA\b/)
     expect(t).toContain('no mínimo 1/3 de Max até 500 kg, 1/5 de Max até 3 t e 1/10 de Max acima')
-    expect(t).toContain('6 REPETIBILIDADE Cerca de metade de Max no centro: anote, retire e anote o zero; repita.')
+    // Um ensaio em cada faixa do passo 3 (POP 7.9: multi-intervalo e múltiplas faixas, um em cada intervalo ou faixa)
+    expect(t).toContain(
+      '6 REPETIBILIDADE NO SISTEMA 4 · Repetibilidade Uma linha por faixa do passo 3 (faixa única: só a 1), carga no centro: na maior, entre metade de Max e Max; nas menores, perto do Max delas, sem passar. Zere antes de cada vez, aplique e anote a indicação; zero que não voltou: em Anotações.',
+    )
     // Os padrões ativos aparecem para marcar; nenhum dado de cliente ou balança
     expect(t).toContain('PP500-01 a 20')
     expect(t).not.toContain('FRIGORÍFICO')
@@ -1064,11 +1168,14 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toMatch(/Receptor de carga retangular \/ quadrado prato redondo mais de 4 apoios gancho tanque \/ silo/)
     // Nenhuma dica da classe I (ela não usa a folha em branco)
     expect(t).not.toMatch(/classe I\b(?!I)|uma peça só/)
-    expect(t).toContain('Pesos (não precisa ser padrão)')
-    // 12 leituras na repetibilidade (5 bastam, até 10 com k = 2, em duas faixas; quantas vezes no canto das caixas), 9
-    // pontos e 6 posições de excentricidade em duas faixas de 3 (mais, no espaço livre), com a posição escrita no local
-    expect(t).toMatch(/1ª 2ª 3ª 4ª · < 100 kg 5ª · < 100 kg 6ª · opcional/)
-    expect(t).toMatch(/7ª · opcional 8ª · opcional 9ª · opcional 10ª · opcional 11ª · opcional 12ª · opcional/)
+    // Na repetibilidade, só a carga aplicada para escrever (sem os pesos nem a hora: o sistema guarda só a carga)
+    expect(t).toContain('Carga aplicada (unid.)')
+    expect(t).not.toMatch(/Pesos \(não precisa ser padrão\)|Hora ____/)
+    // Repetibilidade: uma linha por faixa (1, 2 e 3), com 10 leituras (5 bastam; 3 com 100 kg ou mais; com 10, k = 2;
+    // quantas vezes nos nº em cima das caixas), 9 pontos e 6 posições de excentricidade em duas faixas de 3 (mais, no
+    // espaço livre), com a posição escrita no local
+    expect(t).toMatch(/Faixa Carga aplicada \(unid\.\) 1ª 2ª 3ª 4ª 5ª 6ª 7ª 8ª 9ª 10ª < 100 kg < 100 kg opcional( opcional){4} 1 2 3 7 EXCENTRICIDADE/)
+    expect(t).not.toContain('11ª')
     expect(t).toMatch(/\b9\b RETORNO AO ZERO/)
     expect(t).toContain(
       '7 EXCENTRICIDADE NO SISTEMA 5 · Excentricidade Zere vazia e desloque a carga pelas posições (carga: no mínimo 1/3 de Max até 500 kg, 1/5 de Max até 3 t e 1/10 de Max acima), na ordem do desenho; escreva a posição de cada coluna (mais de 4 apoios ou tanque: uma por apoio). Frente: indicador (se remoto, o de acesso).',
@@ -1150,7 +1257,9 @@ describe.runIf(temPdftotext)(
       const paginas = paginasDe(textoDoPdf(m.pdf))
       const p1 = corrido(paginas[0])
       expect(p1).toContain('Também previstos no sistema, mas o plano não usa: BR-01 · JP-05 · PP500-01 a 20.')
-      expect(p1).toContain('Levou algum? Anote na linha em branco.')
+      // Levou algum? Em Anotações (a lista do passo 1 não tem linha em branco: é a dos cadastrados)
+      expect(p1).toContain('Levou algum? Anote em Anotações (no fim da folha).')
+      expect(p1).not.toContain('linha em branco')
       // Nas linhas da tabela, só os que vão a campo: o jogo de pesos, os 20 kg e o termo-higrômetro
       for (const x of ['JP-01', 'PP20-01 a 15', 'TH-01', 'levar']) expect(p1).toContain(x)
       for (const x of ['Pesos padrão de 500 kg', 'Barômetro', 'Pesos padrão de 5 kg e 10 kg']) expect(p1).not.toContain(x)
@@ -1209,14 +1318,14 @@ describe.runIf(temPdftotext)(
     it('escrita à mão com folga (≈ 6,5 mm): livres embaixo do rótulo (caixas de rótulo em cima) ou de fio a fio (campos em linha)', async () => {
       const branco = await gerarFolhaCampoPdf(folhaEmBranco())
       const pb = palavrasDoPdf(branco)
-      // Caixas com o rótulo em cima (o que é longo: endereço, plataforma, portaria, dimensões; a hora do ensaio)
+      // Caixas com o rótulo em cima (o que é longo: endereço, plataforma, portaria, dimensões). A carga aplicada da
+      // repetibilidade é uma coluna (uma linha por faixa), com o rótulo no cabeçalho e a altura das leituras
       for (const rotulo of [
         ['Endereço', 'da', 'calibração'],
         ['Contato', 'e', 'telefone'],
         ['Plataforma', '(fabricante,'],
         ['Portaria', 'de', 'aprovação'],
         ['Dimensões', 'do', 'prato'],
-        ['Início', 'do', 'ensaio'],
       ]) {
         const { mm } = livreEmbaixo(branco, pb, rotulo)
         expect(mm, rotulo.join(' ')).toBeGreaterThanOrEqual(6.4)
@@ -1230,7 +1339,6 @@ describe.runIf(temPdftotext)(
         ['Hora', 'de', 'início'],
         ['Tipo', 'de', 'balança'],
         ['Nº', 'de', 'apoios'],
-        ['Carga', 'aplicada'],
         ['Carga', 'usada'],
       ]) {
         const { mm } = alturaDaLinha(branco, pb, rotulo)
@@ -1242,7 +1350,6 @@ describe.runIf(temPdftotext)(
       expect(alturaDaLinha(plataforma, palavrasDoPdf(plataforma), ['Técnico', 'que', 'executou']).mm).toBeGreaterThanOrEqual(6.3)
       // As linhas de leitura (pontos, repetibilidade, excentricidade, ambiente) também
       for (const rotulo of [
-        ['Zero', 'após', 'retirar'],
         ['Indicação', '(kg)'],
         ['Início', '15', 'min'],
       ])
@@ -1258,7 +1365,10 @@ describe.runIf(temPdftotext)(
       expect(t).toContain(
         'Zere vazia e desloque a carga pelas posições (carga: no mínimo 1/3 de Max até 500 kg, 1/5 de Max até 3 t e 1/10 de Max acima), na ordem do desenho',
       )
-      expect(t).toMatch(/Carga usada Pesos ou carga usada Hora/)
+      // Sem carga prevista, só a carga usada (o sistema guarda só a carga; os padrões usados se marcam no passo 1), sem a
+      // hora
+      expect(t).toContain('Carga usada (unid.)')
+      expect(t).not.toMatch(/Pesos ou carga usada|Carga usada (\(unid\.\) )?Hora/)
       expect(t).not.toContain('cerca de Max/2')
     })
   },
@@ -1490,65 +1600,80 @@ function tabelaComTitulo(d: DadosFolhaCampo, titulo: string): unknown[][] {
 }
 
 describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela inteira e peças usadas', { timeout: 180_000 }, () => {
-  it('o método e a hora do início numa linha só: o previsto é o do ensaio do sistema; a coluna que ele não usa, mais estreita', async () => {
+  it('o método numa linha fixa: o da classe (POP 7.7); o do ensaio que já tem leituras (fora do POP) só nele; só as colunas que ele usa', async () => {
     const d = folhaPlataforma()
-    const k = structuredClone(d.calibracao!)
-    k.indicacao = { ...k.indicacao, metodo: 'CONTINUO' }
-    const t = corrido(textoDoPdf(await gerarFolhaCampoPdf({ ...d, calibracao: k })))
-    expect(t).toMatch(
-      /Como as cargas foram aplicadas Início do ensaio Crescente e decrescente Crescente com descarga Crescente contínuo PREVISTO ____:____/,
+    // O cabeçalho da tabela dos pontos (a que tem o retorno ao zero)
+    const colunas = (dados: DadosFolhaCampo) =>
+      JSON.stringify(
+        (
+          nosQue((definicaoFolhaCampo(dados) as { content: unknown }).content, (x) =>
+            JSON.stringify((x.table as { body?: unknown[][] } | undefined)?.body ?? '').includes('RETORNO AO ZERO'),
+          )[0].table as { body: unknown[][] }
+        ).body[0],
+      )
+    // O rascunho com outro método, sem leituras: a folha fica com o da classe (o sistema o acerta), sem aviso
+    const semLeituras = structuredClone(d.calibracao!)
+    semLeituras.indicacao = { ...semLeituras.indicacao, metodo: 'CONTINUO' }
+    const a = corrido(textoDoPdf(await gerarFolhaCampoPdf({ ...d, calibracao: semLeituras })))
+    expect(a).toContain(
+      'Como aplicar as cargas Crescente e decrescente: suba até a maior ↑ e desça ↓, sem zerar no meio. Ao trocar peças, na subida não passe da carga; na descida, não fique abaixo dela · pelo POP (7.7), nesta classe',
     )
-    expect(t.match(/Início do ensaio/g)).toHaveLength(1)
-    expect(t).toContain('(vá somando os pesos, sem descarregar)')
-    // Só subindo: a ↓ sai mais estreita
-    const [tabela] = nosQue((definicaoFolhaCampo({ ...d, calibracao: k }) as { content: unknown }).content, (x) =>
-      JSON.stringify((x.table as { body?: unknown[][] } | undefined)?.body?.[0] ?? '').includes('Indicação ↓'),
-    )
-    const larguras = (tabela.table as { widths: number[] }).widths
-    expect(larguras[4]).toBeLessThan(larguras[3])
+    expect(a).not.toMatch(/Crescente contínuo|acerte no sistema/)
+    expect(colunas({ ...d, calibracao: semLeituras })).toContain('Indicação ↓')
+    // Já com leituras (medido antes da regra, o caso real: "crescente contínuo" na classe III): o do ensaio, com o do POP
+    // para comparar; só a coluna ↑
+    const comLeituras = structuredClone(semLeituras)
+    comLeituras.indicacao.pontos[2].crescente = 10
+    const b = corrido(textoDoPdf(await gerarFolhaCampoPdf({ ...d, calibracao: comLeituras })))
+    expect(b).toContain('Como aplicar as cargas Crescente contínuo: vá somando os pesos, sem descarregar')
+    expect(b).toContain('o do ensaio já começado no sistema (pelo POP, nesta classe: Crescente e decrescente)')
+    expect(b).not.toMatch(/Início do ensaio|PREVISTO Crescente|Crescente \S+ PREVISTO/)
+    expect(colunas({ ...d, calibracao: comLeituras })).not.toContain('Indicação ↓')
+    // Um registro de antes com o "Decrescente" (sem a subida), já com leituras: só a coluna ↓
+    const decrescente = structuredClone(comLeituras)
+    decrescente.indicacao.metodo = 'DECRESCENTE'
+    const c = corrido(textoDoPdf(await gerarFolhaCampoPdf({ ...d, calibracao: decrescente })))
+    expect(c).toContain('Como aplicar as cargas Decrescente: comece pela maior e vá retirando ↓')
+    const t = colunas({ ...d, calibracao: decrescente })
+    expect(t).toContain('Indicação ↓')
+    expect(t).not.toContain('Indicação ↑')
     // O retorno ao zero numa linha, com uma caixa para escrever
-    expect(t).toMatch(/RETORNO AO ZERO sem carga/)
+    expect(b).toMatch(/RETORNO AO ZERO sem carga/)
   })
 
-  it('rodoviária sem histórico: com substituição, "crescente contínuo" previsto (sem descer)', async () => {
+  it('rodoviária sem histórico (só registros de antes): o método da classe também com substituição, sem "só crescente"', async () => {
     const t = corrido(textoDoPdf(await gerarFolhaCampoPdf(folhaRodoviariaSemHistorico())))
-    expect(t).toContain('aplique as cargas na ordem da tabela (vá somando os pesos, sem descarregar)')
-    expect(t).not.toContain('suba até a maior')
-    expect(t.match(/Crescente contínuo PREVISTO/g)).toHaveLength(1)
-    expect(t).not.toMatch(/Crescente e decrescente PREVISTO/)
-    // A instrução diz: com substituição, só crescente; a nota das etapas diz por quê
-    expect(t).toContain(
-      'Zere vazia e aplique as cargas na ordem da tabela (vá somando os pesos, sem descarregar); anote a indicação estável. Com cargas de substituição: só crescente.',
-    )
-    expect(t).toContain('Só crescente: para descer, seria preciso tirar o material.')
+    expect(t).toContain('Zere vazia e aplique as cargas na ordem da tabela; anote a indicação estável.')
+    expect(t).toContain('Como aplicar as cargas Crescente e decrescente: suba até a maior ↑ e desça ↓, sem zerar no meio. Ao trocar peças, na subida não passe da carga; na descida, não fique abaixo dela')
+    expect(t).not.toMatch(/Crescente contínuo|[Ss]ó crescente|para descer, seria preciso tirar o material/)
+    // Como fazer as etapas, uma vez só
+    expect(t.match(/[Ee]m cada etapa, anote a indicação/g)).toHaveLength(1)
   })
 
   it('sem substituição na folha (balança que não é rodoviária): a instrução não fala dela', async () => {
     const t = corrido(textoDoPdf(await gerarFolhaCampoPdf(folhaPlataforma())))
-    expect(t).toContain(
-      '(suba até a maior ↑ e desça sem descarregar ↓); anote a indicação estável. Como as cargas foram aplicadas',
-    )
-    expect(t).not.toContain('Com cargas de substituição')
+    expect(t).toContain('Zere vazia e aplique as cargas na ordem da tabela; anote a indicação estável.')
+    expect(t).not.toMatch(/Com cargas de substituição|Cargas de substituição/)
   })
 
-  it('rodoviária 80 t: o título e o método no pé da frente, com o aviso; as tabelas juntas no verso, com as Anotações no fim (2 páginas)', async () => {
+  it('rodoviária 80 t (só registros de antes): os pontos na frente, com o título e o método; as etapas no alto do verso; as Anotações no fim (2 páginas)', async () => {
     const m = await montar(folhaRodoviaria())
     expect(m.paginas).toBe(2)
-    expect(m.extras.etapasAParte).toBeFalsy()
-    // Com o passo 5 inteiro no verso, as Anotações, no fim, ficariam sem as linhas mínimas: o título e o método ficam na
-    // frente e as tabelas (juntas) abrem o verso, com o título de continuação
+    // Juntos, os pontos e as etapas iriam inteiros para o verso, deixando a frente vazia embaixo do título: as etapas vão
+    // à parte, com o título de continuação
+    expect(m.extras.etapasAParte).toBe(true)
     expect(m.extras.ensaiosNoVerso).toBeFalsy()
-    expect(m.extras.avisoPontos).toBe(true)
-    expect(m.extras.continuacoes).toEqual(['parte-5-1'])
+    expect(m.extras.avisoPontos).toBeFalsy()
+    expect(m.extras.continuacoes).toEqual(['parte-5-2'])
     const [frente, verso] = paginasDe(textoDoPdf(m.pdf)).map(corrido)
-    // O que se lê antes das tabelas fica com o título: o método e como fazer as etapas
+    // O que se lê antes das tabelas fica com o título: o método e como fazer as etapas (e onde está a tabela delas)
     expect(frente).toMatch(
-      /5 ERRO DE INDICAÇÃO NO SISTEMA .*Como as cargas foram aplicadas .* Cargas de substituição: em cada etapa/,
+      /5 ERRO DE INDICAÇÃO .*Como aplicar as cargas .* Cargas de substituição \(tabela das etapas depois da dos pontos\): em cada etapa/,
     )
-    expect(frente).toContain('Tabelas na próxima página: os pontos e as etapas de substituição, juntos.')
-    expect(verso).toMatch(/Página 2 de 2 5 ERRO DE INDICAÇÃO \(CONTINUAÇÃO\) NO SISTEMA/)
-    expect(verso).toContain('RETORNO AO ZERO')
-    expect(verso).toMatch(/Cargas de substituição( sugeridas)? — 10 000 kg de pesos padrão em cada etapa/)
+    expect(frente).toContain('RETORNO AO ZERO')
+    expect(verso).toMatch(
+      /Página 2 de 2 5 ERRO DE INDICAÇÃO \(CONTINUAÇÃO\) NO SISTEMA 6 · Erro de indicação Cargas de substituição — 10 000 kg/,
+    )
     expect(verso).toMatch(/8 ASSINATURAS .*ANOTAÇÕES — /)
     expect(m.extras.anotacoes).toBeDefined()
   })
@@ -1563,9 +1688,7 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     // Os ensaios não cabem inteiros no verso: o título do passo 5 fica na frente
     expect(m.extras.ensaiosNoVerso).toBeFalsy()
     const [frente, verso] = paginasDe(textoDoPdf(m.pdf)).map(corrido)
-    expect(frente).toMatch(
-      /5 ERRO DE INDICAÇÃO NO SISTEMA .*Como as cargas foram aplicadas .* Cargas de substituição: em cada etapa/,
-    )
+    expect(frente).toMatch(/5 ERRO DE INDICAÇÃO .*Como aplicar as cargas .* Cargas de substituição: em cada etapa/)
     expect(frente).toContain('Tabelas na próxima página: os pontos e as etapas de substituição, juntos.')
     expect(verso).toMatch(/^.*5 ERRO DE INDICAÇÃO \(CONTINUAÇÃO\) NO SISTEMA 6 · Erro de indicação Nº Carga/)
     expect(verso).toContain('RETORNO AO ZERO')
@@ -1575,24 +1698,25 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     expect(verso).not.toContain('ANOTAÇÕES — ')
   })
 
-  it('rodoviária 60 t sem histórico (verso cheio, com o lembrete do ambiente do fim): o título e o método no pé da frente, com o aviso; as tabelas juntas no verso', async () => {
+  it('rodoviária 60 t sem histórico (só registros de antes): os pontos na frente, com o título e o método; as etapas no alto do verso', async () => {
     const m = await montar(folhaRodoviariaSemHistorico())
     expect(m.paginas).toBe(2)
     expect(m.faltando).toEqual([])
-    expect(m.extras.etapasAParte).toBeFalsy()
-    expect(m.extras.avisoPontos).toBe(true)
+    expect(m.extras.etapasAParte).toBe(true)
+    expect(m.extras.avisoPontos).toBeFalsy()
     expect(m.extras.ensaiosNoVerso).toBeFalsy()
     const [frente, verso] = paginasDe(textoDoPdf(m.pdf)).map(corrido)
     expect(frente).toMatch(
-      /4 AMBIENTE .*5 ERRO DE INDICAÇÃO NO SISTEMA .*Como as cargas foram aplicadas .* Cargas de substituição: em cada etapa/,
+      /4 AMBIENTE .*5 ERRO DE INDICAÇÃO .*Como aplicar as cargas .* Cargas de substituição \(tabela das etapas depois da dos pontos\): em cada etapa/,
     )
-    expect(frente).toContain('Tabelas na próxima página: os pontos e as etapas de substituição, juntos.')
-    expect(verso).toMatch(/^.*5 ERRO DE INDICAÇÃO \(CONTINUAÇÃO\) NO SISTEMA 6 · Erro de indicação Nº Carga/)
-    expect(verso).toMatch(/Cargas de substituição sugeridas — 10 000 kg de pesos padrão em cada etapa/)
+    expect(frente).toContain('RETORNO AO ZERO')
+    expect(verso).toMatch(
+      /^.*5 ERRO DE INDICAÇÃO \(CONTINUAÇÃO\) NO SISTEMA 6 · Erro de indicação Cargas de substituição sugeridas/,
+    )
     expect(verso).toMatch(
       /6 REPETIBILIDADE .*7 EXCENTRICIDADE .*8 ASSINATURAS .*Antes de assinar: preencha a linha Fim do passo 4\./,
     )
-    // O pé da frente, depois do aviso das tabelas, fica livre: as Anotações são a última coisa da folha
+    // As Anotações são a última coisa da folha
     expect(frente).not.toContain('ANOTAÇÕES — ')
     expect(verso).toMatch(/Antes de assinar: preencha a linha Fim do passo 4\..* ANOTAÇÕES — /)
   })
@@ -1610,8 +1734,8 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     expect(m.faltando).toEqual([])
     expect(m.extras.etapasAParte).toBeFalsy()
     const paginas = paginasDe(textoDoPdf(m.pdf)).map(corrido)
-    const i = paginas.findIndex((p) => p.includes('5 ERRO DE INDICAÇÃO NO SISTEMA'))
-    expect(paginas[i]).toMatch(/Como as cargas foram aplicadas .* Cargas de substituição: em cada etapa/)
+    const i = paginas.findIndex((p) => p.includes('5 ERRO DE INDICAÇÃO Zere'))
+    expect(paginas[i]).toMatch(/Como aplicar as cargas .* Cargas de substituição: em cada etapa/)
     const tabelas = paginas.findIndex((p) => p.includes('RETORNO AO ZERO'))
     expect(paginas[tabelas]).toMatch(/Cargas de substituição sugeridas — 10 000 kg de pesos padrão em cada etapa/)
     // O "como fazer" das etapas uma vez só
@@ -1632,8 +1756,8 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     expect(m.faltando).toEqual([])
     expect(m.extras.etapasAParte).toBeFalsy()
     const paginas = paginasDe(textoDoPdf(m.pdf)).map(corrido)
-    const i = paginas.findIndex((p) => p.includes('5 ERRO DE INDICAÇÃO NO SISTEMA'))
-    expect(paginas[i]).toMatch(/Como as cargas foram aplicadas .* Cargas de substituição: em cada etapa/)
+    const i = paginas.findIndex((p) => p.includes('5 ERRO DE INDICAÇÃO Zere'))
+    expect(paginas[i]).toMatch(/Como aplicar as cargas .* Cargas de substituição: em cada etapa/)
     const tabelas = paginas.findIndex((p) => p.includes('RETORNO AO ZERO'))
     expect(paginas[tabelas]).toMatch(/Cargas de substituição — 10 000 kg de pesos padrão em cada etapa/)
     expect(paginas.join(' ').match(/[Ee]m cada etapa, anote a indicação/g)).toHaveLength(1)
@@ -1656,9 +1780,10 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     for (const [dados, naFrente] of [
       [folhaPlataforma, true],
       [folhaClasseI, true],
-      [folhaMultiIntervalo, false],
+      [folhaMultiIntervalo, true],
       [folhaEmBranco, false],
       [folhaEmBrancoOitoPadroes, false],
+      [folhaEmBrancoSemPadroes, false],
     ] as const) {
       const m = await montar(dados())
       expect(m.paginas, dados.name).toBe(2)
@@ -1673,9 +1798,11 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
       const [frente, verso] = paginasDe(textoDoPdf(m.pdf)).map(corrido)
       const quantos = naFrente ? 5 : 4
       for (const x of TITULOS_PASSOS.slice(0, quantos)) expect(frente, `${dados.name}: ${x}`).toContain(x)
-      for (const x of TITULOS_PASSOS.slice(quantos)) expect(verso, `${dados.name}: ${x}`).toContain(x)
+      // A repetibilidade (sem a linha do zero) pode caber no pé da frente; a excentricidade e as assinaturas, no verso
+      for (const x of TITULOS_PASSOS.slice(naFrente ? 6 : quantos)) expect(verso, `${dados.name}: ${x}`).toContain(x)
+      expect(`${frente} ${verso}`).toContain(TITULOS_PASSOS[5])
       expect(verso).toMatch(
-        naFrente ? /Página 2 de 2 6 REPETIBILIDADE NO SISTEMA/ : /Página 2 de 2 5 ERRO DE INDICAÇÃO NO SISTEMA/,
+        naFrente ? /Página 2 de 2 (6 REPETIBILIDADE|7 EXCENTRICIDADE) / : /Página 2 de 2 5 ERRO DE INDICAÇÃO /,
       )
       // As Anotações no fim do verso, com as linhas mínimas
       expect(m.extras.anotacoes?.altura, dados.name).toBeGreaterThanOrEqual(60)
@@ -1718,11 +1845,12 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     const d = dados()
     const corpo = tabelaComTitulo(d, 'Peças usadas').slice(1)
     const pecas = corpo.map((l) => l[4] as { fillColor?: string; stack?: Array<{ text?: unknown }> })
-    const tipos = [...d.padroes.filter((p) => p.ativo && p.tipo !== 'OUTRO').map((p) => p.tipo), 'linha em branco']
+    // Só os padrões cadastrados, sem linha em branco no fim (outro levado vai em Anotações)
+    const tipos = d.padroes.filter((p) => p.ativo && p.tipo !== 'OUTRO').map((p) => p.tipo)
     expect(pecas).toHaveLength(tipos.length)
     expect(tipos).toContain('TERMOHIGROMETRO')
     pecas.forEach((c, i) => {
-      if (tipos[i] === 'PESOS' || tipos[i] === 'linha em branco') {
+      if (tipos[i] === 'PESOS') {
         expect(c.fillColor, tipos[i]).toBe('#FFFFFF')
         expect(JSON.stringify(c.stack ?? ''), tipos[i]).not.toContain('—')
       } else {
@@ -1733,6 +1861,57 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     // Com plano, a coluna é a das peças previstas (do sistema, em cinza)
     const comPlano = tabelaComTitulo(folhaPlataforma(), 'Separar (peças previstas)').slice(1, 2)
     expect((comPlano[0][4] as { fillColor?: string }).fillColor).not.toBe('#FFFFFF')
+  })
+
+  it('padrões listados (com ou sem plano): sem linha em branco no fim; nenhum listado: as linhas para escrever (≥ 3, ≈ 6,5 mm)', async () => {
+    const escrever = (l: unknown[]) => l.every((c) => (c as { fillColor?: string }).fillColor === '#FFFFFF')
+    // Listados: cada linha é um padrão cadastrado (nenhuma toda em branco)
+    for (const [d, titulo, n] of [
+      [folhaPlataforma(), 'Separar (peças previstas)', 3],
+      [folhaMultiIntervalo(), 'Separar (peças previstas)', 3],
+      [folhaClasseI(), 'Separar (peças previstas)', 4],
+      [folhaEmBranco(), 'Peças usadas', 5],
+      [folhaEmBrancoOitoPadroes(), 'Peças usadas', 8],
+    ] as const) {
+      const corpo = tabelaComTitulo(d, titulo).slice(1)
+      expect(corpo, d.numero).toHaveLength(n)
+      expect(corpo.filter(escrever), d.numero).toEqual([])
+    }
+    // O que o plano não usa: "Levou algum?" manda para as Anotações, não para uma linha em branco
+    const multi = jsonDe(folhaMultiIntervalo())
+    expect(multi).toContain('. Levou algum? Anote em Anotações (no fim da folha).')
+    expect(multi).not.toContain('linha em branco')
+    // Nenhum padrão cadastrado (em branco) ou previsto (com plano): só as linhas para escrever, com ≈ 6,5 mm
+    const semNenhum = folhaPlataforma()
+    semNenhum.padroes = []
+    for (const [d, titulo, texto] of [
+      [folhaEmBrancoSemPadroes(), 'Peças usadas', 'Em branco: escreva os padrões levados e, no cliente, marque os usados.'],
+      [semNenhum, 'Separar (peças previstas)', 'Separe os padrões e as peças previstas'],
+    ] as const) {
+      const corpo = tabelaComTitulo(d, titulo).slice(1)
+      expect(corpo.length, d.numero).toBeGreaterThanOrEqual(3)
+      expect(corpo.every(escrever), d.numero).toBe(true)
+      expect(jsonDe(d)).toContain(texto)
+    }
+    const m = await montar(folhaEmBrancoSemPadroes())
+    expect(m.paginas).toBe(2)
+    const pdf = m.pdf
+    const palavras = palavrasDoPdf(pdf)
+    const cab = palavras[0].find((w) => w.texto === 'Levado')!
+    // As 3 linhas para escrever, de fio a fio, embaixo do cabeçalho "Levado"
+    const img = imagemDaPagina(pdf, 1)
+    const x = Math.round((cab.x0 + 2) * img.px)
+    let y = Math.round(cab.y1 * img.px) + 1
+    while (!img.escuro(x, y)) y++
+    const fios: number[] = []
+    for (let k = 0; k < 4; k++) {
+      while (img.escuro(x, y)) y++
+      const ini = y
+      while (!img.escuro(x, y)) y++
+      fios.push((y - ini) * (25.4 / 150))
+    }
+    // (o 4º espaço já é o do passo 2, abaixo da tabela)
+    for (const mm of fios.slice(0, 3)) expect(mm).toBeGreaterThanOrEqual(6.3)
   })
 })
 
@@ -1790,13 +1969,14 @@ describe.runIf(temPdftotext)('correções da 4ª revisão: páginas sem grandes 
     for (const [i, mm] of brancos.slice(0, -1).entries()) expect(mm, `página ${i + 1}`).toBeLessThan(MEIA_PAGINA_MM)
   })
 
-  it('rodoviária 80 t: 2 páginas, frente e verso: o título e o método na p.1, os pontos e as etapas (juntos) na p.2', async () => {
+  it('rodoviária 80 t: 2 páginas, frente e verso: o título, o método e os pontos na p.1; as etapas na p.2', async () => {
     const m = await montar(folhaRodoviaria())
     expect(m.paginas).toBe(2)
-    expect(m.marcas.get(`fim:${'parte-5-1'}`)?.pagina).toBe(2)
     expect(m.marcas.get('fim:passo-5')?.pagina).toBe(1)
+    expect(m.marcas.get(`fim:${'parte-5-1'}`)?.pagina).toBe(1)
+    expect(m.marcas.get(`fim:${'parte-5-2'}`)?.pagina).toBe(2)
     expect(m.extras.ensaiosNoVerso).toBeFalsy()
-    expect(m.extras.avisoPontos).toBe(true)
+    expect(m.extras.avisoPontos).toBeFalsy()
   })
 
   it('textos longos: a tabela dos pontos vai inteira; a última página não fica só com as assinaturas', async () => {
@@ -1836,7 +2016,7 @@ describe.runIf(temPdftotext)('correções da 4ª revisão: páginas sem grandes 
       expect(blocos[0].id).toBe('passo-7')
       expect(JSON.stringify(blocos[0])).toMatch(/"EXCENTRICIDADE"/)
       expect(JSON.stringify(blocos[0])).toMatch(/"Indicação"/)
-      expect(JSON.stringify(blocos[0])).toMatch(/"Carga( usada)?( \(\w+\))?"/)
+      expect(JSON.stringify(blocos[0])).toMatch(/"Carga( usada)?( \([\w.]+\))?"/)
       expect(doc.content.some((x) => /^parte-7-/.test(x.id ?? ''))).toBe(false)
       const m = await montar(e.dados())
       expect(m.paginas).toBeLessThanOrEqual(e.maxPaginas)
@@ -1937,11 +2117,14 @@ describe.runIf(temPdftotext)(
         expect(mm, `página ${i + 1}`).toBeLessThan(MEIA_PAGINA_MM)
     })
 
-    it('pontos e etapas que cabem juntos numa página continuam juntos (rodoviária 80 t, 60 t)', async () => {
+    it('rodoviária 80 t e 60 t (só registros de antes): os pontos cabem na página do título; as etapas vão à parte, em 2 páginas', async () => {
       for (const dados of [folhaRodoviaria, folhaRodoviariaSemHistorico]) {
         const m = await montar(dados())
-        expect(m.extras.etapasAParte, dados.name).toBeFalsy()
+        expect(m.extras.etapasAParte, dados.name).toBe(true)
         expect(m.paginas, dados.name).toBe(2)
+        const titulo = m.marcas.get('fim:passo-5')?.pagina
+        for (let i = 0; m.marcas.has(`linha-pontos:${i}`); i++)
+          expect(m.marcas.get(`linha-pontos:${i}`)?.pagina, dados.name).toBe(titulo)
       }
     })
   },
@@ -2178,32 +2361,34 @@ describe.runIf(temPdftotext)(
       expect(primeiroCinza / img.px).toBeLessThanOrEqual(como.x0 + 1.5)
     })
 
-    it('linhas de leitura mais altas quando a página tem espaço (≈ 8,8 mm), sem página nova; as páginas cheias como estão', async () => {
-      // Plataforma: a frente cheia (os passos 1 a 5) fica como está; no verso, a repetibilidade e a excentricidade crescem
-      const plataforma = await montar(folhaPlataforma())
-      expect(plataforma.paginas).toBe(2)
-      expect(plataforma.extras.folgaLeitura).toEqual({ 6: 6, 7: 6 })
-      const pp = palavrasDoPdf(plataforma.pdf)
-      for (const rotulo of [
-        ['Zero', 'após', 'retirar'],
-        ['Indicação', '(kg)'],
-      ])
-        expect(alturaDaLinha(plataforma.pdf, pp, rotulo).mm, rotulo.join(' ')).toBeGreaterThanOrEqual(8.4)
-      // Balcão: os ensaios no verso; na frente, com espaço, o ambiente (início e fim) cresce
-      const balcao = await montar(folhaMultiIntervalo())
-      expect(balcao.extras.folgaLeitura?.[4]).toBe(6)
-      expect(alturaDaLinha(balcao.pdf, palavrasDoPdf(balcao.pdf), ['Início', '15', 'min']).mm).toBeGreaterThanOrEqual(8.4)
-      // O espaço livre vira escrita mais folgada até ≈ 88 % da altura útil, sem tirar as linhas mínimas das Anotações; o
-      // que ainda sobra no fim da última página são as Anotações, até o pé dela
-      for (const dados of [folhaPlataforma, folhaClasseI, folhaEmBranco]) {
+    it('linhas de leitura mais altas quando a frente tem espaço (≈ 8,8 mm), sem página nova; no verso, o que sobra é das Anotações', async () => {
+      // Em branco: a frente acaba no passo 4 (os ensaios no verso), com espaço: o ambiente (início e fim) cresce
+      const branco = await montar(folhaEmBranco())
+      expect(branco.extras.folgaLeitura?.[4]).toBe(6)
+      expect(alturaDaLinha(branco.pdf, palavrasDoPdf(branco.pdf), ['Início', '15', 'min']).mm).toBeGreaterThanOrEqual(8.4)
+      // As linhas de leitura do verso (a última página) ficam com ≈ 6,5 mm: o espaço que sobra nele, depois das
+      // assinaturas, vai todo para as Anotações, até o pé da página
+      for (const dados of [
+        folhaPlataforma,
+        folhaMultiIntervalo,
+        folhaClasseI,
+        folhaEmBranco,
+        folhaEmBrancoOitoPadroes,
+        folhaEmBrancoSemPadroes,
+      ]) {
         const m = await montar(dados())
         expect(m.paginas, dados.name).toBe(2)
-        expect(m.extras.folgaLeitura?.[6], dados.name).toBeGreaterThan(0)
+        for (const n of [4, 5, 6, 7]) {
+          const id = n === 5 && m.marcas.has('fim:parte-5-1') ? 'parte-5-1' : `passo-${n}`
+          if (m.marcas.get(`fim:${id}`)?.pagina === 2)
+            expect(m.extras.folgaLeitura?.[n] ?? 0, `${dados.name}: passo ${n}`).toBe(0)
+        }
         expect(m.extras.anotacoes?.altura, dados.name).toBeGreaterThanOrEqual(60)
         expect(brancoNoPe(m.pdf, m.paginas).at(-1), `${dados.name}, última`).toBeLessThan(5)
       }
-      // As que já estão cheias no verso (a rodoviária multi-intervalo) não ganham altura lá, e nenhum passo passa para
-      // outra página (na multi-intervalo, só as Anotações, sozinhas numa 3ª)
+      const plataforma = await montar(folhaPlataforma())
+      expect(alturaDaLinha(plataforma.pdf, palavrasDoPdf(plataforma.pdf), ['Indicação', '(kg)']).mm).toBeGreaterThanOrEqual(6.3)
+      // Nenhum passo passa para outra página (na rodoviária multi-intervalo, só as Anotações, sozinhas numa 3ª)
       for (const dados of [folhaRodoviaria, folhaRodoviariaSemHistorico, () => folhaRodoviariaMultiIntervalo()]) {
         const m = await montar(dados())
         expect(m.marcas.get('fim:passo-7')?.pagina).toBe(2)
@@ -2213,7 +2398,6 @@ describe.runIf(temPdftotext)(
       const cheia = await montar(folhaRodoviariaMultiIntervalo())
       for (const n of [5, 6, 7]) expect(cheia.extras.folgaLeitura?.[n] ?? 0).toBe(0)
       // Na folha em branco, as linhas dos padrões com ≈ 6,5 mm (as peças usadas de cada jogo são escritas nelas)
-      const branco = await montar(folhaEmBranco())
       expect(alturaDaLinha(branco.pdf, palavrasDoPdf(branco.pdf), ['PP20-01', 'a', '15']).mm).toBeGreaterThanOrEqual(6.3)
     })
 
@@ -2300,7 +2484,7 @@ describe.runIf(temPdftotext)(
         const t = paginas.join(' ')
         expect(t).not.toMatch(/no verso|na frente|\(frente\)|espaço livre/)
         expect(t).toContain(AVISO_ANOTACOES)
-        if (e.dados !== folhaEmBranco && e.dados !== folhaEmBrancoOitoPadroes) {
+        if (![folhaEmBranco, folhaEmBrancoOitoPadroes, folhaEmBrancoSemPadroes].includes(e.dados)) {
           expect(t).toContain('Anote o certo em Anotações (passo 2 ou 3) e avise o cliente.')
           expect(t).toContain('Pesos diferentes dos impressos: em Anotações (no fim da folha), com o nº da linha.')
         }
@@ -2415,25 +2599,44 @@ describe.runIf(temPdftotext)(
       expect(ultima).toMatch(/8 ASSINATURAS .*ANOTAÇÕES — /)
     })
 
-    it('métodos de carregamento: os que o sistema oferece, sem o "Decrescente"; ele só sai com o rascunho já nele', () => {
-      const opcoes = (d: DadosFolhaCampo) => {
-        const [linha] = nosQue((definicaoFolhaCampo(d) as { content: unknown }).content, (x) =>
-          JSON.stringify(x.stack ?? '').startsWith('[{"text":"Como as cargas foram aplicadas"'),
-        )
-        return JSON.stringify(linha)
+    it('método de carregamento: uma linha fixa, impressa, sem opções de marcar; o "Decrescente" só num registro de antes com leituras', () => {
+      // A grade da linha do método (a que tem o rótulo dela)
+      const linha = (d: DadosFolhaCampo) => {
+        const [g] = nosQue((definicaoFolhaCampo(d) as { content: unknown }).content, (x) => {
+          const t = x.table as { body?: unknown[][] } | undefined
+          return !!t?.body && JSON.stringify(t.body.at(-1)).includes(`"${ROTULO_METODO_FOLHA}"`)
+        })
+        return g
       }
-      for (const dados of [folhaPlataforma, folhaMultiIntervalo, folhaClasseI, folhaRodoviaria, folhaEmBranco]) {
-        const t = opcoes(dados())
-        for (const m of ['Crescente e decrescente', 'Crescente com descarga', 'Crescente contínuo'])
-          expect(t, `${dados.name}: ${m}`).toContain(`"${m}"`)
-        expect(t, dados.name).not.toContain('"Decrescente"')
+      const nomes = Object.values(METODOS_CARREGAMENTO).map((m) => m.label)
+      for (const [dados, metodo] of [
+        [folhaPlataforma, 'Crescente e decrescente'],
+        [folhaMultiIntervalo, 'Crescente e decrescente'],
+        [folhaRodoviaria, 'Crescente e decrescente'],
+        [folhaEmBranco, 'Crescente e decrescente'],
+        [folhaClasseI, 'Crescente com descarga'],
+      ] as const) {
+        const g = linha(dados())
+        const ultima = JSON.stringify((g.table as { body: unknown[][] }).body.at(-1))
+        // Um nome só, o do método, impresso (cinza), sem caixa de marcar nem PREVISTO
+        expect(
+          nomes.filter((n) => ultima.includes(`"${n}"`)),
+          dados.name,
+        ).toEqual([metodo])
+        expect(ultima).toContain('"fillColor":"#E3E3E3"')
+        expect(ultima).not.toMatch(/PREVISTO|"type":"rect"/)
+        // Sem caixa de marcar (fora a do ajuste interno, na classe I) nem a hora do início do ensaio
+        expect(nosQue(g, (x) => x.type === 'rect')).toHaveLength(dados === folhaClasseI ? 1 : 0)
+        expect(JSON.stringify(g)).not.toContain('Início do ensaio')
       }
-      // Um rascunho de antes, já com o "Decrescente": a opção sai (prevista), para conferir o que foi feito
+      // Um rascunho de antes com o "Decrescente": sem leituras, o da classe; com leituras, o dele (é o que foi feito)
       const d = folhaPlataforma()
       d.calibracao = { ...d.calibracao!, indicacao: { ...d.calibracao!.indicacao, metodo: 'DECRESCENTE' } }
-      const t = opcoes(d)
+      expect(JSON.stringify(linha(d))).not.toContain('"Decrescente"')
+      d.calibracao.indicacao.pontos = d.calibracao.indicacao.pontos.map((p, i) => (i === 2 ? { ...p, decrescente: 10 } : p))
+      const t = JSON.stringify(linha(d))
       expect(t).toContain('"Decrescente"')
-      expect(t).toMatch(/"Decrescente","bold":true\},\{"text":"  PREVISTO"/)
+      expect(t).toContain('o do ensaio já começado no sistema (pelo POP, nesta classe: Crescente e decrescente)')
     })
 
     it('tabelas de escrever: os rótulos das colunas numa linha de cabeçalho própria, nenhum dentro das caixas de escrever', () => {
@@ -2469,13 +2672,12 @@ describe.runIf(temPdftotext)(
         for (const linha of ambiente.slice(1))
           for (const c of linha.slice(1)) expect(vazia(c) || c.fillColor !== '#FFFFFF', JSON.stringify(c)).toBe(true)
       }
-      // A repetibilidade (um ensaio, em branco ou com a carga, e a tabela de vários ensaios) e as posições da
-      // excentricidade em branco: o nº de cada leitura (ou posição) numa linha miúda em cima; as caixas vazias
+      // A repetibilidade (um ensaio com a carga e a tabela de vários ensaios) e as posições da excentricidade em branco:
+      // o nº de cada leitura (ou posição) numa linha miúda em cima; as caixas vazias
       for (const [d, rotulo] of [
-        [folhaEmBranco(), 'Com a carga'],
-        [folhaPlataforma(), 'Com a carga'],
-        [folhaClasseI(), 'Com a carga'],
-        [folhaMultiIntervalo(), 'Com a carga'],
+        [folhaPlataforma(), 'Indicação'],
+        [folhaClasseI(), 'Indicação'],
+        [folhaMultiIntervalo(), 'Indicação'],
         [folhaEmBranco(), 'Posição'],
       ] as const) {
         const [tabela] = tabelas(d, rotulo)
@@ -2490,6 +2692,11 @@ describe.runIf(temPdftotext)(
         // Os nº em cima ("1ª", "2"), numa linha própria
         expect(JSON.stringify(tabela)).toMatch(rotulo === 'Posição' ? /"text":"1".*"text":"2".*"text":"3"/ : /"1ª".*"2ª".*"3ª"/)
       }
+      // A repetibilidade em branco: o cabeçalho (a faixa, a carga aplicada e o nº de cada leitura) numa linha própria e,
+      // em cada faixa, a carga e as leituras em caixas vazias
+      const [repetibilidade] = tabelas(folhaEmBranco(), 'Carga aplicada')
+      expect(JSON.stringify(repetibilidade[0])).toMatch(/"Faixa".*"Carga aplicada".*"1ª".*"2ª".*"3ª"/)
+      for (const linha of repetibilidade.slice(1)) for (const c of linha.slice(1)) expect(vazia(c)).toBe(true)
     })
 
     it('classe I: a caixa do ajuste interno de rotina (CAL) antes dos ensaios, com a hora, no alto do passo 5', async () => {
@@ -2519,7 +2726,7 @@ describe.runIf(temPdftotext)(
         .find((p) => p.includes('5 ERRO DE INDICAÇÃO'))!
       const i = pagina.indexOf(AJUSTE_INTERNO_CLASSE_I)
       expect(pagina.indexOf('5 ERRO DE INDICAÇÃO')).toBeLessThan(i)
-      expect(i).toBeLessThan(pagina.indexOf('Como as cargas foram aplicadas'))
+      expect(i).toBeLessThan(pagina.indexOf(ROTULO_METODO_FOLHA))
       expect(pagina).toMatch(
         /Ajuste interno \(CAL\) feito antes dos ensaios rotina das analíticas, não é reparo · no sistema: 2 · Balança e ajuste Hora/,
       )
@@ -2604,52 +2811,60 @@ describe.runIf(temPdftotext)(
         expect(frente).toContain(AVISO_CONTINUA)
         expect(frente.indexOf('Fim após o passo 7')).toBeLessThan(frente.indexOf(AVISO_CONTINUA))
         // A última coisa da página (depois dela, só o rodapé) e uma vez só na folha
-        expect(frente.slice(frente.indexOf(AVISO_CONTINUA) + AVISO_CONTINUA.length).trim()).toMatch(/^FOR-CAL-01 rev\. 03/)
+        expect(frente.slice(frente.indexOf(AVISO_CONTINUA) + AVISO_CONTINUA.length).trim()).toMatch(/^FOR-CAL-01 rev\. 04/)
         expect(paginas.join(' ').match(/Continua na próxima página/g)).toHaveLength(1)
       },
     )
 
-    it('os ensaios no verso (e a linha de continuação) no balcão multi-intervalo e nas duas em branco; na plataforma, não', async () => {
-      for (const dados of [folhaMultiIntervalo, folhaEmBranco, folhaEmBrancoOitoPadroes])
+    it('os ensaios no verso (e a linha de continuação) nas folhas em branco; na plataforma, no balcão e na classe I, não', async () => {
+      for (const dados of [folhaEmBranco, folhaEmBrancoOitoPadroes, folhaEmBrancoSemPadroes])
         expect((await montar(dados())).extras.ensaiosNoVerso, dados.name).toBe(true)
-      expect((await montar(folhaPlataforma())).extras.ensaiosNoVerso).toBeFalsy()
+      for (const dados of [folhaPlataforma, folhaMultiIntervalo, folhaClasseI])
+        expect((await montar(dados())).extras.ensaiosNoVerso, dados.name).toBeFalsy()
     })
 
-    it('folha em branco, repetibilidade: a carga, os pesos e a hora, cada um na sua caixa, com o espaço de escrever embaixo do rótulo', async () => {
+    it('folha em branco, repetibilidade: uma linha por faixa do passo 3 (multi-intervalo e múltiplas faixas: um ensaio em cada), só com a carga aplicada para escrever', async () => {
       const pdf = await gerarFolhaCampoPdf(folhaEmBranco())
-      const pb = palavrasDoPdf(pdf)
-      // A carga: uma linha de escrever (≥ 6,5 mm) embaixo do rótulo; os pesos (não precisa ser padrão): duas
-      expect(livreEmbaixo(pdf, pb, ['Carga', 'aplicada', '(unid.)']).mm).toBeGreaterThanOrEqual(6.5)
-      expect(livreEmbaixo(pdf, pb, ['Pesos', '(não', 'precisa']).mm).toBeGreaterThanOrEqual(13)
-      // A hora em linha, no pé da coluna: na altura da última linha das leituras (o zero da 2ª faixa)
-      const pagina = pb.findIndex((ps) => ps.some((w) => w.texto === 'precisa'))
-      const palavras = pb[pagina]
-      const pesos = palavras.find((w) => w.texto === 'precisa')!
-      const zeros = palavras.filter((w) => w.texto === 'Zero' && w.y0 > pesos.y0 - 20 && w.y0 < pesos.y0 + 120)
-      expect(zeros).toHaveLength(2)
-      const ultimo = zeros[1]
-      const hora = palavras.find((w) => w.texto === 'Hora' && w.x1 < ultimo.x0 && w.y0 > pesos.y1)!
-      expect(hora).toBeDefined()
-      expect(hora.y0).toBeGreaterThan(ultimo.y0)
-      expect(hora.y1 - ultimo.y0).toBeLessThan(19)
-      // Na definição: três caixas na coluna da esquerda (a carga em 2 linhas, os pesos em 3, a hora na última)
-      const [tabela] = nosQue((definicaoFolhaCampo(folhaEmBranco()) as { content: unknown }).content, (x) =>
-        JSON.stringify(x.table ?? '').includes('"Zero após retirar"'),
-      ).map((x) => (x.table as { body: Array<Array<Record<string, unknown>>> }).body)
-      expect(tabela.map((l) => l[0].rowSpan ?? (JSON.stringify(l[0]) === '{}' ? 0 : 1))).toEqual([2, 0, 3, 0, 0, 1])
-      expect(JSON.stringify(tabela[5][0])).toContain('"Hora"')
-      expect(tabela[5][0].verticalAlignment).toBe('bottom')
+      const t = corrido(textoDoPdf(pdf))
+      const rep = t.slice(t.indexOf('6 REPETIBILIDADE'), t.indexOf('7 EXCENTRICIDADE'))
+      expect(rep).not.toMatch(/Pesos|\bHora\b|Zero após retirar|Com a carga/)
+      // A instrução diz a carga de cada faixa (POP 7.9)
+      expect(rep).toContain('Uma linha por faixa do passo 3 (faixa única: só a 1)')
+      expect(rep).toContain('nas menores, perto do Max delas, sem passar')
+      // Na definição: o cabeçalho (a faixa, a carga aplicada e o nº das 10 leituras) e uma linha por faixa (1, 2 e 3),
+      // com a carga e as leituras para escrever
+      const [definicao] = nosQue((definicaoFolhaCampo(folhaEmBranco()) as { content: unknown }).content, (x) =>
+        JSON.stringify(x.table ?? '').includes('"Carga aplicada"'),
+      ).map((x) => x.table as { body: Array<Array<Record<string, unknown>>>; heights: (i: number) => number | string })
+      const tabela = definicao.body
+      expect(tabela).toHaveLength(4)
+      expect(tabela.map((l) => l.length)).toEqual([12, 12, 12, 12])
+      expect(tabela.slice(1).map((l) => JSON.stringify(l[0]))).toEqual(
+        ['1', '2', '3'].map((n) => expect.stringContaining(`"text":"${n}"`)),
+      )
+      expect(JSON.stringify(tabela[0])).toContain('"Carga aplicada"')
+      expect(JSON.stringify(tabela[0])).toContain('10ª')
+      // A carga e as leituras de cada faixa com a altura das linhas de leitura (≈ 6,5 mm para escrever)
+      for (const i of [1, 2, 3]) expect(definicao.heights(i)).toBeGreaterThanOrEqual(15.5)
     })
 
-    it('repetibilidade sem a carga prevista numa faixa só (rascunho sem a carga): a carga, os pesos e a hora numa linha em cima das leituras', async () => {
+    it('repetibilidade sem a carga prevista numa faixa só (rascunho sem a carga): só a carga aplicada, ao lado das leituras', async () => {
       const d = folhaPlataforma()
       d.calibracao = { ...d.calibracao!, repetibilidade: [{ id: 'r1', carga: 0, leituras: [null, null, null, null, null] }] }
       const m = await montar(d)
       expect(m.faltando).toEqual([])
       const t = corrido(textoDoPdf(m.pdf))
       const rep = t.slice(t.indexOf('6 REPETIBILIDADE'), t.indexOf('7 EXCENTRICIDADE'))
-      expect(rep).toMatch(/Carga aplicada \(kg\) Pesos ou carga usada Hora ____:____ 1ª 2ª 3ª 4ª 5ª 6ª · opcional Com a carga/)
-      expect(rep.match(/Com a carga/g)).toHaveLength(1)
+      expect(rep).toContain('Carga aplicada (kg)')
+      expect(rep).toMatch(/1ª 2ª 3ª 4ª 5ª 6ª · opcional/)
+      expect(rep.match(/Indicação \(kg\)/g)).toHaveLength(1)
+      expect(rep).not.toMatch(/Pesos ou carga usada|\bHora\b|Com a carga|Zero após retirar/)
+      // A caixa da carga ocupa as duas linhas (a dos nº e a das leituras)
+      const [tabela] = nosQue((definicaoFolhaCampo(d) as { content: unknown }).content, (x) =>
+        JSON.stringify(x.table ?? '').includes('"Carga aplicada"'),
+      ).map((x) => (x.table as { body: Array<Array<Record<string, unknown>>> }).body)
+      expect(tabela).toHaveLength(2)
+      expect(tabela[0][0].rowSpan).toBe(2)
     })
 
     it('medidas, telefone e nº impressos não se partem: nenhuma unidade, parte do telefone ou do nº sozinha numa linha', async () => {

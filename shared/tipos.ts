@@ -389,6 +389,14 @@ export interface EtapaSubstituicao {
 
 export interface EnsaioIndicacao {
   metodo: MetodoCarregamento
+  /**
+   * O método com que as leituras foram medidas, quando a pessoa passou o ensaio para o método do POP depois delas ("Usar
+   * o método do POP", no ensaio medido antes do método fixo pela classe ou com a classe trocada depois das leituras). A
+   * tela oferece voltar para ele, e a subida e a descida que `metodo` pede e que faltam são pendências mesmo na
+   * calibração medida antes das regras: o certificado não pode dizer que as cargas foram aplicadas de um jeito que não
+   * foi feito. Ausente = o método nunca foi trocado com leituras.
+   */
+  metodoMedido?: MetodoCarregamento
   pontos: PontoIndicacao[]
   /** Leitura do zero ao final do ensaio (retorno ao zero); `null` = não registrada. */
   retornoZero: number | null
@@ -582,6 +590,13 @@ export interface Calibracao {
    * pendências (ver `minimosDoPopComoAviso` em dominio.ts). Quem define é o servidor; ausente = não.
    */
   minimosComoAviso?: boolean
+  /**
+   * Calibração em andamento que já tinha leituras quando a descida do "crescente e decrescente" passou a ser obrigatória
+   * (atualização para a 1.0.4, migração 16), e a revisão de um certificado emitido sem ela: a visita já aconteceu, e a
+   * descida que falta fica só como aviso (POP 7.7). O resto das regras continua. Não vale no ensaio trocado de método
+   * depois das leituras (`EnsaioIndicacao.metodoMedido`). Quem define é o servidor; ausente = não.
+   */
+  descidaComoAviso?: boolean
   /**
    * Revisão: os padrões como foram congelados na emissão do certificado que ela substitui (o certificado e as
    * correções da época, mesmo que o padrão tenha sido calibrado de novo ou desativado depois; ver

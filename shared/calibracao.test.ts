@@ -20,13 +20,14 @@ import {
   AMBIENTE_VAZIO,
   BALANCA_VAZIA,
   calibracaoVazia,
+  METODOS_CARREGAMENTO,
   metodosCarregamentoParaEscolher,
   OPCOES_CALCULO_PADRAO,
   opcoesDaClasse,
   PADRAO_VAZIO,
   padroesSemHistorico,
 } from './dominio.ts'
-import { calcular } from './metrologia/index.ts'
+import { calcular, NOMES_METODO_CARREGAMENTO } from './metrologia/index.ts'
 import type { Balanca, CalibracaoInput, EnsaioIndicacao, Padrao, PontoIndicacao } from './tipos.ts'
 
 const pesos: Padrao = {
@@ -816,6 +817,111 @@ describe('mínimos do POP na calibração nova (e o registro de antes)', () => {
     expect(metodosCarregamentoParaEscolher('CRESCENTE_DECRESCENTE')).toEqual(['CRESCENTE_DECRESCENTE', 'DESCONTINUO', 'CONTINUO'])
     expect(metodosCarregamentoParaEscolher()).not.toContain('DECRESCENTE')
     expect(metodosCarregamentoParaEscolher('DECRESCENTE')).toContain('DECRESCENTE')
+  })
+
+  it('"crescente e decrescente" sem a descida de um ponto: pendência na calibração nova; aviso na já medida e na revisão de antes', () => {
+    const cinco = (metodo: EnsaioIndicacao['metodo'] = 'CRESCENTE_DECRESCENTE') =>
+      calibracaoDe(
+        [0, 5, 10, 20, 30].map((c) =>
+          pontoDe(`p${c}`, c, c ? montarCarga(c, 'kg', [J]).pecas : [], c, {
+            pecasManuais: false,
+            // A descida que falta (10 kg) e a de Max, a virada, que tem uma leitura só
+            ...(c === 10 || c === 30 ? { decrescente: null } : {}),
+          }),
+        ),
+        { metodo },
+      )
+    const FALTA = 'Erro de indicação: falta a leitura de descida em 10,00 kg (POP 7.7).'
+    const AVISO = 'Erro de indicação “crescente e decrescente” sem a leitura de descida em 10,00 kg.'
+    const de = (k: CalibracaoInput) => calcularCalibracao(k, balanca30, [J]).resultado
+    expect(de(cinco()).pendencias).toEqual([FALTA])
+    // Medida antes das regras (a mesma visita) e revisão de um certificado de antes delas: só o aviso
+    for (const k of [
+      { ...cinco(), minimosComoAviso: true },
+      { ...cinco(), substituiId: 'k-original' },
+    ]) {
+      expect(de(k).pendencias).toEqual([])
+      expect(de(k).avisos.map((a) => a.mensagem)).toContain(AVISO)
+    }
+    // A revisão de um certificado emitido com as regras: a pendência, como na calibração nova
+    expect(de({ ...cinco(), substituiId: 'k-original', regrasDoPop: true }).pendencias).toEqual([FALTA])
+    // Medido como "crescente contínuo" antes do método fixo pela classe (o caso real): sem descida, sem pendência
+    expect(de(cinco('CONTINUO')).pendencias).toEqual([])
+    expect(
+      de(cinco('CONTINUO'))
+        .avisos.map((a) => a.mensagem)
+        .join('\n'),
+    ).not.toMatch(/descida/)
+  })
+
+  it('a descida que falta: aviso na calibração medida antes de ela ser obrigatória (`descidaComoAviso`), sem soltar os outros mínimos', () => {
+    // Medida na 1.0.3 em "crescente e decrescente" sem a descida (opcional na época): 10 kg sem ↓; a de Max é a virada
+    const cinco = (pontos = [0, 5, 10, 20, 30]) =>
+      calibracaoDe(
+        pontos.map((c) =>
+          pontoDe(`p${c}`, c, c ? montarCarga(c, 'kg', [J]).pecas : [], c, {
+            pecasManuais: false,
+            ...(c === 10 || c === 30 ? { decrescente: null } : {}),
+          }),
+        ),
+      )
+    const AVISO = 'Erro de indicação “crescente e decrescente” sem a leitura de descida em 10,00 kg.'
+    const de = (k: CalibracaoInput) => calcularCalibracao(k, balanca30, [J]).resultado
+    const marcada = { ...cinco(), descidaComoAviso: true }
+    expect(entradaDoCalculo(marcada, balanca30, [J]).descidaComoAviso).toBe(true)
+    expect(de(marcada).pendencias).toEqual([])
+    expect(de(marcada).avisos.map((a) => a.mensagem)).toContain(AVISO)
+    // Os outros mínimos continuam pendências (a marca é só da descida)
+    expect(de({ ...cinco([0, 10, 20, 30]), descidaComoAviso: true }).pendencias).toEqual([POUCOS])
+    // Também na revisão de um certificado emitido com as regras (a mesma visita)
+    expect(de({ ...marcada, substituiId: 'k-original', regrasDoPop: true }).pendencias).toEqual([])
+  })
+
+  it('ensaio passado para "crescente e decrescente" depois das leituras (`metodoMedido`): a descida que falta é pendência, mesmo medido antes das regras', () => {
+    // O caso real: medido como "crescente contínuo" (só a subida) e trocado para o do POP pela tela
+    const continuo = () =>
+      calibracaoDe(
+        [0, 5, 10, 20, 30].map((c) =>
+          pontoDe(`p${c}`, c, c ? montarCarga(c, 'kg', [J]).pecas : [], c, { pecasManuais: false, decrescente: null }),
+        ),
+        { metodo: 'CONTINUO' },
+      )
+    const trocado = (k: CalibracaoInput): CalibracaoInput => ({
+      ...k,
+      indicacao: { ...k.indicacao, metodo: 'CRESCENTE_DECRESCENTE', metodoMedido: 'CONTINUO' },
+    })
+    const FALTA =
+      'Erro de indicação: falta a leitura de descida em 5,00 kg, 10,00 kg e 20,00 kg (POP 7.7). Sem ela, volte para “Crescente contínuo”, o método medido.'
+    const de = (k: CalibracaoInput) => calcularCalibracao(k, balanca30, [J]).resultado
+    // Antes da troca: o método medido, sem pendência
+    expect(de(continuo()).pendencias).toEqual([])
+    expect(entradaDoCalculo(trocado(continuo()), balanca30, [J]).indicacao.metodoMedido).toBe('CONTINUO')
+    // Calibração nova, medida antes das regras, marcada pela 1.0.4 e revisão de um certificado de antes delas: o
+    // certificado não pode declarar uma descida que não foi feita
+    for (const k of [
+      continuo(),
+      { ...continuo(), minimosComoAviso: true },
+      { ...continuo(), descidaComoAviso: true },
+      { ...continuo(), substituiId: 'k-original' },
+    ])
+      expect(de(trocado(k)).pendencias).toEqual([FALTA])
+    // Com a descida medida, emite com o método novo
+    const medido = trocado(continuo())
+    medido.indicacao.pontos = medido.indicacao.pontos.map((p) => ({ ...p, decrescente: p.carga }))
+    expect(de({ ...medido, minimosComoAviso: true }).pendencias).toEqual([])
+    // "Decrescente" (só a descida) passado para "crescente e decrescente": a subida que falta também
+    const soDescida = calibracaoDe(
+      [0, 5, 10, 20, 30].map((c) =>
+        pontoDe(`p${c}`, c, c ? montarCarga(c, 'kg', [J]).pecas : [], c, { pecasManuais: false, crescente: c ? null : 0 }),
+      ),
+      { metodo: 'CRESCENTE_DECRESCENTE', metodoMedido: 'DECRESCENTE' },
+    )
+    expect(de({ ...soDescida, minimosComoAviso: true }).pendencias).toEqual([
+      'Erro de indicação: falta a leitura de subida em 5,00 kg, 10,00 kg, 20,00 kg e 30,00 kg (POP 7.7). Sem ela, volte para “Decrescente”, o método medido.',
+    ])
+    // O motor escreve os nomes dos métodos como a tela
+    for (const [m, { label }] of Object.entries(METODOS_CARREGAMENTO))
+      expect(NOMES_METODO_CARREGAMENTO[m as EnsaioIndicacao['metodo']]).toBe(label)
   })
 })
 

@@ -7,6 +7,7 @@ import {
   enderecoCliente,
   formatarDataBr,
   hojeLocalIso,
+  minimosDoPopComoAviso,
   parteSeparada,
   semIndicadorLegado,
   textoBusca,
@@ -250,6 +251,12 @@ const MIGRACOES: Migracao[] = [
   // certificado emitido com as regras do POP a partir de um rascunho da 1.0.1 não regravado (as opções sem a convecção),
   // que nasceu marcada como legada, passa a seguir as regras do POP, como o servidor faz hoje (`calculoLegado`).
   revisoesComOsPadroesDaEmissao,
+
+  // 16: a calibração em andamento (também a revisão de um certificado) que já tinha leituras na atualização para a 1.0.4,
+  // quando a descida do "crescente e decrescente" passou a ser obrigatória (POP 7.7), fica com a descida que falta como
+  // aviso (`descidaComoAviso`): a visita já aconteceu, e na 1.0.3 a descida era opcional. A que já tem os mínimos como
+  // avisos não precisa. As novas seguem a regra, e também a que só tem o zero que "Sugerir os pontos" preenche (nada medido).
+  descidasAntesDaRegra,
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
@@ -389,6 +396,51 @@ function medidasAntesDasRegras(db: Banco) {
 }
 
 /**
+ * Migração 16 (ver acima). Repetível: só marca a calibração em andamento (rascunho ou em revisão, também a revisão de um
+ * certificado) com alguma leitura medida (`temLeituraMedida`: o zero que "Sugerir os pontos" já preenche não conta),
+ * ainda sem a marca e sem os mínimos como avisos (`minimosDoPopComoAviso`, onde a descida que falta já é aviso). Não sobe
+ * a versão: a marca não muda nada do que a tela grava. O registro de atividades diz quais.
+ */
+function descidasAntesDaRegra(db: Banco) {
+  const linhas = db
+    .prepare(
+      `SELECT k.id, k.dados, c.nome AS cliente, o.numero AS revisado,
+              (SELECT n.numero FROM numeros_reservados n
+                WHERE n.calibracao_id = k.id AND n.situacao = 'reservado' ORDER BY n.id DESC LIMIT 1) AS reservado
+         FROM calibracoes k LEFT JOIN clientes c ON c.id = k.cliente_id
+              LEFT JOIN calibracoes o ON o.id = k.substitui_id AND k.substitui_id <> ''
+        WHERE k.status IN ('RASCUNHO','REVISAO')
+        ORDER BY k.criado_em, k.id`,
+    )
+    .all() as Array<{ id: string; dados: string; cliente: string | null; revisado: string | null; reservado: string | null }>
+  const gravar = db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
+  const marcadas: string[] = []
+  for (const l of linhas) {
+    const k = JSON.parse(l.dados) as Calibracao
+    if (k.descidaComoAviso === true || !temLeituraMedida(k) || minimosDoPopComoAviso({ ...k, opcoes: k.opcoes ?? {} }))
+      continue
+    gravar.run(JSON.stringify({ ...k, descidaComoAviso: true }), l.id)
+    const os = String(k.ordemServico ?? '').trim()
+    marcadas.push(
+      l.revisado
+        ? `revisão do ${l.revisado}`
+        : l.reservado ||
+            (os ? `OS ${os}` : `${l.cliente || 'Cliente'}${k.dataCalibracao ? ` (${formatarDataBr(k.dataCalibracao)})` : ''}`),
+    )
+  }
+  if (marcadas.length)
+    db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)").run(
+      new Date().toISOString(),
+      detalheLista(
+        marcadas.length === 1
+          ? 'A calibração em andamento medida antes desta versão sai com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: '
+          : `${marcadas.length} calibrações em andamento medidas antes desta versão saem com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: `,
+        marcadas,
+      ),
+    )
+}
+
+/**
  * Migração 15 (ver acima). Repetível: só mexe na revisão em andamento (rascunho ou em revisão) sem os padrões
  * congelados (o certificado revisado com padrões na emissão) ou marcada como legada sem que o certificado revisado seja
  * (a regra é a mesma de `Repositorio.criarCalibracao`). Não sobe a versão: são campos do servidor, que a tela não grava.
@@ -455,6 +507,25 @@ function temLeitura(k: Partial<Pick<Calibracao, 'indicacao' | 'comoEncontrado' |
   const pontos = [...(k.indicacao?.pontos ?? []), ...(k.comoEncontrado?.pontos ?? [])]
   return (
     pontos.some((p) => lido(p.crescente) || lido(p.decrescente)) ||
+    (k.repetibilidade ?? []).some((r) => (r.leituras ?? []).some(lido)) ||
+    (k.excentricidade?.posicoes ?? []).some((p) => lido(p.leitura) || lido(p.referencia))
+  )
+}
+
+/**
+ * A calibração tem alguma leitura medida na visita: a de uma carga do erro de indicação ou do "como encontrado" (a subida
+ * ou a descida de um ponto com carga, ou uma etapa de substituição, como `temLeiturasDeCarga`), da repetibilidade ou da
+ * excentricidade. O zero do erro de indicação não conta: "Sugerir os pontos" e "Refazer pontos" já o preenchem com 0.
+ */
+function temLeituraMedida(k: Partial<Pick<Calibracao, 'indicacao' | 'comoEncontrado' | 'repetibilidade' | 'excentricidade'>>) {
+  const lido = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
+  const ensaios = [k.indicacao, k.comoEncontrado]
+  return (
+    ensaios.some(
+      (e) =>
+        (e?.pontos ?? []).some((p) => Number(p.carga) > 0 && (lido(p.crescente) || lido(p.decrescente))) ||
+        (e?.substituicao?.etapas ?? []).some((x) => lido(x.leituraPadroes) || lido(x.leituraSubstituicao)),
+    ) ||
     (k.repetibilidade ?? []).some((r) => (r.leituras ?? []).some(lido)) ||
     (k.excentricidade?.posicoes ?? []).some((p) => lido(p.leitura) || lido(p.referencia))
   )

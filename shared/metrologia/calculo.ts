@@ -4,7 +4,7 @@
 // do certificado, declaração de conformidade, avisos e pendências.
 // Puro (sem I/O): roda igual no servidor (emissão e PDF) e no navegador (cálculo ao vivo).
 
-import type { Faixa, OpcoesCalculo } from '../tipos.ts'
+import type { Faixa, MetodoCarregamento, OpcoesCalculo } from '../tipos.ts'
 import {
   correcaoEmpuxoRelativa,
   DELTA_T_LOCAL_PADRAO,
@@ -49,6 +49,13 @@ import type {
 
 const RAIZ3 = Math.sqrt(3)
 const RAIZ12 = Math.sqrt(12)
+/** O nome de cada método de carregamento, como a tela e a folha escrevem (`METODOS_CARREGAMENTO` em dominio.ts). */
+export const NOMES_METODO_CARREGAMENTO: Record<MetodoCarregamento, string> = {
+  CRESCENTE_DECRESCENTE: 'Crescente e decrescente',
+  DESCONTINUO: 'Crescente com descarga',
+  CONTINUO: 'Crescente contínuo',
+  DECRESCENTE: 'Decrescente',
+}
 /** Densidade do ar de referência e dos pesos de referência, kg/m³ (OIML R111; cg-18 7.1.2-5). */
 const RHO_AR = RHO_0
 const RHO_PESOS = RHO_C
@@ -618,6 +625,18 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   const legado = entrada.regrasDoPop !== true
   /** Os mínimos do POP só como avisos: no registro de antes e na calibração já medida antes das regras. */
   const minimosComoAviso = legado || entrada.minimosComoAviso === true
+  /**
+   * O método com que as leituras foram medidas, quando a pessoa passou o ensaio para outro depois delas ("Usar o método
+   * do POP"; `EnsaioIndicacao.metodoMedido`); null = o método é o medido. Aí a subida e a descida que o método novo pede
+   * e que faltam são pendências mesmo na calibração medida antes das regras: o certificado não pode dizer que as cargas
+   * foram aplicadas de um jeito que não foi feito.
+   */
+  const metodoMedido =
+    entrada.indicacao.metodoMedido && entrada.indicacao.metodoMedido !== entrada.indicacao.metodo
+      ? entrada.indicacao.metodoMedido
+      : null
+  /** A descida que falta no "crescente e decrescente" só como aviso (medida antes de ela ser obrigatória). */
+  const descidaComoAviso = !metodoMedido && (minimosComoAviso || entrada.descidaComoAviso === true)
   const avisos: Aviso[] = []
   const pendencias: string[] = []
   const repetibilidade = entrada.repetibilidade.map(resumirRepetibilidade)
@@ -1024,6 +1043,12 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   }
   // "Crescente e decrescente" sem a descida de um ponto (a maior carga lida é a virada, com uma leitura só)
   const cargasSemDescida = [...new Set(semDescida.filter((c) => !(Math.abs(c - maiorCargaLida) <= ctx.tol)).map(rotulo))]
+  // O ensaio trocado de método depois das leituras: o caminho de volta, na própria pendência
+  const voltarAoMedido = metodoMedido ? ` Sem ela, volte para “${NOMES_METODO_CARREGAMENTO[metodoMedido]}”, o método medido.` : ''
+  const faltaSubida = () =>
+    `Erro de indicação: falta a leitura de subida em ${listaE([...new Set(semSubida)])} (POP 7.7).${voltarAoMedido}`
+  const faltaDescida = () =>
+    `Erro de indicação: falta a leitura de descida em ${listaE(cargasSemDescida)} (POP 7.7).${voltarAoMedido}`
   // Só o zero lido não é ensaio de carga: pendência também na calibração já medida antes das regras
   if (!legado && pontosLidos > 0 && !cargaLida)
     pendencias.push('Erro de indicação: registre as leituras das cargas acima de zero (POP 7.7).')
@@ -1034,10 +1059,9 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       )
     if (metodo === 'DECRESCENTE')
       pendencias.push('Erro de indicação: a subida é obrigatória; troque o método “Decrescente” (POP 7.7).')
-    else if (semSubida.length)
-      pendencias.push(`Erro de indicação: falta a leitura de subida em ${listaE([...new Set(semSubida)])} (POP 7.7).`)
-    if (cargasSemDescida.length)
-      pendencias.push(`Erro de indicação: falta a leitura de descida em ${listaE(cargasSemDescida)} (POP 7.7).`)
+    else if (semSubida.length) pendencias.push(faltaSubida())
+    // A descida: na calibração medida antes de ela ser obrigatória, o aviso (mais abaixo)
+    if (!descidaComoAviso && cargasSemDescida.length) pendencias.push(faltaDescida())
     // Ensaio copiado e não feito (sem leituras): o aviso mais abaixo
     for (const r of repetibilidade) {
       const minimo = leiturasMinimasRepetibilidade(r.carga, ctx)
@@ -1053,6 +1077,12 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
         )
     }
     if (semEnsaio.length) pendencias.push(textoSemEnsaio())
+  }
+  // Trocado de método depois das leituras: o que o método novo pede (a subida, a descida), também na calibração medida
+  // antes das regras (`metodoMedido`)
+  else if (metodoMedido) {
+    if (metodo !== 'DECRESCENTE' && semSubida.length) pendencias.push(faltaSubida())
+    if (cargasSemDescida.length) pendencias.push(faltaDescida())
   }
   // Retorno ao zero (POP 7.7: registrado ao fim do erro de indicação; 7.8: a balança que não volta ao zero não pesa
   // corretamente). O limite é o EMA em serviço na carga zero (2 e da 1ª faixa) ou, sem classe, a tolerância do cliente
@@ -1186,8 +1216,8 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       nivel: 'atencao',
       mensagem: `Erro de indicação com ${pontosLidos} ponto(s); o mínimo é 5, contando o zero (cg-18 §5.2).`,
     })
-  // A descida que falta: na calibração nova, a pendência (mais acima); medida antes das regras, só o aviso
-  if (minimosComoAviso && cargasSemDescida.length)
+  // A descida que falta: na calibração nova, a pendência (mais acima); medida antes de ela ser obrigatória, só o aviso
+  if (descidaComoAviso && cargasSemDescida.length)
     avisos.push({
       nivel: 'atencao',
       mensagem: `Erro de indicação “crescente e decrescente” sem a leitura de descida em ${listaE(cargasSemDescida)}.`,

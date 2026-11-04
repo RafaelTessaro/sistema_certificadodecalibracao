@@ -104,6 +104,12 @@ export interface EntradaCalculo {
   }
   indicacao: {
     metodo: MetodoCarregamento
+    /**
+     * O método com que as leituras foram medidas, quando o ensaio passou para `metodo` depois delas
+     * (`EnsaioIndicacao.metodoMedido`): a subida e a descida que `metodo` pede e que faltam são pendências mesmo com
+     * `minimosComoAviso` ou sem `regrasDoPop`. Ausente (ou igual a `metodo`) = o método é o medido.
+     */
+    metodoMedido?: MetodoCarregamento
     pontos: PontoCalculo[]
     retornoZero: number | null
     substituicao: {
@@ -139,6 +145,12 @@ export interface EntradaCalculo {
    * visita já aconteceu. Sem `regrasDoPop`, não muda nada (tudo já é aviso).
    */
   minimosComoAviso?: boolean
+  /**
+   * Com `regrasDoPop`: a descida que falta num ponto do "crescente e decrescente" (POP 7.7) fica só como aviso. É a
+   * calibração medida antes de a descida ser obrigatória (`Calibracao.descidaComoAviso`): a visita já aconteceu. Não vale
+   * no ensaio trocado de método depois das leituras (`indicacao.metodoMedido`).
+   */
+  descidaComoAviso?: boolean
   /**
    * Revisão de um certificado emitido antes das regras do POP (sem `regrasDoPop`): as leituras dele. A leitura fora do
    * esperado que a revisão mudou (ou acrescentou) é pendência; a que já estava no certificado revisado, só o aviso.

@@ -1141,6 +1141,17 @@ const DESCRICAO_METODO: Record<MetodoCarregamento, string> = {
   DECRESCENTE: 'Carregamento: cargas decrescentes, a partir da maior carga.',
 }
 
+/**
+ * Como as cargas foram aplicadas, embaixo do título do erro de indicação. O "crescente e decrescente" das regras do POP
+ * (7.7) é sem zerar entre os pontos: as peças de uma carga para a seguinte se trocam, sem passar da carga na subida nem
+ * ficar abaixo dela na descida. O registro de antes das regras sai como saía ("sem descarregar").
+ */
+function descricaoMetodo(ctx: Contexto, metodo: MetodoCarregamento): string {
+  return metodo === 'CRESCENTE_DECRESCENTE' && ctx.e.regrasDoPop === true
+    ? 'Carregamento: cargas crescentes até a maior carga e depois decrescentes, sem zerar entre os pontos.'
+    : DESCRICAO_METODO[metodo]
+}
+
 interface OpcoesTabelaErros {
   conformidade: boolean
   substituicao: boolean
@@ -1299,7 +1310,7 @@ function erroIndicacao(ctx: Contexto, fim: No[] = []): No[] {
     ctx.r,
     `${N_RESULTADOS}.3`,
     temComoEncontrado(ctx.d) ? 'Erro de indicação — como deixado (após o ajuste)' : 'Erro de indicação',
-    DESCRICAO_METODO[ensaio.metodo],
+    descricaoMetodo(ctx, ensaio.metodo),
   )
   if (!pontosLidos(r).length) return [inteiro([...titulo, paragrafo(ctx.r, 'Ensaio não realizado.'), ...fim])]
   const tab = tabelaErros(ctx, r, ensaio, { conformidade: k.conformidade.solicitada, substituicao: comSubstituicao(ensaio) })
@@ -1317,7 +1328,7 @@ function comoEncontrado(ctx: Contexto, fim: No[] = []): No[] {
           ctx.r,
           `${N_RESULTADOS}.4`,
           'Erro de indicação — como encontrado (antes do ajuste)',
-          DESCRICAO_METODO[ensaio.metodo],
+          descricaoMetodo(ctx, ensaio.metodo),
         ),
         tabelaErros(ctx, r, ensaio, { conformidade: ctx.k.conformidade.solicitada, substituicao: comSubstituicao(ensaio) }),
         ...depoisDaTabela(ctx, r, ensaio, ctx.k.indicacao),

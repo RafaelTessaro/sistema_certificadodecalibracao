@@ -1,5 +1,5 @@
 import { CircleCheck, CircleX, Hand, History, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
   cargaDasPecas,
@@ -11,17 +11,19 @@ import {
   pontosSugeridos,
 } from '#shared/calibracao.ts'
 import {
+  comMetodoIndicacaoDaClasse,
   ehRodoviaria,
   massaLegivel,
   METODOS_CARREGAMENTO,
-  metodosCarregamentoParaEscolher,
+  metodoIndicacaoPadrao,
   minimosDoPopComoAviso,
   registroAnterior,
+  ROTULO_METODO_INDICACAO,
 } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
 import { cargaDaDescida, formatarNumero } from '#shared/metrologia/index.ts'
 import type { ResultadoCalculo, ResultadoPonto } from '#shared/metrologia/tipos.ts'
-import type { EnsaioIndicacao, MetodoCarregamento, Padrao, PecaCarga, PontoIndicacao } from '#shared/tipos.ts'
+import type { ClasseExatidao, EnsaioIndicacao, MetodoCarregamento, Padrao, PecaCarga, PontoIndicacao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
@@ -32,7 +34,20 @@ import { Segmented } from '../ui/Misc'
 import { montagemDoPonto, pecasPara, recomporEnsaio } from './cargas'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
-import { type AbaIndicacao, ensaioEmOrdemDeCarga, mudarEnsaioDaAba, podeRefazerPontos, textoRefazerPontos } from './indicacao'
+import {
+  type AbaIndicacao,
+  ensaioEmOrdemDeCarga,
+  metodoNaEtapa,
+  mudarEnsaioDaAba,
+  podeRefazerPontos,
+  semMetodoMedido,
+  textoMetodoDaClasse,
+  textoMetodoForaDoPop,
+  textoMetodoTrocado,
+  textoRefazerPontos,
+  trocarParaMetodoDoPop,
+  voltarParaMetodoMedido,
+} from './indicacao'
 import { casasDe, tomLeitura } from './util'
 
 export function EtapaIndicacao(ctx: ContextoEtapa) {
@@ -141,6 +156,7 @@ export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicaca
         resultado={resultado ?? null}
         titulo={antes ? 'Erro de indicação antes do ajuste' : 'Erro de indicação'}
         grupo={`ind-${antes ? 'antes' : 'depois'}`}
+        antes={antes}
       />
       {/* Cada aba tem as suas etapas de substituição (com ajuste, a cadeia é refeita depois dele) */}
       {(rodoviaria || ensaio.substituicao.ativa) && (
@@ -183,6 +199,7 @@ function TabelaPontos({
   resultado,
   titulo,
   grupo,
+  antes = false,
 }: {
   ctx: ContextoEtapa
   ensaio: EnsaioIndicacao
@@ -190,6 +207,8 @@ function TabelaPontos({
   resultado: ResultadoCalculo | null
   titulo: string
   grupo: string
+  /** O "como encontrado" de um registro de antes: o método como foi medido, sem o do POP. */
+  antes?: boolean
 }) {
   const { balanca, selecionados, f } = ctx
   const u = balanca.unidade
@@ -235,8 +254,9 @@ function TabelaPontos({
     if (!pode) return
     // As mesmas cargas da folha de campo sem rascunho (na classe I, as que os pesos escolhidos montam dentro de 6.1)
     const cargas = pontosSugeridos(balanca, pesos)
+    // Sem as leituras, não há método medido a guardar (`metodoMedido`)
     setEnsaio((e) => ({
-      ...e,
+      ...semMetodoMedido(e),
       pontos: cargas.map((c) => ({
         id: novoId(),
         carga: c,
@@ -281,22 +301,7 @@ function TabelaPontos({
           </div>
         }
       />
-      <div className="flex flex-col gap-3 px-5 pb-4 sm:flex-row sm:items-end">
-        <Field label="Como as cargas foram aplicadas" htmlFor={`${grupo}-metodo`} className="sm:w-80">
-          <Select
-            id={`${grupo}-metodo`}
-            value={ensaio.metodo}
-            onChange={(e) => setEnsaio((x) => ({ ...x, metodo: e.target.value as MetodoCarregamento }))}
-          >
-            {metodosCarregamentoParaEscolher(ensaio.metodo).map((m) => (
-              <option key={m} value={m}>
-                {METODOS_CARREGAMENTO[m].label}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <p className="pb-2.5 text-[13px] text-muted">{METODOS_CARREGAMENTO[ensaio.metodo].descricao}</p>
-      </div>
+      <MetodoDoEnsaio ensaio={ensaio} setEnsaio={setEnsaio} classe={balanca.classe} antes={antes} />
 
       {pesos.length === 0 && (
         <p className="mx-5 mb-4 flex items-center gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
@@ -532,6 +537,107 @@ function TabelaPontos({
         }}
       />
     </Card>
+  )
+}
+
+/**
+ * Como aplicar as cargas: fixo pela classe (POP 7.7: "crescente e decrescente"; na classe I, "crescente com
+ * descarga"), só em texto, sem escolha. Sem leituras de carga, o ensaio com outro método (o rascunho de antes, a classe
+ * trocada) passa sozinho para o da classe. Com leituras de outro método (medido antes dessa regra, ou a classe trocada
+ * depois delas), ele fica como foi medido, com o aviso (não impede a emissão) e a troca para o do POP, que sempre
+ * pergunta antes (o certificado passa a dizer o método novo) e guarda o medido, para voltar a ele.
+ */
+function MetodoDoEnsaio({
+  ensaio,
+  setEnsaio,
+  classe,
+  antes,
+}: {
+  ensaio: EnsaioIndicacao
+  setEnsaio: (m: (e: EnsaioIndicacao) => EnsaioIndicacao) => void
+  classe: ClasseExatidao
+  antes: boolean
+}) {
+  const { metodo, foraDoPop, automatico, voltarPara } = antes
+    ? { metodo: ensaio.metodo, foraDoPop: false, automatico: false, voltarPara: null }
+    : metodoNaEtapa(ensaio, classe)
+  useEffect(() => {
+    if (automatico) setEnsaio((e) => comMetodoIndicacaoDaClasse(e, classe))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [automatico, classe])
+  /** Grava o método (e a marca do medido) do ensaio novo, sem desfazer o que mudou enquanto a pergunta estava aberta. */
+  const gravarMetodo = (novo: EnsaioIndicacao) =>
+    setEnsaio((e) => ({
+      ...semMetodoMedido(e),
+      metodo: novo.metodo,
+      ...(novo.metodoMedido ? { metodoMedido: novo.metodoMedido } : {}),
+    }))
+  const doPop = metodoIndicacaoPadrao(classe)
+  const usarDoPop = async () => {
+    const novo = await trocarParaMetodoDoPop(ensaio, classe, (texto) =>
+      confirmar({
+        titulo: `Passar para “${METODOS_CARREGAMENTO[doPop].label}”?`,
+        descricao: texto,
+        confirmar: 'Usar o método do POP',
+        perigo: true,
+      }),
+    )
+    if (novo) gravarMetodo(novo)
+  }
+  const voltar = async () => {
+    const novo = await voltarParaMetodoMedido(ensaio, (texto) =>
+      confirmar({
+        titulo: voltarPara ? `Voltar para “${METODOS_CARREGAMENTO[voltarPara].label}”?` : 'Voltar para o método medido?',
+        descricao: texto,
+        confirmar: 'Voltar',
+        perigo: true,
+      }),
+    )
+    if (novo) gravarMetodo(novo)
+  }
+  const botaoVoltar = voltarPara && (
+    <Button tamanho="sm" className="shrink-0 self-start sm:self-center" onClick={() => void voltar()}>
+      Voltar para “{METODOS_CARREGAMENTO[voltarPara].label}”
+    </Button>
+  )
+  return (
+    <div className="flex flex-col gap-1.5 px-5 pb-4">
+      <span className="text-[13px] font-medium text-ink-2">{ROTULO_METODO_INDICACAO}</span>
+      <p className="text-sm text-ink">
+        {METODOS_CARREGAMENTO[metodo].label}
+        <span className="text-[13px] text-muted"> · {METODOS_CARREGAMENTO[metodo].descricao}</span>
+      </p>
+      {foraDoPop ? (
+        <div
+          role="note"
+          className="flex flex-col gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span className="flex items-start gap-2">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            {textoMetodoForaDoPop(ensaio.metodo, classe)}
+          </span>
+          <div className="flex shrink-0 flex-wrap gap-2 self-start sm:self-center">
+            <Button tamanho="sm" onClick={() => void usarDoPop()}>
+              Usar o método do POP
+            </Button>
+            {botaoVoltar}
+          </div>
+        </div>
+      ) : voltarPara ? (
+        <div
+          role="note"
+          className="flex flex-col gap-2 rounded-xl bg-surface-2 px-3.5 py-2.5 text-[13px] text-ink-2 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span className="flex items-start gap-2">
+            <History className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
+            {textoMetodoTrocado(voltarPara)}
+          </span>
+          {botaoVoltar}
+        </div>
+      ) : (
+        !antes && <span className="text-xs text-muted">{textoMetodoDaClasse(classe)}</span>
+      )}
+    </div>
   )
 }
 

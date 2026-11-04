@@ -39,8 +39,12 @@ export function entradaDe(k: Calibracao): CalibracaoInput {
   return entrada
 }
 
-/** Os ensaios sem as leituras (mesmos pontos, cargas e pesos), para uma nova calibração da mesma balança. */
+/**
+ * Os ensaios sem as leituras (mesmos pontos, cargas e pesos), para uma nova calibração da mesma balança. Sem leituras,
+ * não há método medido a guardar (`EnsaioIndicacao.metodoMedido`, do ensaio trocado de método depois delas).
+ */
 export function semLeituras(k: CalibracaoInput): Pick<CalibracaoInput, 'repetibilidade' | 'excentricidade' | 'indicacao'> {
+  const { metodoMedido: _medido, ...indicacao } = k.indicacao
   return {
     repetibilidade: k.repetibilidade.map((r) => ({ ...r, leituras: r.leituras.map(() => null) })),
     excentricidade: {
@@ -48,7 +52,7 @@ export function semLeituras(k: CalibracaoInput): Pick<CalibracaoInput, 'repetibi
       posicoes: k.excentricidade.posicoes.map((p) => ({ ...p, leitura: null, referencia: null })),
     },
     indicacao: {
-      ...k.indicacao,
+      ...indicacao,
       retornoZero: null,
       pontos: k.indicacao.pontos.map((p) => ({ ...p, crescente: null, decrescente: null })),
       substituicao: {

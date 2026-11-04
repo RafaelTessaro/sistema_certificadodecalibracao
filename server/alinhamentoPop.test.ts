@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { calibracaoVazia } from '#shared/dominio.ts'
 import type { Calibracao, CalibracaoInput } from '#shared/tipos.ts'
 import { cenarioCalibracao, criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
-import { planoConformeAoPop } from './rascunhos.ts'
+import { planoConformeAoPop, semLeituras } from './rascunhos.ts'
 
 let t: AppComLogin
 let c: Awaited<ReturnType<typeof cenarioCalibracao>>
@@ -86,6 +86,39 @@ describe('calibração nova conforme o POP', () => {
     expect(planoConformeAoPop(antes, 'II').excentricidade.metodo).toBe(1)
     expect(planoConformeAoPop(antes, '').excentricidade.metodo).toBe(1)
     expect(planoConformeAoPop(antes, 'I').opcoes.divisaoTeste).toBe(0)
+  })
+
+  it('a calibração nova não leva o método medido de um ensaio trocado depois das leituras (ela não tem leituras)', () => {
+    const k = calibracaoVazia(undefined, 'III')
+    const trocado = { ...k, indicacao: { ...k.indicacao, metodoMedido: 'CONTINUO' as const } }
+    expect(semLeituras(trocado).indicacao).not.toHaveProperty('metodoMedido')
+    expect(semLeituras(trocado).indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
+  })
+
+  it('o erro de indicação também pelo método da classe (POP 7.7): o "crescente contínuo" da última emitida não passa', async () => {
+    const k = calibracaoVazia(undefined, 'III')
+    for (const metodo of ['CONTINUO', 'DESCONTINUO', 'DECRESCENTE', 'CRESCENTE_DECRESCENTE'] as const) {
+      const antes = { ...k, indicacao: { ...k.indicacao, metodo } }
+      expect(planoConformeAoPop(antes, 'III').indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
+      expect(planoConformeAoPop(antes, '').indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
+      expect(planoConformeAoPop(antes, 'I').indicacao.metodo).toBe('DESCONTINUO')
+    }
+    // Pela API: a última emitida medida como "crescente contínuo" (antes desta regra)
+    const pronta = await salvar(await c.calibracaoPronta(), (x) => ({
+      ...x,
+      indicacao: { ...x.indicacao, metodo: 'CONTINUO', pontos: x.indicacao.pontos.map((p) => ({ ...p, decrescente: null })) },
+    }))
+    const r = await c.emitir(pronta)
+    expect(r.statusCode, r.body).toBe(200)
+    const emitida: Calibracao = r.json().calibracao
+    expect(emitida.indicacao.metodo).toBe('CONTINUO')
+    const { calibracao: nova } = (await c.criar('/api/calibracoes', { balancaId: c.balanca.id })) as { calibracao: Calibracao }
+    expect(nova.indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
+    await t.chamar('DELETE', `/api/calibracoes/${nova.id}`, { cookie: t.cookieAdmin })
+    const { calibracao: denovo } = (await c.criar(`/api/calibracoes/${emitida.id}/recalibrar`, {})) as {
+      calibracao: Calibracao
+    }
+    expect(denovo.indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
   })
 
   it.skipIf(!temPdftotext)('o certificado: "não foi realizado ajuste" e sem a linha da verificação preliminar', async () => {

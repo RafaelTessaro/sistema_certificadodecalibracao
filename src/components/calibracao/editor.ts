@@ -106,7 +106,7 @@ export function pendenciasDaTela(a: {
  * A etapa ganha o ✓ na lista de etapas. Padrões e ambiente: um jogo de pesos e nenhum padrão escolhido desativado
  * (impede a emissão: tire-o ou reative-o), as temperaturas e o que o cálculo pede do ar e da convecção. Na calibração
  * nova (as regras do POP): a excentricidade só fica "não realizada" na balança suspensa (gancho), e o erro de indicação
- * pede o retorno ao zero (POP 7.7 e 7.10).
+ * pede o retorno ao zero e as leituras que faltam (a subida; no "crescente e decrescente", a descida; POP 7.7 e 7.10).
  */
 export function etapaCompleta(
   e: IdEtapa,
@@ -149,7 +149,9 @@ export function etapaCompleta(
       return (
         f.indicacao.pontos.length > 0 &&
         f.indicacao.pontos.every((p) => p.crescente !== null || p.decrescente !== null) &&
-        (!minimosDoPop || f.indicacao.retornoZero !== null)
+        (!minimosDoPop || f.indicacao.retornoZero !== null) &&
+        // A subida e, no "crescente e decrescente", a descida dos pontos (POP 7.7): as pendências do cálculo
+        !calc?.resultado.pendencias.some((p) => p.startsWith('Erro de indicação: falta a leitura'))
       )
     case 'conclusao':
       return !f.conformidade.solicitada || f.conformidade.criterio !== 'CLIENTE' || f.conformidade.toleranciaCliente > 0

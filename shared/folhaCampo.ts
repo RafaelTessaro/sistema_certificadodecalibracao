@@ -15,11 +15,13 @@ import {
   pontosSugeridos,
 } from './calibracao.ts'
 import {
+  comMetodoIndicacaoDaClasse,
   converterMassa,
   deltaTPesosMaximo,
   ehRodoviaria,
   metodoExcentricidadePadrao,
   metodoIndicacaoPadrao,
+  METODOS_EXCENTRICIDADE,
   numeroBr,
   padroesSemHistorico,
   type BalancaDosPadroes,
@@ -59,22 +61,28 @@ import type {
  * Código e revisão do formulário (documento controlado, ISO/IEC 17025 8.3): muda a cada alteração do layout.
  * Rev. 01: folha enxuta (dado impresso diferente vai no verso, sem caixas de correção). Rev. 02: compacta, em 2
  * páginas (frente e verso) nas balanças cadastradas: chegada e balança num bloco, ambiente do início e do fim numa
- * tabela, repetibilidade na horizontal, escritório ao lado das observações. Rev. 03: só a medição: sem QR, sem
- * rubrica no rodapé e sem faixa no alto (a OS fica no passo 2); sem a verificação antes de calibrar (o passo 4 é só o
- * ambiente), sem ajuste e reparo, sem "como encontrado" e "depois do ajuste", sem a faixa do EMA e sem o encerramento
- * (a conformidade e a próxima calibração ficam só no sistema; o diferente, as observações e as anomalias vão no bloco
- * Anotações, no fim da folha, depois das assinaturas, ou numa folha anexa); os rótulos das tabelas de escrever numa
- * linha de cabeçalho própria (nenhum dentro das caixas); o método de carregamento numa linha fixa, o da classe (POP
- * 7.7), sem opções de marcar; o ΔT pesos − ar e o ajuste interno de rotina (CAL) antes dos ensaios só na balança classe
- * I (a folha em branco é das classes II a IIII); a excentricidade com o método numa frase fixa; a hora só na chegada,
- * no ambiente, no término e no ajuste interno da classe I (os ensaios não têm hora, e a repetibilidade não tem o zero
- * depois de retirar a carga); o lembrete do ambiente do fim antes das assinaturas; 8 passos.
+ * tabela, repetibilidade na horizontal, escritório ao lado das observações. Rev. 03 (1.0.3): só a medição: sem QR, sem
+ * rubrica no rodapé e só a OS na faixa do alto; sem a verificação antes de calibrar (o passo 4 é só o ambiente), sem
+ * ajuste e reparo, sem "como encontrado" e "depois do ajuste", sem a faixa do EMA e sem o encerramento (a conformidade
+ * e a próxima calibração ficam só no sistema; o diferente, as observações e as anomalias vão no bloco Anotações ou
+ * numa folha anexa); o ΔT pesos − ar e o ajuste interno de rotina (CAL) antes dos ensaios só na balança classe I (a
+ * folha em branco é das classes II a IIII); a excentricidade com o método numa frase fixa; o lembrete do ambiente do
+ * fim antes das assinaturas; 8 passos. Rev. 04 (1.0.4): sem faixa no alto (a OS fica no passo 2) e o bloco Anotações
+ * no fim da folha, depois das assinaturas; os rótulos das tabelas de escrever numa linha de cabeçalho própria (nenhum
+ * dentro das caixas); o método de carregamento numa linha fixa, o da classe (POP 7.7), sem caixas de marcar (no
+ * "crescente e decrescente", sem zerar no meio e, ao trocar peças, sem passar da carga na subida nem ficar abaixo dela
+ * na descida), e a descida fechada só no zero e em Max; a hora só na chegada, no ambiente, no término e no ajuste
+ * interno da classe I (sem o início do erro de indicação e a hora da repetibilidade e da excentricidade); a
+ * repetibilidade sem o zero depois de retirar a carga e, sem carga prevista, só a carga aplicada (sem os pesos); na
+ * folha em branco, uma linha da repetibilidade por faixa do passo 3 (POP 7.9: um ensaio em cada intervalo ou faixa); a
+ * excentricidade sem carga prevista só com a carga usada; os padrões cadastrados sem linha em branco no fim (o que não
+ * está na lista vai em Anotações).
  * O procedimento de referência é o POP configurado no sistema (sai no rodapé, ver `referenciaDoFormulario`);
  * `referencia` é o guia técnico (metadados do PDF).
  */
 export const FORMULARIO_FOLHA_CAMPO = {
   codigo: 'FOR-CAL-01',
-  revisao: '03',
+  revisao: '04',
   titulo: 'Folha de campo de calibração de balança',
   referencia: 'EURAMET cg-18 v4.0',
 } as const
@@ -207,6 +215,17 @@ export interface PlanoFolha {
 
 /** Leituras da repetibilidade na classe I (POP, Tabela 4: 10; nas outras classes, 5, ou 3 com 100 kg ou mais). */
 export const LEITURAS_CLASSE_I = 10
+
+/**
+ * Como fazer a excentricidade, numa frase fixa da folha (sem opções de marcar), com os nomes do POP (7.10), que não
+ * numera os métodos: nas classes II a IIII (e na folha em branco), zera vazia e desloca a carga (no sistema, o método 1,
+ * "Zera e desloca a carga pelas posições"); na classe I, o zero antes de cada posição (o 3). O plano avisa antes de sair
+ * quando o sistema está com outro.
+ */
+export const METODO_EXCENTRICIDADE_FOLHA = {
+  classeI: 'Zere antes de cada posição',
+  demais: 'Zere vazia e desloque a carga pelas posições',
+} as const
 
 const TOL = 1e-9
 
@@ -365,11 +384,11 @@ export function planoDaFolha(
   const semFechar = pontos.filter((p) => p.falta > 0)
   const maiorNivel = Math.max(0, ...pontos.map((p) => p.nivelSubstituicao))
   // O método de carregamento é fixo pela classe (POP 7.7, `metodoIndicacaoPadrao`): "crescente e decrescente" nas
-  // classes II a IIII e sem classe; "crescente com descarga" na classe I. O do rascunho sem leituras não conta (o
-  // sistema o acerta pela classe); o ensaio que já tem leituras, medido com outro método antes desta regra, fica com
-  // o dele: é o que foi feito
+  // classes II a IIII e sem classe; "crescente com descarga" na classe I. Como a tela (`comMetodoIndicacaoDaClasse`): o
+  // do rascunho sem leitura de carga não conta (o sistema o acerta pela classe; o zero lido não conta); o ensaio que já
+  // tem leitura de carga, medido com outro método antes desta regra, fica com o dele: é o que foi feito
   const metodoDe = (e: EnsaioIndicacao | null | undefined): MetodoCarregamento =>
-    e && temLeituras(e) ? e.metodo : metodoIndicacaoPadrao(balanca.classe)
+    e ? comMetodoIndicacaoDaClasse(e, balanca.classe).metodo : metodoIndicacaoPadrao(balanca.classe)
   const metodo = metodoDe(ensaio)
   const metodoComoEncontrado = metodoDe(calibracao?.comoEncontrado ?? ensaio)
   if (subSugerida && maiorNivel > 0)
@@ -455,12 +474,16 @@ export function planoDaFolha(
   // mínimo da Tabela 5 do POP (o arredondamento antigo ia para o mais próximo) e um ensaio de repetibilidade só
   // numa balança de vários intervalos (POP 7.2 e 7.9: acertar no sistema antes de imprimir)
   // Classe I: o método 3 (POP 7.10); o rascunho copiado de um certificado antigo pode vir com outro. Nas outras
-  // classes, a folha imprime o método 1 numa frase fixa (sem opções de marcar): o sistema tem de estar com ele
+  // classes, a folha imprime o método 1 numa frase fixa (sem opções de marcar): o sistema tem de estar com ele. Os
+  // métodos pelos nomes: o do POP e da folha (`METODO_EXCENTRICIDADE_FOLHA`) e o do sistema (o POP não os numera)
+  const noSistema = `o sistema está com “${METODOS_EXCENTRICIDADE[excentricidade.metodo]}”`
   if (excentricidade.aplicavel && balanca.classe === 'I' && excentricidade.metodo !== 3)
-    avisos.push('Excentricidade: na classe I, o POP pede o método 3 (zera antes de cada posição); acerte no sistema.')
+    avisos.push(
+      `Excentricidade: na classe I, o POP (7.10) pede “${METODO_EXCENTRICIDADE_FOLHA.classeI}”, e ${noSistema}; acerte no sistema.`,
+    )
   if (excentricidade.aplicavel && balanca.classe !== 'I' && excentricidade.metodo !== 1)
     avisos.push(
-      `Excentricidade: a folha prevê o método 1 (zera vazia e desloca a carga pelas posições) e o sistema está com o método ${excentricidade.metodo}; acerte no sistema.`,
+      `Excentricidade: a folha prevê “${METODO_EXCENTRICIDADE_FOLHA.demais}” (POP 7.10), e ${noSistema}; acerte no sistema.`,
     )
   if (excentricidade.aplicavel && excentricidadeAbaixoDoMinimo(excentricidade.carga, max, u))
     avisos.push(

@@ -11,9 +11,18 @@ import {
   type AbaIndicacao,
   ensaioEmOrdemDeCarga,
   leiturasDigitadas,
+  leiturasEscondidasPelaTroca,
+  metodoNaEtapa,
   mudarEnsaioDaAba,
   podeRefazerPontos,
+  textoMetodoDaClasse,
+  textoMetodoForaDoPop,
+  semMetodoMedido,
   textoRefazerPontos,
+  textoTrocarMetodo,
+  textoVoltarMetodo,
+  trocarParaMetodoDoPop,
+  voltarParaMetodoMedido,
 } from './indicacao'
 
 // Sem DOM: a janela (portal no document.body) não é desenhada; fechada, ela não mostra nada
@@ -187,5 +196,151 @@ describe('ponto acrescentado no fim com carga menor', () => {
     // O "Decrescente" (só num registro de antes) fica como está
     const decrescente = ensaioDigitado('DECRESCENTE')
     expect(ensaioEmOrdemDeCarga(decrescente)).toBe(decrescente)
+  })
+})
+
+// ---- Método de carregamento fixo pela classe (POP 7.7) -------------------------------------------------------------
+
+describe('método do erro de indicação fixo pela classe', () => {
+  /** O ensaio sem leituras de carga: os pontos sugeridos, com o zero lido. */
+  const sugerido = (metodo: EnsaioIndicacao['metodo']): EnsaioIndicacao => ({
+    ...ensaioDigitado(metodo),
+    pontos: ensaioDigitado().pontos.map((p) => ({ ...p, crescente: p.carga ? null : 0, decrescente: p.carga ? null : 0 })),
+  })
+
+  it('a linha do POP: "crescente e decrescente" nas classes II a IIII e sem classe; "crescente com descarga" na I', () => {
+    expect(textoMetodoDaClasse('III')).toBe('Pelo POP (7.7), nesta classe: “Crescente e decrescente”.')
+    expect(textoMetodoDaClasse('II')).toBe('Pelo POP (7.7), nesta classe: “Crescente e decrescente”.')
+    expect(textoMetodoDaClasse('')).toBe('Pelo POP (7.7), nesta classe: “Crescente e decrescente”.')
+    expect(textoMetodoDaClasse('I')).toBe('Pelo POP (7.7), nesta classe: “Crescente com descarga”.')
+  })
+
+  it('sem leituras de carga, a etapa mostra (e grava) o da classe; com leituras de outro método, ele fica, com o aviso', () => {
+    expect(metodoNaEtapa(sugerido('CRESCENTE_DECRESCENTE'), 'III')).toEqual({
+      metodo: 'CRESCENTE_DECRESCENTE',
+      foraDoPop: false,
+      automatico: false,
+      voltarPara: null,
+    })
+    expect(metodoNaEtapa(sugerido('CONTINUO'), 'III')).toEqual({
+      metodo: 'CRESCENTE_DECRESCENTE',
+      foraDoPop: false,
+      automatico: true,
+      voltarPara: null,
+    })
+    // A classe trocada antes das leituras: segue a nova
+    expect(metodoNaEtapa(sugerido('CRESCENTE_DECRESCENTE'), 'I')).toEqual({
+      metodo: 'DESCONTINUO',
+      foraDoPop: false,
+      automatico: true,
+      voltarPara: null,
+    })
+    // Medido antes da regra (o caso real: "crescente contínuo" numa classe III)
+    expect(metodoNaEtapa(ensaioDigitado('CONTINUO'), 'III')).toEqual({
+      metodo: 'CONTINUO',
+      foraDoPop: true,
+      automatico: false,
+      voltarPara: null,
+    })
+    expect(metodoNaEtapa(ensaioDigitado('DECRESCENTE'), 'III').foraDoPop).toBe(true)
+    // Só a coluna que o método esconde lida também conta: a leitura existe
+    const soDescida = {
+      ...sugerido('CONTINUO'),
+      pontos: sugerido('CONTINUO').pontos.map((p) => (p.carga === 10 ? { ...p, decrescente: 10 } : p)),
+    }
+    expect(metodoNaEtapa(soDescida, 'III').foraDoPop).toBe(true)
+    // Uma etapa de substituição lida também
+    const comEtapa = {
+      ...sugerido('CONTINUO'),
+      substituicao: { ativa: true, pecas: [], etapas: [{ leituraPadroes: 1000, leituraSubstituicao: null }] },
+    }
+    expect(metodoNaEtapa(comEtapa, 'III').foraDoPop).toBe(true)
+  })
+
+  it('o aviso do ensaio medido com outro método vale para os dois casos (medido antes da regra, ou a classe trocada)', () => {
+    expect(textoMetodoForaDoPop('CONTINUO', 'III')).toBe(
+      'Medido como “Crescente contínuo”, que não é o método do POP nesta classe (“Crescente e decrescente”). As leituras ficam como estão, e o certificado sai com o método usado.',
+    )
+    // A classe corrigida para I depois de um "crescente e decrescente" medido hoje: nada de "antes do método fixo"
+    expect(textoMetodoForaDoPop('CRESCENTE_DECRESCENTE', 'I')).toBe(
+      'Medido como “Crescente e decrescente”, que não é o método do POP nesta classe (“Crescente com descarga”). As leituras ficam como estão, e o certificado sai com o método usado.',
+    )
+  })
+
+  it('a troca para o do POP sempre pergunta, diz o que o método novo pede e guarda o método medido', async () => {
+    // O caso real: "crescente contínuo" com leituras numa classe III. A troca não esconde nada, mas passa a pedir a descida
+    const continuo = { ...ensaioDigitado('CONTINUO'), pontos: ensaioDigitado().pontos.map((p) => ({ ...p, decrescente: null })) }
+    expect(leiturasEscondidasPelaTroca(continuo, 'CRESCENTE_DECRESCENTE')).toBe(0)
+    expect(textoTrocarMetodo(continuo, 'CRESCENTE_DECRESCENTE')).toBe(
+      '“Crescente e decrescente” pede a leitura de descida em cada carga, menos Max: sem ela, o certificado não sai. Troque só se for medir de novo com esse método, que é o que sai no certificado. Dá para voltar para “Crescente contínuo”.',
+    )
+    const desiste = vi.fn(async () => false)
+    expect(await trocarParaMetodoDoPop(continuo, 'III', desiste)).toBeNull()
+    expect(desiste).toHaveBeenCalledWith(textoTrocarMetodo(continuo, 'CRESCENTE_DECRESCENTE'))
+    const trocado = await trocarParaMetodoDoPop(continuo, 'III', async () => true)
+    expect(trocado).toEqual({ ...continuo, metodo: 'CRESCENTE_DECRESCENTE', metodoMedido: 'CONTINUO' })
+    // Depois da troca: sem o aviso, com a volta para o medido
+    expect(metodoNaEtapa(trocado!, 'III')).toEqual({
+      metodo: 'CRESCENTE_DECRESCENTE',
+      foraDoPop: false,
+      automatico: false,
+      voltarPara: 'CONTINUO',
+    })
+    // "Crescente e decrescente" numa classe I → "crescente com descarga": as 2 descidas de carga somem (o zero não conta)
+    expect(leiturasEscondidasPelaTroca(ensaioDigitado(), 'DESCONTINUO')).toBe(2)
+    expect(textoTrocarMetodo(ensaioDigitado(), 'DESCONTINUO')).toBe(
+      'As 2 leituras de descida já digitadas saem do cálculo e do certificado (ficam guardadas). Troque só se for medir de novo com esse método, que é o que sai no certificado. Dá para voltar para “Crescente e decrescente”.',
+    )
+    const comDescarga = await trocarParaMetodoDoPop(ensaioDigitado(), 'I', async () => true)
+    expect(comDescarga?.metodo).toBe('DESCONTINUO')
+    expect(comDescarga?.metodoMedido).toBe('CRESCENTE_DECRESCENTE')
+    // "Decrescente" (só a descida) → "crescente e decrescente": pede a subida e a descida que faltam
+    const soDescida = {
+      ...ensaioDigitado('DECRESCENTE'),
+      pontos: ensaioDigitado().pontos.map((p) => ({ ...p, crescente: p.carga ? null : 0, decrescente: p.carga ? p.carga : 0 })),
+    }
+    expect(textoTrocarMetodo(soDescida, 'CRESCENTE_DECRESCENTE')).toBe(
+      '“Crescente e decrescente” pede a leitura de subida em cada carga: sem ela, o certificado não sai. Troque só se for medir de novo com esse método, que é o que sai no certificado. Dá para voltar para “Decrescente”.',
+    )
+    // Faltando as duas (a subida em 10 kg, a descida em 20 kg)
+    const misto = {
+      ...soDescida,
+      pontos: soDescida.pontos.map((p) => (p.carga === 20 ? { ...p, crescente: 19.99, decrescente: null } : p)),
+    }
+    expect(textoTrocarMetodo(misto, 'CRESCENTE_DECRESCENTE')).toMatch(
+      /^“Crescente e decrescente” pede a leitura de subida e de descida em cada carga, menos Max: sem ela, o certificado não sai\. /,
+    )
+    // Já no método da classe: nada a trocar; sem leituras de carga, troca sem perguntar e sem guardar o método
+    const nunca = vi.fn(async () => false)
+    expect(await trocarParaMetodoDoPop(ensaioDigitado(), 'III', nunca)).toBeNull()
+    const semLeituras = { ...continuo, pontos: continuo.pontos.map((p) => ({ ...p, crescente: p.carga ? null : 0 })) }
+    expect(await trocarParaMetodoDoPop(semLeituras, 'III', nunca)).toEqual({ ...semLeituras, metodo: 'CRESCENTE_DECRESCENTE' })
+    expect(nunca).not.toHaveBeenCalled()
+  })
+
+  it('volta para o método medido: tira a marca; pergunta antes quando esconde a descida digitada depois da troca', async () => {
+    const continuo = { ...ensaioDigitado('CONTINUO'), pontos: ensaioDigitado().pontos.map((p) => ({ ...p, decrescente: null })) }
+    const trocado = (await trocarParaMetodoDoPop(continuo, 'III', async () => true))!
+    const nunca = vi.fn(async () => false)
+    expect(await voltarParaMetodoMedido(trocado, nunca)).toEqual(continuo)
+    expect(nunca).not.toHaveBeenCalled()
+    // Com a descida digitada depois da troca, a volta a esconde: pergunta antes
+    const comDescida = { ...trocado, pontos: trocado.pontos.map((p) => (p.carga === 10 ? { ...p, decrescente: 9.995 } : p)) }
+    const pergunta = vi.fn(async () => false)
+    expect(await voltarParaMetodoMedido(comDescida, pergunta)).toBeNull()
+    expect(pergunta).toHaveBeenCalledWith(textoVoltarMetodo(1, 'CONTINUO'))
+    expect(textoVoltarMetodo(1, 'CONTINUO')).toBe(
+      'Com “Crescente contínuo”, a leitura de descida já digitada sai do cálculo e do certificado (fica guardada). Continuar?',
+    )
+    expect(textoVoltarMetodo(2, 'CONTINUO')).toBe(
+      'Com “Crescente contínuo”, as 2 leituras de descida já digitadas saem do cálculo e do certificado (ficam guardadas). Continuar?',
+    )
+    expect((await voltarParaMetodoMedido(comDescida, async () => true))?.metodo).toBe('CONTINUO')
+    // Sem troca: nada a voltar; "Refazer pontos" (sem leituras) tira a marca
+    expect(await voltarParaMetodoMedido(continuo, nunca)).toBeNull()
+    expect(semMetodoMedido(trocado)).not.toHaveProperty('metodoMedido')
+    // A marca sem leituras de carga não aparece na etapa
+    const semLeituras = { ...trocado, pontos: trocado.pontos.map((p) => ({ ...p, crescente: p.carga ? null : 0 })) }
+    expect(metodoNaEtapa(semLeituras, 'III').voltarPara).toBeNull()
   })
 })

@@ -11,18 +11,19 @@
 // Migração 14: o rascunho já medido antes das regras do POP mantém os mínimos como avisos (a visita já aconteceu).
 // Migração 15: a revisão aberta antes da 1.0.3 ganha os padrões da emissão do certificado revisado; a marcada como legada
 // de um certificado emitido com as regras do POP passa a segui-las.
+// Migração 16: a calibração em andamento já medida antes de a descida ser obrigatória (1.0.4) fica com ela como aviso.
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { calculoLegado, hojeLocalIso, OPCOES_CALCULO_PADRAO, pendenciasEmissao } from '#shared/dominio.ts'
-import type { Calibracao } from '#shared/tipos.ts'
+import { calculoLegado, calibracaoVazia, hojeLocalIso, OPCOES_CALCULO_PADRAO, pendenciasEmissao } from '#shared/dominio.ts'
+import type { Balanca, Calibracao } from '#shared/tipos.ts'
 import { exemploClasseI } from './pdf/exemplosCertificado.ts'
 import { detalheTrocaIndicador, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 15
+const ULTIMA = 16
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -1085,6 +1086,191 @@ describe('migração 15: as revisões abertas antes da 1.0.3 e as marcadas como 
     expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(2)
     const nada = bancoV14()
     nada.exec("DELETE FROM calibracoes WHERE id IN ('r1', 'r2')")
+    migrar(nada)
+    expect(registros(nada).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toEqual([])
+  })
+})
+
+describe('migração 16: a calibração em andamento já medida antes de a descida ser obrigatória', () => {
+  const OPCOES = { ...OPCOES_CALCULO_PADRAO }
+  /** O erro de indicação "crescente e decrescente" com a subida (e a descida, quando dada) em 0, 10 e 30 kg. */
+  const indicacao = (subida: boolean, descida = false) => ({
+    metodo: 'CRESCENTE_DECRESCENTE',
+    retornoZero: null,
+    substituicao: { ativa: false, pecas: [], etapas: [] },
+    pontos: [0, 10, 30].map((carga, i) => ({
+      id: `p${i}`,
+      carga,
+      pecas: [],
+      crescente: subida ? carga : null,
+      decrescente: descida ? carga : null,
+    })),
+  })
+  /**
+   * Banco na versão 15 com: k1 (rascunho da 1.0.3 medido sem a descida, OS 55), k2 (enviado ao signatário, medido com
+   * a descida, com o nº reservado), k3 (rascunho com os mínimos como avisos: a descida já é aviso), k4 (rascunho ainda
+   * sem leitura), o5 (emitido na 1.0.3 com as regras do POP) e r6 (revisão de o5 aberta na 1.0.3), r7 (revisão aberta
+   * de um certificado de antes das regras: tudo já é aviso).
+   */
+  function bancoV15() {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 1)
+    db.prepare(
+      `INSERT INTO clientes (id, tipo, documento, nome, busca, ativo, dados, versao, criado_em, atualizado_em)
+       VALUES ('c1', 'PJ', '', 'Frigorífico', 'frigorifico', 1, '{}', 1, ?, ?)`,
+    ).run(EM, EM)
+    inserirBalanca(db, 'b1', { numeroSerie: 'TL-2231', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
+    migrar(db, 15)
+    const inserir = db.prepare(
+      `INSERT INTO calibracoes (id, status, numero, cliente_id, balanca_id, ordem_servico, substitui_id, dados, versao,
+                                criado_em, atualizado_em)
+       VALUES (?, ?, ?, 'c1', 'b1', ?, ?, ?, 2, ?, ?)`,
+    )
+    let minutos = 0
+    const calibracao = (id: string, status: string, o: { os?: string; numero?: string; substitui?: string }, dados: object) => {
+      const em = new Date(Date.parse(EM) + ++minutos * 60_000).toISOString()
+      const k = {
+        id,
+        status,
+        numero: o.numero ?? '',
+        clienteId: 'c1',
+        balancaId: 'b1',
+        ordemServico: o.os ?? '',
+        dataCalibracao: '2026-10-20',
+        substituiId: o.substitui ?? '',
+        opcoes: OPCOES,
+        emissao: null,
+        repetibilidade: [],
+        excentricidade: { aplicavel: true, carga: 10, posicoes: [] },
+        comoEncontrado: null,
+        ...dados,
+      }
+      inserir.run(id, status, o.numero ?? '', o.os ?? '', o.substitui ?? '', JSON.stringify(k), em, em)
+    }
+    calibracao('k1', 'RASCUNHO', { os: '55' }, { indicacao: indicacao(true) })
+    calibracao('k2', 'REVISAO', {}, { indicacao: indicacao(true, true) })
+    calibracao('k3', 'RASCUNHO', { os: '56' }, { indicacao: indicacao(true), minimosComoAviso: true })
+    calibracao('k4', 'RASCUNHO', { os: '57' }, { indicacao: indicacao(false) })
+    calibracao(
+      'o5',
+      'EMITIDO',
+      { numero: 'CC-2026-00005' },
+      { indicacao: indicacao(true), emissao: { padroes: [], regrasDoPop: true } },
+    )
+    calibracao('r6', 'RASCUNHO', { substitui: 'o5' }, { indicacao: indicacao(true), regrasDoPop: true })
+    calibracao('o8', 'EMITIDO', { numero: 'CC-2026-00008' }, { indicacao: indicacao(true), emissao: { padroes: [] } })
+    calibracao('r7', 'RASCUNHO', { substitui: 'o8' }, { indicacao: indicacao(true) })
+    db.prepare(
+      `INSERT INTO numeros_reservados (numero, ano, sequencia, calibracao_id, folha, reservado_em, situacao)
+       VALUES ('CC-2026-00042', 2026, 42, 'k2', 'FC-2026-00042', ?, 'reservado')`,
+    ).run(EM)
+    return db
+  }
+  const dados = (db: DatabaseSync) =>
+    Object.fromEntries(
+      (
+        db.prepare('SELECT id, dados, versao FROM calibracoes ORDER BY id').all() as Array<{
+          id: string
+          dados: string
+          versao: number
+        }>
+      ).map((l) => [l.id, { ...(JSON.parse(l.dados) as Record<string, unknown>), _versao: l.versao }]),
+    )
+
+  it('marca a calibração em andamento com leituras (também a revisão aberta); o resto fica como estava', () => {
+    const db = bancoV15()
+    const antes = dados(db)
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    const depois = dados(db)
+    for (const id of ['k1', 'k2', 'r6']) expect(depois[id], id).toEqual({ ...antes[id], descidaComoAviso: true })
+    // Os mínimos já como avisos, sem leitura, emitidos e a revisão de um certificado de antes das regras: como estavam
+    for (const id of ['k3', 'k4', 'o5', 'o8', 'r7']) expect(depois[id], id).toEqual(antes[id])
+    // A marcada: a descida que falta (10 kg) só como aviso; os outros mínimos continuam
+    const k1 = { ...calibracaoVazia(), ...(depois.k1 as unknown as Calibracao) }
+    const balanca: Pick<Balanca, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'> = {
+      unidade: 'kg',
+      classe: 'III',
+      tipoFaixas: 'UNICA',
+      faixas: [{ max: 30, e: 0.01, d: 0.01 }],
+    }
+    const { resultado } = calcularCalibracao(k1, balanca, [])
+    expect(resultado.pendencias.join('\n')).not.toMatch(/descida/)
+    expect(resultado.avisos.map((a) => a.mensagem)).toContain(
+      'Erro de indicação “crescente e decrescente” sem a leitura de descida em 10,00 kg.',
+    )
+    expect(calcularCalibracao({ ...k1, descidaComoAviso: undefined }, balanca, []).resultado.pendencias).toContain(
+      'Erro de indicação: falta a leitura de descida em 10,00 kg (POP 7.7).',
+    )
+  })
+
+  it('o registro de atividades diz quais: a OS, o nº reservado ou o certificado revisado', () => {
+    const db = bancoV15()
+    migrar(db)
+    expect(
+      registros(db)
+        .filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
+        .map((r) => r.detalhe),
+    ).toEqual([
+      '3 calibrações em andamento medidas antes desta versão saem com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: OS 55, CC-2026-00042, revisão do CC-2026-00005.',
+    ])
+    const uma = bancoV15()
+    uma.exec("DELETE FROM calibracoes WHERE id IN ('k2', 'r6')")
+    migrar(uma)
+    expect(registros(uma).find((r) => r.acao === 'SISTEMA_ATUALIZADO')?.detalhe).toBe(
+      'A calibração em andamento medida antes desta versão sai com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: OS 55.',
+    )
+  })
+
+  it('o zero que "Sugerir os pontos" já preenche não conta como visita feita; a repetibilidade e a excentricidade lidas, sim', () => {
+    const db = bancoV15()
+    const inserir = db.prepare(
+      `INSERT INTO calibracoes (id, status, numero, cliente_id, balanca_id, ordem_servico, substitui_id, dados, versao,
+                                criado_em, atualizado_em)
+       VALUES (?, 'RASCUNHO', '', 'c1', 'b1', ?, '', ?, 2, ?, ?)`,
+    )
+    const vazia = indicacao(false)
+    // Só os pontos sugeridos: o zero com ↑ 0 e ↓ 0, nenhuma carga lida (o "como encontrado" também)
+    const soZero = { ...vazia, pontos: vazia.pontos.map((p) => (p.carga === 0 ? { ...p, crescente: 0, decrescente: 0 } : p)) }
+    const base = (os: string, extra: object) => ({
+      clienteId: 'c1',
+      balancaId: 'b1',
+      ordemServico: os,
+      dataCalibracao: '2026-10-20',
+      substituiId: '',
+      opcoes: OPCOES,
+      emissao: null,
+      repetibilidade: [],
+      excentricidade: { aplicavel: true, carga: 10, posicoes: [] },
+      comoEncontrado: null,
+      indicacao: soZero,
+      ...extra,
+    })
+    const linhas: Array<[string, string, object]> = [
+      ['z1', '60', {}],
+      ['z2', '61', { comoEncontrado: soZero }],
+      ['z3', '62', { repetibilidade: [{ id: 'r1', carga: 20, leituras: [20, 20.01, null, null, null] }] }],
+      ['z4', '63', { excentricidade: { aplicavel: true, carga: 10, posicoes: [{ id: 'e1', rotulo: '1', leitura: 10 }] } }],
+    ]
+    for (const [id, os, extra] of linhas) inserir.run(id, os, JSON.stringify({ id, ...base(os, extra) }), EM, EM)
+    const antes = dados(db)
+    migrar(db)
+    const depois = dados(db)
+    for (const id of ['z1', 'z2']) expect(depois[id], id).toEqual(antes[id])
+    for (const id of ['z3', 'z4']) expect(depois[id], id).toEqual({ ...antes[id], descidaComoAviso: true })
+    expect(registros(db).find((r) => r.acao === 'SISTEMA_ATUALIZADO')?.detalhe).toContain('OS 62, OS 63')
+  })
+
+  it('pode ser repetida sem mudar nada nem registrar de novo; sem o que marcar, não registra', () => {
+    const db = bancoV15()
+    migrar(db)
+    const depois = dados(db)
+    db.exec('PRAGMA user_version = 15')
+    migrar(db)
+    expect(dados(db)).toEqual(depois)
+    expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(1)
+    const nada = bancoV15()
+    nada.exec("DELETE FROM calibracoes WHERE id IN ('k1', 'k2', 'r6')")
     migrar(nada)
     expect(registros(nada).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toEqual([])
   })

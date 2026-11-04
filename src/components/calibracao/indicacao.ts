@@ -1,5 +1,6 @@
 import { leiturasDoMetodo, pontosEmOrdemDeCarga } from '#shared/calibracao.ts'
-import type { CalibracaoInput, EnsaioIndicacao } from '#shared/tipos.ts'
+import { METODOS_CARREGAMENTO, metodoIndicacaoForaDoPop, metodoIndicacaoPadrao, temLeiturasDeCarga } from '#shared/dominio.ts'
+import type { CalibracaoInput, ClasseExatidao, EnsaioIndicacao, MetodoCarregamento } from '#shared/tipos.ts'
 
 /** Abas do erro de indicação: "antes do ajuste" (como encontrado) e "depois do ajuste" (o ensaio final). */
 export type AbaIndicacao = 'antes' | 'depois'
@@ -57,4 +58,157 @@ export function ensaioEmOrdemDeCarga(e: EnsaioIndicacao): EnsaioIndicacao {
   if (e.metodo === 'DECRESCENTE') return e
   const pontos = pontosEmOrdemDeCarga(e.pontos)
   return pontos === e.pontos ? e : { ...e, pontos }
+}
+
+// ---- Método de carregamento: fixo pela classe (POP 7.7) ------------------------------------------------------
+
+/** O nome do método como a tela e a folha escrevem: “Crescente e decrescente”. */
+const nomeMetodo = (m: MetodoCarregamento) => `“${METODOS_CARREGAMENTO[m].label}”`
+
+/** A linha embaixo do método: o que o POP pede na classe da balança. */
+export const textoMetodoDaClasse = (classe: ClasseExatidao | null | undefined) =>
+  `Pelo POP (7.7), nesta classe: ${nomeMetodo(metodoIndicacaoPadrao(classe))}.`
+
+/**
+ * Como a etapa mostra o método do ensaio final (sem escolha: é o da classe). `metodo`: o que aparece; `foraDoPop`: o
+ * ensaio já tem leituras de carga com outro método (medido antes dessa regra, ou a classe trocada depois das
+ * leituras), que fica como foi medido, com o aviso e a troca para o do POP; `automatico`: sem leituras de carga e com
+ * outro método, a tela passa para o da classe sozinha (`comMetodoIndicacaoDaClasse`) e já mostra o da classe;
+ * `voltarPara`: o ensaio com leituras foi trocado de método depois delas (`EnsaioIndicacao.metodoMedido`), e a tela
+ * oferece voltar para o medido.
+ */
+export function metodoNaEtapa(
+  e: Pick<EnsaioIndicacao, 'metodo' | 'metodoMedido' | 'pontos' | 'substituicao'>,
+  classe: ClasseExatidao | null | undefined,
+): { metodo: MetodoCarregamento; foraDoPop: boolean; automatico: boolean; voltarPara: MetodoCarregamento | null } {
+  const fora = metodoIndicacaoForaDoPop(e.metodo, classe)
+  const comLeituras = temLeiturasDeCarga(e)
+  return {
+    metodo: fora && !comLeituras ? metodoIndicacaoPadrao(classe) : e.metodo,
+    foraDoPop: fora && comLeituras,
+    automatico: fora && !comLeituras,
+    voltarPara: comLeituras && e.metodoMedido && e.metodoMedido !== e.metodo ? e.metodoMedido : null,
+  }
+}
+
+/**
+ * O aviso do ensaio medido com outro método (`metodoNaEtapa(...).foraDoPop`): não impede a emissão. Vale para os dois
+ * casos (medido antes do método fixo pela classe, ou a classe trocada depois das leituras).
+ */
+export const textoMetodoForaDoPop = (metodo: MetodoCarregamento, classe: ClasseExatidao | null | undefined) =>
+  `Medido como ${nomeMetodo(metodo)}, que não é o método do POP nesta classe (${nomeMetodo(metodoIndicacaoPadrao(classe))}). As leituras ficam como estão, e o certificado sai com o método usado.`
+
+/**
+ * Leituras dos pontos com carga que a troca para `novo` esconde (a coluna que ele não usa): elas ficam guardadas, mas
+ * saem do cálculo e do certificado. O zero não conta (como em `leiturasDigitadas`).
+ */
+export function leiturasEscondidasPelaTroca(e: EnsaioIndicacao, novo: MetodoCarregamento): number {
+  return e.pontos
+    .filter((p) => p.carga > 0)
+    .reduce((n, p) => {
+      const agora = leiturasDoMetodo(p, e.metodo)
+      const depois = leiturasDoMetodo(p, novo)
+      return (
+        n +
+        (agora.crescente !== null && depois.crescente === null ? 1 : 0) +
+        (agora.decrescente !== null && depois.decrescente === null ? 1 : 0)
+      )
+    }, 0)
+}
+
+/**
+ * O que o método `novo` pede e o ensaio ainda não tem, nos pontos com carga já lidos: a subida (todo método, menos o
+ * "Decrescente") e a descida ("crescente e decrescente", menos na maior carga, que é a virada). Como as pendências do
+ * cálculo.
+ */
+export function leiturasQueFaltam(e: EnsaioIndicacao, novo: MetodoCarregamento): { subida: boolean; descida: boolean } {
+  const lidos = e.pontos.filter((p) => p.carga > 0 && (p.crescente !== null || p.decrescente !== null))
+  const maior = Math.max(0, ...lidos.map((p) => p.carga))
+  return {
+    subida: novo !== 'DECRESCENTE' && lidos.some((p) => p.crescente === null),
+    descida:
+      novo === 'CRESCENTE_DECRESCENTE' && !e.substituicao.ativa && lidos.some((p) => p.carga < maior && p.decrescente === null),
+  }
+}
+
+/** As leituras de descida que uma troca esconde (ficam guardadas, fora do cálculo e do certificado). */
+const textoEscondidas = (n: number) =>
+  n === 1
+    ? 'A leitura de descida já digitada sai do cálculo e do certificado (fica guardada).'
+    : `As ${n} leituras de descida já digitadas saem do cálculo e do certificado (ficam guardadas).`
+
+/**
+ * A pergunta antes de passar o ensaio já medido para o método do POP (sempre: o certificado passa a dizer que as cargas
+ * foram aplicadas assim). Diz as leituras que a troca esconde, o que o método novo pede e ainda falta (sem isso, o
+ * certificado não sai) e que dá para voltar para o método medido.
+ */
+export function textoTrocarMetodo(e: EnsaioIndicacao, novo: MetodoCarregamento): string {
+  const n = leiturasEscondidasPelaTroca(e, novo)
+  const falta = leiturasQueFaltam(e, novo)
+  const pede = [falta.subida && 'subida', falta.descida && 'descida'].filter(Boolean).join(' e de ')
+  const menosMax = falta.descida ? ', menos Max' : ''
+  return [
+    n > 0 ? textoEscondidas(n) : '',
+    pede ? `${nomeMetodo(novo)} pede a leitura de ${pede} em cada carga${menosMax}: sem ela, o certificado não sai.` : '',
+    'Troque só se for medir de novo com esse método, que é o que sai no certificado.',
+    `Dá para voltar para ${nomeMetodo(e.metodoMedido ?? e.metodo)}.`,
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
+/**
+ * O ensaio sem a marca do método medido: não foi trocado depois das leituras, ou "Refazer pontos" apagou as leituras
+ * (sem elas, não há método medido a guardar).
+ */
+export function semMetodoMedido(e: EnsaioIndicacao): EnsaioIndicacao {
+  const { metodoMedido: _medido, ...resto } = e
+  return resto
+}
+
+/**
+ * "Usar o método do POP" no ensaio medido com outro: troca para o da classe e guarda o método medido
+ * (`EnsaioIndicacao.metodoMedido`), para voltar a ele. Com leituras de carga, só depois de `confirmar`
+ * (`textoTrocarMetodo`): a troca muda o que o certificado diz. Devolve o ensaio novo, ou null (nada a trocar, ou a
+ * pessoa desistiu).
+ */
+export async function trocarParaMetodoDoPop(
+  e: EnsaioIndicacao,
+  classe: ClasseExatidao | null | undefined,
+  confirmar: (texto: string) => Promise<boolean>,
+): Promise<EnsaioIndicacao | null> {
+  const novo = metodoIndicacaoPadrao(classe)
+  if (e.metodo === novo) return null
+  if (!temLeiturasDeCarga(e)) return { ...semMetodoMedido(e), metodo: novo }
+  if (!(await confirmar(textoTrocarMetodo(e, novo)))) return null
+  const medido = e.metodoMedido ?? e.metodo
+  return medido === novo ? { ...semMetodoMedido(e), metodo: novo } : { ...e, metodo: novo, metodoMedido: medido }
+}
+
+/** A nota do ensaio trocado de método depois das leituras (`metodoNaEtapa(...).voltarPara`), com a volta ao lado. */
+export const textoMetodoTrocado = (medido: MetodoCarregamento) =>
+  `Trocado depois das leituras, medidas como ${nomeMetodo(medido)}. O que este método pede e falta impede a emissão.`
+
+/** A pergunta antes de voltar para o método medido quando a volta esconde leituras (a descida digitada depois). */
+export const textoVoltarMetodo = (n: number, medido: MetodoCarregamento) =>
+  `Com ${nomeMetodo(medido)}, ${
+    n === 1
+      ? 'a leitura de descida já digitada sai do cálculo e do certificado (fica guardada)'
+      : `as ${n} leituras de descida já digitadas saem do cálculo e do certificado (ficam guardadas)`
+  }. Continuar?`
+
+/**
+ * "Voltar para …" no ensaio trocado de método depois das leituras: volta para o método medido e tira a marca. Quando a
+ * volta esconde leituras (a descida digitada depois da troca), só depois de `confirmarEsconder` (`textoVoltarMetodo`).
+ * Devolve o ensaio novo, ou null (nada a voltar, ou a pessoa desistiu).
+ */
+export async function voltarParaMetodoMedido(
+  e: EnsaioIndicacao,
+  confirmarEsconder: (texto: string) => Promise<boolean>,
+): Promise<EnsaioIndicacao | null> {
+  const medido = e.metodoMedido
+  if (!medido || medido === e.metodo) return null
+  const n = leiturasEscondidasPelaTroca(e, medido)
+  if (n > 0 && !(await confirmarEsconder(textoVoltarMetodo(n, medido)))) return null
+  return { ...semMetodoMedido(e), metodo: medido }
 }

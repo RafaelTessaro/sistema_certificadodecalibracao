@@ -23,7 +23,7 @@ import { useSessao } from '../../store/sessao'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
 import { Resultado } from './EtapaRepetibilidade'
-import { casasDe, maxDe } from './util'
+import { casasDe, dicaDoMetodoExcentricidade, maxDe } from './util'
 
 export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa) {
   const admin = useSessao((x) => x.usuario?.nivel === 'ADMIN')
@@ -141,7 +141,7 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                 label="Como foi feito"
                 htmlFor="ecc-metodo"
                 className="sm:col-span-2"
-                hint={`Pelo POP (7.10), na ${classeI ? 'classe I' : 'classe da balança'}: método ${metodoDaClasse}.`}
+                hint={dicaDoMetodoExcentricidade(balanca.classe)}
               >
                 <Select
                   id="ecc-metodo"
@@ -150,7 +150,7 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                 >
                   {([1, 2, 3, 4] as const).map((m) => (
                     <option key={m} value={m}>
-                      {m}. {METODOS_EXCENTRICIDADE[m]}
+                      {METODOS_EXCENTRICIDADE[m]}
                     </option>
                   ))}
                 </Select>

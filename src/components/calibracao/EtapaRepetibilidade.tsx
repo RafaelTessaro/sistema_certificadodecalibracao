@@ -32,7 +32,7 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
         <CardHeader
           icone={<Repeat className="h-4 w-4" />}
           titulo="Repetibilidade"
-          descricao="Coloque a mesma carga várias vezes, conferindo o zero entre uma e outra. Registre cada indicação."
+          descricao="A mesma carga, várias vezes (POP 7.9). Zere antes de cada vez, coloque a carga no centro e registre a indicação."
           acoes={
             <Button tamanho="sm" icone={<Plus className="h-3.5 w-3.5" />} onClick={novo}>
               {f.repetibilidade.length ? 'Outro ensaio' : 'Adicionar ensaio'}

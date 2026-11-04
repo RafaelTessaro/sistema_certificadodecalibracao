@@ -93,6 +93,136 @@ describe('mínimos do POP bloqueiam a emissão', () => {
     expect((await emitir(certo.calibracao)).statusCode).toBe(200)
   })
 
+  it('"crescente e decrescente" sem a descida de um ponto: pendência e emissão recusada; Max (a virada) só com a subida, não', async () => {
+    const pronta = await c.calibracaoPronta()
+    const semDescida = (cargas: number[]) => (k: CalibracaoInput) => ({
+      ...k,
+      indicacao: {
+        ...k.indicacao,
+        pontos: k.indicacao.pontos.map((p) => (cargas.includes(p.carga) ? { ...p, decrescente: null } : p)),
+      },
+    })
+    const falta = await salvar(pronta, semDescida([10, 30]))
+    expect(falta.pendencias.map(sem)).toEqual(['Erro de indicação: falta a leitura de descida em 10,00 kg (POP 7.7).'])
+    expect((await paraRevisao(falta.calibracao)).statusCode).toBe(409)
+    expect((await emitir(falta.calibracao)).statusCode).toBe(409)
+    // A calibração já medida quando o sistema passou a seguir as regras (marcada pela migração): só o aviso, emite
+    const atual = (await detalhe(falta.calibracao)).calibracao as Calibracao
+    t.ctx.db
+      .prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
+      .run(JSON.stringify({ ...atual, minimosComoAviso: true }), atual.id)
+    expect(await pendenciasDe(atual)).toEqual([])
+    const r = await emitir(atual)
+    expect(r.statusCode, r.body).toBe(200)
+    // A revisão dele é a mesma visita: continua só com o aviso
+    const rev = await revisar(r.json().calibracao as Calibracao)
+    expect(await pendenciasDe(rev)).toEqual([])
+    const { resultado } = calcularCalibracao(rev, c.balanca, [c.pesos])
+    expect(resultado.avisos.map((a) => sem(a.mensagem))).toContain(
+      'Erro de indicação “crescente e decrescente” sem a leitura de descida em 10,00 kg.',
+    )
+    expect((await emitir(rev)).statusCode).toBe(200)
+  })
+
+  it.skipIf(!temPdftotext)(
+    'medida como "crescente contínuo" antes do método fixo pela classe: fica, sem pendência, e o certificado sai com ele',
+    async () => {
+      const pronta = await c.calibracaoPronta()
+      const { calibracao, pendencias } = await salvar(pronta, (k) => ({
+        ...k,
+        indicacao: { ...k.indicacao, metodo: 'CONTINUO', pontos: k.indicacao.pontos.map((p) => ({ ...p, decrescente: null })) },
+      }))
+      expect(calibracao.indicacao.metodo).toBe('CONTINUO')
+      expect(pendencias).toEqual([])
+      const r = await emitir(calibracao)
+      expect(r.statusCode, r.body).toBe(200)
+      const emitida = r.json().calibracao as Calibracao
+      expect(emitida.indicacao.metodo).toBe('CONTINUO')
+      const pdf = await t.chamar('GET', `/api/calibracoes/${emitida.id}/pdf`, { cookie: t.cookieAdmin })
+      expect(pdf.statusCode).toBe(200)
+      const texto = sem(
+        spawnSync('pdftotext', ['-layout', '-enc', 'UTF-8', '-', '-'], { input: pdf.rawPayload })
+          .stdout.toString('utf8')
+          .replace(/\s+/g, ' '),
+      )
+      expect(texto).toContain('Carregamento: cargas crescentes, sem descarregar entre os pontos.')
+      expect(texto).not.toContain('decrescentes')
+    },
+  )
+
+  it('revisão de um certificado emitido na 1.0.3 sem a descida (com as regras do POP): a descida que falta é só aviso', async () => {
+    const r = await c.emitir(await c.calibracaoPronta())
+    expect(r.statusCode, r.body).toBe(200)
+    const emitida = r.json().calibracao as Calibracao
+    // Gravado como a 1.0.3 emitia (a descida era opcional): 10 e 20 kg sem a descida
+    const daEpoca: Calibracao = {
+      ...emitida,
+      indicacao: {
+        ...emitida.indicacao,
+        pontos: emitida.indicacao.pontos.map((p) => (p.carga === 10 || p.carga === 20 ? { ...p, decrescente: null } : p)),
+      },
+    }
+    t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(daEpoca), emitida.id)
+    const rev = await revisar(emitida)
+    expect(rev.regrasDoPop).toBe(true)
+    expect(rev.descidaComoAviso).toBe(true)
+    expect(await pendenciasDe(rev)).toEqual([])
+    const { resultado } = calcularCalibracao(rev, c.balanca, [c.pesos])
+    expect(resultado.avisos.map((a) => sem(a.mensagem))).toContain(
+      'Erro de indicação “crescente e decrescente” sem a leitura de descida em 10,00 kg e 20,00 kg.',
+    )
+    // Os outros mínimos continuam pendências na revisão (só a descida é aviso)
+    const sem5 = await salvar(rev, (k) => ({
+      ...k,
+      indicacao: { ...k.indicacao, pontos: k.indicacao.pontos.filter((p) => p.carga !== 5) },
+    }))
+    expect(sem5.pendencias.map(sem)).toEqual([
+      'Erro de indicação: 4 pontos lidos; o POP pede no mínimo 5, contando o zero (7.7).',
+    ])
+    const volta = await salvar(sem5.calibracao, (k) => ({ ...k, indicacao: rev.indicacao }))
+    expect(volta.calibracao.descidaComoAviso).toBe(true)
+    const r1 = await emitir(volta.calibracao)
+    expect(r1.statusCode, r1.body).toBe(200)
+    // A revisão da revisão continua com a marca (a mesma visita); a de um certificado com todas as descidas segue a regra
+    const r2 = r1.json().calibracao as Calibracao
+    expect((await revisar(r2)).descidaComoAviso).toBe(true)
+    const outra = await c.emitir(await c.calibracaoPronta())
+    expect((await revisar(outra.json().calibracao as Calibracao)).descidaComoAviso).toBeUndefined()
+  })
+
+  it('passada para "crescente e decrescente" depois das leituras ("Usar o método do POP"): a descida que falta impede a emissão, mesmo medida antes das regras', async () => {
+    const pronta = await c.calibracaoPronta()
+    // Medida como "crescente contínuo" e marcada pela migração (a visita já aconteceu)
+    const continuo = await salvar(pronta, (k) => ({
+      ...k,
+      indicacao: { ...k.indicacao, metodo: 'CONTINUO', pontos: k.indicacao.pontos.map((p) => ({ ...p, decrescente: null })) },
+    }))
+    expect(continuo.pendencias).toEqual([])
+    const atual = (await detalhe(continuo.calibracao)).calibracao as Calibracao
+    t.ctx.db
+      .prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
+      .run(JSON.stringify({ ...atual, minimosComoAviso: true, descidaComoAviso: true }), atual.id)
+    // A tela troca e guarda o método medido
+    const trocada = await salvar(atual, (k) => ({
+      ...k,
+      indicacao: { ...k.indicacao, metodo: 'CRESCENTE_DECRESCENTE', metodoMedido: 'CONTINUO' },
+    }))
+    expect(trocada.calibracao.indicacao.metodoMedido).toBe('CONTINUO')
+    expect(trocada.calibracao.minimosComoAviso).toBe(true)
+    expect(trocada.pendencias.map(sem)).toEqual([
+      'Erro de indicação: falta a leitura de descida em 5,00 kg, 10,00 kg e 20,00 kg (POP 7.7). Sem ela, volte para “Crescente contínuo”, o método medido.',
+    ])
+    expect((await emitir(trocada.calibracao)).statusCode).toBe(409)
+    // Voltando para o medido: emite com ele
+    const { metodoMedido: _medido, ...indicacao } = trocada.calibracao.indicacao
+    const volta = await salvar(trocada.calibracao, (k) => ({ ...k, indicacao: { ...indicacao, metodo: 'CONTINUO' } }))
+    expect(volta.calibracao.indicacao).not.toHaveProperty('metodoMedido')
+    expect(volta.pendencias).toEqual([])
+    const r = await emitir(volta.calibracao)
+    expect(r.statusCode, r.body).toBe(200)
+    expect((r.json().calibracao as Calibracao).indicacao.metodo).toBe('CONTINUO')
+  })
+
   it('revisão de certificado emitido antes destas regras (4 pontos, 3 leituras, "Decrescente"): emite como na época', async () => {
     const r = await c.emitir(await c.calibracaoPronta())
     expect(r.statusCode, r.body).toBe(200)
@@ -118,7 +248,7 @@ describe('mínimos do POP bloqueiam a emissão', () => {
     const r1 = await emitir(rev)
     expect(r1.statusCode, r1.body).toBe(200)
     expect(r1.json().calibracao.indicacao.metodo).toBe('DECRESCENTE')
-    // A calibração nova da balança (do plano da última emitida) e "calibrar de novo" saem com a subida
+    // A calibração nova da balança (do plano da última emitida) e "calibrar de novo" saem com o método da classe
     const nova = (await c.criar('/api/calibracoes', { balancaId: c.balanca.id })).calibracao as Calibracao
     expect(nova.indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
     await t.chamar('DELETE', `/api/calibracoes/${nova.id}`, { cookie: t.cookieAdmin })

@@ -30,6 +30,7 @@ import {
   normalizarPadrao,
   numeroDaRevisao,
   OPCOES_CALCULO_PADRAO,
+  temCargaSemDescida,
   textoBusca,
   textoBuscaBalanca,
   textoBuscaCalibracao,
@@ -1132,6 +1133,9 @@ export class Repositorio {
           k.regrasDoPop = true
           // Medida antes das regras (a mesma visita): os mínimos continuam avisos (`minimosDoPopComoAviso`)
           if (original.minimosComoAviso === true) k.minimosComoAviso = true
+          // Emitido sem a descida de alguma carga (medido antes de ela ser obrigatória, 1.0.3): a revisão não pode pedir
+          // uma leitura que a visita não fez; a descida que falta fica como aviso (`descidaComoAviso`)
+          if (original.descidaComoAviso === true || temCargaSemDescida(original.indicacao)) k.descidaComoAviso = true
         }
         // Os padrões como foram congelados na emissão (o certificado e as correções da época), mesmo que tenham sido
         // calibrados de novo ou desativados depois (`padroesDaCalibracao`)

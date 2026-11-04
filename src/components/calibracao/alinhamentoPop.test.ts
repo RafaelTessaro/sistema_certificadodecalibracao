@@ -13,11 +13,11 @@ import type { Balanca, CalibracaoInput, Cliente, EnsaioIndicacao, Padrao } from 
 import type { ContextoEtapa } from './contexto'
 import { EtapaConclusao } from './EtapaConclusao'
 import { EtapaExcentricidade } from './EtapaExcentricidade'
-import { ComoEncontradoAnterior, EtapaIndicacao } from './EtapaIndicacao'
+import { ComoEncontradoAnterior, EtapaIndicacao, PainelDaAba } from './EtapaIndicacao'
 import { EtapaInstrumento } from './EtapaInstrumento'
 import { EtapaPadroes } from './EtapaPadroes'
 import { EtapaRepetibilidade } from './EtapaRepetibilidade'
-import { comMetodoDaClasse, pedeAjusteInterno } from './util'
+import { comMetodoDaClasse, dicaDoMetodoExcentricidade, pedeAjusteInterno } from './util'
 
 // As janelas (as peças de cada carga) abrem num portal no document.body, que não existe no servidor
 vi.mock('../ui/Modal', () => ({ Modal: () => null }))
@@ -229,6 +229,12 @@ describe('Excentricidade: método fixo pela classe (POP 7.10)', () => {
     expect(t).toContain('Diferente do POP (7.10): nesta classe, o método é “zera e desloca a carga pelas posições”.')
     expect(t).toContain('>alterar<')
   })
+
+  it('ao alterar, a dica diz o método do POP pelo nome (o POP não numera os métodos)', () => {
+    expect(dicaDoMetodoExcentricidade('III')).toBe('Pelo POP (7.10), na classe da balança: “zera e desloca a carga pelas posições”.')
+    expect(dicaDoMetodoExcentricidade(null)).toBe('Pelo POP (7.10), na classe da balança: “zera e desloca a carga pelas posições”.')
+    expect(dicaDoMetodoExcentricidade('I')).toBe('Pelo POP (7.10), na classe I: “zera antes de cada posição”.')
+  })
 })
 
 describe('classe trocada no meio da calibração ("Corrigir cadastro")', () => {
@@ -242,7 +248,126 @@ describe('classe trocada no meio da calibração ("Corrigir cadastro")', () => {
       ...k,
       excentricidade: { ...k.excentricidade, posicoes: [{ rotulo: 'Centro', leitura: 10, referencia: null }] },
     }
-    expect(comMetodoDaClasse(lido, 'I')).toBe(lido)
+    expect(comMetodoDaClasse(lido, 'I').excentricidade).toBe(lido.excentricidade)
+  })
+
+  it('o erro de indicação ainda sem leituras de carga também segue a classe nova; com leituras, fica', () => {
+    const k = calibracaoVazia(undefined, 'III')
+    expect(k.indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
+    expect(comMetodoDaClasse(k, 'I').indicacao.metodo).toBe('DESCONTINUO')
+    expect(comMetodoDaClasse(comMetodoDaClasse(k, 'I'), 'II').indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
+    expect(comMetodoDaClasse(k, '').indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
+    // Os pontos sugeridos já vêm com o zero lido: ainda não é leitura de carga
+    const sugerido = { ...k, indicacao: ensaio([ponto('z', 0, 0), ponto('a', 10), ponto('b', 30)]) }
+    expect(comMetodoDaClasse(sugerido, 'I').indicacao.metodo).toBe('DESCONTINUO')
+    // Com uma leitura de carga, fica como foi medido (e a excentricidade sem leituras segue a classe)
+    const lido = { ...k, indicacao: ensaio([ponto('z', 0, 0), ponto('a', 10, 10)]) }
+    const trocada = comMetodoDaClasse(lido, 'I')
+    expect(trocada.indicacao).toBe(lido.indicacao)
+    expect(trocada.excentricidade.metodo).toBe(3)
+  })
+})
+
+describe('Erro de indicação: método fixo pela classe (POP 7.7)', () => {
+  const classeI = { ...balanca, classe: 'I', unidade: 'g', faixas: [{ max: 220, e: 0.001, d: 0.0001 }] } as Balanca
+  const texto = (x: string) => x.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+
+  it('classe III: "Crescente e decrescente" em texto, com a linha do POP, sem lista para escolher', () => {
+    const k = calibracaoVazia(undefined, 'III')
+    expect(k.indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
+    const t = html(EtapaIndicacao, contexto(k))
+    expect(texto(t)).toContain('Como aplicar as cargas Crescente e decrescente')
+    expect(t).toContain('Pelo POP (7.7), nesta classe: “Crescente e decrescente”.')
+    expect(t).not.toContain('-metodo"')
+    expect(t).not.toContain('<select')
+    expect(t).not.toMatch(/Crescente contínuo|>Decrescente</)
+    expect(t).not.toContain('Usar o método do POP')
+  })
+
+  it('classe I: "Crescente com descarga"', () => {
+    const vazia = calibracaoVazia(undefined, 'I')
+    expect(vazia.indicacao.metodo).toBe('DESCONTINUO')
+    const k = { ...vazia, indicacao: { ...vazia.indicacao, pontos: [ponto('z', 0, 0), ponto('a', 100), ponto('b', 200)] } }
+    const t = html(EtapaIndicacao, contexto(k, classeI))
+    expect(texto(t)).toContain('Como aplicar as cargas Crescente com descarga')
+    expect(t).toContain('Pelo POP (7.7), nesta classe: “Crescente com descarga”.')
+    // Só a subida: sem a coluna da descida
+    expect(t).toContain('Indicação ↑')
+    expect(t).not.toContain('Indicação ↓')
+  })
+
+  it('rascunho de antes com outro método e sem leituras de carga: já mostra o da classe (a tela acerta sozinha)', () => {
+    const k = {
+      ...calibracaoVazia(undefined, 'III'),
+      indicacao: { ...ensaio([ponto('z', 0, 0), ponto('a', 10)]), metodo: 'CONTINUO' as const },
+    }
+    const t = html(EtapaIndicacao, contexto(k))
+    expect(texto(t)).toContain('Como aplicar as cargas Crescente e decrescente')
+    expect(t).not.toContain('Usar o método do POP')
+  })
+
+  it('medido como "Crescente contínuo" numa classe III (antes desta regra): fica, com o aviso e a troca, sem pendência', () => {
+    const k = calibracaoVazia(undefined, 'III')
+    const pontos = [0, 5, 10, 20, 30].map((c) => ponto(`p${c}`, c, c))
+    const f: CalibracaoInput = { ...k, indicacao: { ...ensaio(pontos), metodo: 'CONTINUO' } }
+    const t = html(EtapaIndicacao, contexto(f))
+    expect(texto(t)).toContain('Como aplicar as cargas Crescente contínuo')
+    expect(t).toContain(
+      'Medido como “Crescente contínuo”, que não é o método do POP nesta classe (“Crescente e decrescente”). As leituras ficam como estão, e o certificado sai com o método usado.',
+    )
+    expect(t).not.toContain('antes do método fixo')
+    expect(t).toContain('Usar o método do POP')
+    expect(t).not.toContain('Voltar para')
+    expect(t).toContain('role="note"')
+    // As leituras continuam; a coluna da descida, que ele não usa, não aparece
+    expect(t).not.toContain('Indicação ↓')
+    // O cálculo não pede a descida: o método é o do ensaio
+    const r = calcularCalibracao(f, balanca, [])
+    expect(r.resultado.pendencias.join('\n')).not.toMatch(/descida/)
+    expect(r.resultado.avisos.map((a) => a.mensagem).join('\n')).not.toMatch(/descida/)
+  })
+
+  it('trocado para o do POP depois das leituras: a nota, a volta para o medido e a descida que falta como pendência', () => {
+    const k = calibracaoVazia(undefined, 'III')
+    const pontos = [0, 5, 10, 20, 30].map((c) => ponto(`p${c}`, c, c))
+    const f: CalibracaoInput = {
+      ...k,
+      minimosComoAviso: true,
+      indicacao: { ...ensaio(pontos), metodo: 'CRESCENTE_DECRESCENTE', metodoMedido: 'CONTINUO' },
+    }
+    const t = html(EtapaIndicacao, contexto(f))
+    expect(texto(t)).toContain('Como aplicar as cargas Crescente e decrescente')
+    expect(t).toContain(
+      'Trocado depois das leituras, medidas como “Crescente contínuo”. O que este método pede e falta impede a emissão.',
+    )
+    expect(t).toContain('Voltar para “Crescente contínuo”')
+    expect(t).not.toContain('Usar o método do POP')
+    expect(t).toContain('Indicação ↓')
+    // Mesmo na calibração medida antes das regras, a descida que falta impede a emissão
+    expect(calcularCalibracao(f, balanca, []).resultado.pendencias.join('\n')).toMatch(
+      /falta a leitura de descida em .* Sem ela, volte para “Crescente contínuo”, o método medido\./,
+    )
+  })
+
+  it('a classe trocada para I depois das leituras: o aviso diz o método medido e o do POP, sem "antes da regra"', () => {
+    const k = calibracaoVazia(undefined, 'III')
+    const pontos = [0, 100, 200].map((c) => ({ ...ponto(`p${c}`, c, c), decrescente: c }))
+    const f: CalibracaoInput = { ...k, indicacao: ensaio(pontos) }
+    const classeI3 = { ...classeI, faixas: [{ max: 200, e: 0.001, d: 0.0001 }] } as Balanca
+    const t = html(EtapaIndicacao, contexto(f, classeI3))
+    expect(t).toContain(
+      'Medido como “Crescente e decrescente”, que não é o método do POP nesta classe (“Crescente com descarga”).',
+    )
+    expect(t).not.toContain('antes do método fixo')
+  })
+
+  it('o "como encontrado" de um registro de antes mostra o método dele, sem a linha do POP', () => {
+    const k = legado()
+    const f: CalibracaoInput = { ...k, comoEncontrado: { ...k.comoEncontrado!, metodo: 'CONTINUO' } }
+    const t = renderToStaticMarkup(createElement(PainelDaAba, { ctx: contexto(f), aba: 'antes' }))
+    expect(texto(t)).toContain('Como aplicar as cargas Crescente contínuo')
+    expect(t).not.toContain('Pelo POP (7.7)')
+    expect(t).not.toContain('Usar o método do POP')
   })
 })
 
@@ -287,6 +412,12 @@ describe('dados que o POP exige na calibração nova: a carga da repetibilidade 
     expect(lido(html(EtapaRepetibilidade, contexto(f)))).toContain('Informe a carga do ensaio.')
     const comCarga = { ...f, repetibilidade: [{ ...f.repetibilidade[0], carga: 15 }] }
     expect(lido(html(EtapaRepetibilidade, contexto(comCarga)))).not.toContain('Informe a carga do ensaio.')
+  })
+
+  it('repetibilidade: zerar antes de cada aplicação, como o POP (7.9) e a folha (não só conferir o zero)', () => {
+    const t = lido(html(EtapaRepetibilidade, contexto(calibracaoVazia(undefined, 'III'))))
+    expect(t).toContain('Zere antes de cada vez, coloque a carga no centro e registre a indicação.')
+    expect(t).not.toContain('conferindo o zero')
   })
 
   it('retorno ao zero: obrigatório na calibração nova (POP 7.7); opcional na revisão de um certificado de antes', () => {

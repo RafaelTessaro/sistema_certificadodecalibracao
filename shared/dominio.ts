@@ -340,12 +340,18 @@ export const AJUSTES_DA_CALIBRACAO: ReadonlyArray<{ valor: Exclude<AjusteRealiza
 export const METODOS_CARREGAMENTO: Record<MetodoCarregamento, { label: string; descricao: string }> = {
   CRESCENTE_DECRESCENTE: {
     label: 'Crescente e decrescente',
-    descricao: 'Sobe até Max e desce, sem descarregar. Mostra a histerese.',
+    descricao: 'Sobe até Max e desce, sem zerar no meio. Mostra a histerese.',
   },
   DESCONTINUO: { label: 'Crescente com descarga', descricao: 'Descarrega entre um ponto e outro.' },
   CONTINUO: { label: 'Crescente contínuo', descricao: 'Sobe sem descarregar.' },
   DECRESCENTE: { label: 'Decrescente', descricao: 'Parte de Max e vai descarregando (tremonhas, silos).' },
 }
+
+/**
+ * O rótulo do método do erro de indicação, o mesmo na tela e no passo 5 da folha (uma instrução: o método é fixo pela
+ * classe, sem nada a marcar) e citado no POP (7.7).
+ */
+export const ROTULO_METODO_INDICACAO = 'Como aplicar as cargas'
 
 /**
  * Métodos de carregamento de antes do método fixo pela classe: sem o "Decrescente", que não tem a subida (POP 7.7: a
@@ -1525,6 +1531,19 @@ export function comMetodoIndicacaoDaClasse<T extends Pick<EnsaioIndicacao, 'meto
 }
 
 /**
+ * O "crescente e decrescente" tem uma carga lida na subida e sem a descida (POP 7.7)? A maior carga lida não conta (é a
+ * virada, com uma leitura só), nem o zero (a descida dele é o retorno ao zero) e nem o ensaio com substituição (as cargas
+ * só sobem): como a pendência do cálculo. Para o servidor marcar o que foi medido antes de a descida ser obrigatória.
+ */
+export function temCargaSemDescida(e: Pick<EnsaioIndicacao, 'metodo' | 'pontos' | 'substituicao'> | null | undefined): boolean {
+  if (!e || e.metodo !== 'CRESCENTE_DECRESCENTE' || e.substituicao.ativa) return false
+  const lida = (v: number | null) => typeof v === 'number' && Number.isFinite(v)
+  const subidas = e.pontos.filter((p) => p.carga > 0 && lida(p.crescente))
+  const maior = Math.max(0, ...e.pontos.filter((p) => lida(p.crescente) || lida(p.decrescente)).map((p) => p.carga))
+  return subidas.some((p) => p.carga < maior && !lida(p.decrescente))
+}
+
+/**
  * O ensaio "como encontrado" tem alguma leitura? A tela de antes criava um vazio ao escolher um ajuste; vazio, ele
  * não entra no cálculo nem no certificado.
  */
@@ -1680,8 +1699,13 @@ function normalizarIndicacao(v: unknown): EnsaioIndicacao {
       nivelSubstituicao: inteiro(x.nivelSubstituicao, LIMITES.etapas, 0),
     }
   })
+  const metodos = Object.keys(METODOS_CARREGAMENTO) as MetodoCarregamento[]
+  const metodo = umDe(r.metodo, metodos, 'CRESCENTE_DECRESCENTE')
+  // O método medido, quando o ensaio foi trocado de método depois das leituras (o mesmo método: não foi trocado)
+  const metodoMedido = metodos.includes(r.metodoMedido as MetodoCarregamento) ? (r.metodoMedido as MetodoCarregamento) : null
   return {
-    metodo: umDe(r.metodo, Object.keys(METODOS_CARREGAMENTO) as MetodoCarregamento[], 'CRESCENTE_DECRESCENTE'),
+    metodo,
+    ...(metodoMedido && metodoMedido !== metodo ? { metodoMedido } : {}),
     pontos,
     retornoZero: numeroOuNulo(r.retornoZero),
     substituicao: {

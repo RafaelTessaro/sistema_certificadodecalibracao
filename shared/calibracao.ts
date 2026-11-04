@@ -265,6 +265,8 @@ function indicacaoParaCalculo(ensaio: EnsaioIndicacao, padroes: Padrao[], unidad
   const etapaSemPadrao = ensaio.substituicao.ativa ? pecasSemPadrao(ensaio.substituicao.pecas, padroes) : ''
   return {
     metodo: ensaio.metodo,
+    // Trocado de método depois das leituras: o que o método novo pede e falta é pendência (ver o motor)
+    ...(ensaio.metodoMedido && ensaio.metodoMedido !== ensaio.metodo ? { metodoMedido: ensaio.metodoMedido } : {}),
     retornoZero: ensaio.retornoZero,
     pontos: ensaio.pontos.map((p) => {
       const nivel = ensaio.substituicao.ativa ? p.nivelSubstituicao : 0
@@ -389,7 +391,10 @@ type Original = Pick<CalibracaoInput, 'indicacao' | 'repetibilidade' | 'excentri
 export function entradaDoCalculo(
   k: Pick<CalibracaoInput, 'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade'> &
     Partial<
-      Pick<CalibracaoInput, 'ambiente' | 'ajuste' | 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso'>
+      Pick<
+        CalibracaoInput,
+        'ambiente' | 'ajuste' | 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso' | 'descidaComoAviso'
+      >
     > & {
       emissao?: unknown
     },
@@ -422,8 +427,15 @@ export function entradaDoCalculo(
     conformidade: k.conformidade,
     ar: arDoAmbiente(k.ambiente, ajustadaAntes),
     termica: termicaDoAmbiente(k.ambiente),
-    // A calibração já medida antes das regras: os mínimos como avisos (`minimosDoPopComoAviso`)
-    ...(comoAviso ? {} : { regrasDoPop: true, ...(minimosDoPopComoAviso(k, momento) ? { minimosComoAviso: true } : {}) }),
+    // A calibração já medida antes das regras: os mínimos como avisos (`minimosDoPopComoAviso`); medida antes de a
+    // descida ser obrigatória, a descida que falta (`descidaComoAviso`)
+    ...(comoAviso
+      ? {}
+      : {
+          regrasDoPop: true,
+          ...(minimosDoPopComoAviso(k, momento) ? { minimosComoAviso: true } : {}),
+          ...(k.descidaComoAviso === true ? { descidaComoAviso: true } : {}),
+        }),
     ...(comoAviso && momento === 'FINAL' && original ? { leiturasDoOriginal: leiturasOriginais(original) } : {}),
   }
 }
@@ -437,7 +449,12 @@ export function calcularCalibracao(
     CalibracaoInput,
     'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade' | 'comoEncontrado' | 'ajuste'
   > &
-    Partial<Pick<CalibracaoInput, 'ambiente' | 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso'>> & {
+    Partial<
+      Pick<
+        CalibracaoInput,
+        'ambiente' | 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso' | 'descidaComoAviso'
+      >
+    > & {
       emissao?: unknown
     },
   balanca: Pick<Balanca, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>,

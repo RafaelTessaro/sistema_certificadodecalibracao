@@ -6,7 +6,8 @@
 //      prevê todos os padrões ativos da empresa (como o POST /api/calibracoes faz sem histórico): a folha
 //      lista inteiros só os que vão a campo;
 //   3. rodoviária 80 t com cargas de substituição (do último certificado);
-//   4. folha em branco, para uma balança ainda não cadastrada (também com os 8 padrões de uma empresa maior);
+//   4. folha em branco, para uma balança ainda não cadastrada (também com os 8 padrões de uma empresa maior e sem
+//      nenhum padrão cadastrado);
 //   5. rodoviária 60 t sem calibração anterior: o plano sai das sugestões, sem a substituição no rascunho (a
 //      folha sugere as etapas, com os 20 × 500 kg em cada uma, e o nº de substituições de cada ponto) e sem
 //      declaração de conformidade pedida;
@@ -261,6 +262,14 @@ export function folhaEmBrancoOitoPadroes(): DadosFolhaCampo {
     },
   ]
   return { ...folhaEmBranco(), numero: 'FC-2026-00047', numeroCertificado: 'CC-2026-00130', padroes: [...empresa, ...extras] }
+}
+
+/**
+ * Folha em branco de uma empresa sem nenhum padrão cadastrado (o sistema recém-instalado): o passo 1 sai só com as
+ * linhas para escrever os padrões levados.
+ */
+export function folhaEmBrancoSemPadroes(): DadosFolhaCampo {
+  return { ...folhaEmBranco(), numero: 'FC-2026-00049', numeroCertificado: 'CC-2026-00133', padroes: [] }
 }
 
 export function folhaRodoviariaSemHistorico(): DadosFolhaCampo {

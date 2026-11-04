@@ -4,6 +4,7 @@ import {
   deltaTMaximo,
   ehRodoviaria,
   metodoExcentricidadePadrao,
+  METODOS_EXCENTRICIDADE,
   somarMeses,
   temLeiturasExcentricidade,
 } from '#shared/dominio.ts'
@@ -58,6 +59,13 @@ export function proximosEnsaiosRepetibilidade<T extends { carga: number }>(
 export function pedeAjusteInterno(b: Pick<Balanca, 'classe' | 'faixas'>): boolean {
   return b.classe === 'I' || menorD(b) < maxDe(b) / 100_000
 }
+
+/**
+ * Dica do método da excentricidade ao alterá-lo: o do POP (7.10) para a classe, pelo nome (o POP não numera os métodos;
+ * o número é só do registro).
+ */
+export const dicaDoMetodoExcentricidade = (classe: ClasseExatidao | null | undefined) =>
+  `Pelo POP (7.10), na ${classe === 'I' ? 'classe I' : 'classe da balança'}: “${METODOS_EXCENTRICIDADE[metodoExcentricidadePadrao(classe)].toLowerCase()}”.`
 
 /**
  * A classe da balança mudou no meio da calibração ("Corrigir cadastro"): os ensaios ainda sem leituras passam para o

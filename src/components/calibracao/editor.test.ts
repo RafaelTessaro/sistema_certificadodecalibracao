@@ -18,6 +18,7 @@ import {
   PENDENCIA_TECNICO_EXCLUIDO,
   pendenciasEmissao,
 } from '#shared/dominio.ts'
+import type { ResultadoCalculo } from '#shared/metrologia/tipos.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao, PontoIndicacao } from '#shared/tipos.ts'
 import type { DetalheCalibracao } from '../../lib/api'
 import { recomporCargas } from './cargas'
@@ -210,6 +211,32 @@ describe('etapas Excentricidade e Erro de indicação na lista de etapas (POP 7.
     expect(de(lida(null))).toBe(false)
     expect(de({ ...lida(null), substituiId: 'orig' })).toBe(true)
     expect(de({ ...lida(null), minimosComoAviso: true })).toBe(true)
+  })
+
+  it('erro de indicação: com a leitura que falta (a descida no "crescente e decrescente", ou a subida), a etapa não fica feita', () => {
+    const f = calibracaoVazia(undefined, 'III')
+    const k: CalibracaoInput = {
+      ...f,
+      indicacao: {
+        ...f.indicacao,
+        retornoZero: 0,
+        pontos: [0, 10, 20, 30].map((carga) => ({
+          id: `p${carga}`,
+          carga,
+          pecas: [],
+          pecasManuais: false,
+          crescente: carga,
+          decrescente: carga === 10 ? null : carga,
+          nivelSubstituicao: 0,
+        })),
+      },
+    }
+    const calc = (pendencias: string[]) => ({ resultado: { pendencias } as unknown as ResultadoCalculo, comoEncontrado: null })
+    const de = (pendencias: string[]) => etapaCompleta('indicacao', { f: k, calc: calc(pendencias), selecionados: [] })
+    expect(de(['Erro de indicação: falta a leitura de descida em 10,00 kg (POP 7.7).'])).toBe(false)
+    expect(de(['Erro de indicação: falta a leitura de subida em 10,00 kg (POP 7.7).'])).toBe(false)
+    // As outras pendências do cálculo não são da etapa
+    expect(de(['Repetibilidade: registre as leituras do ensaio (no mínimo 5; 3 com carga ≥ 100 kg; POP, Tabela 4).'])).toBe(true)
   })
 })
 

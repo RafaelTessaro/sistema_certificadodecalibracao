@@ -1260,6 +1260,63 @@ describe('calibração nova: os mínimos do POP e as leituras fora do esperado b
     ).toEqual(['Erro de indicação: falta a leitura de subida em 10 000 g (POP 7.7).'])
   })
 
+  it('"crescente e decrescente": o ponto com carga lido na subida e sem a descida é pendência; a virada (Max) e o zero, não', () => {
+    const semDescida = (cargas: number[]) => (e: EntradaCalculo) => {
+      e.indicacao.pontos = e.indicacao.pontos.map((p) => (cargas.includes(p.carga) ? { ...p, decrescente: null } : p))
+    }
+    expect(nova(semDescida([5000, 15000])).pendencias).toEqual([
+      'Erro de indicação: falta a leitura de descida em 5000 g e 15 000 g (POP 7.7).',
+    ])
+    // Max é a virada: uma leitura só (POP, Figura 3); o zero tem a sua descida no retorno ao zero
+    expect(nova(semDescida([0, 30000])).pendencias).toEqual([])
+    // Faixa parcial: a virada é a maior carga lida
+    const parcial = nova((e) => {
+      comLeituras(e, [0, 5000, 10000, 15000, 20000])
+      semDescida([20000])(e)
+    })
+    expect(parcial.pendencias.join('\n')).not.toMatch(/descida/)
+    // Sem nenhuma leitura no ponto: não é a descida que falta (os mínimos têm a pendência deles)
+    expect(nova((e) => comLeituras(e, [0, 10000, 15000, 20000, 30000])).pendencias.join('\n')).not.toMatch(/descida/)
+    // Os outros métodos não têm a descida (o "Decrescente" tem a pendência dele)
+    for (const metodo of ['CONTINUO', 'DESCONTINUO'] as const)
+      expect(
+        nova((e) => {
+          e.indicacao.metodo = metodo
+          semDescida([5000, 15000])(e)
+        }).pendencias,
+      ).toEqual([])
+    // Com substituição, as cargas só sobem
+    const comSubstituicao = nova((e) => {
+      semDescida([5000, 15000])(e)
+      e.indicacao.substituicao = { ativa: true, pecas: [], etapas: [] }
+    })
+    expect(comSubstituicao.pendencias.join('\n')).not.toMatch(/descida/)
+  })
+
+  it('a descida que falta só avisa na calibração já medida antes das regras e no registro de antes', () => {
+    const tirar = (e: EntradaCalculo) => {
+      e.indicacao.pontos = e.indicacao.pontos.map((p) => (p.carga === 5000 ? { ...p, decrescente: null } : p))
+    }
+    const aviso = 'atencao: Erro de indicação “crescente e decrescente” sem a leitura de descida em 5000 g.'
+    const medida = nova((e) => {
+      e.minimosComoAviso = true
+      tirar(e)
+    })
+    expect(medida.pendencias).toEqual([])
+    expect(medida.avisos).toContain(aviso)
+    const antes = exemplo30kg()
+    tirar(antes)
+    const r = calcular(antes)
+    expect(r.pendencias).toEqual([])
+    expect(r.avisos.map((a) => `${a.nivel}: ${sem(a.mensagem)}`)).toContain(aviso)
+    // Com a descida, nem o aviso
+    expect(
+      calcular(exemplo30kg())
+        .avisos.map((a) => a.mensagem)
+        .join('\n'),
+    ).not.toMatch(/descida/)
+  })
+
   it('repetibilidade abaixo da Tabela 4: 2 e 4 leituras a 15 kg são pendência; 5 não; 3 com 100 kg ou mais não', () => {
     const rep = (leituras: number[]) =>
       nova((e) => (e.repetibilidade = [{ id: 'r', carga: 15000, leituras }])).pendencias.filter((p) => p.startsWith('Repet'))

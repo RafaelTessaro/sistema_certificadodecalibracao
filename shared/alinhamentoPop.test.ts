@@ -10,15 +10,19 @@ import {
   AJUSTES_DA_CALIBRACAO,
   BALANCA_VAZIA,
   calibracaoVazia,
+  comMetodoIndicacaoDaClasse,
   LISTA_RECEPTORES,
   LISTA_TIPOS_BALANCA,
   metodoExcentricidadeForaDoPop,
+  metodoIndicacaoForaDoPop,
   normalizarBalanca,
   normalizarCalibracao,
   receptoresParaEscolher,
   registroAnterior,
   semRegistroAnterior,
+  temCargaSemDescida,
   temLeiturasComoEncontrado,
+  temLeiturasDeCarga,
   temLeiturasExcentricidade,
   TIPOS_FORA_DO_POP,
   tiposBalancaParaEscolher,
@@ -153,6 +157,64 @@ describe('excentricidade: método fixo pela classe (POP 7.10)', () => {
     expect(temLeiturasExcentricidade({ posicoes: [p(null, null), p(null, null)] })).toBe(false)
     expect(temLeiturasExcentricidade({ posicoes: [p(null, 0)] })).toBe(true)
     expect(temLeiturasExcentricidade({ posicoes: [p(10, null)] })).toBe(true)
+  })
+})
+
+describe('erro de indicação: método fixo pela classe (POP 7.7)', () => {
+  it('"crescente e decrescente" nas classes II, III, IIII e sem classe; "crescente com descarga" na classe I', () => {
+    expect(calibracaoVazia(undefined, 'III').indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
+    expect(calibracaoVazia(undefined, 'I').indicacao.metodo).toBe('DESCONTINUO')
+    for (const classe of ['II', 'III', 'IIII', ''] as const) {
+      expect(metodoIndicacaoForaDoPop('CRESCENTE_DECRESCENTE', classe)).toBe(false)
+      for (const m of ['DESCONTINUO', 'CONTINUO', 'DECRESCENTE'] as const) expect(metodoIndicacaoForaDoPop(m, classe)).toBe(true)
+    }
+    expect(metodoIndicacaoForaDoPop('DESCONTINUO', 'I')).toBe(false)
+    expect(metodoIndicacaoForaDoPop('CRESCENTE_DECRESCENTE', 'I')).toBe(true)
+  })
+
+  it('leituras de carga: a subida ou a descida de um ponto com carga, ou uma etapa de substituição; o zero não conta', () => {
+    const vazio = ensaio([ponto('z', 0, 0), ponto('a', 10), ponto('b', 30)], 0)
+    expect(temLeiturasDeCarga(vazio)).toBe(false)
+    expect(temLeiturasDeCarga(ensaio([ponto('z', 0, 0), ponto('a', 10, 10)]))).toBe(true)
+    expect(temLeiturasDeCarga(ensaio([ponto('z', 0, 0), { ...ponto('a', 10), decrescente: 10 }]))).toBe(true)
+    const etapa = {
+      ...vazio,
+      substituicao: { ativa: true, pecas: [], etapas: [{ leituraPadroes: null, leituraSubstituicao: 5 }] },
+    }
+    expect(temLeiturasDeCarga(etapa)).toBe(true)
+  })
+
+  it('sem leituras de carga, o ensaio segue a classe (também a classe trocada); com leituras, fica como foi medido', () => {
+    const continuo = { ...ensaio([ponto('z', 0, 0), ponto('a', 10)]), metodo: 'CONTINUO' as const }
+    expect(comMetodoIndicacaoDaClasse(continuo, 'III').metodo).toBe('CRESCENTE_DECRESCENTE')
+    expect(comMetodoIndicacaoDaClasse(continuo, 'I').metodo).toBe('DESCONTINUO')
+    const doPop = ensaio([ponto('z', 0, 0), ponto('a', 10)])
+    expect(comMetodoIndicacaoDaClasse(doPop, 'III')).toBe(doPop)
+    const medido = { ...ensaio([ponto('z', 0, 0), ponto('a', 10, 10)]), metodo: 'CONTINUO' as const }
+    expect(comMetodoIndicacaoDaClasse(medido, 'III')).toBe(medido)
+  })
+
+  it('o método medido de um ensaio trocado depois das leituras é gravado; inválido ou igual ao método, não', () => {
+    const k = (indicacao: object) =>
+      normalizarCalibracao({ ...calibracaoVazia(), clienteId: 'c1', balancaId: 'b1', indicacao }).valor.indicacao
+    const base = ensaio([ponto('z', 0, 0), ponto('a', 10, 10)])
+    expect(k({ ...base, metodoMedido: 'CONTINUO' }).metodoMedido).toBe('CONTINUO')
+    expect(k({ ...base, metodoMedido: 'CRESCENTE_DECRESCENTE' })).not.toHaveProperty('metodoMedido')
+    expect(k({ ...base, metodoMedido: 'QUALQUER' })).not.toHaveProperty('metodoMedido')
+    expect(k(base)).not.toHaveProperty('metodoMedido')
+  })
+
+  it('"crescente e decrescente" com carga sem a descida: a maior carga lida, o zero e a substituição não contam', () => {
+    const desce = (p: ReturnType<typeof ponto>, v: number | null = p.carga) => ({ ...p, decrescente: v })
+    const completo = ensaio([desce(ponto('z', 0, 0)), desce(ponto('a', 10, 10)), ponto('b', 30, 30)])
+    expect(temCargaSemDescida(completo)).toBe(false)
+    const falta = ensaio([ponto('z', 0, 0), ponto('a', 10, 10), ponto('b', 30, 30)])
+    expect(temCargaSemDescida(falta)).toBe(true)
+    // Sem leitura ainda, outro método ou com substituição: nada falta
+    expect(temCargaSemDescida(ensaio([ponto('z', 0, 0), ponto('a', 10), ponto('b', 30)]))).toBe(false)
+    expect(temCargaSemDescida({ ...falta, metodo: 'CONTINUO' })).toBe(false)
+    expect(temCargaSemDescida({ ...falta, substituicao: { ativa: true, pecas: [], etapas: [] } })).toBe(false)
+    expect(temCargaSemDescida(null)).toBe(false)
   })
 })
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Padrao } from './tipos.ts'
 import { exemploClasseI } from '../server/pdf/exemplosCertificado.ts'
 import { calcularCalibracao, montarCarga, pontosSugeridos } from './calibracao.ts'
+import { METODOS_EXCENTRICIDADE } from './dominio.ts'
 import {
   folhaClasseI,
   folhaEmBranco,
@@ -172,43 +173,39 @@ describe('planoDaFolha', () => {
     expect(p.pontos.at(-1)?.ema).toBe(80)
   })
 
-  it('com substituição, as cargas só sobem: "crescente e decrescente" vira "crescente contínuo"', () => {
-    // Rascunho novo (sem pontos): o padrão do sistema, sem aviso
-    const semHistorico = plano(folhaRodoviariaSemHistorico())
-    expect(semHistorico.metodo).toBe('CONTINUO')
-    expect(semHistorico.metodoComoEncontrado).toBe('CONTINUO')
-    expect(semHistorico.avisos.join(' ')).not.toContain('as cargas só sobem')
-    // O último certificado com "crescente e decrescente" e substituição: a folha prevê o contínuo e avisa
+  it('método fixo pela classe (POP 7.7): crescente e decrescente nas classes II a IIII e sem classe; com descarga na classe I', () => {
+    // O rascunho sem leituras não conta (o sistema o acerta pela classe): nem o método do último certificado, nem o
+    // "contínuo" de uma rodoviária com substituição; e sem aviso para acertar no sistema
     const d = folhaRodoviaria()
     const k = structuredClone(d.calibracao!)
-    k.indicacao.metodo = 'CRESCENTE_DECRESCENTE'
-    const p = planoDaFolha(k, d.balanca!, d.padroes, k.dataCalibracao)
-    expect(p.metodo).toBe('CONTINUO')
-    expect(p.avisos).toContain(
-      'Com cargas de substituição, as cargas só sobem: a folha prevê “Crescente contínuo” (no sistema está “Crescente e decrescente”); acerte no sistema.',
-    )
-    // Descarregar entre os pontos (ou só descer) também pediria tirar o material: contínuo, com aviso
-    for (const m of ['DESCONTINUO', 'DECRESCENTE'] as const) {
+    for (const m of ['CONTINUO', 'DESCONTINUO', 'DECRESCENTE', 'CRESCENTE_DECRESCENTE'] as const) {
       k.indicacao.metodo = m
-      const x = planoDaFolha(k, d.balanca!, d.padroes, k.dataCalibracao)
-      expect(x.metodo).toBe('CONTINUO')
-      expect(x.avisos.join(' ')).toContain('a folha prevê “Crescente contínuo”')
+      const p = planoDaFolha(k, d.balanca!, d.padroes, k.dataCalibracao)
+      expect(temLeituras(k.indicacao)).toBe(false)
+      expect([p.metodoComoEncontrado, p.metodo], m).toEqual(['CRESCENTE_DECRESCENTE', 'CRESCENTE_DECRESCENTE'])
+      expect(p.avisos.join(' '), m).not.toMatch(/só sobem|Crescente contínuo|acerte no sistema/)
     }
-    // Sem substituição (os pesos fecham as cargas) o método do rascunho fica
-    expect(plano(folhaPlataforma()).metodo).toBe('CRESCENTE_DECRESCENTE')
+    // Rascunho novo (sem pontos), também com a substituição sugerida
+    const semHistorico = plano(folhaRodoviariaSemHistorico())
+    expect(semHistorico.substituicao.sugerida).toBe(true)
+    expect([semHistorico.metodoComoEncontrado, semHistorico.metodo]).toEqual(['CRESCENTE_DECRESCENTE', 'CRESCENTE_DECRESCENTE'])
+    // Sem classe e nas classes II a IIII: crescente e decrescente; na classe I, com descarga
     const plataforma = folhaPlataforma()
     plataforma.calibracao!.indicacao.metodo = 'DESCONTINUO'
-    expect(plano(plataforma).metodo).toBe('DESCONTINUO')
+    for (const classe of ['', 'II', 'III', 'IIII'] as const)
+      expect(
+        planoDaFolha(plataforma.calibracao, { ...plataforma.balanca!, classe }, plataforma.padroes, '2026-10-21').metodo,
+      ).toBe('CRESCENTE_DECRESCENTE')
+    const classeI = folhaClasseI()
+    classeI.calibracao!.indicacao.metodo = 'CRESCENTE_DECRESCENTE'
+    expect(plano(classeI).metodo).toBe('DESCONTINUO')
   })
 
-  it('com substituição e o ensaio já com leituras, fica o método do ensaio (é o que foi feito), sem aviso', () => {
+  it('o ensaio que já tem leituras fica com o método dele (medido antes da regra, mesmo fora do POP), sem aviso', () => {
     const d = folhaRodoviaria()
     const k = structuredClone(d.calibracao!)
-    k.indicacao.metodo = 'CRESCENTE_DECRESCENTE'
-    // Sem leituras (o rascunho do último certificado, com as leituras limpas): só crescente
-    expect(temLeituras(k.indicacao)).toBe(false)
-    expect(planoDaFolha(k, d.balanca!, d.padroes, k.dataCalibracao).metodo).toBe('CONTINUO')
-    // Com uma leitura de ponto ou de etapa, o método do rascunho
+    k.indicacao.metodo = 'CONTINUO'
+    // Com uma leitura de ponto ou de etapa, o método do rascunho (o caso real: "crescente contínuo" na classe III)
     const comPonto = structuredClone(k)
     comPonto.indicacao.pontos[1].crescente = 5000
     const comEtapa = structuredClone(k)
@@ -216,35 +213,31 @@ describe('planoDaFolha', () => {
     for (const x of [comPonto, comEtapa]) {
       expect(temLeituras(x.indicacao)).toBe(true)
       const p = planoDaFolha(x, d.balanca!, d.padroes, x.dataCalibracao)
-      expect(p.metodo).toBe('CRESCENTE_DECRESCENTE')
-      expect(p.avisos.join(' ')).not.toContain('as cargas só sobem')
+      expect(p.metodo).toBe('CONTINUO')
+      expect(p.avisos.join(' ')).not.toMatch(/só sobem|acerte no sistema/)
     }
-    // Cada ensaio pelas suas leituras: o "como encontrado" medido fica; o "depois do ajuste", ainda vazio, vira contínuo
+    const plataforma = folhaPlataforma()
+    const kp = plataforma.calibracao!
+    kp.indicacao.metodo = 'DESCONTINUO'
+    // Só o zero lido não conta (é o mesmo em todo método), como na tela: o da classe
+    kp.indicacao.pontos[0].crescente = 0
+    kp.indicacao.retornoZero = 0
+    expect(plano(plataforma).metodo).toBe('CRESCENTE_DECRESCENTE')
+    // Com a leitura de uma carga, o do ensaio
+    kp.indicacao.pontos[2].crescente = 10
+    expect(plano(plataforma).metodo).toBe('DESCONTINUO')
+    // Cada ensaio pelas suas leituras: o "como encontrado" medido fica com o dele; o ensaio final, ainda vazio, pela classe
     const ajuste = structuredClone(k)
     ajuste.ajuste = { ...ajuste.ajuste, realizado: 'INTERNO' }
     ajuste.comoEncontrado = structuredClone(comPonto.indicacao)
     const p = planoDaFolha(ajuste, d.balanca!, d.padroes, ajuste.dataCalibracao)
-    expect([p.metodoComoEncontrado, p.metodo]).toEqual(['CRESCENTE_DECRESCENTE', 'CONTINUO'])
-    // O "como encontrado" ainda vazio, com outro método no sistema: a folha prevê o contínuo e avisa
+    expect([p.metodoComoEncontrado, p.metodo]).toEqual(['CONTINUO', 'CRESCENTE_DECRESCENTE'])
+    // O "como encontrado" ainda vazio, com outro método no sistema: pela classe
     const antesVazio = structuredClone(k)
-    antesVazio.indicacao.metodo = 'CONTINUO'
     antesVazio.ajuste = { ...antesVazio.ajuste, realizado: 'INTERNO' }
     antesVazio.comoEncontrado = { ...structuredClone(k.indicacao), metodo: 'DESCONTINUO' }
     const q = planoDaFolha(antesVazio, d.balanca!, d.padroes, antesVazio.dataCalibracao)
-    expect([q.metodoComoEncontrado, q.metodo]).toEqual(['CONTINUO', 'CONTINUO'])
-    expect(q.avisos).toContain(
-      'Com cargas de substituição, as cargas só sobem: a folha prevê “Crescente contínuo” (no sistema, o “como encontrado” está “Crescente com descarga”); acerte no sistema.',
-    )
-  })
-
-  it('o método do "como encontrado" é o do ensaio dele, quando o rascunho já tem o ajuste previsto', () => {
-    const d = folhaPlataforma()
-    const k = structuredClone(d.calibracao!)
-    expect(planoDaFolha(k, d.balanca!, d.padroes, k.dataCalibracao).metodoComoEncontrado).toBe('CRESCENTE_DECRESCENTE')
-    k.ajuste = { ...k.ajuste, realizado: 'INTERNO' }
-    k.comoEncontrado = { ...structuredClone(k.indicacao), metodo: 'CONTINUO' }
-    const p = planoDaFolha(k, d.balanca!, d.padroes, k.dataCalibracao)
-    expect([p.metodoComoEncontrado, p.metodo]).toEqual(['CONTINUO', 'CRESCENTE_DECRESCENTE'])
+    expect([q.metodoComoEncontrado, q.metodo]).toEqual(['CRESCENTE_DECRESCENTE', 'CRESCENTE_DECRESCENTE'])
   })
 
   it('substituição sugerida: só em rodoviária, só quando os pesos não fecham, e a etapa é redonda (as peças pequenas completam)', () => {
@@ -641,27 +634,30 @@ describe('planoDaFolha: balança classe I', () => {
     d.calibracao!.excentricidade = { ...d.calibracao!.excentricidade, metodo: 1 }
     const p = plano(d)
     expect(p.excentricidade.metodo).toBe(1)
+    // Os métodos pelos nomes, como o POP (7.10) e a folha os escrevem (o POP não os numera)
     expect(p.avisos).toContain(
-      'Excentricidade: na classe I, o POP pede o método 3 (zera antes de cada posição); acerte no sistema.',
+      'Excentricidade: na classe I, o POP (7.10) pede “Zere antes de cada posição”, e o sistema está com “Zera e desloca a carga pelas posições”; acerte no sistema.',
     )
+    expect(p.avisos.join('\n')).not.toMatch(/método \d/)
     // Nas outras classes, o método 1 é o padrão (e o da folha): sem aviso
     expect(plano({ ...d, balanca: { ...d.balanca!, classe: 'II' } }).avisos.join('\n')).not.toMatch(/Excentricidade/)
   })
 
-  it('classes II a IIII: a folha prevê o método 1 numa frase fixa; com outro no sistema, aviso para acertar', () => {
+  it('classes II a IIII: a folha prevê o método do POP numa frase fixa; com outro no sistema, aviso para acertar, pelos nomes', () => {
     for (const metodo of [2, 3, 4] as const) {
       const d = folhaPlataforma()
       d.calibracao!.excentricidade = { ...d.calibracao!.excentricidade, metodo }
       expect(plano(d).avisos).toContain(
-        `Excentricidade: a folha prevê o método 1 (zera vazia e desloca a carga pelas posições) e o sistema está com o método ${metodo}; acerte no sistema.`,
+        `Excentricidade: a folha prevê “Zere vazia e desloque a carga pelas posições” (POP 7.10), e o sistema está com “${METODOS_EXCENTRICIDADE[metodo]}”; acerte no sistema.`,
       )
+      expect(plano(d).avisos.join('\n')).not.toMatch(/método \d/)
     }
     // Com o método 1, sem aviso; não aplicável (gancho), sem aviso
     expect(plano(folhaPlataforma()).avisos.join('\n')).not.toMatch(/Excentricidade/)
     const gancho = folhaPlataforma()
     gancho.balanca = { ...gancho.balanca!, receptor: 'GANCHO' }
     gancho.calibracao!.excentricidade = { ...gancho.calibracao!.excentricidade, metodo: 2 }
-    expect(plano(gancho).avisos.join('\n')).not.toMatch(/folha prevê o método 1/)
+    expect(plano(gancho).avisos.join('\n')).not.toMatch(/Excentricidade/)
   })
 
   it('rascunho com menos de 10 leituras: a folha prevê 10 (o mínimo da classe I)', () => {
@@ -705,8 +701,9 @@ describe('referência do formulário', () => {
     expect(referenciaDoFormulario('POPULAR-01 rev. 0')).toBe('POP POPULAR-01 rev. 0')
     for (const vazio of ['', '   ', null, undefined]) expect(referenciaDoFormulario(vazio)).toBe('')
     expect(JSON.stringify(FORMULARIO_FOLHA_CAMPO)).not.toContain('PT-CAL-01')
-    // Layout novo (rev. 03, só a medição): revisão nova do formulário controlado
-    expect(FORMULARIO_FOLHA_CAMPO.revisao).toBe('03')
+    // Layout novo (rev. 04: o método numa linha fixa, os ensaios sem hora, a repetibilidade sem o zero depois de
+    // retirar a carga): revisão nova do formulário controlado (a rev. 03 da 1.0.3 tinha esses campos)
+    expect(FORMULARIO_FOLHA_CAMPO.revisao).toBe('04')
   })
 })
 
