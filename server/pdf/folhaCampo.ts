@@ -1845,9 +1845,9 @@ function instrumentosAmbiente(ctx: Contexto): Padrao[] {
  * momento, com a hora, a temperatura, a umidade, a pressão e o instrumento usado (o previsto embaixo do título).
  * O fim é medido depois da excentricidade, no mesmo lugar e com o mesmo instrumento: a linha dele fica aqui,
  * embaixo da do início, para comparar. Balança classe I: a linha do início é medida logo antes do 1º ensaio (não 15 min
- * após a chegada), com a diferença de temperatura pesos − ar (a última medição, a que libera os ensaios). As dicas (o instrumento previsto, quando a
- * pressão é obrigatória, quando medir o ΔT e o limite dele) vão no cabeçalho, embaixo do título da coluna: as caixas
- * de escrever ficam livres.
+ * após a chegada), com a diferença de temperatura pesos − ar (a última medição, a que libera os ensaios). As dicas (o
+ * instrumento previsto, quando a pressão é obrigatória, quando medir o ΔT e o limite dele) vão no cabeçalho, embaixo do
+ * título da coluna: as caixas de escrever ficam livres.
  */
 function tabelaAmbiente(ctx: Contexto): NoObjeto {
   const previstos = instrumentosAmbiente(ctx)
@@ -2066,8 +2066,9 @@ function pesosDaCarga(
 const TAMANHOS_PESOS = [9, 8.6, 8.2, 7.8, 7.4]
 
 /**
- * Linhas da tabela de pontos na folha em branco: o zero e mais 8 (0, Min, 25, 50, 75 e 100 % de Max e, na classe III,
- * 500e e 2000e; multi-intervalo com mais cargas: em Anotações, no fim da folha).
+ * Linhas da tabela de pontos na folha em branco: o zero e mais 8 (0, Min, 25, 50, 75 e 100 % de Max e as duas cargas
+ * da classe em que o EMA muda, Tabela 2 do POP: 5000e e 20 000e na II, 500e e 2000e na III, 50e e 200e na IIII;
+ * multi-intervalo com mais cargas: em Anotações, no fim da folha).
  */
 const LINHAS_PONTOS_EM_BRANCO = 9
 
@@ -2147,7 +2148,7 @@ function tabelaPontos(ctx: Contexto, reserva: number): TabelaPontos {
     linhas.push(cel)
   }
   const inicio = linhas.length
-  // Em branco: o zero e mais 8 linhas (0, Min, 25, 50, 75 e 100 % de Max e, na classe III, 500e e 2000e)
+  // Em branco: o zero e mais 8 linhas (0, Min, 25, 50, 75 e 100 % de Max e as duas cargas da classe em que o EMA muda)
   const total = plano ? reserva : LINHAS_PONTOS_EM_BRANCO
   for (let i = 0; i < total; i++) {
     const zeroEmBranco = !plano && i === 0
@@ -2295,7 +2296,8 @@ function passoIndicacao(ctx: Contexto, n: number): No[] {
     : [
         'Cargas: ',
         { text: '0, Min (se marcada), 25, 50, 75 e 100 % de Max', bold: true },
-        ' e em 500e e 2000e (classe III). Zere vazia, aplique as cargas e anote a indicação estável.',
+        // As cargas em que o EMA muda (POP 7.7 e Tabela 2) nas classes da folha em branco (a classe I tem a folha dela)
+        ' e em 5000e e 20\u00a0000e (classe II), 500e e 2000e (III) ou 50e e 200e (IIII). Zere vazia, aplique as cargas e anote a indicação estável.',
       ]
   const t = tabelaPontos(ctx, reservaDosPontos(ctx))
   const total = t.linhas.length
@@ -2709,7 +2711,7 @@ function passoRepetibilidade(ctx: Contexto, n: number): No[] {
   const primeiro = lista[0]
   const varios = lista.length > 1
   // Em branco: uma linha por faixa do passo 3 e a carga de cada uma (POP 7.9: na faixa ou no intervalo de cima, entre
-  // metade de Max e Max; nos de baixo, perto do Max deles, sem passar)
+  // metade de Max e Max, sem ser o Max dos de baixo; nos de baixo, perto do Max deles, sem passar)
   if (!primeiro)
     return passo(
       ctx,
@@ -2720,7 +2722,7 @@ function passoRepetibilidade(ctx: Contexto, n: number): No[] {
         { text: 'Uma linha por faixa do passo 3', bold: true },
         ' (faixa única: só a 1), carga no centro: na maior, ',
         { text: 'entre metade de Max e Max', bold: true },
-        `; nas menores, perto do Max delas, sem passar. ${INSTRUCAO_REPETIBILIDADE}`,
+        `, sem ser o Max das menores; nas menores, perto do Max delas, sem passar. ${INSTRUCAO_REPETIBILIDADE}`,
       ],
       [tabelaRepetibilidadeEmBranco(ctx)],
     )

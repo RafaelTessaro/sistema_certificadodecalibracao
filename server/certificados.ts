@@ -246,8 +246,9 @@ export function montarEmissao(
     pop: pop?.pop ?? null,
     substituiNumero: original?.numero ?? '',
     substituiEmissao: original?.dataEmissao ?? '',
-    // Calculado com as regras do POP: a revisão dele também as segue (`Repositorio.criarCalibracao`)
-    ...(regrasDoPopComoAviso(k) ? {} : { regrasDoPop: true }),
+    // Calculado com as regras do POP: a revisão dele também as segue (`Repositorio.criarCalibracao`); o "crescente e
+    // decrescente" sai "sem zerar" só no emitido a partir desta versão (`carregamentoSemZerar`)
+    ...(regrasDoPopComoAviso(k) ? {} : { regrasDoPop: true, carregamentoSemZerar: true }),
   }
 }
 

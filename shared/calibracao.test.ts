@@ -892,19 +892,22 @@ describe('mínimos do POP na calibração nova (e o registro de antes)', () => {
     })
     const FALTA =
       'Erro de indicação: falta a leitura de descida em 5,00 kg, 10,00 kg e 20,00 kg (POP 7.7). Sem ela, volte para “Crescente contínuo”, o método medido.'
+    // Começada antes desta versão (a troca pode ter vindo antes das leituras, com a folha de antes impressa): sem "medido"
+    const FALTA_DE_ANTES =
+      'Erro de indicação: falta a leitura de descida em 5,00 kg, 10,00 kg e 20,00 kg (POP 7.7). Sem ela, volte para “Crescente contínuo”, o método com que a calibração foi começada.'
     const de = (k: CalibracaoInput) => calcularCalibracao(k, balanca30, [J]).resultado
     // Antes da troca: o método medido, sem pendência
     expect(de(continuo()).pendencias).toEqual([])
     expect(entradaDoCalculo(trocado(continuo()), balanca30, [J]).indicacao.metodoMedido).toBe('CONTINUO')
     // Calibração nova, medida antes das regras, marcada pela 1.0.4 e revisão de um certificado de antes delas: o
     // certificado não pode declarar uma descida que não foi feita
+    expect(de(trocado(continuo())).pendencias).toEqual([FALTA])
     for (const k of [
-      continuo(),
       { ...continuo(), minimosComoAviso: true },
       { ...continuo(), descidaComoAviso: true },
       { ...continuo(), substituiId: 'k-original' },
     ])
-      expect(de(trocado(k)).pendencias).toEqual([FALTA])
+      expect(de(trocado(k)).pendencias).toEqual([FALTA_DE_ANTES])
     // Com a descida medida, emite com o método novo
     const medido = trocado(continuo())
     medido.indicacao.pontos = medido.indicacao.pontos.map((p) => ({ ...p, decrescente: p.carga }))
@@ -917,6 +920,9 @@ describe('mínimos do POP na calibração nova (e o registro de antes)', () => {
       { metodo: 'CRESCENTE_DECRESCENTE', metodoMedido: 'DECRESCENTE' },
     )
     expect(de({ ...soDescida, minimosComoAviso: true }).pendencias).toEqual([
+      'Erro de indicação: falta a leitura de subida em 5,00 kg, 10,00 kg, 20,00 kg e 30,00 kg (POP 7.7). Sem ela, volte para “Decrescente”, o método com que a calibração foi começada.',
+    ])
+    expect(de(soDescida).pendencias).toEqual([
       'Erro de indicação: falta a leitura de subida em 5,00 kg, 10,00 kg, 20,00 kg e 30,00 kg (POP 7.7). Sem ela, volte para “Decrescente”, o método medido.',
     ])
     // O motor escreve os nomes dos métodos como a tela
@@ -939,15 +945,21 @@ describe('mínimos do POP na calibração nova (e o registro de antes)', () => {
     expect(de(subidas())).toEqual([
       'Erro de indicação: medido como “Crescente e decrescente” e trocado depois para “Crescente com descarga”, que não é o método do POP nesta classe; volte para o medido (POP 7.7).',
     ])
-    // Também medida antes das regras ou antes da descida obrigatória (a marca não esconde um método que não foi usado)
-    expect(de({ ...subidas(), minimosComoAviso: true })).toHaveLength(1)
-    expect(de({ ...subidas(), descidaComoAviso: true })).toHaveLength(1)
+    // Também medida antes das regras ou antes da descida obrigatória (a marca não esconde um método que não foi usado);
+    // começada antes desta versão, a troca pode ter vindo antes das leituras: sem "medido"
+    const DE_ANTES =
+      'Erro de indicação: começada antes desta versão com “Crescente e decrescente” e trocada depois para “Crescente com descarga”, que não é o método do POP nesta classe; volte para o de antes (POP 7.7).'
+    expect(de({ ...subidas(), minimosComoAviso: true })).toEqual([DE_ANTES])
+    expect(de({ ...subidas(), descidaComoAviso: true })).toEqual([DE_ANTES])
     // Na classe I, o método de agora é o do POP: só o que ele pede (e o resto das regras da classe I)
     expect(de(subidas(), 'I').join(' ')).not.toMatch(/Erro de indicação/)
     // O medido que também não é o do POP: as duas saídas
     const continuo = { ...subidas(), indicacao: { ...subidas().indicacao, metodoMedido: 'CONTINUO' as const } }
     expect(de(continuo)).toEqual([
       'Erro de indicação: medido como “Crescente contínuo” e trocado depois para “Crescente com descarga”, que não é o método do POP nesta classe (“Crescente e decrescente”); use o do POP ou volte para o medido (POP 7.7).',
+    ])
+    expect(de({ ...continuo, descidaComoAviso: true })).toEqual([
+      'Erro de indicação: começada antes desta versão com “Crescente contínuo” e trocada depois para “Crescente com descarga”, que não é o método do POP nesta classe (“Crescente e decrescente”); use o do POP ou volte para o de antes (POP 7.7).',
     ])
     // Sem a troca (o método é o medido, mesmo fora do POP): sem essa pendência
     const semTroca = { ...subidas(), indicacao: { ...subidas().indicacao, metodoMedido: undefined } }

@@ -1144,10 +1144,12 @@ const DESCRICAO_METODO: Record<MetodoCarregamento, string> = {
 /**
  * Como as cargas foram aplicadas, embaixo do título do erro de indicação. O "crescente e decrescente" das regras do POP
  * (7.7) é sem zerar entre os pontos: as peças de uma carga para a seguinte se trocam, sem passar da carga na subida nem
- * ficar abaixo dela na descida. O registro de antes das regras sai como saía ("sem descarregar").
+ * ficar abaixo dela na descida. Só no emitido a partir da 1.0.4 (`EmissaoCertificado.carregamentoSemZerar`): o emitido
+ * antes (o da 1.0.3, mesmo com as regras, e o registro de antes delas) sai como saía ("sem descarregar"), e o PDF refeito
+ * dos dados congelados continua idêntico ao entregue (`pdfEmitido`, em server/certificados.ts).
  */
 function descricaoMetodo(ctx: Contexto, metodo: MetodoCarregamento): string {
-  return metodo === 'CRESCENTE_DECRESCENTE' && ctx.e.regrasDoPop === true
+  return metodo === 'CRESCENTE_DECRESCENTE' && ctx.e.regrasDoPop === true && ctx.e.carregamentoSemZerar === true
     ? 'Carregamento: cargas crescentes até a maior carga e depois decrescentes, sem zerar entre os pontos.'
     : DESCRICAO_METODO[metodo]
 }

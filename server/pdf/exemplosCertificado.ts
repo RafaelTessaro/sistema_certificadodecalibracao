@@ -378,6 +378,12 @@ function ensaio(metodo: MetodoCarregamento, pontos: PontoIndicacao[], retornoZer
   return { metodo, pontos, retornoZero, substituicao: { ativa: false, pecas: [], etapas: [] } }
 }
 
+/**
+ * A emissão das amostras com as regras do POP, como a desta versão (`montarEmissao`, em server/certificados.ts): com a
+ * marca do texto do "crescente e decrescente" (`EmissaoCertificado.carregamentoSemZerar`).
+ */
+const COM_REGRAS = { regrasDoPop: true, carregamentoSemZerar: true } as const
+
 function montar(
   calibracao: Calibracao,
   emissao: EmissaoCertificado,
@@ -528,7 +534,7 @@ function plataformaToledo(): { k: Calibracao; e: EmissaoCertificado; pesos: Padr
  */
 export function exemploPlataforma300kg(): DadosCertificadoPdf {
   const { k, e } = plataformaToledo()
-  return montar(k, { ...e, regrasDoPop: true })
+  return montar(k, { ...e, ...COM_REGRAS })
 }
 
 /**
@@ -658,7 +664,7 @@ export function exemploBancada(): DadosCertificadoPdf {
     textos: TEXTOS_EXEMPLO,
     substituiNumero: '',
     substituiEmissao: '',
-    regrasDoPop: true,
+    ...COM_REGRAS,
   }
   return montar(k, e)
 }
@@ -804,7 +810,7 @@ function analiticaHorto(): {
  */
 export function exemploClasseI220g(): DadosCertificadoPdf {
   const { k, e } = analiticaHorto()
-  return montar(k, { ...e, regrasDoPop: true })
+  return montar(k, { ...e, ...COM_REGRAS })
 }
 
 /**
@@ -961,7 +967,7 @@ export function exemploBalanca32kg(): DadosCertificadoPdf {
     textos: TEXTOS_EXEMPLO,
     substituiNumero: '',
     substituiEmissao: '',
-    regrasDoPop: true,
+    ...COM_REGRAS,
   }
   return montar(k, e)
 }
@@ -1107,7 +1113,7 @@ export function exemploPiorCasoAtual(): DadosCertificadoPdf {
     textos: TEXTOS_EXEMPLO,
     substituiNumero: 'CC-2026-00151',
     substituiEmissao: '2026-10-30T17:45:00.000Z',
-    regrasDoPop: true,
+    ...COM_REGRAS,
   }
   return montar(k, e)
 }

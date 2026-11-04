@@ -394,7 +394,9 @@ export interface EnsaioIndicacao {
    * o método do POP", no ensaio medido antes do método fixo pela classe ou com a classe trocada depois das leituras). A
    * tela oferece voltar para ele, e a subida e a descida que `metodo` pede e que faltam são pendências mesmo na
    * calibração medida antes das regras: o certificado não pode dizer que as cargas foram aplicadas de um jeito que não
-   * foi feito. Ausente = o método nunca foi trocado com leituras.
+   * foi feito. Na calibração começada antes do método fixo pela classe (`metodoIndicacaoDaVisita`), também a troca sem
+   * leituras digitadas: aí é o método com que ela foi começada (o da folha de antes), e as telas e as pendências não
+   * dizem "medido". Ausente = o método nunca foi trocado com leituras.
    */
   metodoMedido?: MetodoCarregamento
   pontos: PontoIndicacao[]
@@ -726,6 +728,12 @@ export interface EmissaoCertificado {
    * ou anterior) ou sem elas (a revisão de um desses).
    */
   regrasDoPop?: boolean
+  /**
+   * Emitido com as regras do POP a partir da 1.0.4: o "crescente e decrescente" sai como o POP 7.7 pede, "sem zerar
+   * entre os pontos" (ver `descricaoMetodo` em server/pdf/certificado.ts). Ausente = emitido antes (a 1.0.3, com as
+   * regras, dizia "sem descarregar"), ou sem as regras: o PDF refeito dos dados congelados sai igual ao emitido.
+   */
+  carregamentoSemZerar?: boolean
 }
 
 export interface Signatario {

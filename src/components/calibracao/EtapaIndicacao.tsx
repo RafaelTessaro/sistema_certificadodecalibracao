@@ -629,7 +629,7 @@ function MetodoDoEnsaio({
         >
           <span className="flex items-start gap-2">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            {textoMetodoForaDoPop(ensaio, classe)}
+            {textoMetodoForaDoPop(ensaio, classe, daVisita)}
           </span>
           <div className="flex shrink-0 flex-wrap gap-2 self-start sm:self-center">
             {/* Medido no método do POP (trocado depois, e a classe trocada de volta): a volta é a mesma troca */}
@@ -648,7 +648,7 @@ function MetodoDoEnsaio({
         >
           <span className="flex items-start gap-2">
             <History className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
-            {textoMetodoTrocado(voltarPara)}
+            {textoMetodoTrocado(voltarPara, daVisita)}
           </span>
           {botaoVoltar}
         </div>

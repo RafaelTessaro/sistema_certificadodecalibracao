@@ -102,7 +102,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
         <CardHeader
           icone={<Thermometer className="h-4 w-4" />}
           titulo="Condições ambientais"
-          descricao="No início e no fim da calibração. Escolha também o termo-higrômetro usado."
+          descricao={`${quandoAmbiente(balanca.classe === 'I')} Escolha também o termo-higrômetro usado.`}
         />
         <div className="flex flex-col gap-5 px-5 pb-5">
           {instrumentos.length > 0 && (
@@ -253,11 +253,20 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
 }
 
 /**
+ * Quando medir o ambiente (POP 7.5, item 1): na classe I, o início é lido logo antes do 1º ensaio, depois do aquecimento
+ * e da aclimatação dos pesos, junto com o ΔT pesos − ar (a folha da classe I diz o mesmo na linha "Início" do passo 4);
+ * nas outras, 15 min após a chegada (a folha diz quando).
+ */
+const quandoAmbiente = (classeI: boolean): string =>
+  classeI ? 'No início, logo antes do 1º ensaio, e no fim da calibração.' : 'No início e no fim da calibração.'
+
+/**
  * Diferença de temperatura entre os pesos e o ar (convecção, cg-18 7.1.2.4): medida antes do 1º ensaio, com o
  * termômetro de duas entradas, ou estimada pelo tempo de aclimatação (Tabela F1.3). Trocar o modo limpa o outro.
- * Pela aclimatação, a folha não tem a hora do 1º ensaio: os minutos vão da chegada (passo 2) ao Início do ambiente
- * (passo 4), medido logo antes dos ensaios; o tempo contado fica um pouco menor que o real, e a incerteza, conservadora
- * (POP 7.4, item 6).
+ * Pela aclimatação, a folha não tem a hora do 1º ensaio: os minutos vão da chegada (hora de início do passo 2) ao
+ * Início do ambiente (passo 4), que na classe I é medido logo antes do 1º ensaio, com o ΔT; os ensaios começam depois
+ * dele, então o tempo contado fica um pouco menor que o real, e a incerteza, conservadora (POP 7.4, item 6, e 7.5,
+ * item 1).
  */
 function GrupoConveccao({
   ambiente,

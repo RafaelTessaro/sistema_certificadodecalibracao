@@ -86,10 +86,7 @@ export function comMetodoDaClasse<
     f.excentricidade.metodo === metodo || temLeiturasExcentricidade(f.excentricidade)
       ? f.excentricidade
       : { ...f.excentricidade, metodo }
-  const indicacao = comMetodoMedidoDaClasse(
-    comMetodoIndicacaoDaClasse(f.indicacao, classe, metodoIndicacaoDaVisita(f)),
-    classe,
-  )
+  const indicacao = comMetodoMedidoDaClasse(comMetodoIndicacaoDaClasse(f.indicacao, classe, metodoIndicacaoDaVisita(f)), classe)
   return excentricidade === f.excentricidade && indicacao === f.indicacao ? f : { ...f, excentricidade, indicacao }
 }
 

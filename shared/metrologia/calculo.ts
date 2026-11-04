@@ -635,8 +635,14 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     entrada.indicacao.metodoMedido && entrada.indicacao.metodoMedido !== entrada.indicacao.metodo
       ? entrada.indicacao.metodoMedido
       : null
+  /**
+   * Calibração começada antes do método fixo pela classe (a visita de `metodoIndicacaoDaVisita`, em dominio.ts): medida
+   * antes das regras ou antes de a descida ser obrigatória, ou com a folha de antes impressa. Trocada para o método do
+   * POP (`metodoMedido`), a troca pode ter vindo antes das leituras: as pendências não dizem "o método medido".
+   */
+  const comecadaAntes = minimosComoAviso || entrada.descidaComoAviso === true
   /** A descida que falta no "crescente e decrescente" só como aviso (medida antes de ela ser obrigatória). */
-  const descidaComoAviso = !metodoMedido && (minimosComoAviso || entrada.descidaComoAviso === true)
+  const descidaComoAviso = !metodoMedido && comecadaAntes
   const avisos: Aviso[] = []
   const pendencias: string[] = []
   const repetibilidade = entrada.repetibilidade.map(resumirRepetibilidade)
@@ -1043,8 +1049,13 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   }
   // "Crescente e decrescente" sem a descida de um ponto (a maior carga lida é a virada, com uma leitura só)
   const cargasSemDescida = [...new Set(semDescida.filter((c) => !(Math.abs(c - maiorCargaLida) <= ctx.tol)).map(rotulo))]
-  // O ensaio trocado de método depois das leituras: o caminho de volta, na própria pendência
-  const voltarAoMedido = metodoMedido ? ` Sem ela, volte para “${NOMES_METODO_CARREGAMENTO[metodoMedido]}”, o método medido.` : ''
+  // O ensaio trocado de método depois das leituras: o caminho de volta, na própria pendência. Na calibração começada
+  // antes desta versão (`comecadaAntes`), o método com que foi começada, sem "medido"
+  const voltarAoMedido = metodoMedido
+    ? ` Sem ela, volte para “${NOMES_METODO_CARREGAMENTO[metodoMedido]}”, ${
+        comecadaAntes ? 'o método com que a calibração foi começada' : 'o método medido'
+      }.`
+    : ''
   const faltaSubida = () =>
     `Erro de indicação: falta a leitura de subida em ${listaE([...new Set(semSubida)])} (POP 7.7).${voltarAoMedido}`
   const faltaDescida = () =>
@@ -1090,9 +1101,12 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   const metodoDoPop: MetodoCarregamento = instrumento.classe === 'I' ? 'DESCONTINUO' : 'CRESCENTE_DECRESCENTE'
   if (metodoMedido && metodo !== metodoDoPop) {
     const nome = (m: MetodoCarregamento) => `“${NOMES_METODO_CARREGAMENTO[m]}”`
+    const [origem, volta] = comecadaAntes
+      ? [`começada antes desta versão com ${nome(metodoMedido)} e trocada`, 'o de antes']
+      : [`medido como ${nome(metodoMedido)} e trocado`, 'o medido']
     pendencias.push(
-      `Erro de indicação: medido como ${nome(metodoMedido)} e trocado depois para ${nome(metodo)}, que não é o método do POP nesta classe${
-        metodoMedido === metodoDoPop ? '; volte para o medido' : ` (${nome(metodoDoPop)}); use o do POP ou volte para o medido`
+      `Erro de indicação: ${origem} depois para ${nome(metodo)}, que não é o método do POP nesta classe${
+        metodoMedido === metodoDoPop ? `; volte para ${volta}` : ` (${nome(metodoDoPop)}); use o do POP ou volte para ${volta}`
       } (POP 7.7).`,
     )
   }

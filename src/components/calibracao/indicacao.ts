@@ -119,17 +119,24 @@ export function noMetodoDaClasse(
  * classe, ou a classe trocada depois das leituras): não impede a emissão, e o certificado sai com o método usado. Sem
  * leituras, na visita feita antes dessa regra: o mesmo, se as cargas foram aplicadas assim. Trocado depois das leituras
  * (`metodoMedido`) e com a classe trocada depois: o método de agora não é o do POP nem o medido, e impede a emissão.
+ * Na visita feita antes dessa regra (`daVisita`), o método guardado é aquele com que a calibração foi começada, sem
+ * "medido": a troca pode ter vindo antes das leituras (`textoMetodoTrocado`).
  */
 export function textoMetodoForaDoPop(
   e: Pick<EnsaioIndicacao, 'metodo' | 'metodoMedido' | 'pontos' | 'substituicao'>,
   classe: ClasseExatidao | null | undefined,
+  daVisita = false,
 ): string {
   const pop = metodoIndicacaoPadrao(classe)
   const medido = e.metodoMedido && e.metodoMedido !== e.metodo ? e.metodoMedido : null
-  if (medido)
-    return `Medido como ${nomeMetodo(medido)} e trocado depois para ${nomeMetodo(e.metodo)}, que não é o método do POP nesta classe${
-      medido === pop ? '. Volte para o medido' : ` (${nomeMetodo(pop)}). Use o do POP ou volte para o medido`
+  if (medido) {
+    const [origem, volta] = daVisita
+      ? [`Começada antes desta versão com ${nomeMetodo(medido)} e trocada`, 'o de antes']
+      : [`Medido como ${nomeMetodo(medido)} e trocado`, 'o medido']
+    return `${origem} depois para ${nomeMetodo(e.metodo)}, que não é o método do POP nesta classe${
+      medido === pop ? `. Volte para ${volta}` : ` (${nomeMetodo(pop)}). Use o do POP ou volte para ${volta}`
     }: do jeito que está, o certificado não sai.`
+  }
   if (!temLeiturasDeCarga(e))
     return `Começada antes desta versão com ${nomeMetodo(e.metodo)}, que não é o método do POP nesta classe (${nomeMetodo(pop)}). Se as cargas foram aplicadas assim, digite as leituras: o certificado sai com o método usado. Se não, use o do POP.`
   return `Medido como ${nomeMetodo(e.metodo)}, que não é o método do POP nesta classe (${nomeMetodo(pop)}). As leituras ficam como estão, e o certificado sai com o método usado.`
@@ -245,9 +252,18 @@ export function comMetodoMedidoDaClasse<T extends Pick<EnsaioIndicacao, 'metodo'
   return { ...resto, metodo: medido } as T
 }
 
-/** A nota do ensaio trocado de método depois das leituras (`metodoNaEtapa(...).voltarPara`), com a volta ao lado. */
-export const textoMetodoTrocado = (medido: MetodoCarregamento) =>
-  `Trocado depois das leituras, medidas como ${nomeMetodo(medido)}. O que este método pede e falta impede a emissão.`
+/**
+ * A nota do ensaio trocado de método (`metodoNaEtapa(...).voltarPara`), com a volta ao lado. A calibração desta versão
+ * só guarda o método trocado com leituras de carga (`trocarParaMetodoDoPop`): foram medidas com ele. Na visita feita
+ * antes dessa regra (`daVisita`), também sem leituras (a folha de antes impressa, nada digitado), e as leituras podem ter
+ * sido digitadas depois da troca: a nota diz o método com que a calibração foi começada, sem "leituras medidas".
+ */
+export const textoMetodoTrocado = (medido: MetodoCarregamento, daVisita = false) =>
+  `${
+    daVisita
+      ? `Começada antes desta versão com ${nomeMetodo(medido)} e trocada depois para o método do POP.`
+      : `Trocado depois das leituras, medidas como ${nomeMetodo(medido)}.`
+  } O que este método pede e falta impede a emissão.`
 
 /** A pergunta antes de voltar para o método medido quando a volta esconde leituras (a descida digitada depois). */
 export const textoVoltarMetodo = (n: number, medido: MetodoCarregamento) =>

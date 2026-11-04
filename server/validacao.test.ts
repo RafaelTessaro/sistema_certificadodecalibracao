@@ -210,7 +210,7 @@ describe('mínimos do POP bloqueiam a emissão', () => {
     expect(trocada.calibracao.indicacao.metodoMedido).toBe('CONTINUO')
     expect(trocada.calibracao.minimosComoAviso).toBe(true)
     expect(trocada.pendencias.map(sem)).toEqual([
-      'Erro de indicação: falta a leitura de descida em 5,00 kg, 10,00 kg e 20,00 kg (POP 7.7). Sem ela, volte para “Crescente contínuo”, o método medido.',
+      'Erro de indicação: falta a leitura de descida em 5,00 kg, 10,00 kg e 20,00 kg (POP 7.7). Sem ela, volte para “Crescente contínuo”, o método com que a calibração foi começada.',
     ])
     expect((await emitir(trocada.calibracao)).statusCode).toBe(409)
     // Voltando para o medido: emite com ele
@@ -853,6 +853,9 @@ describe('revisão de certificado emitido com as regras do POP', () => {
   it('a emissão marca as regras; a revisão as segue: leitura absurda e mínimos são pendências (409)', async () => {
     const emitida = await c.emitido()
     expect(emitida.emissao!.regrasDoPop).toBe(true)
+    // Emitido por esta versão: o "crescente e decrescente" sai "sem zerar entre os pontos" (o da 1.0.3, sem a marca,
+    // continua com o texto da época quando o PDF é refeito)
+    expect(emitida.emissao!.carregamentoSemZerar).toBe(true)
     const rev = await revisar(emitida)
     expect(rev.regrasDoPop).toBe(true)
     const absurda = await salvar(rev, em20(20000))

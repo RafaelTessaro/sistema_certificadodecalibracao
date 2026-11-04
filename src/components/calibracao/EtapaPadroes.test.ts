@@ -20,11 +20,11 @@ const balancaI = {
   faixas: [{ max: 0.22, e: 0.000001, d: 0.0000001 }],
 } as Balanca
 
-function html(f: CalibracaoInput): string {
+function html(f: CalibracaoInput, balanca: Balanca = balancaI): string {
   const ctx: ContextoEtapa = {
     f,
     alterar: () => {},
-    balanca: balancaI,
+    balanca,
     cliente: { ...CLIENTE_VAZIO, id: 'c1' } as Cliente,
     padroes: [],
     selecionados: [],
@@ -56,5 +56,13 @@ describe('Padrões e ambiente, classe I: ΔT pesos − ar pela aclimatação (PO
     const t = html({ ...k, ambiente: { ...k.ambiente, deltaTPesos: 0.4 } })
     expect(t).toContain('ΔT pesos − ar (antes do 1º ensaio)')
     expect(t).not.toContain(DICA)
+  })
+
+  it('o ambiente do início, na classe I, é lido logo antes do 1º ensaio (POP 7.5, item 1); nas outras, sem essa dica', () => {
+    expect(html(k)).toContain('Condições ambientais No início, logo antes do 1º ensaio, e no fim da calibração.')
+    const balancaIII = { ...balancaI, tipo: 'PLATAFORMA', classe: 'III', faixas: [{ max: 300, e: 0.05, d: 0.05 }] } as Balanca
+    const t = html(calibracaoVazia(undefined, 'III'), balancaIII)
+    expect(t).toContain('Condições ambientais No início e no fim da calibração.')
+    expect(t).not.toContain('logo antes do 1º ensaio')
   })
 })

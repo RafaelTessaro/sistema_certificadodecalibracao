@@ -231,8 +231,12 @@ describe('Excentricidade: método fixo pela classe (POP 7.10)', () => {
   })
 
   it('ao alterar, a dica diz o método do POP pelo nome (o POP não numera os métodos)', () => {
-    expect(dicaDoMetodoExcentricidade('III')).toBe('Pelo POP (7.10), na classe da balança: “zera e desloca a carga pelas posições”.')
-    expect(dicaDoMetodoExcentricidade(null)).toBe('Pelo POP (7.10), na classe da balança: “zera e desloca a carga pelas posições”.')
+    expect(dicaDoMetodoExcentricidade('III')).toBe(
+      'Pelo POP (7.10), na classe da balança: “zera e desloca a carga pelas posições”.',
+    )
+    expect(dicaDoMetodoExcentricidade(null)).toBe(
+      'Pelo POP (7.10), na classe da balança: “zera e desloca a carga pelas posições”.',
+    )
     expect(dicaDoMetodoExcentricidade('I')).toBe('Pelo POP (7.10), na classe I: “zera antes de cada posição”.')
   })
 })
@@ -368,14 +372,23 @@ describe('Erro de indicação: método fixo pela classe (POP 7.7)', () => {
     }
     const t = html(EtapaIndicacao, contexto(f))
     expect(texto(t)).toContain('Como aplicar as cargas Crescente e decrescente')
+    // Começada antes desta versão (a troca pode ter vindo antes das leituras): a nota não diz "medidas como"
     expect(t).toContain(
-      'Trocado depois das leituras, medidas como “Crescente contínuo”. O que este método pede e falta impede a emissão.',
+      'Começada antes desta versão com “Crescente contínuo” e trocada depois para o método do POP. O que este método pede e falta impede a emissão.',
     )
     expect(t).toContain('Voltar para “Crescente contínuo”')
     expect(t).not.toContain('Usar o método do POP')
     expect(t).toContain('Indicação ↓')
     // Mesmo na calibração medida antes das regras, a descida que falta impede a emissão
     expect(calcularCalibracao(f, balanca, []).resultado.pendencias.join('\n')).toMatch(
+      /falta a leitura de descida em .* Sem ela, volte para “Crescente contínuo”, o método com que a calibração foi começada\./,
+    )
+    // A calibração desta versão (a classe trocada depois das leituras): medidas com ele
+    const nova = { ...f, minimosComoAviso: undefined }
+    expect(html(EtapaIndicacao, contexto(nova))).toContain(
+      'Trocado depois das leituras, medidas como “Crescente contínuo”. O que este método pede e falta impede a emissão.',
+    )
+    expect(calcularCalibracao(nova, balanca, []).resultado.pendencias.join('\n')).toMatch(
       /falta a leitura de descida em .* Sem ela, volte para “Crescente contínuo”, o método medido\./,
     )
   })

@@ -19,6 +19,7 @@ import {
   podeRefazerPontos,
   textoMetodoDaClasse,
   textoMetodoForaDoPop,
+  textoMetodoTrocado,
   semMetodoMedido,
   textoRefazerPontos,
   textoTrocarMetodo,
@@ -303,9 +304,38 @@ describe('método do erro de indicação fixo pela classe', () => {
       automatico: false,
       voltarPara: 'DESCONTINUO',
     })
-    expect(await voltarParaMetodoMedido(trocado!, vi.fn(async () => false))).toEqual(daVisita)
+    expect(
+      await voltarParaMetodoMedido(
+        trocado!,
+        vi.fn(async () => false),
+      ),
+    ).toEqual(daVisita)
     // Desistiu: nada muda
     expect(await trocarParaMetodoDoPop(daVisita, 'III', async () => false, true)).toBeNull()
+  })
+
+  it('visita feita antes desta regra, trocada para o do POP: a nota fala do método com que foi começada, sem "leituras medidas"', async () => {
+    // O caso da conferência: folha da 1.0.3 impressa com "crescente contínuo", nada digitado, "Usar o método do POP".
+    // A troca pode ter vindo antes das leituras (digitadas depois, já no método do POP): a nota não diz "medidas como"
+    const daVisita = sugerido('CONTINUO')
+    const trocado = (await trocarParaMetodoDoPop(daVisita, 'III', async () => true, true))!
+    expect(metodoNaEtapa(trocado, 'III', true).voltarPara).toBe('CONTINUO')
+    const nota =
+      'Começada antes desta versão com “Crescente contínuo” e trocada depois para o método do POP. O que este método pede e falta impede a emissão.'
+    expect(textoMetodoTrocado('CONTINUO', true)).toBe(nota)
+    expect(textoMetodoTrocado('CONTINUO', true)).not.toMatch(/leituras|medid/)
+    // A calibração desta versão só guarda o método trocado com leituras: elas foram medidas com ele
+    expect(textoMetodoTrocado('CONTINUO')).toBe(
+      'Trocado depois das leituras, medidas como “Crescente contínuo”. O que este método pede e falta impede a emissão.',
+    )
+    // E a classe trocada depois (o método de agora não é o do POP): o mesmo começo, sem "medido"
+    const classeTrocada = { ...trocado, metodo: 'DESCONTINUO' as const }
+    expect(textoMetodoForaDoPop(classeTrocada, 'III', true)).toBe(
+      'Começada antes desta versão com “Crescente contínuo” e trocada depois para “Crescente com descarga”, que não é o método do POP nesta classe (“Crescente e decrescente”). Use o do POP ou volte para o de antes: do jeito que está, o certificado não sai.',
+    )
+    expect(textoMetodoForaDoPop({ ...classeTrocada, metodoMedido: 'CRESCENTE_DECRESCENTE' }, 'III', true)).toBe(
+      'Começada antes desta versão com “Crescente e decrescente” e trocada depois para “Crescente com descarga”, que não é o método do POP nesta classe. Volte para o de antes: do jeito que está, o certificado não sai.',
+    )
   })
 
   it('trocado depois das leituras e a classe trocada depois: o aviso diz o medido e o de agora, e pede a volta', () => {

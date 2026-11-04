@@ -589,7 +589,7 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     )
     expect(barraBranco).not.toContain('Cargas: ')
     expect(JSON.stringify(branco.content)).toContain(
-      '" e em 500e e 2000e (classe III). Zere vazia, aplique as cargas e anote a indicação estável."',
+      '" e em 5000e e 20\u00a0000e (classe II), 500e e 2000e (III) ou 50e e 200e (IIII). Zere vazia, aplique as cargas e anote a indicação estável."',
     )
   })
 
@@ -1175,15 +1175,16 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
       /Classe I: cadastre a balança Classe II III IIII não marcada Faixas única multi-intervalo múltiplas e imprima a folha dela/,
     )
     expect(t).toContain('prato redondo')
+    // As cargas em que o EMA muda nas classes da folha em branco (POP 7.7 e Tabela 2: II, III e IIII), sem dizer "EMA"
     expect(t).toContain(
-      '0, Min (se marcada), 25, 50, 75 e 100 % de Max e em 500e e 2000e (classe III). Zere vazia, aplique as cargas e anote a indicação estável.',
+      '0, Min (se marcada), 25, 50, 75 e 100 % de Max e em 5000e e 20 000e (classe II), 500e e 2000e (III) ou 50e e 200e (IIII). Zere vazia, aplique as cargas e anote a indicação estável.',
     )
     // Sem o EMA: a coluna e a caixa que o explicavam saíram da folha
     expect(t).not.toMatch(/\bEMA\b/)
     expect(t).toContain('no mínimo 1/3 de Max até 500 kg, 1/5 de Max até 3 t e 1/10 de Max acima')
     // Um ensaio em cada faixa do passo 3 (POP 7.9: multi-intervalo e múltiplas faixas, um em cada intervalo ou faixa)
     expect(t).toContain(
-      '6 REPETIBILIDADE NO SISTEMA 4 · Repetibilidade Uma linha por faixa do passo 3 (faixa única: só a 1), carga no centro: na maior, entre metade de Max e Max; nas menores, perto do Max delas, sem passar. Zere antes de cada vez, aplique e anote a indicação; zero que não voltou: em Anotações.',
+      '6 REPETIBILIDADE NO SISTEMA 4 · Repetibilidade Uma linha por faixa do passo 3 (faixa única: só a 1), carga no centro: na maior, entre metade de Max e Max, sem ser o Max das menores; nas menores, perto do Max delas, sem passar. Zere antes de cada vez, aplique e anote a indicação; zero que não voltou: em Anotações.',
     )
     // Os padrões ativos aparecem para marcar; nenhum dado de cliente ou balança
     expect(t).toContain('PP500-01 a 20')
@@ -1204,7 +1205,9 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     // Repetibilidade: uma linha por faixa (1, 2 e 3), com 10 leituras (5 bastam; 3 com 100 kg ou mais; com 10, k = 2;
     // quantas vezes nos nº em cima das caixas), 9 pontos e 6 posições de excentricidade em duas faixas de 3 (mais, no
     // espaço livre), com a posição escrita no local
-    expect(t).toMatch(/Faixa Carga aplicada \(unid\.\) 1ª 2ª 3ª 4ª 5ª 6ª 7ª 8ª 9ª 10ª < 100 kg < 100 kg opcional( opcional){4} 1 2 3 7 EXCENTRICIDADE/)
+    expect(t).toMatch(
+      /Faixa Carga aplicada \(unid\.\) 1ª 2ª 3ª 4ª 5ª 6ª 7ª 8ª 9ª 10ª < 100 kg < 100 kg opcional( opcional){4} 1 2 3 7 EXCENTRICIDADE/,
+    )
     expect(t).not.toContain('11ª')
     expect(t).toMatch(/\b9\b RETORNO AO ZERO/)
     expect(t).toContain(
@@ -1674,7 +1677,9 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
   it('rodoviária sem histórico (só registros de antes): o método da classe também com substituição, sem "só crescente"', async () => {
     const t = corrido(textoDoPdf(await gerarFolhaCampoPdf(folhaRodoviariaSemHistorico())))
     expect(t).toContain('Zere vazia e aplique as cargas na ordem da tabela; anote a indicação estável.')
-    expect(t).toContain('Como aplicar as cargas Crescente e decrescente: suba até a maior ↑ e desça ↓, sem zerar no meio. Ao trocar peças, na subida não passe da carga; na descida, não fique abaixo dela')
+    expect(t).toContain(
+      'Como aplicar as cargas Crescente e decrescente: suba até a maior ↑ e desça ↓, sem zerar no meio. Ao trocar peças, na subida não passe da carga; na descida, não fique abaixo dela',
+    )
     expect(t).not.toMatch(/Crescente contínuo|[Ss]ó crescente|para descer, seria preciso tirar o material/)
     // Como fazer as etapas, uma vez só
     expect(t.match(/[Ee]m cada etapa, anote a indicação/g)).toHaveLength(1)
@@ -2733,7 +2738,7 @@ describe.runIf(temPdftotext)(
       const m = await montar(folhaClasseI())
       expect(m.paginas).toBe(2)
       const palavras = palavrasDoPdf(m.pdf)[0]
-      const j = palavras.findIndex((w, k) =>
+      const j = palavras.findIndex((_, k) =>
         ['Início', 'logo', 'antes', 'do', '1º', 'ensaio'].every((r, n) => palavras[k + n]?.texto === r),
       )
       expect(j).toBeGreaterThanOrEqual(0)
@@ -2741,9 +2746,7 @@ describe.runIf(temPdftotext)(
       // Numa linha só: o "ensaio" na mesma altura do "Início" (sem quebrar para a linha de baixo)
       for (const w of rotulo) expect(Math.abs(w.y1 - rotulo[0].y1)).toBeLessThan(1.5)
       // E antes do título "Hora" da coluna seguinte (o "Hora" mais perto, em cima da linha)
-      const [hora] = palavras
-        .filter((w) => w.texto === 'Hora' && w.y1 < rotulo[0].y0)
-        .sort((x, y) => y.y1 - x.y1)
+      const [hora] = palavras.filter((w) => w.texto === 'Hora' && w.y1 < rotulo[0].y0).sort((x, y) => y.y1 - x.y1)
       expect(rotulo[0].y0 - hora.y1).toBeLessThan(40)
       expect(rotulo[5].x1).toBeLessThan(hora.x0 - 6)
     })
@@ -2880,6 +2883,8 @@ describe.runIf(temPdftotext)(
       // A instrução diz a carga de cada faixa (POP 7.9)
       expect(rep).toContain('Uma linha por faixa do passo 3 (faixa única: só a 1)')
       expect(rep).toContain('nas menores, perto do Max delas, sem passar')
+      // Na maior, a carga não pode ser o Max de uma menor (POP 7.9: numa de 15 kg e 30 kg, 25 kg, e não 15 kg)
+      expect(rep).toContain('na maior, entre metade de Max e Max, sem ser o Max das menores;')
       // Na definição: o cabeçalho (a faixa, a carga aplicada e o nº das 10 leituras) e uma linha por faixa (1, 2 e 3),
       // com a carga e as leituras para escrever
       const [definicao] = nosQue((definicaoFolhaCampo(folhaEmBranco()) as { content: unknown }).content, (x) =>
