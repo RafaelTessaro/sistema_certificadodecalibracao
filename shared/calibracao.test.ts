@@ -413,9 +413,9 @@ describe('classe I: ligação com o motor', () => {
     })
     antigo.comoEncontrado = structuredClone(antigo.indicacao)
     const emitido = { ...antigo, emissao: { codigo: 'ABCD-1234' } }
-    // Referência: as opções da época (5c) aplicadas também ao "como encontrado"
+    // Referência: as opções da época (5c) aplicadas também ao "como encontrado" (e os pontos na ordem da época)
     const ref = calcular({
-      ...entradaDoCalculo(antigo, analitica, [jogoE2], antigo.comoEncontrado, 'COMO_ENCONTRADO'),
+      ...entradaDoCalculo(emitido, analitica, [jogoE2], antigo.comoEncontrado, 'COMO_ENCONTRADO'),
       opcoes: antigo.opcoes,
     })
     expect(ref.pontos[1].crescente!.correcaoEmpuxo).toBe(0)

@@ -1449,6 +1449,8 @@ function transplantarCertificados(origem: Banco, destino: Banco): string[] {
   // (o certificado mostraria outra revisão como "o POP da emissão")
   const pops = passarPops(origem, destino)
   const popsSemId: Array<{ numero: string; pop: string }> = []
+  // Não passou porque o id dela já é de outra revisão na cópia (não porque a cópia ou o banco atual não têm a tabela)
+  const idOcupado = temTabela(destino, 'pop_versoes') ? destino.prepare('SELECT 1 FROM pop_versoes WHERE id = ?') : null
   for (const l of passaram) {
     let pop: { id?: unknown; codigo?: unknown; revisao?: unknown } | null | undefined
     try {
@@ -1457,7 +1459,7 @@ function transplantarCertificados(origem: Banco, destino: Banco): string[] {
       pop = null
     }
     if (!pop || typeof pop.id !== 'number') continue
-    if (pops.garantir(pop.id) === null)
+    if (pops.garantir(pop.id) === null && idOcupado?.get(pop.id))
       popsSemId.push({ numero: String(l.numero), pop: `${String(pop.codigo)} rev. ${String(pop.revisao)}` })
   }
   const popsRegistradas = pops.registradas()
