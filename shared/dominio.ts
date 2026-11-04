@@ -1518,16 +1518,33 @@ export const temLeiturasDeCarga = (e: Pick<EnsaioIndicacao, 'pontos' | 'substitu
   e.substituicao.etapas.some((x) => x.leituraPadroes !== null || x.leituraSubstituicao !== null)
 
 /**
+ * O método gravado do erro de indicação é o da visita, mesmo sem leitura de carga digitada: a calibração começada antes
+ * de o método ser fixo pela classe (1.0.4) e já medida ou com a folha de campo impressa (`descidaComoAviso`, migração
+ * 16: a folha de antes trazia o método do rascunho) ou medida antes das regras do POP (`minimosDoPopComoAviso`). O
+ * sistema não o troca sozinho pelo da classe: a etapa mostra o aviso e "Usar o método do POP", e a folha o imprime.
+ */
+export function metodoIndicacaoDaVisita(
+  k: Pick<CalibracaoInput, 'opcoes'> &
+    Partial<Pick<CalibracaoInput, 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso' | 'descidaComoAviso'>> & {
+      emissao?: unknown
+    },
+): boolean {
+  return k.descidaComoAviso === true || minimosDoPopComoAviso(k)
+}
+
+/**
  * O erro de indicação com o método da classe (`metodoIndicacaoPadrao`) enquanto não tem leitura de carga
  * (`temLeiturasDeCarga`): o rascunho com outro método, ainda sem leituras, e a classe da balança trocada antes das
- * leituras. Com leituras, fica o método com que foi medido. Já com o método da classe, o mesmo ensaio (nada a gravar).
+ * leituras. Com leituras, fica o método com que foi medido; `daVisita` (`metodoIndicacaoDaVisita`), também sem elas.
+ * Já com o método da classe, o mesmo ensaio (nada a gravar).
  */
 export function comMetodoIndicacaoDaClasse<T extends Pick<EnsaioIndicacao, 'metodo' | 'pontos' | 'substituicao'>>(
   e: T,
   classe: ClasseExatidao | null | undefined,
+  daVisita = false,
 ): T {
   const metodo = metodoIndicacaoPadrao(classe)
-  return e.metodo === metodo || temLeiturasDeCarga(e) ? e : { ...e, metodo }
+  return e.metodo === metodo || daVisita || temLeiturasDeCarga(e) ? e : { ...e, metodo }
 }
 
 /**

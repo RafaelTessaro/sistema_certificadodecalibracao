@@ -430,8 +430,8 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
   it('classe I: ΔT pesos − ar só no início, antes do 1º ensaio, com o limite dos pesos; umidade e pressão obrigatórias (sem linha a mais)', () => {
     const t = jsonDe(folhaClasseI()).replace(/\u00a0/g, ' ')
     // Na tabela do ambiente (a folha não cresce): o ΔT pesos − ar, obrigatório, só no início, com o limite dos pesos E2.
-    // A célula fica na linha do início (15 min após chegar), mas o ΔT é medido antes do 1º ensaio (POP 7.4.5): a dica
-    // diz quando, na própria célula
+    // A célula fica na linha do início, que na classe I é medida antes do 1º ensaio (POP 7.4.5 e 7.5.1): a dica
+    // diz quando, no cabeçalho da coluna
     expect(t).toContain('{"text":"ΔT pesos − ar ●"},{"text":" (°C)"')
     expect(t.match(/"ΔT pesos − ar ●"/g)).toHaveLength(1)
     // (a dica de quando, embaixo do título da coluna: a caixa de escrever fica livre)
@@ -667,7 +667,7 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     for (const p of paginasDe(texto).filter((x) => x.includes('RETORNO AO ZERO'))) expect(p).toContain('ERRO DE INDICAÇÃO')
     // O ambiente no início e no fim numa tabela só (o fim, depois da excentricidade)
     expect(t).toMatch(
-      /4 AMBIENTE NO SISTEMA 3 · Padrões e ambiente Ambiente Hora Temperatura ● .*Início 15 min após chegar .*Fim após o passo 7/,
+      /4 AMBIENTE NO SISTEMA 3 · Padrões e ambiente Ambiente Hora Temperatura ● .*Início (15 min após chegar|antes do 1º ensaio) .*Fim após o passo 7/,
     )
     expect(t).toContain('Instrumento usado')
     expect(t).toContain('Técnico que executou — nome e assinatura')
@@ -728,6 +728,9 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain('FRIGORÍFICO VALE DO CORUMBATAÍ LTDA')
     expect(t).toContain('Avenida Brasil, 2450')
     expect(t).toContain('Carlos Eduardo Lima')
+    // Fora da classe I, o ambiente do início é medido 15 min após a chegada (POP 7.5, item 1)
+    expect(t).toContain('Início 15 min após chegar')
+    expect(t).not.toContain('Início antes do 1º ensaio')
     // O cliente impresso, compacto (sem "confere" nem caixa para o certo: diferente, em Anotações); o técnico
     // previsto é só uma dica, numa caixa branca, e o nome ao lado da assinatura fica para quem executou escrever
     expect(corrido(paginas[0])).toMatch(/Razão social Contato no cliente CNPJ FRIGORÍFICO VALE DO CORUMBATAÍ LTDA/)
@@ -828,7 +831,10 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     const ambiente = p1.slice(p1.indexOf('4 AMBIENTE'))
     expect(ambiente).toMatch(/Temperatura ● \(°C\) Umidade ● \(%\) Pressão ● \(hPa\) ΔT pesos − ar ● \(°C\) Instrumento usado/)
     // Quando medir o ΔT, o limite e o instrumento previsto no cabeçalho, embaixo do título: as caixas ficam livres
-    expect(ambiente).toMatch(/Instrumento usado antes do 1º ensaio · previsto: TH-01, BR-01 até 1 °C Início 15 min após chegar/)
+    // Na classe I, o Início é medido logo antes do 1º ensaio (POP 7.4, item 6, e 7.5, item 1): a hora dele fecha os
+    // minutos de aclimatação dos pesos ("Pela aclimatação"), contados da hora de início do passo 2
+    expect(ambiente).toMatch(/Instrumento usado antes do 1º ensaio · previsto: TH-01, BR-01 até 1 °C Início antes do 1º ensaio/)
+    expect(ambiente).not.toContain('15 min após chegar')
     // Repetibilidade: 10 vezes, 12 colunas em duas faixas (as duas últimas opcionais)
     expect(t).toContain('uma peça só, no centro, 10')
     expect(t).toContain('10ª 11ª · opcional 12ª · opcional')
@@ -2865,6 +2871,43 @@ describe.runIf(temPdftotext)(
       ).map((x) => (x.table as { body: Array<Array<Record<string, unknown>>> }).body)
       expect(tabela).toHaveLength(2)
       expect(tabela[0][0].rowSpan).toBe(2)
+    })
+
+    it('vários ensaios na tabela compacta, um deles sem a carga: a carga aplicada para escrever, como no ensaio único', async () => {
+      const d = folhaMultiIntervalo()
+      const vazio = (n: number) => Array.from({ length: n }, () => null)
+      d.calibracao = {
+        ...d.calibracao!,
+        repetibilidade: [
+          { id: 'r1', carga: 2.5, leituras: vazio(5) },
+          { id: 'r2', carga: 0, leituras: vazio(5) },
+          { id: 'r3', carga: 16.5, leituras: vazio(5) },
+        ],
+      }
+      const m = await montar(d)
+      expect(m.faltando).toEqual([])
+      expect(m.paginas).toBe(2)
+      const t = corrido(textoDoPdf(m.pdf))
+      const rep = t.slice(t.indexOf('6 REPETIBILIDADE'), t.indexOf('7 EXCENTRICIDADE'))
+      // O 2º ensaio: só a carga aplicada, sem a carga 0,000, sem pesos e sem "no centro, 5 vezes" (nada impresso de guia)
+      expect(rep).toContain('2 · Carga aplicada (kg)')
+      expect(rep).not.toMatch(/0,000|2 · Carga \(kg\)/)
+      expect(rep.match(/no centro, 5 vezes/g)).toHaveLength(2)
+      for (const x of ['1 · Carga (kg)', '2,500', '3 · Carga (kg)', '16,50']) expect(rep).toContain(x)
+      // A linha dele: a caixa branca (não a cinza do previsto), com o rótulo no alto e ≥ 6,5 mm livres embaixo dele
+      const [tabela] = nosQue((definicaoFolhaCampo(d) as { content: unknown }).content, (x) =>
+        JSON.stringify(x.table ?? '').includes('Carga aplicada'),
+      ).map((x) => x.table as { body: Array<Array<Record<string, unknown>>>; heights: (i: number) => number | string })
+      expect(tabela.body).toHaveLength(4)
+      const celula = tabela.body[2][0]
+      expect(JSON.stringify(celula)).toContain('2 · Carga aplicada')
+      expect(celula.fillColor).toBe('#FFFFFF')
+      // As com a carga prevista ficam com a altura das leituras (a célula cinza cresce com o conteúdo)
+      expect(tabela.heights(1)).toBe(tabela.heights(3))
+      expect(Number(tabela.heights(1))).toBeLessThan(Number(tabela.heights(2)))
+      // Medido no PDF, como a revisão mediu: ≥ 6,5 mm livres embaixo do rótulo (o ensaio único sem carga tem ≈ 6,5)
+      const { mm } = livreEmbaixo(m.pdf, palavrasDoPdf(m.pdf), ['2', '·', 'Carga', 'aplicada'])
+      expect(mm).toBeGreaterThanOrEqual(6.5)
     })
 
     it('medidas, telefone e nº impressos não se partem: nenhuma unidade, parte do telefone ou do nº sozinha numa linha', async () => {

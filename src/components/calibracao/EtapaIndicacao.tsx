@@ -1,5 +1,5 @@
 import { CircleCheck, CircleX, Hand, History, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
   cargaDasPecas,
@@ -15,6 +15,7 @@ import {
   ehRodoviaria,
   massaLegivel,
   METODOS_CARREGAMENTO,
+  metodoIndicacaoDaVisita,
   metodoIndicacaoPadrao,
   minimosDoPopComoAviso,
   registroAnterior,
@@ -39,6 +40,7 @@ import {
   ensaioEmOrdemDeCarga,
   metodoNaEtapa,
   mudarEnsaioDaAba,
+  noMetodoDaClasse,
   podeRefazerPontos,
   semMetodoMedido,
   textoMetodoDaClasse,
@@ -139,9 +141,13 @@ export function ComoEncontradoAnterior({ ctx }: { ctx: ContextoEtapa }) {
 export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicacao }) {
   const { f, alterar, balanca, calc } = ctx
   const antes = aba === 'antes' && !!f.comoEncontrado
-  const ensaio = antes ? f.comoEncontrado! : f.indicacao
+  // O ensaio final sem leituras de carga com outro método (o rascunho de antes, a classe trocada fora do formulário)
+  // aparece no da classe e passa para ele junto com a primeira mudança (`noMetodoDaClasse`): abrir a etapa não grava
+  const daVisita = metodoIndicacaoDaVisita(f)
+  const ensaio = antes ? f.comoEncontrado! : comMetodoIndicacaoDaClasse(f.indicacao, balanca.classe, daVisita)
   const resultado = antes ? calc?.comoEncontrado : calc?.resultado
-  const setEnsaio = (mudar: (e: EnsaioIndicacao) => EnsaioIndicacao) => alterar((s) => mudarEnsaioDaAba(s, aba, mudar))
+  const setEnsaio = (mudar: (e: EnsaioIndicacao) => EnsaioIndicacao) =>
+    alterar((s) => mudarEnsaioDaAba(s, aba, antes ? mudar : noMetodoDaClasse(mudar, balanca.classe, daVisita)))
   const rodoviaria = ehRodoviaria(balanca)
   // Na calibração nova (as regras do POP), o retorno ao zero é obrigatório; no "como encontrado", no registro de antes
   // e na calibração já medida antes das regras, opcional, como na época
@@ -301,7 +307,13 @@ function TabelaPontos({
           </div>
         }
       />
-      <MetodoDoEnsaio ensaio={ensaio} setEnsaio={setEnsaio} classe={balanca.classe} antes={antes} />
+      <MetodoDoEnsaio
+        ensaio={ensaio}
+        setEnsaio={setEnsaio}
+        classe={balanca.classe}
+        antes={antes}
+        daVisita={metodoIndicacaoDaVisita(f)}
+      />
 
       {pesos.length === 0 && (
         <p className="mx-5 mb-4 flex items-center gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
@@ -543,28 +555,27 @@ function TabelaPontos({
 /**
  * Como aplicar as cargas: fixo pela classe (POP 7.7: "crescente e decrescente"; na classe I, "crescente com
  * descarga"), só em texto, sem escolha. Sem leituras de carga, o ensaio com outro método (o rascunho de antes, a classe
- * trocada) passa sozinho para o da classe. Com leituras de outro método (medido antes dessa regra, ou a classe trocada
- * depois delas), ele fica como foi medido, com o aviso (não impede a emissão) e a troca para o do POP, que sempre
- * pergunta antes (o certificado passa a dizer o método novo) e guarda o medido, para voltar a ele.
+ * trocada) aparece no da classe e passa para ele na primeira mudança (`noMetodoDaClasse`, no `setEnsaio` da aba; abrir a
+ * etapa não grava). Com leituras de outro método (medido antes dessa regra, ou a classe trocada depois delas) ou na
+ * visita feita antes dessa regra (`daVisita`, mesmo sem leituras), ele fica como foi medido, com o aviso e a troca para
+ * o do POP, que pergunta antes (o certificado passa a dizer o método novo) e guarda o medido, para voltar a ele.
  */
 function MetodoDoEnsaio({
   ensaio,
   setEnsaio,
   classe,
   antes,
+  daVisita,
 }: {
   ensaio: EnsaioIndicacao
   setEnsaio: (m: (e: EnsaioIndicacao) => EnsaioIndicacao) => void
   classe: ClasseExatidao
   antes: boolean
+  daVisita: boolean
 }) {
-  const { metodo, foraDoPop, automatico, voltarPara } = antes
-    ? { metodo: ensaio.metodo, foraDoPop: false, automatico: false, voltarPara: null }
-    : metodoNaEtapa(ensaio, classe)
-  useEffect(() => {
-    if (automatico) setEnsaio((e) => comMetodoIndicacaoDaClasse(e, classe))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [automatico, classe])
+  const { metodo, foraDoPop, voltarPara } = antes
+    ? { metodo: ensaio.metodo, foraDoPop: false, voltarPara: null }
+    : metodoNaEtapa(ensaio, classe, daVisita)
   /** Grava o método (e a marca do medido) do ensaio novo, sem desfazer o que mudou enquanto a pergunta estava aberta. */
   const gravarMetodo = (novo: EnsaioIndicacao) =>
     setEnsaio((e) => ({
@@ -574,13 +585,17 @@ function MetodoDoEnsaio({
     }))
   const doPop = metodoIndicacaoPadrao(classe)
   const usarDoPop = async () => {
-    const novo = await trocarParaMetodoDoPop(ensaio, classe, (texto) =>
-      confirmar({
-        titulo: `Passar para “${METODOS_CARREGAMENTO[doPop].label}”?`,
-        descricao: texto,
-        confirmar: 'Usar o método do POP',
-        perigo: true,
-      }),
+    const novo = await trocarParaMetodoDoPop(
+      ensaio,
+      classe,
+      (texto) =>
+        confirmar({
+          titulo: `Passar para “${METODOS_CARREGAMENTO[doPop].label}”?`,
+          descricao: texto,
+          confirmar: 'Usar o método do POP',
+          perigo: true,
+        }),
+      daVisita,
     )
     if (novo) gravarMetodo(novo)
   }
@@ -614,12 +629,15 @@ function MetodoDoEnsaio({
         >
           <span className="flex items-start gap-2">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            {textoMetodoForaDoPop(ensaio.metodo, classe)}
+            {textoMetodoForaDoPop(ensaio, classe)}
           </span>
           <div className="flex shrink-0 flex-wrap gap-2 self-start sm:self-center">
-            <Button tamanho="sm" onClick={() => void usarDoPop()}>
-              Usar o método do POP
-            </Button>
+            {/* Medido no método do POP (trocado depois, e a classe trocada de volta): a volta é a mesma troca */}
+            {voltarPara !== doPop && (
+              <Button tamanho="sm" onClick={() => void usarDoPop()}>
+                Usar o método do POP
+              </Button>
+            )}
             {botaoVoltar}
           </div>
         </div>

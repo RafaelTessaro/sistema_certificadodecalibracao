@@ -1,5 +1,11 @@
 import { leiturasDoMetodo, pontosEmOrdemDeCarga } from '#shared/calibracao.ts'
-import { METODOS_CARREGAMENTO, metodoIndicacaoForaDoPop, metodoIndicacaoPadrao, temLeiturasDeCarga } from '#shared/dominio.ts'
+import {
+  comMetodoIndicacaoDaClasse,
+  METODOS_CARREGAMENTO,
+  metodoIndicacaoForaDoPop,
+  metodoIndicacaoPadrao,
+  temLeiturasDeCarga,
+} from '#shared/dominio.ts'
 import type { CalibracaoInput, ClasseExatidao, EnsaioIndicacao, MetodoCarregamento } from '#shared/tipos.ts'
 
 /** Abas do erro de indicação: "antes do ajuste" (como encontrado) e "depois do ajuste" (o ensaio final). */
@@ -72,31 +78,62 @@ export const textoMetodoDaClasse = (classe: ClasseExatidao | null | undefined) =
 /**
  * Como a etapa mostra o método do ensaio final (sem escolha: é o da classe). `metodo`: o que aparece; `foraDoPop`: o
  * ensaio já tem leituras de carga com outro método (medido antes dessa regra, ou a classe trocada depois das
- * leituras), que fica como foi medido, com o aviso e a troca para o do POP; `automatico`: sem leituras de carga e com
- * outro método, a tela passa para o da classe sozinha (`comMetodoIndicacaoDaClasse`) e já mostra o da classe;
- * `voltarPara`: o ensaio com leituras foi trocado de método depois delas (`EnsaioIndicacao.metodoMedido`), e a tela
- * oferece voltar para o medido.
+ * leituras) ou, sem elas, é de uma visita feita antes dessa regra (`daVisita`, `metodoIndicacaoDaVisita`): fica como
+ * foi medido, com o aviso e a troca para o do POP; `automatico`: sem leituras de carga e com outro método, a tela mostra
+ * o da classe e o grava junto com a primeira mudança no ensaio (`noMetodoDaClasse`; só abrir a etapa não grava nada);
+ * `voltarPara`: o ensaio foi trocado de método depois das leituras (`EnsaioIndicacao.metodoMedido`), e a tela oferece
+ * voltar para o medido.
  */
 export function metodoNaEtapa(
   e: Pick<EnsaioIndicacao, 'metodo' | 'metodoMedido' | 'pontos' | 'substituicao'>,
   classe: ClasseExatidao | null | undefined,
+  daVisita = false,
 ): { metodo: MetodoCarregamento; foraDoPop: boolean; automatico: boolean; voltarPara: MetodoCarregamento | null } {
   const fora = metodoIndicacaoForaDoPop(e.metodo, classe)
-  const comLeituras = temLeiturasDeCarga(e)
+  const medido = daVisita || temLeiturasDeCarga(e)
   return {
-    metodo: fora && !comLeituras ? metodoIndicacaoPadrao(classe) : e.metodo,
-    foraDoPop: fora && comLeituras,
-    automatico: fora && !comLeituras,
-    voltarPara: comLeituras && e.metodoMedido && e.metodoMedido !== e.metodo ? e.metodoMedido : null,
+    metodo: fora && !medido ? metodoIndicacaoPadrao(classe) : e.metodo,
+    foraDoPop: fora && medido,
+    automatico: fora && !medido,
+    voltarPara: medido && e.metodoMedido && e.metodoMedido !== e.metodo ? e.metodoMedido : null,
   }
 }
 
 /**
- * O aviso do ensaio medido com outro método (`metodoNaEtapa(...).foraDoPop`): não impede a emissão. Vale para os dois
- * casos (medido antes do método fixo pela classe, ou a classe trocada depois das leituras).
+ * A mudança no ensaio final feita pela etapa, no método da classe (`comMetodoIndicacaoDaClasse`): o ensaio sem leituras
+ * de carga com outro método (o rascunho de antes, a classe trocada fora do formulário) passa para o da classe junto com
+ * a primeira mudança, e a primeira leitura digitada já entra nele. Também depois dela (o "Refazer pontos" que apaga as
+ * leituras). Com leituras, ou na visita feita antes dessa regra (`daVisita`), fica o método do ensaio. Assim, só abrir a
+ * etapa não grava nada (duas pessoas com o mesmo rascunho aberto não entram em conflito).
  */
-export const textoMetodoForaDoPop = (metodo: MetodoCarregamento, classe: ClasseExatidao | null | undefined) =>
-  `Medido como ${nomeMetodo(metodo)}, que não é o método do POP nesta classe (${nomeMetodo(metodoIndicacaoPadrao(classe))}). As leituras ficam como estão, e o certificado sai com o método usado.`
+export function noMetodoDaClasse(
+  mudar: (e: EnsaioIndicacao) => EnsaioIndicacao,
+  classe: ClasseExatidao | null | undefined,
+  daVisita = false,
+): (e: EnsaioIndicacao) => EnsaioIndicacao {
+  return (e) => comMetodoIndicacaoDaClasse(mudar(comMetodoIndicacaoDaClasse(e, classe, daVisita)), classe, daVisita)
+}
+
+/**
+ * O aviso do ensaio com outro método (`metodoNaEtapa(...).foraDoPop`). Medido com ele (antes do método fixo pela
+ * classe, ou a classe trocada depois das leituras): não impede a emissão, e o certificado sai com o método usado. Sem
+ * leituras, na visita feita antes dessa regra: o mesmo, se as cargas foram aplicadas assim. Trocado depois das leituras
+ * (`metodoMedido`) e com a classe trocada depois: o método de agora não é o do POP nem o medido, e impede a emissão.
+ */
+export function textoMetodoForaDoPop(
+  e: Pick<EnsaioIndicacao, 'metodo' | 'metodoMedido' | 'pontos' | 'substituicao'>,
+  classe: ClasseExatidao | null | undefined,
+): string {
+  const pop = metodoIndicacaoPadrao(classe)
+  const medido = e.metodoMedido && e.metodoMedido !== e.metodo ? e.metodoMedido : null
+  if (medido)
+    return `Medido como ${nomeMetodo(medido)} e trocado depois para ${nomeMetodo(e.metodo)}, que não é o método do POP nesta classe${
+      medido === pop ? '. Volte para o medido' : ` (${nomeMetodo(pop)}). Use o do POP ou volte para o medido`
+    }: do jeito que está, o certificado não sai.`
+  if (!temLeiturasDeCarga(e))
+    return `Começada antes desta versão com ${nomeMetodo(e.metodo)}, que não é o método do POP nesta classe (${nomeMetodo(pop)}). Se as cargas foram aplicadas assim, digite as leituras: o certificado sai com o método usado. Se não, use o do POP.`
+  return `Medido como ${nomeMetodo(e.metodo)}, que não é o método do POP nesta classe (${nomeMetodo(pop)}). As leituras ficam como estão, e o certificado sai com o método usado.`
+}
 
 /**
  * Leituras dos pontos com carga que a troca para `novo` esconde (a coluna que ele não usa): elas ficam guardadas, mas
@@ -144,13 +181,19 @@ const textoEscondidas = (n: number) =>
  */
 export function textoTrocarMetodo(e: EnsaioIndicacao, novo: MetodoCarregamento): string {
   const n = leiturasEscondidasPelaTroca(e, novo)
-  const falta = leiturasQueFaltam(e, novo)
+  const medido = temLeiturasDeCarga(e)
+  // Sem leituras (a visita feita antes dessa regra), tudo o que o método novo pede ainda falta
+  const falta = medido
+    ? leiturasQueFaltam(e, novo)
+    : { subida: novo !== 'DECRESCENTE', descida: novo === 'CRESCENTE_DECRESCENTE' && !e.substituicao.ativa }
   const pede = [falta.subida && 'subida', falta.descida && 'descida'].filter(Boolean).join(' e de ')
   const menosMax = falta.descida ? ', menos Max' : ''
   return [
     n > 0 ? textoEscondidas(n) : '',
     pede ? `${nomeMetodo(novo)} pede a leitura de ${pede} em cada carga${menosMax}: sem ela, o certificado não sai.` : '',
-    'Troque só se for medir de novo com esse método, que é o que sai no certificado.',
+    medido
+      ? 'Troque só se for medir de novo com esse método, que é o que sai no certificado.'
+      : 'Troque só se as cargas foram aplicadas assim, ou se for medir de novo com esse método: é o que sai no certificado.',
     `Dá para voltar para ${nomeMetodo(e.metodoMedido ?? e.metodo)}.`,
   ]
     .filter(Boolean)
@@ -168,21 +211,38 @@ export function semMetodoMedido(e: EnsaioIndicacao): EnsaioIndicacao {
 
 /**
  * "Usar o método do POP" no ensaio medido com outro: troca para o da classe e guarda o método medido
- * (`EnsaioIndicacao.metodoMedido`), para voltar a ele. Com leituras de carga, só depois de `confirmar`
- * (`textoTrocarMetodo`): a troca muda o que o certificado diz. Devolve o ensaio novo, ou null (nada a trocar, ou a
- * pessoa desistiu).
+ * (`EnsaioIndicacao.metodoMedido`), para voltar a ele. Com leituras de carga, ou na visita feita antes dessa regra
+ * (`daVisita`, mesmo sem elas: o método gravado é o da visita), só depois de `confirmar` (`textoTrocarMetodo`): a troca
+ * muda o que o certificado diz. Devolve o ensaio novo, ou null (nada a trocar, ou a pessoa desistiu).
  */
 export async function trocarParaMetodoDoPop(
   e: EnsaioIndicacao,
   classe: ClasseExatidao | null | undefined,
   confirmar: (texto: string) => Promise<boolean>,
+  daVisita = false,
 ): Promise<EnsaioIndicacao | null> {
   const novo = metodoIndicacaoPadrao(classe)
   if (e.metodo === novo) return null
-  if (!temLeiturasDeCarga(e)) return { ...semMetodoMedido(e), metodo: novo }
+  if (!daVisita && !temLeiturasDeCarga(e)) return { ...semMetodoMedido(e), metodo: novo }
   if (!(await confirmar(textoTrocarMetodo(e, novo)))) return null
   const medido = e.metodoMedido ?? e.metodo
   return medido === novo ? { ...semMetodoMedido(e), metodo: novo } : { ...e, metodo: novo, metodoMedido: medido }
+}
+
+/**
+ * A classe da balança trocada no formulário ("Corrigir cadastro") com o ensaio já trocado de método depois das leituras
+ * (`EnsaioIndicacao.metodoMedido`): se o método medido é o da classe nova, o ensaio volta para ele, sem a marca (as
+ * leituras foram feitas assim; o certificado não pode sair com um método que não é o medido nem o do POP). Nada a
+ * mudar: o mesmo ensaio.
+ */
+export function comMetodoMedidoDaClasse<T extends Pick<EnsaioIndicacao, 'metodo' | 'metodoMedido'>>(
+  e: T,
+  classe: ClasseExatidao | null | undefined,
+): T {
+  const medido = e.metodoMedido
+  if (!medido || medido === e.metodo || medido !== metodoIndicacaoPadrao(classe)) return e
+  const { metodoMedido: _medido, ...resto } = e
+  return { ...resto, metodo: medido } as T
 }
 
 /** A nota do ensaio trocado de método depois das leituras (`metodoNaEtapa(...).voltarPara`), com a volta ao lado. */

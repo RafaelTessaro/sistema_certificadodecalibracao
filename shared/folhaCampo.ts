@@ -20,6 +20,7 @@ import {
   deltaTPesosMaximo,
   ehRodoviaria,
   metodoExcentricidadePadrao,
+  metodoIndicacaoDaVisita,
   metodoIndicacaoPadrao,
   METODOS_EXCENTRICIDADE,
   numeroBr,
@@ -386,9 +387,11 @@ export function planoDaFolha(
   // O método de carregamento é fixo pela classe (POP 7.7, `metodoIndicacaoPadrao`): "crescente e decrescente" nas
   // classes II a IIII e sem classe; "crescente com descarga" na classe I. Como a tela (`comMetodoIndicacaoDaClasse`): o
   // do rascunho sem leitura de carga não conta (o sistema o acerta pela classe; o zero lido não conta); o ensaio que já
-  // tem leitura de carga, medido com outro método antes desta regra, fica com o dele: é o que foi feito
+  // tem leitura de carga, medido com outro método antes desta regra, fica com o dele: é o que foi feito. A visita feita
+  // antes desta regra (`metodoIndicacaoDaVisita`: já medida ou com a folha de antes impressa) também, mesmo sem leituras
+  const daVisita = !!calibracao && metodoIndicacaoDaVisita(calibracao)
   const metodoDe = (e: EnsaioIndicacao | null | undefined): MetodoCarregamento =>
-    e ? comMetodoIndicacaoDaClasse(e, balanca.classe).metodo : metodoIndicacaoPadrao(balanca.classe)
+    e ? comMetodoIndicacaoDaClasse(e, balanca.classe, daVisita).metodo : metodoIndicacaoPadrao(balanca.classe)
   const metodo = metodoDe(ensaio)
   const metodoComoEncontrado = metodoDe(calibracao?.comoEncontrado ?? ensaio)
   if (subSugerida && maiorNivel > 0)

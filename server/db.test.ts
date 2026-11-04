@@ -11,12 +11,21 @@
 // Migração 14: o rascunho já medido antes das regras do POP mantém os mínimos como avisos (a visita já aconteceu).
 // Migração 15: a revisão aberta antes da 1.0.3 ganha os padrões da emissão do certificado revisado; a marcada como legada
 // de um certificado emitido com as regras do POP passa a segui-las.
-// Migração 16: a calibração em andamento já medida antes de a descida ser obrigatória (1.0.4) fica com ela como aviso.
+// Migração 16: a calibração em andamento já medida (ou com a folha de campo impressa) antes de a descida ser obrigatória
+// (1.0.4) fica com ela como aviso e com o método de carregamento gravado.
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { calculoLegado, calibracaoVazia, hojeLocalIso, OPCOES_CALCULO_PADRAO, pendenciasEmissao } from '#shared/dominio.ts'
+import {
+  calculoLegado,
+  calibracaoVazia,
+  comMetodoIndicacaoDaClasse,
+  hojeLocalIso,
+  metodoIndicacaoDaVisita,
+  OPCOES_CALCULO_PADRAO,
+  pendenciasEmissao,
+} from '#shared/dominio.ts'
 import type { Balanca, Calibracao } from '#shared/tipos.ts'
 import { exemploClasseI } from './pdf/exemplosCertificado.ts'
 import { detalheTrocaIndicador, migrar } from './db.ts'
@@ -1212,13 +1221,13 @@ describe('migração 16: a calibração em andamento já medida antes de a desci
         .filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
         .map((r) => r.detalhe),
     ).toEqual([
-      '3 calibrações em andamento medidas antes desta versão saem com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: OS 55, CC-2026-00042, revisão do CC-2026-00005.',
+      '3 calibrações em andamento medidas ou com a folha impressa antes desta versão mantêm o método gravado e saem com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: OS 55, CC-2026-00042, revisão do CC-2026-00005.',
     ])
     const uma = bancoV15()
     uma.exec("DELETE FROM calibracoes WHERE id IN ('k2', 'r6')")
     migrar(uma)
     expect(registros(uma).find((r) => r.acao === 'SISTEMA_ATUALIZADO')?.detalhe).toBe(
-      'A calibração em andamento medida antes desta versão sai com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: OS 55.',
+      'A calibração em andamento medida ou com a folha impressa antes desta versão mantém o método gravado e sai com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: OS 55.',
     )
   })
 
@@ -1259,6 +1268,62 @@ describe('migração 16: a calibração em andamento já medida antes de a desci
     for (const id of ['z1', 'z2']) expect(depois[id], id).toEqual(antes[id])
     for (const id of ['z3', 'z4']) expect(depois[id], id).toEqual({ ...antes[id], descidaComoAviso: true })
     expect(registros(db).find((r) => r.acao === 'SISTEMA_ATUALIZADO')?.detalhe).toContain('OS 62, OS 63')
+  })
+
+  it('a folha de campo impressa antes da atualização também marca (ela trazia o método do rascunho), mesmo sem nada digitado', () => {
+    const db = bancoV15()
+    const inserir = db.prepare(
+      `INSERT INTO calibracoes (id, status, numero, cliente_id, balanca_id, ordem_servico, substitui_id, dados, versao,
+                                criado_em, atualizado_em)
+       VALUES (?, 'RASCUNHO', '', 'c1', 'b1', ?, '', ?, 2, ?, ?)`,
+    )
+    // O caso da conferência: classe III com "crescente com descarga" (o que a folha da 1.0.3 imprimiu), nada digitado
+    const vazia = { ...indicacao(false), metodo: 'DESCONTINUO' }
+    const base = (id: string, os: string) => ({
+      id,
+      clienteId: 'c1',
+      balancaId: 'b1',
+      ordemServico: os,
+      dataCalibracao: '2026-10-20',
+      substituiId: '',
+      opcoes: OPCOES,
+      emissao: null,
+      repetibilidade: [],
+      excentricidade: { aplicavel: true, carga: 10, posicoes: [] },
+      comoEncontrado: null,
+      indicacao: vazia,
+    })
+    inserir.run('f1', '70', JSON.stringify(base('f1', '70')), EM, EM)
+    inserir.run('f2', '71', JSON.stringify(base('f2', '71')), EM, EM)
+    inserir.run('f3', '72', JSON.stringify(base('f3', '72')), EM, EM)
+    const folha = db.prepare(
+      `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, impressa_por,
+         impressa_em, ultima_em, substituida_por, substituida_em) VALUES (?, 2026, ?, ?, ?, 'b1', 'c1', 'Ana', ?, ?, ?, ?)`,
+    )
+    // f1: a folha da 1.0.3; f2: uma folha substituída por outra (as duas impressas); f3: nenhuma folha
+    folha.run('FC-2026-00070', 70, 'calibracao:f1', 'f1', EM, EM, '', '')
+    folha.run('FC-2026-00071', 71, 'calibracao:f2:a', 'f2', EM, EM, 'FC-2026-00072', EM)
+    folha.run('FC-2026-00072', 72, 'calibracao:f2', 'f2', EM, EM, '', '')
+    // Uma folha avulsa (sem rascunho) não marca nada
+    folha.run('FC-2026-00073', 73, 'avulsa:1', '', EM, EM, '', '')
+    const antes = dados(db)
+    migrar(db)
+    const depois = dados(db)
+    for (const id of ['f1', 'f2']) expect(depois[id], id).toEqual({ ...antes[id], descidaComoAviso: true })
+    expect(depois.f3).toEqual(antes.f3)
+    expect(registros(db).find((r) => r.acao === 'SISTEMA_ATUALIZADO')?.detalhe).toContain('OS 70, OS 71')
+    expect(registros(db).find((r) => r.acao === 'SISTEMA_ATUALIZADO')?.detalhe).not.toContain('OS 72')
+    // A marcada fica com o método gravado (a visita), mesmo sem leituras; a sem folha segue a classe
+    const balancaIII = { classe: 'III' as const }
+    const k = (id: string) => ({ ...calibracaoVazia(), ...(depois[id] as unknown as Calibracao) })
+    expect(metodoIndicacaoDaVisita(k('f1'))).toBe(true)
+    expect(comMetodoIndicacaoDaClasse(k('f1').indicacao, balancaIII.classe, metodoIndicacaoDaVisita(k('f1'))).metodo).toBe(
+      'DESCONTINUO',
+    )
+    expect(metodoIndicacaoDaVisita(k('f3'))).toBe(false)
+    expect(comMetodoIndicacaoDaClasse(k('f3').indicacao, balancaIII.classe, metodoIndicacaoDaVisita(k('f3'))).metodo).toBe(
+      'CRESCENTE_DECRESCENTE',
+    )
   })
 
   it('pode ser repetida sem mudar nada nem registrar de novo; sem o que marcar, não registra', () => {

@@ -192,6 +192,8 @@ const ALTURA_LEITURA = 15.5
  * ≈ 6,7 mm livres. A caixa cresce quando o rótulo quebra em duas linhas, e o espaço livre continua o mesmo.
  */
 const LIVRE_ESCRITA = 17.5
+/** Altura de uma linha de rótulo no alto de uma caixa de escrever (o "Carga aplicada (kg)"), na letra do rótulo. */
+const ALTURA_ROTULO_CAIXA = 8.5
 /** Altura da linha do modelo do formato ("____:____"), que fica no pé do espaço livre (escreve-se nela). */
 const ALTURA_FORMATO = 9
 /** Lado das caixas de marcar (≈ 3,5 mm). */
@@ -1856,8 +1858,8 @@ function tabelaAmbiente(ctx: Contexto): NoObjeto {
   // couber numa linha, quebra só depois do "·"
   const quandoDeltaT = `${semQuebra('antes do 1º ensaio ·')} ${semQuebra(`até ${numeroBr(ctx.plano?.limiteDeltaTPesos ?? 1)} °C`)}`
   const colunas: Coluna[] = [
-    // O momento e quando, numa linha só ("Início  15 min após chegar"); cada título numa linha (na classe I, com
-    // uma coluna a mais, as larguras medidas)
+    // O momento e quando, numa linha só ("Início  15 min após chegar"; na classe I, "Início  antes do 1º ensaio");
+    // cada título numa linha (na classe I, com uma coluna a mais, as larguras medidas)
     { titulo: 'Ambiente', largura: classeI ? 84 : 92 },
     { titulo: 'Hora', largura: classeI ? 36 : 42, alinhamento: 'center' },
     { titulo: `Temperatura${OBRIG}`, unidade: '°C', largura: classeI ? 70 : '*' },
@@ -1884,10 +1886,14 @@ function tabelaAmbiente(ctx: Contexto): NoObjeto {
       { text: titulo, font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.texto },
       { text: `  ${texto}`, fontSize: 6.2 },
     ])
+  // Na classe I, o Início é medido logo antes do 1º ensaio, depois do aquecimento e da aclimatação dos pesos (POP 7.4,
+  // item 6, e 7.5, item 1): sem o termômetro de duas entradas, a hora dele fecha os minutos "Pela aclimatação", contados
+  // da hora de início do passo 2. Nas outras, 15 min após a chegada
+  const quandoInicio = classeI ? 'antes do 1º ensaio' : '15 min após chegar'
   return tabelaLeituras(
     colunas,
     [
-      [momento('Início', '15 min após chegar'), livre(), livre(), livre(), livre(), ...(classeI ? [livre()] : []), livre()],
+      [momento('Início', quandoInicio), livre(), livre(), livre(), livre(), ...(classeI ? [livre()] : []), livre()],
       [
         momento('Fim', `após o passo ${N.excentricidade}`),
         livre(),
@@ -2643,8 +2649,9 @@ function tabelaRepetibilidadeEmBranco(ctx: Contexto): NoObjeto {
 /**
  * Mais de um ensaio (multi-intervalo e múltiplas faixas: um por intervalo, POP 7.9): uma tabela só, uma linha por
  * ensaio (a carga, os pesos e quantas vezes, cinza; as leituras com a carga), com o nº de cada leitura numa linha miúda
- * em cima de todas (as caixas de escrever ficam livres). Com muitas leituras previstas (mais de 8 num ensaio), null: um
- * bloco por ensaio.
+ * em cima de todas (as caixas de escrever ficam livres). O ensaio do rascunho sem a carga (o campo apagado grava 0):
+ * como no ensaio único, só a carga aplicada para escrever, numa caixa branca com o rótulo no alto e o espaço da escrita
+ * embaixo dele (`LIVRE_ESCRITA`). Com muitas leituras previstas (mais de 8 num ensaio), null: um bloco por ensaio.
  */
 function tabelaRepetibilidades(ctx: Contexto, lista: PlanoFolha['repetibilidade']): No[] | null {
   const maior = Math.max(...lista.map((r) => r.leituras))
@@ -2663,19 +2670,27 @@ function tabelaRepetibilidades(ctx: Contexto, lista: PlanoFolha['repetibilidade'
     rotuloMiudo(''),
     ...Array.from({ length: colunasLeitura }, (_, j) => rotuloMiudo(`${j + 1}ª${j + 1 > maior ? ' · opcional' : ''}`)),
   ]
+  const semCarga = (r: PlanoFolha['repetibilidade'][number]) => !(r.carga > 0)
   const linhas = lista.map((r, i): CelulaTabela[] => [
-    pre(celulaCarga(ctx, r, `${i + 1} · Carga`, comoRepetir(ctx, r.leituras, r))),
+    semCarga(r)
+      ? dica([
+          { text: `${i + 1} · Carga aplicada`, font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.rotulo },
+          { text: ` (${uc})`, fontSize: FONTE_DICA, color: T.suave },
+        ])
+      : pre(celulaCarga(ctx, r, `${i + 1} · Carga`, comoRepetir(ctx, r.leituras, r))),
     rotuloLinha(ROTULO_LEITURAS_REPETIBILIDADE),
     ...Array.from({ length: colunasLeitura }, livre),
   ])
   const altura = alturaLeitura(ctx, N.repetibilidade)
+  // A linha do ensaio sem a carga: o rótulo (uma linha) e o espaço da escrita embaixo dele
+  const alturaSemCarga = Math.max(altura, ALTURA_ROTULO_CAIXA + LIVRE_ESCRITA)
   return [
     tabelaSemCabecalho(
       [128, 80, ...Array.from({ length: colunasLeitura }, () => '*')],
       [cabecalho, ...linhas],
       // Fio mais forte entre os ensaios
       (i) => i > 1,
-      (i) => (i === 0 ? 'auto' : altura),
+      (i) => (i === 0 ? 'auto' : semCarga(lista[i - 1]) ? alturaSemCarga : altura),
       (i) => i === 0,
     ),
   ]

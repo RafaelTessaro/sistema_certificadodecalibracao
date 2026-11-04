@@ -1084,6 +1084,18 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     if (metodo !== 'DECRESCENTE' && semSubida.length) pendencias.push(faltaSubida())
     if (cargasSemDescida.length) pendencias.push(faltaDescida())
   }
+  // Trocado de método depois das leituras e, depois, com a classe da balança trocada: o método de agora não é o do POP
+  // nesta classe (o de `metodoIndicacaoPadrao`, em dominio.ts) nem o medido, e o certificado diria um método que não foi
+  // usado. Também na calibração medida antes das regras (`metodoMedido`)
+  const metodoDoPop: MetodoCarregamento = instrumento.classe === 'I' ? 'DESCONTINUO' : 'CRESCENTE_DECRESCENTE'
+  if (metodoMedido && metodo !== metodoDoPop) {
+    const nome = (m: MetodoCarregamento) => `“${NOMES_METODO_CARREGAMENTO[m]}”`
+    pendencias.push(
+      `Erro de indicação: medido como ${nome(metodoMedido)} e trocado depois para ${nome(metodo)}, que não é o método do POP nesta classe${
+        metodoMedido === metodoDoPop ? '; volte para o medido' : ` (${nome(metodoDoPop)}); use o do POP ou volte para o medido`
+      } (POP 7.7).`,
+    )
+  }
   // Retorno ao zero (POP 7.7: registrado ao fim do erro de indicação; 7.8: a balança que não volta ao zero não pesa
   // corretamente). O limite é o EMA em serviço na carga zero (2 e da 1ª faixa) ou, sem classe, a tolerância do cliente
   const limiteZero = limiteServico(0)

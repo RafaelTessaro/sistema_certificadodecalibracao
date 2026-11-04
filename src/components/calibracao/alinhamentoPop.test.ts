@@ -266,6 +266,37 @@ describe('classe trocada no meio da calibração ("Corrigir cadastro")', () => {
     expect(trocada.indicacao).toBe(lido.indicacao)
     expect(trocada.excentricidade.metodo).toBe(3)
   })
+
+  it('a visita feita antes desta regra (já medida ou com a folha de antes impressa) fica com o método, mesmo sem leituras', () => {
+    const k = calibracaoVazia(undefined, 'III')
+    const sugerido = { ...k, descidaComoAviso: true, indicacao: ensaio([ponto('z', 0, 0), ponto('a', 10), ponto('b', 30)]) }
+    expect(comMetodoDaClasse(sugerido, 'I').indicacao).toBe(sugerido.indicacao)
+    const medidaAntesDasRegras = { ...sugerido, descidaComoAviso: undefined, minimosComoAviso: true }
+    expect(comMetodoDaClasse(medidaAntesDasRegras, 'I').indicacao).toBe(sugerido.indicacao)
+    // Sem a marca: segue a classe nova
+    expect(comMetodoDaClasse({ ...sugerido, descidaComoAviso: undefined }, 'I').indicacao.metodo).toBe('DESCONTINUO')
+  })
+
+  it('trocado para o do POP depois das leituras e a classe trocada de volta: volta para o medido, e a descida é pedida', () => {
+    // O caminho da conferência: classe III medida em "crescente e decrescente" só com as subidas (pendência)
+    const k = calibracaoVazia(undefined, 'III')
+    const pontos = [0, 5, 10, 20, 30].map((c) => ponto(`p${c}`, c, c))
+    const medido: CalibracaoInput = { ...k, indicacao: ensaio(pontos) }
+    const pendenciaDescida = 'Erro de indicação: falta a leitura de descida em 5,00 kg, 10,00 kg e 20,00 kg (POP 7.7).'
+    expect(calcularCalibracao(medido, balanca, []).resultado.pendencias).toContain(pendenciaDescida)
+    // Classe → I ("Corrigir cadastro"): com leituras, o método fica; "Usar o método do POP" troca e guarda o medido
+    const naI = comMetodoDaClasse(medido, 'I')
+    expect(naI.indicacao).toBe(medido.indicacao)
+    const trocado: CalibracaoInput = {
+      ...naI,
+      indicacao: { ...naI.indicacao, metodo: 'DESCONTINUO', metodoMedido: 'CRESCENTE_DECRESCENTE' },
+    }
+    // Classe → III de novo: volta para o medido, sem a marca, e a descida que falta volta a impedir a emissão
+    const deVolta = comMetodoDaClasse(trocado, 'III')
+    expect(deVolta.indicacao.metodo).toBe('CRESCENTE_DECRESCENTE')
+    expect(deVolta.indicacao).not.toHaveProperty('metodoMedido')
+    expect(calcularCalibracao(deVolta, balanca, []).resultado.pendencias).toContain(pendenciaDescida)
+  })
 })
 
 describe('Erro de indicação: método fixo pela classe (POP 7.7)', () => {
@@ -359,6 +390,66 @@ describe('Erro de indicação: método fixo pela classe (POP 7.7)', () => {
       'Medido como “Crescente e decrescente”, que não é o método do POP nesta classe (“Crescente com descarga”).',
     )
     expect(t).not.toContain('antes do método fixo')
+  })
+
+  it('rascunho de antes sem leituras: a tabela já tem a coluna da descida do método da classe', () => {
+    const k = {
+      ...calibracaoVazia(undefined, 'III'),
+      indicacao: { ...ensaio([ponto('z', 0, 0), ponto('a', 10)]), metodo: 'DESCONTINUO' as const },
+    }
+    const t = html(EtapaIndicacao, contexto(k))
+    expect(t).toContain('Indicação ↓')
+  })
+
+  it('visita feita antes desta regra (folha de antes impressa), sem leituras: o método gravado, com o aviso e a troca', () => {
+    // O caso da conferência: o rascunho da 1.0.3 com "crescente com descarga" numa classe III e nada digitado
+    const k: CalibracaoInput = {
+      ...calibracaoVazia(undefined, 'III'),
+      descidaComoAviso: true,
+      indicacao: { ...ensaio([ponto('z', 0, 0), ponto('a', 10), ponto('b', 30)]), metodo: 'DESCONTINUO' },
+    }
+    const t = html(EtapaIndicacao, contexto(k))
+    expect(texto(t)).toContain('Como aplicar as cargas Crescente com descarga')
+    expect(t).toContain(
+      'Começada antes desta versão com “Crescente com descarga”, que não é o método do POP nesta classe (“Crescente e decrescente”).',
+    )
+    expect(t).toContain('Usar o método do POP')
+    expect(t).not.toContain('Pelo POP (7.7), nesta classe')
+    // Só a subida, como o método gravado
+    expect(t).not.toContain('Indicação ↓')
+    // As subidas digitadas: o certificado sai com o método usado, sem pendência da descida
+    const lido = {
+      ...k,
+      indicacao: { ...k.indicacao, pontos: [0, 5, 10, 20, 30].map((c) => ponto(`p${c}`, c, c)) },
+    }
+    expect(calcularCalibracao(lido, balanca, []).resultado.pendencias.join('\n')).not.toMatch(/descida|método/)
+  })
+
+  it('trocado depois das leituras e a classe trocada fora do formulário: o aviso, a volta e a pendência', () => {
+    const k = calibracaoVazia(undefined, 'III')
+    const pontos = [0, 5, 10, 20, 30].map((c) => ponto(`p${c}`, c, c))
+    const f: CalibracaoInput = {
+      ...k,
+      indicacao: { ...ensaio(pontos), metodo: 'DESCONTINUO', metodoMedido: 'CRESCENTE_DECRESCENTE' },
+    }
+    const t = html(EtapaIndicacao, contexto(f))
+    expect(t).toContain(
+      'Medido como “Crescente e decrescente” e trocado depois para “Crescente com descarga”, que não é o método do POP nesta classe. Volte para o medido: do jeito que está, o certificado não sai.',
+    )
+    expect(t).toContain('Voltar para “Crescente e decrescente”')
+    // A volta já é a troca para o do POP: um botão só
+    expect(t).not.toContain('Usar o método do POP')
+    expect(calcularCalibracao(f, balanca, []).resultado.pendencias).toContain(
+      'Erro de indicação: medido como “Crescente e decrescente” e trocado depois para “Crescente com descarga”, que não é o método do POP nesta classe; volte para o medido (POP 7.7).',
+    )
+    // Medido com outro que também não é o do POP: os dois botões
+    const continuo = { ...f, indicacao: { ...f.indicacao, metodoMedido: 'CONTINUO' as const } }
+    const t2 = html(EtapaIndicacao, contexto(continuo))
+    expect(t2).toContain('Usar o método do POP')
+    expect(t2).toContain('Voltar para “Crescente contínuo”')
+    expect(calcularCalibracao(continuo, balanca, []).resultado.pendencias).toContain(
+      'Erro de indicação: medido como “Crescente contínuo” e trocado depois para “Crescente com descarga”, que não é o método do POP nesta classe (“Crescente e decrescente”); use o do POP ou volte para o medido (POP 7.7).',
+    )
   })
 
   it('o "como encontrado" de um registro de antes mostra o método dele, sem a linha do POP', () => {

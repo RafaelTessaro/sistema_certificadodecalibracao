@@ -255,6 +255,9 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
 /**
  * Diferença de temperatura entre os pesos e o ar (convecção, cg-18 7.1.2.4): medida antes do 1º ensaio, com o
  * termômetro de duas entradas, ou estimada pelo tempo de aclimatação (Tabela F1.3). Trocar o modo limpa o outro.
+ * Pela aclimatação, a folha não tem a hora do 1º ensaio: os minutos vão da chegada (passo 2) ao Início do ambiente
+ * (passo 4), medido logo antes dos ensaios; o tempo contado fica um pouco menor que o real, e a incerteza, conservadora
+ * (POP 7.4, item 6).
  */
 function GrupoConveccao({
   ambiente,
@@ -368,7 +371,11 @@ function GrupoConveccao({
                 tom={tomFaixa(acl.deltaT0, 'deltaT0')}
               />
             </Field>
-            <Field label="Pesos no local até o 1º ensaio" htmlFor="amb-acl-min">
+            <Field
+              label="Pesos no local até o 1º ensaio"
+              htmlFor="amb-acl-min"
+              hint="Da hora de chegada (passo 2) até o Início do ambiente (passo 4) da folha."
+            >
               <CampoNumero
                 id="amb-acl-min"
                 valor={acl.minutos}

@@ -5,12 +5,14 @@ import {
   ehRodoviaria,
   metodoExcentricidadePadrao,
   METODOS_EXCENTRICIDADE,
+  metodoIndicacaoDaVisita,
   somarMeses,
   temLeiturasExcentricidade,
 } from '#shared/dominio.ts'
 import { cargaDaFaixaDecrescente, casasDecimais, leituraImplausivel } from '#shared/metrologia/index.ts'
 import type { ResultadoPonto } from '#shared/metrologia/tipos.ts'
 import type { Balanca, CalibracaoInput, ClasseExatidao, Padrao, PontoIndicacao } from '#shared/tipos.ts'
+import { comMetodoMedidoDaClasse } from './indicacao'
 
 /** Maior capacidade da balança. */
 export const maxDe = (b: Pick<Balanca, 'faixas'>) => Math.max(0, ...b.faixas.map((f) => f.max))
@@ -71,18 +73,23 @@ export const dicaDoMetodoExcentricidade = (classe: ClasseExatidao | null | undef
  * A classe da balança mudou no meio da calibração ("Corrigir cadastro"): os ensaios ainda sem leituras passam para o
  * método da classe nova, a excentricidade (POP 7.10: 1; na classe I, 3) e o erro de indicação (POP 7.7: "crescente e
  * decrescente"; na classe I, "crescente com descarga"; `comMetodoIndicacaoDaClasse`). Com leituras, cada um fica como
- * foi feito. Nada a mudar: o mesmo objeto.
+ * foi feito; o erro de indicação da visita feita antes dessa regra (`metodoIndicacaoDaVisita`), também sem elas. O
+ * ensaio trocado de método depois das leituras volta para o medido quando ele é o da classe nova
+ * (`comMetodoMedidoDaClasse`). Nada a mudar: o mesmo objeto.
  */
-export function comMetodoDaClasse<T extends Pick<CalibracaoInput, 'excentricidade' | 'indicacao'>>(
-  f: T,
-  classe: ClasseExatidao,
-): T {
+export function comMetodoDaClasse<
+  T extends Pick<CalibracaoInput, 'excentricidade' | 'indicacao' | 'opcoes'> &
+    Partial<Pick<CalibracaoInput, 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso' | 'descidaComoAviso'>>,
+>(f: T, classe: ClasseExatidao): T {
   const metodo = metodoExcentricidadePadrao(classe)
   const excentricidade =
     f.excentricidade.metodo === metodo || temLeiturasExcentricidade(f.excentricidade)
       ? f.excentricidade
       : { ...f.excentricidade, metodo }
-  const indicacao = comMetodoIndicacaoDaClasse(f.indicacao, classe)
+  const indicacao = comMetodoMedidoDaClasse(
+    comMetodoIndicacaoDaClasse(f.indicacao, classe, metodoIndicacaoDaVisita(f)),
+    classe,
+  )
   return excentricidade === f.excentricidade && indicacao === f.indicacao ? f : { ...f, excentricidade, indicacao }
 }
 

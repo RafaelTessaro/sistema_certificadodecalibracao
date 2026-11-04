@@ -240,6 +240,22 @@ describe('planoDaFolha', () => {
     expect([q.metodoComoEncontrado, q.metodo]).toEqual(['CRESCENTE_DECRESCENTE', 'CRESCENTE_DECRESCENTE'])
   })
 
+  it('a visita feita antes desta regra (já medida ou com a folha de antes impressa) imprime o método gravado, mesmo sem leituras', () => {
+    // O caso da conferência: o rascunho da 1.0.3 com "crescente com descarga" numa classe III, nada digitado, e a marca
+    // da migração 16 (`descidaComoAviso`): a folha reimpressa diz o que a primeira dizia, como a tela
+    const plataforma = folhaPlataforma()
+    const kp = plataforma.calibracao!
+    kp.indicacao.metodo = 'DESCONTINUO'
+    expect(temLeituras(kp.indicacao)).toBe(false)
+    expect(plano(plataforma).metodo).toBe('CRESCENTE_DECRESCENTE')
+    kp.descidaComoAviso = true
+    expect(plano(plataforma).metodo).toBe('DESCONTINUO')
+    // Medida antes das regras do POP (1.0.2): também
+    kp.descidaComoAviso = undefined
+    kp.minimosComoAviso = true
+    expect(plano(plataforma).metodo).toBe('DESCONTINUO')
+  })
+
   it('substituição sugerida: só em rodoviária, só quando os pesos não fecham, e a etapa é redonda (as peças pequenas completam)', () => {
     const d = folhaRodoviariaSemHistorico()
     // Os pesos fecham todas as cargas: sem sugestão

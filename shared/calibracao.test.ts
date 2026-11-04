@@ -923,6 +923,36 @@ describe('mínimos do POP na calibração nova (e o registro de antes)', () => {
     for (const [m, { label }] of Object.entries(METODOS_CARREGAMENTO))
       expect(NOMES_METODO_CARREGAMENTO[m as EnsaioIndicacao['metodo']]).toBe(label)
   })
+
+  it('trocado depois das leituras e a classe trocada depois: o método que não é o do POP nem o medido é pendência', () => {
+    // O caminho da conferência: medido na classe III em "crescente e decrescente" só com as subidas, classe → I, "Usar o
+    // método do POP" ("crescente com descarga", guardando o medido) e classe → III de novo, fora do formulário
+    const subidas = () =>
+      calibracaoDe(
+        [0, 5, 10, 20, 30].map((c) =>
+          pontoDe(`p${c}`, c, c ? montarCarga(c, 'kg', [J]).pecas : [], c, { pecasManuais: false, decrescente: null }),
+        ),
+        { metodo: 'DESCONTINUO', metodoMedido: 'CRESCENTE_DECRESCENTE' },
+      )
+    const de = (k: CalibracaoInput, classe: Balanca['classe'] = 'III') =>
+      calcularCalibracao(k, { ...balanca30, classe }, [J]).resultado.pendencias
+    expect(de(subidas())).toEqual([
+      'Erro de indicação: medido como “Crescente e decrescente” e trocado depois para “Crescente com descarga”, que não é o método do POP nesta classe; volte para o medido (POP 7.7).',
+    ])
+    // Também medida antes das regras ou antes da descida obrigatória (a marca não esconde um método que não foi usado)
+    expect(de({ ...subidas(), minimosComoAviso: true })).toHaveLength(1)
+    expect(de({ ...subidas(), descidaComoAviso: true })).toHaveLength(1)
+    // Na classe I, o método de agora é o do POP: só o que ele pede (e o resto das regras da classe I)
+    expect(de(subidas(), 'I').join(' ')).not.toMatch(/Erro de indicação/)
+    // O medido que também não é o do POP: as duas saídas
+    const continuo = { ...subidas(), indicacao: { ...subidas().indicacao, metodoMedido: 'CONTINUO' as const } }
+    expect(de(continuo)).toEqual([
+      'Erro de indicação: medido como “Crescente contínuo” e trocado depois para “Crescente com descarga”, que não é o método do POP nesta classe (“Crescente e decrescente”); use o do POP ou volte para o medido (POP 7.7).',
+    ])
+    // Sem a troca (o método é o medido, mesmo fora do POP): sem essa pendência
+    const semTroca = { ...subidas(), indicacao: { ...subidas().indicacao, metodoMedido: undefined } }
+    expect(de(semTroca).join(' ')).not.toMatch(/trocado depois/)
+  })
 })
 
 describe('revisão: as regras do POP valem quando o certificado revisado foi emitido com elas', () => {

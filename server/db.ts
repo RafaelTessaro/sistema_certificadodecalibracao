@@ -252,10 +252,12 @@ const MIGRACOES: Migracao[] = [
   // que nasceu marcada como legada, passa a seguir as regras do POP, como o servidor faz hoje (`calculoLegado`).
   revisoesComOsPadroesDaEmissao,
 
-  // 16: a calibração em andamento (também a revisão de um certificado) que já tinha leituras na atualização para a 1.0.4,
-  // quando a descida do "crescente e decrescente" passou a ser obrigatória (POP 7.7), fica com a descida que falta como
-  // aviso (`descidaComoAviso`): a visita já aconteceu, e na 1.0.3 a descida era opcional. A que já tem os mínimos como
-  // avisos não precisa. As novas seguem a regra, e também a que só tem o zero que "Sugerir os pontos" preenche (nada medido).
+  // 16: a calibração em andamento (também a revisão de um certificado) que já tinha leituras ou a folha de campo impressa
+  // na atualização para a 1.0.4, quando a descida do "crescente e decrescente" passou a ser obrigatória e o método do
+  // erro de indicação passou a ser fixo pela classe (POP 7.7), fica com a descida que falta como aviso e com o método
+  // gravado, que a folha de antes imprimia (`descidaComoAviso`, `metodoIndicacaoDaVisita`): a visita já aconteceu, ou vai
+  // acontecer com essa folha, e na 1.0.3 a descida era opcional. A que já tem os mínimos como avisos não precisa. As
+  // novas seguem a regra, e também a sem folha que só tem o zero que "Sugerir os pontos" preenche (nada medido).
   descidasAntesDaRegra,
 ]
 
@@ -397,27 +399,40 @@ function medidasAntesDasRegras(db: Banco) {
 
 /**
  * Migração 16 (ver acima). Repetível: só marca a calibração em andamento (rascunho ou em revisão, também a revisão de um
- * certificado) com alguma leitura medida (`temLeituraMedida`: o zero que "Sugerir os pontos" já preenche não conta),
- * ainda sem a marca e sem os mínimos como avisos (`minimosDoPopComoAviso`, onde a descida que falta já é aviso). Não sobe
- * a versão: a marca não muda nada do que a tela grava. O registro de atividades diz quais.
+ * certificado) com alguma leitura medida (`temLeituraMedida`: o zero que "Sugerir os pontos" já preenche não conta) ou
+ * com uma folha de campo impressa (a da 1.0.3 trazia o método do rascunho), ainda sem a marca e sem os mínimos como
+ * avisos (`minimosDoPopComoAviso`, onde a descida que falta já é aviso e o método também é o gravado). Não sobe a versão:
+ * a marca não muda nada do que a tela grava. O registro de atividades diz quais.
  */
 function descidasAntesDaRegra(db: Banco) {
   const linhas = db
     .prepare(
       `SELECT k.id, k.dados, c.nome AS cliente, o.numero AS revisado,
               (SELECT n.numero FROM numeros_reservados n
-                WHERE n.calibracao_id = k.id AND n.situacao = 'reservado' ORDER BY n.id DESC LIMIT 1) AS reservado
+                WHERE n.calibracao_id = k.id AND n.situacao = 'reservado' ORDER BY n.id DESC LIMIT 1) AS reservado,
+              EXISTS (SELECT 1 FROM folhas_campo f WHERE f.calibracao_id = k.id) AS com_folha
          FROM calibracoes k LEFT JOIN clientes c ON c.id = k.cliente_id
               LEFT JOIN calibracoes o ON o.id = k.substitui_id AND k.substitui_id <> ''
         WHERE k.status IN ('RASCUNHO','REVISAO')
         ORDER BY k.criado_em, k.id`,
     )
-    .all() as Array<{ id: string; dados: string; cliente: string | null; revisado: string | null; reservado: string | null }>
+    .all() as Array<{
+    id: string
+    dados: string
+    cliente: string | null
+    revisado: string | null
+    reservado: string | null
+    com_folha: number
+  }>
   const gravar = db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
   const marcadas: string[] = []
   for (const l of linhas) {
     const k = JSON.parse(l.dados) as Calibracao
-    if (k.descidaComoAviso === true || !temLeituraMedida(k) || minimosDoPopComoAviso({ ...k, opcoes: k.opcoes ?? {} }))
+    if (
+      k.descidaComoAviso === true ||
+      !(temLeituraMedida(k) || Number(l.com_folha) === 1) ||
+      minimosDoPopComoAviso({ ...k, opcoes: k.opcoes ?? {} })
+    )
       continue
     gravar.run(JSON.stringify({ ...k, descidaComoAviso: true }), l.id)
     const os = String(k.ordemServico ?? '').trim()
@@ -433,8 +448,8 @@ function descidasAntesDaRegra(db: Banco) {
       new Date().toISOString(),
       detalheLista(
         marcadas.length === 1
-          ? 'A calibração em andamento medida antes desta versão sai com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: '
-          : `${marcadas.length} calibrações em andamento medidas antes desta versão saem com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: `,
+          ? 'A calibração em andamento medida ou com a folha impressa antes desta versão mantém o método gravado e sai com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: '
+          : `${marcadas.length} calibrações em andamento medidas ou com a folha impressa antes desta versão mantêm o método gravado e saem com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: `,
         marcadas,
       ),
     )

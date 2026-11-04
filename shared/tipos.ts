@@ -591,10 +591,12 @@ export interface Calibracao {
    */
   minimosComoAviso?: boolean
   /**
-   * Calibração em andamento que já tinha leituras quando a descida do "crescente e decrescente" passou a ser obrigatória
-   * (atualização para a 1.0.4, migração 16), e a revisão de um certificado emitido sem ela: a visita já aconteceu, e a
-   * descida que falta fica só como aviso (POP 7.7). O resto das regras continua. Não vale no ensaio trocado de método
-   * depois das leituras (`EnsaioIndicacao.metodoMedido`). Quem define é o servidor; ausente = não.
+   * Calibração em andamento que já tinha leituras ou a folha de campo impressa quando a descida do "crescente e
+   * decrescente" passou a ser obrigatória (atualização para a 1.0.4, migração 16), e a revisão de um certificado emitido
+   * sem ela: a visita já aconteceu, e a descida que falta fica só como aviso (POP 7.7). O método do erro de indicação
+   * gravado é o da visita, mesmo sem leituras (`metodoIndicacaoDaVisita`): o sistema não o troca sozinho pelo da classe.
+   * O resto das regras continua. Não vale no ensaio trocado de método depois das leituras
+   * (`EnsaioIndicacao.metodoMedido`). Quem define é o servidor; ausente = não.
    */
   descidaComoAviso?: boolean
   /**
