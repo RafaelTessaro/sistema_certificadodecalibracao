@@ -988,6 +988,14 @@ describe('pontos em ordem de carga (o ponto acrescentado no fim com carga menor)
       expect(resultado.pontos[1]).toMatchObject({ id: 'p5', carga: 5 })
       expect(resultado.pendencias, metodo).toEqual([])
     }
+    // O "como encontrado" da mesma calibração também
+    const k = calibracaoDe([0, 10, 20, 30, 5].map((c) => ponto(c)))
+    const comAntes = {
+      ...k,
+      ajuste: { realizado: 'INTERNO' as const, descricao: '' },
+      comoEncontrado: structuredClone(k.indicacao),
+    }
+    expect(cargas(calcularCalibracao(comAntes, balanca30, [J]).comoEncontrado!.pontos)).toEqual([0, 5, 10, 20, 30])
   })
 
   it('o registro de antes das regras (revisão de um certificado 1.0.2): a ordem como na época', () => {
