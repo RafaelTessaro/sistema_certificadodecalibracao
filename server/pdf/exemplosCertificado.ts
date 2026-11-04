@@ -1,18 +1,31 @@
-// Certificados de exemplo, realistas, para os testes do PDF e para as amostras em server/pdf/exemplos/:
-//   1. plataforma Toledo 300 kg × 50 g, classe III, com reparo, ajuste ("como encontrado" + "como deixado")
-//      e declaração de conformidade pela Portaria 157/2022 em serviço;
+// Certificados de exemplo, realistas, para os testes do PDF e para as amostras.
+//
+// As amostras publicadas (server/pdf/exemplos/) seguem as regras da versão 1.0.3 (o POP de calibração): sem ajuste
+// externo, sem "como encontrado"/"como deixado", sem reparo e sem a verificação preliminar; só o ajuste interno (CAL)
+// de rotina antes dos ensaios, nas analíticas e na classe I; os mínimos do POP cumpridos e os erros dentro do EMA em
+// serviço (sem pendência nenhuma para emitir):
+//   1. plataforma Toledo 300 kg × 50 g, classe III, sem ajuste, com declaração de conformidade pela Portaria
+//      157/2022 em serviço (banda de guarda) e a próxima calibração a pedido do cliente;
 //   2. bancada 30 kg × 5 g, sem ajuste, histerese pela MÉDIA (exemplo numérico da pesquisa 02, §9),
 //      calibrada no laboratório, executada e autorizada pela mesma pessoa, com opiniões;
-//   3. rodoviária 80 t × 20 kg, 4 apoios, cargas de substituição, faixa parcial, revisão (substitui o nº …)
-//      e marca d'água "PRÉVIA — SEM VALOR";
-//   4. o pior caso, para conferir o limite de 3 páginas: rodoviária multi-intervalo 30/60/80 t, cargas de
-//      substituição até Max, ajuste com "como encontrado" (também com substituição), reparo, revisão,
-//      conformidade, 4 padrões, verificação preliminar com item "não", observações e opiniões;
-//   5. classe I: analítica 220 g × 0,1 mg com pesos E2 pelo certificado (com a densidade), no local de uso,
-//      ajuste interno logo depois do "como encontrado", empuxo pela densidade do ar medida e convecção calculada
-//      pela diferença de temperatura pesos − ar (a frase no método do certificado).
-//   6. balcão 32 kg × 5 g, classe III: o caso mais comum, com os pontos que o sistema sugere, sem ajuste e
-//      sem declaração de conformidade.
+//   3. classe I: analítica 220 g × 0,1 mg com pesos E2 pelo certificado (com a densidade), no local de uso, com o
+//      ajuste interno (CAL) antes dos ensaios, empuxo pela densidade do ar medida e convecção calculada pela
+//      diferença de temperatura pesos − ar (a frase no método do certificado);
+//   4. balcão 32 kg × 5 g, classe III: o caso mais comum, com os pontos que o sistema sugere, sem ajuste e
+//      sem declaração de conformidade;
+//   5. o pior caso de hoje, para conferir o limite de 3 páginas: balança de piso multi-intervalo 60/150/300 kg com
+//      os pontos e as repetibilidades que o sistema sugere (uma por intervalo), revisão, conformidade, próxima
+//      calibração, 4 padrões e textos longos (cliente, local, observações e opiniões).
+//
+// Os registros de antes do POP (versões 1.0.1 e 1.0.2), que continuam abrindo e saindo como saíam: só para os testes
+// (as amostras deles vão para server/pdf/exemplos/legado/, para não serem tomadas pelo comportamento de hoje):
+//   - plataforma 300 kg com ajuste externo ("como encontrado" + "como deixado") e reparo;
+//   - rodoviária 80 t × 20 kg, 4 apoios, cargas de substituição, faixa parcial, revisão (substitui o nº …)
+//     e marca d'água "PRÉVIA — SEM VALOR";
+//   - o pior caso de antes: rodoviária multi-intervalo 30/60/80 t, cargas de substituição até Max, ajuste com "como
+//     encontrado" (também com substituição), reparo, revisão, conformidade, 4 padrões, verificação preliminar com
+//     item "não", observações e opiniões;
+//   - classe I 220 g com o "como encontrado" medido antes do ajuste interno.
 // Os resultados saem do motor de cálculo de verdade (shared/calibracao.ts).
 
 import { calcularCalibracao, montarCarga, montarPonto } from '#shared/calibracao.ts'
@@ -401,7 +414,8 @@ function calibracaoBase(id: string): Calibracao {
 
 // ---- 1. Plataforma Toledo 300 kg × 50 g ----------------------------------------------------------
 
-export function exemploPlataforma(): DadosCertificadoPdf {
+/** A plataforma do Frigorífico, o cliente e a calibração dela sem ajuste (a amostra e o registro de antes). */
+function plataformaToledo(): { k: Calibracao; e: EmissaoCertificado; pesos: Padrao[] } {
   const padroes = [PP20, JP01, TH01]
   const pesos = [PP20, JP01]
   const b = balanca({
@@ -455,14 +469,6 @@ export function exemploPlataforma(): DadosCertificadoPdf {
     signatarioId: RESPONSAVEL.id,
     padroesIds: padroes.map((p) => p.id),
     ambiente: { temperaturaInicial: 22.4, temperaturaFinal: 23.1, umidadeInicial: 58, umidadeFinal: 56, pressao: null },
-    ajuste: { realizado: 'EXTERNO', descricao: 'ajuste de span com 200 kg de pesos padrão, após a troca da célula de carga' },
-    comoEncontrado: ensaio('CONTINUO', [
-      ponto('ce0', 0, 0, null, pesos, 'kg'),
-      ponto('ce1', 50, 50.1, null, pesos, 'kg'),
-      ponto('ce2', 100, 100.2, null, pesos, 'kg'),
-      ponto('ce3', 200, 200.4, null, pesos, 'kg'),
-      ponto('ce4', 300, 300.65, null, pesos, 'kg'),
-    ]),
     repetibilidade: [{ id: 'rep1', carga: 150, leituras: [150, 150.05, 150, 150, 150.05] }],
     excentricidade: {
       aplicavel: true,
@@ -495,13 +501,6 @@ export function exemploPlataforma(): DadosCertificadoPdf {
     conformidade: { solicitada: true, criterio: 'PORTARIA_SERVICO', toleranciaCliente: 0, regra: 'BANDA_GUARDA' },
     proximaCalibracao: '2027-10-13',
     proximaNoCertificado: true,
-    reparo: {
-      houve: true,
-      descricao: 'troca da célula de carga e da caixa de junção',
-      marcaReparo: 'MR-SP 004512',
-      selosRetirados: '118832-A e 118832-B',
-      selosColocados: '0457712 e 0457713',
-    },
     observacoes: 'Balança utilizada na expedição para conferência de cargas paletizadas.',
   }
   const e: EmissaoCertificado = {
@@ -520,7 +519,43 @@ export function exemploPlataforma(): DadosCertificadoPdf {
     substituiNumero: '',
     substituiEmissao: '',
   }
-  return montar(k, e)
+  return { k, e, pesos }
+}
+
+/**
+ * A amostra da plataforma (1.0.3): calibração sem ajuste, sem "como encontrado" e sem reparo (POP 7.8), com a
+ * declaração de conformidade (banda de guarda) e a próxima calibração a pedido do cliente.
+ */
+export function exemploPlataforma300kg(): DadosCertificadoPdf {
+  const { k, e } = plataformaToledo()
+  return montar(k, { ...e, regrasDoPop: true })
+}
+
+/**
+ * A mesma plataforma num registro de antes do POP (1.0.2): ajuste externo depois da troca da célula, com o "como
+ * encontrado" e o "como deixado", e o reparo. Só para os testes (sai como saía); não é o que o sistema faz hoje.
+ */
+export function exemploPlataformaLegado(): DadosCertificadoPdf {
+  const { k, e, pesos } = plataformaToledo()
+  const legado: Calibracao = {
+    ...k,
+    ajuste: { realizado: 'EXTERNO', descricao: 'ajuste de span com 200 kg de pesos padrão, após a troca da célula de carga' },
+    comoEncontrado: ensaio('CONTINUO', [
+      ponto('ce0', 0, 0, null, pesos, 'kg'),
+      ponto('ce1', 50, 50.1, null, pesos, 'kg'),
+      ponto('ce2', 100, 100.2, null, pesos, 'kg'),
+      ponto('ce3', 200, 200.4, null, pesos, 'kg'),
+      ponto('ce4', 300, 300.65, null, pesos, 'kg'),
+    ]),
+    reparo: {
+      houve: true,
+      descricao: 'troca da célula de carga e da caixa de junção',
+      marcaReparo: 'MR-SP 004512',
+      selosRetirados: '118832-A e 118832-B',
+      selosColocados: '0457712 e 0457713',
+    },
+  }
+  return montar(legado, e)
 }
 
 // ---- 2. Bancada 30 kg × 5 g -----------------------------------------------------------------------
@@ -578,14 +613,6 @@ export function exemploBancada(): DadosCertificadoPdf {
     padroesIds: padroes.map((p) => p.id),
     // Sem barômetro entre os padrões: a pressão não foi medida
     ambiente: { temperaturaInicial: 21, temperaturaFinal: 22.5, umidadeInicial: 55, umidadeFinal: 54, pressao: null },
-    preliminar: {
-      identificavel: 'SIM',
-      limpa: 'SIM',
-      nivelada: 'SIM',
-      aquecida: 'SIM',
-      preCarga: 'SIM',
-      zeroAutomatico: 'LIGADO',
-    },
     repetibilidade: [{ id: 'rep1', carga: 15, leituras: [15, 15.005, 15, 15, 15.005, 15] }],
     excentricidade: {
       aplicavel: true,
@@ -631,13 +658,470 @@ export function exemploBancada(): DadosCertificadoPdf {
     textos: TEXTOS_EXEMPLO,
     substituiNumero: '',
     substituiEmissao: '',
+    regrasDoPop: true,
   }
   return montar(k, e)
 }
 
-// ---- 3. Rodoviária 80 t × 20 kg (revisão, prévia) ----------------------------------------------------
+// ---- 3. Classe I: analítica 220 g × 0,1 mg (ajuste interno (CAL), empuxo pela densidade do ar, convecção) ---
 
-export function exemploRodoviaria(): DadosCertificadoPdf {
+/**
+ * Analítica classe I no local de uso, com pesos E2 pelo certificado. Empuxo pela densidade do ar medida (temperatura,
+ * umidade e pressão) e convecção pela diferença de temperatura pesos − ar medida antes do 1º ensaio: as opções da
+ * classe I. Os pontos são os sugeridos pelo sistema (0, Min, ~25 %… em múltiplos de 10 g, sem peças menores que 10 g
+ * e dentro de 1/3 do EMA com os pesos E2 — 160 g = 100 g + 50 g + 10 g, e não 170 g = 100 g + 50 g + 20 g —, e as
+ * cargas onde muda o EMA: 50 g e 200 g); a repetibilidade com 10 leituras de uma peça só, e a excentricidade com
+ * uma peça de 1/3 de Max ou mais, pelo método 3 (zera antes de cada posição). `g`: um ponto lido na subida.
+ */
+function analiticaHorto(): {
+  k: Calibracao
+  e: EmissaoCertificado
+  g: (id: string, carga: number, leitura: number) => PontoIndicacao
+} {
+  const padroes = [JE2, TH01, BR01, TD01]
+  const pesos = [JE2]
+  const b = balanca({
+    id: 'bal-analitica',
+    clienteId: 'cli-farma',
+    tipo: 'ANALITICA',
+    fabricante: 'Shimadzu',
+    modelo: 'AUY220',
+    numeroSerie: 'D450120387',
+    identificacao: 'BA-03 (CQ)',
+    unidade: 'g',
+    faixas: [{ max: 220, e: 0.001, d: 0.0001 }],
+    min: 0.01,
+    classe: 'I',
+    portariaAprovacao: 'Portaria Inmetro/Dimel nº 0270/2011',
+    receptor: 'CIRCULAR',
+    dimensoes: 'prato Ø 80 mm',
+    finalidade: 'LABORATORIO',
+    localInstalacao: 'Controle de qualidade — sala de balanças',
+    anoFabricacao: '2020',
+  })
+  const c = cliente({
+    id: 'cli-farma',
+    nome: 'Farmacêutica Horto',
+    razaoSocial: 'LABORATÓRIO FARMACÊUTICO HORTO FLORESTAL LTDA',
+    documento: '61.827.504/0001-74',
+    contato: 'Camila Torres (Garantia da Qualidade)',
+    telefone: '(19) 3522-8800',
+    email: 'qualidade@farmahorto.com.br',
+    cep: '13506-900',
+    logradouro: 'Avenida Navarro de Andrade',
+    numero: '1200',
+    bairro: 'Horto Florestal',
+    cidade: 'Rio Claro',
+    uf: 'SP',
+  })
+  const g = (id: string, carga: number, leitura: number) => ponto(id, carga, leitura, null, pesos, 'g')
+  const k: Calibracao = {
+    ...calibracaoBase('cal-analitica'),
+    numero: 'CC-2026-00132',
+    sequencia: 132,
+    clienteId: c.id,
+    balancaId: b.id,
+    ordemServico: 'OS-2026-0547',
+    dataCalibracao: '2026-10-26',
+    dataEmissao: '2026-10-27',
+    local: 'CLIENTE',
+    localEndereco: 'Avenida Navarro de Andrade, 1200 – Horto Florestal – Rio Claro/SP (controle de qualidade)',
+    tecnicoId: TECNICO.id,
+    signatarioId: RESPONSAVEL.id,
+    padroesIds: padroes.map((p) => p.id),
+    // Pressão absoluta do local (Rio Claro, ≈ 612 m), lida no barômetro; ΔT pesos − ar com o termômetro TD-01
+    ambiente: {
+      temperaturaInicial: 22.4,
+      temperaturaFinal: 22.9,
+      umidadeInicial: 54,
+      umidadeFinal: 55,
+      pressao: 942,
+      deltaTPesos: 0.3,
+    },
+    // O ajuste interno (CAL) de rotina antes dos ensaios (POP 7.6 e 7.11): o ensaio final é o de logo após um ajuste
+    ajuste: { realizado: 'INTERNO', descricao: 'função CAL feita pelo cliente' },
+    repetibilidade: [
+      {
+        id: 'rep1',
+        carga: 200,
+        leituras: [200.0003, 200.0004, 200.0003, 200.0003, 200.0002, 200.0003, 200.0004, 200.0003, 200.0003, 200.0002],
+      },
+    ],
+    excentricidade: {
+      aplicavel: true,
+      motivo: '',
+      carga: 100,
+      metodo: 3,
+      posicoes: [
+        { rotulo: 'Centro', leitura: 100.0001, referencia: 0 },
+        { rotulo: 'Frente (0°)', leitura: 100.0003, referencia: 0 },
+        { rotulo: 'Direita (90°)', leitura: 100.0002, referencia: 0.0001 },
+        { rotulo: 'Trás (180°)', leitura: 100.0001, referencia: 0 },
+        { rotulo: 'Esquerda (270°)', leitura: 100.0002, referencia: 0 },
+      ],
+    },
+    indicacao: ensaio(
+      'DESCONTINUO',
+      [
+        g('p0', 0, 0),
+        // Min (10 mg), marcada na plaqueta
+        g('pmin', 0.01, 0.01),
+        g('p1', 50, 50.0001),
+        g('p2', 60, 60.0001),
+        g('p3', 110, 110.0002),
+        g('p4', 160, 160.0002),
+        g('p5', 200, 200.0003),
+        g('p6', 220, 220.0003),
+      ],
+      0,
+    ),
+    // As opções da classe I: empuxo pela densidade do ar medida e convecção calculada (deriva: o padrão, EMA)
+    opcoes: { ...calibracaoVazia().opcoes, empuxo: 'MEDIDO', conveccao: 'CALCULAR' },
+    observacoes: 'Calibração no local de uso, com a capela fechada em todas as leituras.',
+  }
+  const e: EmissaoCertificado = {
+    emitidoEm: '2026-10-27T13:20:00.000Z',
+    emitidoPor: RESPONSAVEL.id,
+    codigo: 'K7AN-2LTC',
+    hashPdf: '',
+    arquivo: '',
+    empresa: EMPRESA_PADRAO,
+    cliente: c,
+    balanca: b,
+    padroes,
+    tecnico: TECNICO,
+    signatario: RESPONSAVEL,
+    textos: TEXTOS_EXEMPLO,
+    substituiNumero: '',
+    substituiEmissao: '',
+  }
+  return { k, e, g }
+}
+
+/**
+ * A amostra da classe I (1.0.3): o ajuste interno (CAL) feito pelo cliente antes dos ensaios, sem "como encontrado"
+ * nem "como deixado": os resultados são os de depois do ajuste.
+ */
+export function exemploClasseI220g(): DadosCertificadoPdf {
+  const { k, e } = analiticaHorto()
+  return montar(k, { ...e, regrasDoPop: true })
+}
+
+/**
+ * A mesma analítica num registro de antes do POP (1.0.2): o "como encontrado" medido e o ajuste interno logo em
+ * seguida (sem descrição), com os resultados antes e depois do ajuste. Só para os testes.
+ */
+export function exemploClasseILegado(): DadosCertificadoPdf {
+  const { k, e, g } = analiticaHorto()
+  const legado: Calibracao = {
+    ...k,
+    ajuste: { realizado: 'INTERNO', descricao: '' },
+    comoEncontrado: ensaio('DESCONTINUO', [
+      g('ce0', 0, 0),
+      g('ce1', 50, 50.0003),
+      g('ce2', 110, 110.0006),
+      g('ce3', 160, 160.0009),
+      g('ce4', 220, 220.0012),
+    ]),
+  }
+  return montar(legado, e)
+}
+
+// ---- 4. Balcão 32 kg × 5 g: o caso mais comum (classe III, sem ajuste, sem conformidade) ------------------
+
+/** Jogo de pesos 100 g a 10 kg, classe M1, aço inoxidável (balanças de balcão até 32 kg). */
+const JP02 = padrao({
+  id: 'pad-jp02',
+  tipo: 'PESOS',
+  identificacao: 'JP-02',
+  descricao: 'Jogo de pesos padrão 100 g a 10 kg',
+  fabricante: 'Toledo do Brasil',
+  classe: 'M1',
+  material: 'Aço inoxidável',
+  densidade: 7950,
+  pesos: [
+    peso('10a', '10 kg nº 1', 10_000, 60, 160),
+    peso('10b', '10 kg nº 2', 10_000, -40, 160),
+    peso('10c', '10 kg nº 3', 10_000, 90, 160),
+    peso('5a', '5 kg nº 1', 5_000, 35, 80),
+    peso('5b', '5 kg nº 2', 5_000, -20, 80),
+    peso('2a', '2 kg nº 1', 2_000, -12, 30),
+    peso('2b', '2 kg nº 2', 2_000, 18, 30),
+    peso('1a', '1 kg', 1_000, 8, 16),
+    peso('500', '500 g', 500, 4, 8),
+    peso('200a', '200 g nº 1', 200, 1.2, 3),
+    peso('200b', '200 g nº 2', 200, -1, 3),
+    peso('100', '100 g', 100, 0.8, 1.6),
+  ],
+  certificado: 'CAL-12347/2026',
+  laboratorio: 'Laboratório Metrológico Paulista Ltda.',
+  acreditacao: 'CAL 0383',
+  dataCalibracao: '2026-03-10',
+  validade: '2028-03-10',
+})
+
+/**
+ * Balança de balcão 32 kg × 5 g, classe III, no local de uso: os pontos, a repetibilidade e a excentricidade
+ * que o sistema sugere para ela (0, Min, 2,5, 8, 10, 16, 24 e 32 kg; 5 leituras com 16 kg; 15 kg nas 5
+ * posições), cargas crescentes e decrescentes, sem ajuste e sem declaração de conformidade.
+ */
+export function exemploBalanca32kg(): DadosCertificadoPdf {
+  const padroes = [JP02, TH01]
+  const pesos = [JP02]
+  const b = balanca({
+    id: 'bal-32',
+    clienteId: 'cli-emporio',
+    tipo: 'BALCAO',
+    fabricante: 'Ramuza',
+    modelo: 'DP-32',
+    numeroSerie: 'R32-60218',
+    identificacao: 'Balcão 2',
+    faixas: [{ max: 32, e: 0.005, d: 0.005 }],
+    min: 0.1,
+    classe: 'III',
+    portariaAprovacao: 'Portaria Inmetro/Dimel nº 0109/2014',
+    receptor: 'RETANGULAR',
+    dimensoes: 'prato 35 × 30 cm',
+    finalidade: 'COMERCIAL',
+    localInstalacao: 'Balcão do açougue',
+    anoFabricacao: '2022',
+  })
+  const c = cliente({
+    id: 'cli-emporio',
+    nome: 'Empório Boa Morte Ltda.',
+    razaoSocial: 'EMPÓRIO BOA MORTE LTDA',
+    documento: '11.222.333/0001-81',
+    contato: 'Ana Paula (gerência)',
+    telefone: '(19) 3524-0000',
+    email: 'gerencia@emporioexemplo.com.br',
+    cep: '13500-000',
+    logradouro: 'Avenida 2',
+    numero: '1500',
+    bairro: 'Centro',
+    cidade: 'Rio Claro',
+    uf: 'SP',
+  })
+  const kg = (id: string, carga: number, sobe: number, desce: number) => ponto(id, carga, sobe, desce, pesos, 'kg')
+  const k: Calibracao = {
+    ...calibracaoBase('cal-32'),
+    numero: 'CC-2026-00140',
+    sequencia: 140,
+    clienteId: c.id,
+    balancaId: b.id,
+    ordemServico: 'OS-2026-0602',
+    dataCalibracao: '2026-10-27',
+    dataEmissao: '2026-10-28',
+    local: 'CLIENTE',
+    localEndereco: 'Avenida 2, 1500 – Centro – Rio Claro/SP',
+    tecnicoId: TECNICO.id,
+    signatarioId: RESPONSAVEL.id,
+    padroesIds: padroes.map((p) => p.id),
+    ambiente: { temperaturaInicial: 23.4, temperaturaFinal: 24.1, umidadeInicial: 58, umidadeFinal: 56, pressao: null },
+    repetibilidade: [{ id: 'rep1', carga: 16, leituras: [16, 16.005, 16, 16, 16.005] }],
+    excentricidade: {
+      aplicavel: true,
+      motivo: '',
+      carga: 15,
+      metodo: 1,
+      posicoes: [
+        { rotulo: 'Centro', leitura: 15, referencia: null },
+        { rotulo: 'Frente esquerda', leitura: 15.005, referencia: null },
+        { rotulo: 'Trás esquerda', leitura: 15, referencia: null },
+        { rotulo: 'Trás direita', leitura: 14.995, referencia: null },
+        { rotulo: 'Frente direita', leitura: 15, referencia: null },
+      ],
+    },
+    indicacao: ensaio(
+      'CRESCENTE_DECRESCENTE',
+      [
+        kg('p0', 0, 0, 0),
+        kg('p1', 0.1, 0.1, 0.1),
+        kg('p2', 2.5, 2.5, 2.5),
+        kg('p3', 8, 8, 8),
+        kg('p4', 10, 10.005, 10.005),
+        kg('p5', 16, 16.005, 16.01),
+        kg('p6', 24, 24.005, 24.01),
+        kg('p7', 32, 32.005, 32.005),
+      ],
+      0,
+    ),
+  }
+  const e: EmissaoCertificado = {
+    emitidoEm: '2026-10-28T13:10:00.000Z',
+    emitidoPor: RESPONSAVEL.id,
+    codigo: 'X32K-0001',
+    hashPdf: '',
+    arquivo: '',
+    empresa: EMPRESA_PADRAO,
+    cliente: c,
+    balanca: b,
+    padroes,
+    tecnico: TECNICO,
+    signatario: RESPONSAVEL,
+    textos: TEXTOS_EXEMPLO,
+    substituiNumero: '',
+    substituiEmissao: '',
+    regrasDoPop: true,
+  }
+  return montar(k, e)
+}
+
+// ---- 5. Pior caso de hoje: piso multi-intervalo 60/150/300 kg (revisão, conformidade, textos longos) ---------
+
+/**
+ * O pior caso de hoje, para conferir o limite de 3 páginas com tudo o que uma calibração da 1.0.3 pode ter: balança
+ * de piso multi-intervalo 60/150/300 kg × 20/50/100 g, classe III, com os pontos (subindo e descendo), as
+ * repetibilidades (uma por intervalo, POP 7.9) e a carga de excentricidade que o sistema sugere; revisão (substitui
+ * o nº …), declaração de conformidade (aceitação simples), próxima calibração a pedido do cliente, 4 padrões (com o
+ * barômetro) e textos longos: a razão social, o contato, o local, as observações (uma por linha) e as opiniões. Sem
+ * ajuste, sem "como encontrado", sem reparo e sem a verificação preliminar (POP 7 e 7.8).
+ */
+export function exemploPiorCasoAtual(): DadosCertificadoPdf {
+  const padroes = [PP20, JP01, TH01, BR01]
+  const pesos = [PP20, JP01]
+  const b = balanca({
+    id: 'bal-piso-multi',
+    clienteId: 'cli-coop',
+    tipo: 'PISO',
+    fabricante: 'Alfa Instrumentos',
+    modelo: '3107C',
+    numeroSerie: '3107C-2024-118734',
+    identificacao: 'BP-07 (armazém de sementes, doca 3)',
+    plataformaFabricante: 'Alfa Instrumentos',
+    plataformaModelo: 'PL-1515 Inox',
+    plataformaSerie: 'PL1515-2024-0093',
+    tipoFaixas: 'MULTI_INTERVALO',
+    faixas: [
+      { max: 60, e: 0.02, d: 0.02 },
+      { max: 150, e: 0.05, d: 0.05 },
+      { max: 300, e: 0.1, d: 0.1 },
+    ],
+    min: 0.4,
+    classe: 'III',
+    portariaAprovacao: 'Portaria Inmetro/Dimel nº 0187/2020',
+    receptor: 'RETANGULAR',
+    dimensoes: '1,50 × 1,50 m, em fosso',
+    finalidade: 'COMERCIAL',
+    localInstalacao: 'Armazém de sementes — doca 3, expedição de big bags e sacaria',
+    anoFabricacao: '2024',
+  })
+  const c = cliente({
+    id: 'cli-coop',
+    nome: 'Coopervale',
+    razaoSocial: 'COOPERATIVA AGROINDUSTRIAL DOS PRODUTORES RURAIS DO VALE DO CORUMBATAÍ E REGIÃO',
+    documento: '33.592.510/0001-54',
+    contato: 'Eng.ª Paula Ribeiro de Albuquerque (Qualidade e Metrologia)',
+    telefone: '(19) 3526-4400',
+    celular: '(19) 99745-2210',
+    email: 'metrologia.qualidade@coopervale.coop.br',
+    cep: '13505-600',
+    logradouro: 'Rodovia Washington Luís (SP-310), km 182,5',
+    numero: 's/n',
+    complemento: 'armazém 14, portaria 2',
+    bairro: 'Distrito Industrial Norte',
+    cidade: 'Rio Claro',
+    uf: 'SP',
+  })
+  const kg = (id: string, carga: number, sobe: number, desce: number) => ponto(id, carga, sobe, desce, pesos, 'kg')
+  const k: Calibracao = {
+    ...calibracaoBase('cal-pior-atual'),
+    numero: 'CC-2026-00151-R1',
+    sequencia: 151,
+    revisao: 1,
+    clienteId: c.id,
+    balancaId: b.id,
+    ordemServico: 'OS-2026-0611',
+    dataCalibracao: '2026-10-29',
+    dataEmissao: '2026-11-03',
+    local: 'CLIENTE',
+    localEndereco:
+      'Rodovia Washington Luís (SP-310), km 182,5, armazém 14 – Distrito Industrial Norte – Rio Claro/SP (armazém de sementes, doca 3)',
+    tecnicoId: TECNICO.id,
+    signatarioId: RESPONSAVEL.id,
+    padroesIds: padroes.map((p) => p.id),
+    ambiente: { temperaturaInicial: 24.2, temperaturaFinal: 27.9, umidadeInicial: 63, umidadeFinal: 52, pressao: 944 },
+    // Uma por intervalo de d diferente (POP 7.9), nas cargas que o sistema sugere, com 5 leituras em cada (o mínimo
+    // é 5; 3 com carga de 100 kg ou mais)
+    repetibilidade: [
+      { id: 'rep1', carga: 48, leituras: [48, 48.02, 48, 48, 48.02] },
+      { id: 'rep2', carga: 120, leituras: [120, 120, 120.05, 120, 120] },
+      { id: 'rep3', carga: 250, leituras: [250, 250.1, 250, 250, 250] },
+    ],
+    excentricidade: {
+      aplicavel: true,
+      motivo: '',
+      carga: 100,
+      metodo: 1,
+      posicoes: [
+        { rotulo: 'Centro', leitura: 100, referencia: null },
+        { rotulo: 'Frente esquerda', leitura: 100.05, referencia: null },
+        { rotulo: 'Trás esquerda', leitura: 100, referencia: null },
+        { rotulo: 'Trás direita', leitura: 99.95, referencia: null },
+        { rotulo: 'Frente direita', leitura: 100.05, referencia: null },
+      ],
+    },
+    // Os pontos sugeridos: 0, Min, 25/50/75 % de Max e as mudanças de EMA de cada intervalo (500e e 2000e)
+    indicacao: ensaio(
+      'CRESCENTE_DECRESCENTE',
+      [
+        kg('p0', 0, 0, 0),
+        kg('pmin', 0.4, 0.4, 0.4),
+        kg('p1', 10, 10, 10.02),
+        kg('p2', 40, 40.02, 40.02),
+        kg('p3', 75, 75.05, 75.05),
+        kg('p4', 100, 100.05, 100.05),
+        kg('p5', 150, 150.05, 150.05),
+        kg('p6', 200, 200.1, 200.1),
+        kg('p7', 225, 225.1, 225.2),
+        kg('p8', 300, 300.1, 300.1),
+      ],
+      0,
+    ),
+    conformidade: { solicitada: true, criterio: 'PORTARIA_SERVICO', toleranciaCliente: 0, regra: 'SIMPLES' },
+    proximaCalibracao: '2027-10-29',
+    proximaNoCertificado: true,
+    substituiId: 'cal-pior-atual-original',
+    regrasDoPop: true,
+    motivoRevisao:
+      'correção do nº de série da plataforma e do endereço do local da calibração, transcritos com erro no certificado original, e inclusão da data da próxima calibração pedida pelo cliente',
+    observacoes: [
+      'Balança usada na expedição de sementes em big bags e sacaria, com cargas de até 300 kg.',
+      'Plataforma em fosso, limpa e com as folgas laterais livres; o zero automático ficou ligado durante os ensaios, como no uso.',
+      'Pesos padrão aclimatados no armazém por 2 h antes do primeiro ensaio.',
+    ].join('\n'),
+    opinioes:
+      'Os erros de indicação ficaram dentro do EMA em serviço em todos os pontos, com folga menor no intervalo de 150 kg a 300 kg. Recomenda-se manter as folgas laterais da plataforma livres de sementes e de restos de embalagem, que podem encostar na estrutura e causar erros nas cargas maiores, e conferir o zero no início de cada turno.',
+  }
+  const e: EmissaoCertificado = {
+    emitidoEm: '2026-11-03T14:05:00.000Z',
+    emitidoPor: RESPONSAVEL.id,
+    codigo: 'Q9MZ-4TPV',
+    hashPdf: '',
+    arquivo: '',
+    empresa: EMPRESA_PADRAO,
+    cliente: c,
+    balanca: b,
+    padroes,
+    tecnico: TECNICO,
+    signatario: RESPONSAVEL,
+    textos: TEXTOS_EXEMPLO,
+    substituiNumero: 'CC-2026-00151',
+    substituiEmissao: '2026-10-30T17:45:00.000Z',
+    regrasDoPop: true,
+  }
+  return montar(k, e)
+}
+
+// ==== Registros de antes do POP (legado): só para os testes ====================================================
+
+// ---- Legado: rodoviária 80 t × 20 kg (revisão, prévia) ------------------------------------------------
+
+/**
+ * Rodoviária de um registro de antes do POP (a empresa não calibra mais rodoviárias nem ferroviárias, POP 2.1; a
+ * balança já cadastrada continua abrindo): cargas de substituição, faixa parcial, revisão e a prévia do rascunho.
+ * Só para os testes.
+ */
+export function exemploRodoviariaLegado(): DadosCertificadoPdf {
   const padroes = [PP500, TH01, BR01]
   const pesos = [PP500]
   const b = balanca({
@@ -767,9 +1251,13 @@ export function exemploRodoviaria(): DadosCertificadoPdf {
   return montar(k, e, { marcaDagua: 'PRÉVIA — SEM VALOR', previa: true })
 }
 
-// ---- 4. Pior caso: rodoviária multi-intervalo 30/60/80 t (ajuste, substituição, conformidade) ---------
+// ---- Legado: o pior caso de antes, rodoviária multi-intervalo 30/60/80 t (ajuste, substituição) ---------
 
-export function exemploPiorCaso(): DadosCertificadoPdf {
+/**
+ * O pior caso de antes do POP: rodoviária multi-intervalo com cargas de substituição, ajuste externo com o "como
+ * encontrado", reparo, revisão, conformidade e a verificação preliminar com item "não". Só para os testes.
+ */
+export function exemploPiorCasoLegado(): DadosCertificadoPdf {
   const padroes = [PP500, PP20, TH01, BR01]
   const pesos = [PP500, PP20]
   const b = balanca({
@@ -957,287 +1445,13 @@ export function exemploPiorCaso(): DadosCertificadoPdf {
   return montar(k, e)
 }
 
-// ---- 5. Classe I: analítica 220 g × 0,1 mg (empuxo pela densidade do ar, convecção) -----------------------
+// ---- Os nomes de antes (para quem ainda os usa: são os registros de antes do POP) ------------------------------
 
-/**
- * Analítica classe I no local de uso, com pesos E2 pelo certificado: "como encontrado", ajuste interno logo em
- * seguida (POP 7.11) e os ensaios depois do ajuste. Empuxo pela densidade do ar medida (temperatura, umidade e
- * pressão) e convecção pela diferença de temperatura pesos − ar medida antes do 1º ensaio: as opções da classe I.
- * Os pontos são os sugeridos pelo sistema (0, Min, ~25 %… em múltiplos de 10 g, sem peças menores que 10 g e
- * dentro de 1/3 do EMA com os pesos E2 — 160 g = 100 g + 50 g + 10 g, e não 170 g = 100 g + 50 g + 20 g —, e as
- * cargas onde muda o EMA: 50 g e 200 g); a repetibilidade com 10 leituras de uma peça só, e a excentricidade com
- * uma peça de 1/3 de Max ou mais, pelo método 3 (zera antes de cada posição).
- */
-export function exemploClasseI(): DadosCertificadoPdf {
-  const padroes = [JE2, TH01, BR01, TD01]
-  const pesos = [JE2]
-  const b = balanca({
-    id: 'bal-analitica',
-    clienteId: 'cli-farma',
-    tipo: 'ANALITICA',
-    fabricante: 'Shimadzu',
-    modelo: 'AUY220',
-    numeroSerie: 'D450120387',
-    identificacao: 'BA-03 (CQ)',
-    unidade: 'g',
-    faixas: [{ max: 220, e: 0.001, d: 0.0001 }],
-    min: 0.01,
-    classe: 'I',
-    portariaAprovacao: 'Portaria Inmetro/Dimel nº 0270/2011',
-    receptor: 'CIRCULAR',
-    dimensoes: 'prato Ø 80 mm',
-    finalidade: 'LABORATORIO',
-    localInstalacao: 'Controle de qualidade — sala de balanças',
-    anoFabricacao: '2020',
-  })
-  const c = cliente({
-    id: 'cli-farma',
-    nome: 'Farmacêutica Horto',
-    razaoSocial: 'LABORATÓRIO FARMACÊUTICO HORTO FLORESTAL LTDA',
-    documento: '61.827.504/0001-74',
-    contato: 'Camila Torres (Garantia da Qualidade)',
-    telefone: '(19) 3522-8800',
-    email: 'qualidade@farmahorto.com.br',
-    cep: '13506-900',
-    logradouro: 'Avenida Navarro de Andrade',
-    numero: '1200',
-    bairro: 'Horto Florestal',
-    cidade: 'Rio Claro',
-    uf: 'SP',
-  })
-  const g = (id: string, carga: number, leitura: number) => ponto(id, carga, leitura, null, pesos, 'g')
-  const k: Calibracao = {
-    ...calibracaoBase('cal-analitica'),
-    numero: 'CC-2026-00132',
-    sequencia: 132,
-    clienteId: c.id,
-    balancaId: b.id,
-    ordemServico: 'OS-2026-0547',
-    dataCalibracao: '2026-10-26',
-    dataEmissao: '2026-10-27',
-    local: 'CLIENTE',
-    localEndereco: 'Avenida Navarro de Andrade, 1200 – Horto Florestal – Rio Claro/SP (controle de qualidade)',
-    tecnicoId: TECNICO.id,
-    signatarioId: RESPONSAVEL.id,
-    padroesIds: padroes.map((p) => p.id),
-    // Pressão absoluta do local (Rio Claro, ≈ 612 m), lida no barômetro; ΔT pesos − ar com o termômetro TD-01
-    ambiente: {
-      temperaturaInicial: 22.4,
-      temperaturaFinal: 22.9,
-      umidadeInicial: 54,
-      umidadeFinal: 55,
-      pressao: 942,
-      deltaTPesos: 0.3,
-    },
-    preliminar: {
-      identificavel: 'SIM',
-      limpa: 'SIM',
-      nivelada: 'SIM',
-      aquecida: 'SIM',
-      preCarga: 'SIM',
-      zeroAutomatico: 'LIGADO',
-    },
-    // Ajuste interno logo após o "como encontrado" (POP 7.11): o ensaio final é o de logo após um ajuste
-    ajuste: { realizado: 'INTERNO', descricao: '' },
-    comoEncontrado: ensaio('DESCONTINUO', [
-      g('ce0', 0, 0),
-      g('ce1', 50, 50.0003),
-      g('ce2', 110, 110.0006),
-      g('ce3', 160, 160.0009),
-      g('ce4', 220, 220.0012),
-    ]),
-    repetibilidade: [
-      {
-        id: 'rep1',
-        carga: 200,
-        leituras: [200.0003, 200.0004, 200.0003, 200.0003, 200.0002, 200.0003, 200.0004, 200.0003, 200.0003, 200.0002],
-      },
-    ],
-    excentricidade: {
-      aplicavel: true,
-      motivo: '',
-      carga: 100,
-      metodo: 3,
-      posicoes: [
-        { rotulo: 'Centro', leitura: 100.0001, referencia: 0 },
-        { rotulo: 'Frente (0°)', leitura: 100.0003, referencia: 0 },
-        { rotulo: 'Direita (90°)', leitura: 100.0002, referencia: 0.0001 },
-        { rotulo: 'Trás (180°)', leitura: 100.0001, referencia: 0 },
-        { rotulo: 'Esquerda (270°)', leitura: 100.0002, referencia: 0 },
-      ],
-    },
-    indicacao: ensaio(
-      'DESCONTINUO',
-      [
-        g('p0', 0, 0),
-        // Min (10 mg), marcada na plaqueta
-        g('pmin', 0.01, 0.01),
-        g('p1', 50, 50.0001),
-        g('p2', 60, 60.0001),
-        g('p3', 110, 110.0002),
-        g('p4', 160, 160.0002),
-        g('p5', 200, 200.0003),
-        g('p6', 220, 220.0003),
-      ],
-      0,
-    ),
-    // As opções da classe I: empuxo pela densidade do ar medida e convecção calculada (deriva: o padrão, EMA)
-    opcoes: { ...calibracaoVazia().opcoes, empuxo: 'MEDIDO', conveccao: 'CALCULAR' },
-    observacoes: 'Calibração no local de uso, com a capela fechada em todas as leituras.',
-  }
-  const e: EmissaoCertificado = {
-    emitidoEm: '2026-10-27T13:20:00.000Z',
-    emitidoPor: RESPONSAVEL.id,
-    codigo: 'K7AN-2LTC',
-    hashPdf: '',
-    arquivo: '',
-    empresa: EMPRESA_PADRAO,
-    cliente: c,
-    balanca: b,
-    padroes,
-    tecnico: TECNICO,
-    signatario: RESPONSAVEL,
-    textos: TEXTOS_EXEMPLO,
-    substituiNumero: '',
-    substituiEmissao: '',
-  }
-  return montar(k, e)
-}
-
-// ---- 6. Balcão 32 kg × 5 g: o caso mais comum (classe III, sem ajuste, sem conformidade) ------------------
-
-/** Jogo de pesos 100 g a 10 kg, classe M1, aço inoxidável (balanças de balcão até 32 kg). */
-const JP02 = padrao({
-  id: 'pad-jp02',
-  tipo: 'PESOS',
-  identificacao: 'JP-02',
-  descricao: 'Jogo de pesos padrão 100 g a 10 kg',
-  fabricante: 'Toledo do Brasil',
-  classe: 'M1',
-  material: 'Aço inoxidável',
-  densidade: 7950,
-  pesos: [
-    peso('10a', '10 kg nº 1', 10_000, 60, 160),
-    peso('10b', '10 kg nº 2', 10_000, -40, 160),
-    peso('10c', '10 kg nº 3', 10_000, 90, 160),
-    peso('5a', '5 kg nº 1', 5_000, 35, 80),
-    peso('5b', '5 kg nº 2', 5_000, -20, 80),
-    peso('2a', '2 kg nº 1', 2_000, -12, 30),
-    peso('2b', '2 kg nº 2', 2_000, 18, 30),
-    peso('1a', '1 kg', 1_000, 8, 16),
-    peso('500', '500 g', 500, 4, 8),
-    peso('200a', '200 g nº 1', 200, 1.2, 3),
-    peso('200b', '200 g nº 2', 200, -1, 3),
-    peso('100', '100 g', 100, 0.8, 1.6),
-  ],
-  certificado: 'CAL-12347/2026',
-  laboratorio: 'Laboratório Metrológico Paulista Ltda.',
-  acreditacao: 'CAL 0383',
-  dataCalibracao: '2026-03-10',
-  validade: '2028-03-10',
-})
-
-/**
- * Balança de balcão 32 kg × 5 g, classe III, no local de uso: os pontos, a repetibilidade e a excentricidade
- * que o sistema sugere para ela (0, Min, 2,5, 8, 10, 16, 24 e 32 kg; 5 leituras com 16 kg; 15 kg nas 5
- * posições), cargas crescentes e decrescentes, sem ajuste e sem declaração de conformidade.
- */
-export function exemploBalanca32kg(): DadosCertificadoPdf {
-  const padroes = [JP02, TH01]
-  const pesos = [JP02]
-  const b = balanca({
-    id: 'bal-32',
-    clienteId: 'cli-emporio',
-    tipo: 'BALCAO',
-    fabricante: 'Ramuza',
-    modelo: 'DP-32',
-    numeroSerie: 'R32-60218',
-    identificacao: 'Balcão 2',
-    faixas: [{ max: 32, e: 0.005, d: 0.005 }],
-    min: 0.1,
-    classe: 'III',
-    portariaAprovacao: 'Portaria Inmetro/Dimel nº 0109/2014',
-    receptor: 'RETANGULAR',
-    dimensoes: 'prato 35 × 30 cm',
-    finalidade: 'COMERCIAL',
-    localInstalacao: 'Balcão do açougue',
-    anoFabricacao: '2022',
-  })
-  const c = cliente({
-    id: 'cli-emporio',
-    nome: 'Empório Boa Morte Ltda.',
-    razaoSocial: 'EMPÓRIO BOA MORTE LTDA',
-    documento: '11.222.333/0001-81',
-    contato: 'Ana Paula (gerência)',
-    telefone: '(19) 3524-0000',
-    email: 'gerencia@emporioexemplo.com.br',
-    cep: '13500-000',
-    logradouro: 'Avenida 2',
-    numero: '1500',
-    bairro: 'Centro',
-    cidade: 'Rio Claro',
-    uf: 'SP',
-  })
-  const kg = (id: string, carga: number, sobe: number, desce: number) => ponto(id, carga, sobe, desce, pesos, 'kg')
-  const k: Calibracao = {
-    ...calibracaoBase('cal-32'),
-    numero: 'CC-2026-00140',
-    sequencia: 140,
-    clienteId: c.id,
-    balancaId: b.id,
-    ordemServico: 'OS-2026-0602',
-    dataCalibracao: '2026-10-27',
-    dataEmissao: '2026-10-28',
-    local: 'CLIENTE',
-    localEndereco: 'Avenida 2, 1500 – Centro – Rio Claro/SP',
-    tecnicoId: TECNICO.id,
-    signatarioId: RESPONSAVEL.id,
-    padroesIds: padroes.map((p) => p.id),
-    ambiente: { temperaturaInicial: 23.4, temperaturaFinal: 24.1, umidadeInicial: 58, umidadeFinal: 56, pressao: null },
-    repetibilidade: [{ id: 'rep1', carga: 16, leituras: [16, 16.005, 16, 16, 16.005] }],
-    excentricidade: {
-      aplicavel: true,
-      motivo: '',
-      carga: 15,
-      metodo: 1,
-      posicoes: [
-        { rotulo: 'Centro', leitura: 15, referencia: null },
-        { rotulo: 'Frente esquerda', leitura: 15.005, referencia: null },
-        { rotulo: 'Trás esquerda', leitura: 15, referencia: null },
-        { rotulo: 'Trás direita', leitura: 14.995, referencia: null },
-        { rotulo: 'Frente direita', leitura: 15, referencia: null },
-      ],
-    },
-    indicacao: ensaio(
-      'CRESCENTE_DECRESCENTE',
-      [
-        kg('p0', 0, 0, 0),
-        kg('p1', 0.1, 0.1, 0.1),
-        kg('p2', 2.5, 2.5, 2.5),
-        kg('p3', 8, 8, 8),
-        kg('p4', 10, 10.005, 10.005),
-        kg('p5', 16, 16.005, 16.01),
-        kg('p6', 24, 24.005, 24.01),
-        kg('p7', 32, 32.005, 32.005),
-      ],
-      0,
-    ),
-  }
-  const e: EmissaoCertificado = {
-    emitidoEm: '2026-10-28T13:10:00.000Z',
-    emitidoPor: RESPONSAVEL.id,
-    codigo: 'X32K-0001',
-    hashPdf: '',
-    arquivo: '',
-    empresa: EMPRESA_PADRAO,
-    cliente: c,
-    balanca: b,
-    padroes,
-    tecnico: TECNICO,
-    signatario: RESPONSAVEL,
-    textos: TEXTOS_EXEMPLO,
-    substituiNumero: '',
-    substituiEmissao: '',
-  }
-  return montar(k, e)
-}
+/** @deprecated Registro de antes do POP: use `exemploPlataformaLegado` (a amostra de hoje é `exemploPlataforma300kg`). */
+export const exemploPlataforma = exemploPlataformaLegado
+/** @deprecated Registro de antes do POP (a empresa não calibra rodoviárias): use `exemploRodoviariaLegado`. */
+export const exemploRodoviaria = exemploRodoviariaLegado
+/** @deprecated O pior caso de antes do POP: use `exemploPiorCasoLegado` (o de hoje é `exemploPiorCasoAtual`). */
+export const exemploPiorCaso = exemploPiorCasoLegado
+/** @deprecated Registro de antes do POP: use `exemploClasseILegado` (a amostra de hoje é `exemploClasseI220g`). */
+export const exemploClasseI = exemploClasseILegado

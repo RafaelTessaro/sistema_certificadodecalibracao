@@ -1,15 +1,29 @@
 // Testes do certificado em PDF: gera os exemplos realistas (server/pdf/exemplosCertificado.ts),
 // grava as amostras em server/pdf/exemplos/ e confere o conteúdo pelo texto extraído com o pdftotext
 // (testes opcionais: só rodam se o poppler-utils estiver instalado). Com o pdftoppm, também renderiza
-// as páginas em PNG (80 dpi) para a revisão visual.
+// as páginas em PNG (80 dpi) para a revisão visual. As amostras publicadas seguem as regras da 1.0.3; as dos
+// registros de antes do POP (ajuste externo, "como encontrado", reparo, rodoviária) vão para exemplos/legado/.
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { massaLegivel, multilinha, REPRODUCAO_ANTIGA, TEXTOS_ANTIGOS, TEXTOS_PADRAO } from '#shared/dominio.ts'
+import {
+  calibracaoVazia,
+  massaLegivel,
+  METODOS_CARREGAMENTO,
+  metodoExcentricidadePadrao,
+  metodoIndicacaoPadrao,
+  multilinha,
+  pendenciasEmissao,
+  registroAnterior,
+  REPRODUCAO_ANTIGA,
+  TEXTOS_ANTIGOS,
+  TEXTOS_PADRAO,
+  TIPOS_FORA_DO_POP,
+} from '#shared/dominio.ts'
 import { densidadeAr, posicoesExcentricidade } from '#shared/metrologia/index.ts'
 import { A4, pdfmake } from './base.ts'
 import {
@@ -31,10 +45,13 @@ import {
 import {
   exemploBalanca32kg,
   exemploBancada,
-  exemploClasseI,
-  exemploPiorCaso,
-  exemploPlataforma,
-  exemploRodoviaria,
+  exemploClasseI220g,
+  exemploClasseILegado,
+  exemploPiorCasoAtual,
+  exemploPiorCasoLegado,
+  exemploPlataforma300kg,
+  exemploPlataformaLegado,
+  exemploRodoviariaLegado,
   POP_EXEMPLO,
 } from './exemplosCertificado.ts'
 import { diagramaExcentricidade, diagramaPosicoes } from './graficos.ts'
@@ -65,26 +82,64 @@ const paginas = (t: string) => {
 }
 
 /**
- * Os exemplos, todos em no máximo 3 páginas, com o desenho das posições e o gráfico: `grafico`, a altura dele
- * na montagem (o pior caso também aperta os respiros, `compacto`).
+ * Um exemplo, em no máximo 3 páginas, com o desenho das posições e o gráfico: `grafico`, a altura dele na montagem
+ * (o pior caso também aperta os respiros, `compacto`). `arquivo`: o caminho da amostra em exemplos/, sem a extensão.
  */
-const EXEMPLOS: Array<{
+interface Exemplo {
   arquivo: string
   dados: () => DadosCertificadoPdf
   paginas: number
   grafico: number
   compacto?: boolean
-}> = [
-  // Ajuste com "como encontrado", reparo e conformidade: o gráfico encolhe um pouco para caber em 3
-  { arquivo: 'certificado-plataforma-300kg', dados: exemploPlataforma, paginas: 3, grafico: 116 },
+}
+
+/** As amostras publicadas (exemplos/): o que o sistema faz hoje (1.0.3), sem pendência nenhuma para emitir. */
+const EXEMPLOS: Exemplo[] = [
+  // Sem ajuste, com a conformidade (banda de guarda) e a próxima calibração a pedido
+  { arquivo: 'certificado-plataforma-300kg', dados: exemploPlataforma300kg, paginas: 3, grafico: 150 },
   { arquivo: 'certificado-bancada-30kg', dados: exemploBancada, paginas: 3, grafico: 150 },
-  { arquivo: 'certificado-rodoviaria-80t', dados: exemploRodoviaria, paginas: 3, grafico: 150 },
-  // Tudo junto: o gráfico menor e os respiros do layout compacto
-  { arquivo: 'certificado-pior-caso', dados: exemploPiorCaso, paginas: 3, grafico: 100, compacto: true },
-  { arquivo: 'certificado-classe-i-220g', dados: exemploClasseI, paginas: 3, grafico: 150 },
+  // O ajuste interno (CAL) antes dos ensaios, sem "como encontrado"
+  { arquivo: 'certificado-classe-i-220g', dados: exemploClasseI220g, paginas: 3, grafico: 150 },
   // O caso mais comum: balcão 32 kg × 5 g, com os pontos que o sistema sugere
   { arquivo: 'certificado-balanca-32kg', dados: exemploBalanca32kg, paginas: 3, grafico: 150 },
+  // Tudo o que uma calibração de hoje pode ter: o gráfico menor e os respiros do layout compacto
+  { arquivo: 'certificado-pior-caso', dados: exemploPiorCasoAtual, paginas: 3, grafico: 100, compacto: true },
 ]
+
+/** Pasta das amostras dos registros de antes do POP (dentro de exemplos/), à parte das de hoje. */
+const LEGADO = 'legado'
+
+/**
+ * Os registros de antes do POP (1.0.1 e 1.0.2), que continuam abrindo e saindo como saíam: amostras em
+ * exemplos/legado/, para não serem tomadas pelo que o sistema faz hoje.
+ */
+const LEGADOS: Exemplo[] = [
+  // Ajuste externo com "como encontrado", reparo e conformidade: o gráfico encolhe um pouco para caber em 3
+  {
+    arquivo: `${LEGADO}/certificado-plataforma-300kg-ajuste-externo`,
+    dados: exemploPlataformaLegado,
+    paginas: 3,
+    grafico: 116,
+  },
+  { arquivo: `${LEGADO}/certificado-rodoviaria-80t`, dados: exemploRodoviariaLegado, paginas: 3, grafico: 150 },
+  // Tudo junto (substituição, ajuste com "como encontrado", reparo, revisão): o gráfico menor e o layout compacto
+  {
+    arquivo: `${LEGADO}/certificado-pior-caso-rodoviaria`,
+    dados: exemploPiorCasoLegado,
+    paginas: 3,
+    grafico: 100,
+    compacto: true,
+  },
+  {
+    arquivo: `${LEGADO}/certificado-classe-i-220g-como-encontrado`,
+    dados: exemploClasseILegado,
+    paginas: 3,
+    grafico: 150,
+  },
+]
+
+/** Todos os exemplos (os de hoje e os de antes): o que vale para qualquer certificado. */
+const TODOS: Exemplo[] = [...EXEMPLOS, ...LEGADOS]
 
 /** Resultados calculados de novo depois de mudar a calibração de um exemplo. */
 function recalculado(d: DadosCertificadoPdf): DadosCertificadoPdf {
@@ -107,16 +162,16 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
     },
   },
   {
-    nome: 'plataforma com reparo e ajuste, sem "como encontrado"',
+    nome: 'plataforma (legado) com reparo e ajuste externo, sem "como encontrado"',
     paginas: 3,
     dados: () => {
-      const d = exemploPlataforma()
+      const d = exemploPlataformaLegado()
       d.calibracao.comoEncontrado = null
       return recalculado(d)
     },
   },
   {
-    nome: 'bancada com conformidade, reparo e ajuste',
+    nome: 'bancada (legado) com conformidade, reparo e ajuste externo',
     paginas: 3,
     dados: () => {
       const d = exemploBancada()
@@ -137,7 +192,7 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
     nome: 'rodoviária com uma opinião de 1 linha',
     paginas: 3,
     dados: () => {
-      const d = exemploRodoviaria()
+      const d = exemploRodoviariaLegado()
       d.calibracao.opinioes = 'Recomenda-se limpar as laterais da plataforma.'
       return d
     },
@@ -195,18 +250,41 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
     },
   },
   {
-    nome: 'plataforma sem reparo, com "como encontrado"',
+    nome: 'plataforma (legado) sem reparo, com "como encontrado"',
     paginas: 3,
     dados: () => {
-      const d = exemploPlataforma()
+      const d = exemploPlataformaLegado()
       d.calibracao.reparo = { houve: false, descricao: '', marcaReparo: '', selosRetirados: '', selosColocados: '' }
       return d
     },
   },
+  // A plataforma de hoje sem a conformidade nem a próxima calibração (o mais comum) e com uma opinião curta
   {
-    nome: 'pior caso com 6 padrões, 3 cargas de repetibilidade e 10 posições',
+    nome: 'plataforma sem conformidade, com opinião de 1 linha',
+    paginas: 3,
     dados: () => {
-      const d = exemploPiorCaso()
+      const d = exemploPlataforma300kg()
+      d.calibracao.conformidade = { ...d.calibracao.conformidade, solicitada: false }
+      d.calibracao.proximaNoCertificado = false
+      d.calibracao.opinioes = 'A balança está em boas condições de uso; mantenha a plataforma limpa e nivelada.'
+      return recalculado(d)
+    },
+  },
+  {
+    nome: 'pior caso de hoje com 6 padrões',
+    dados: () => {
+      const d = exemploPiorCasoAtual()
+      const extra = d.emissao.padroes
+        .slice(0, 2)
+        .map((p, i) => ({ ...p, id: `${p.id}-x${i}`, identificacao: `${p.identificacao}B` }))
+      d.emissao.padroes = [...d.emissao.padroes, ...extra]
+      return recalculado(d)
+    },
+  },
+  {
+    nome: 'pior caso (legado) com 6 padrões, 3 cargas de repetibilidade e 10 posições',
+    dados: () => {
+      const d = exemploPiorCasoLegado()
       const k = d.calibracao
       k.repetibilidade = [
         { id: 'r1', carga: 10000, leituras: [10000, 10010, 10000] },
@@ -227,9 +305,9 @@ const VARIANTES: Array<{ nome: string; dados: () => DadosCertificadoPdf; paginas
   },
 ]
 
-/** A rodoviária de exemplo como um certificado comum: original (sem revisão) e sem marca d'água. */
+/** A rodoviária de exemplo (legado) como um certificado comum: original (sem revisão) e sem marca d'água. */
 function rodoviariaSemRevisao(): DadosCertificadoPdf {
-  const d = exemploRodoviaria()
+  const d = exemploRodoviariaLegado()
   d.calibracao = { ...d.calibracao, numero: 'CC-2026-00098', revisao: 0, substituiId: '', motivoRevisao: '' }
   d.emissao = { ...d.emissao, substituiNumero: '', substituiEmissao: '' }
   d.marcaDagua = ''
@@ -252,7 +330,7 @@ const gerados = new Map<string, Buffer>()
 async function pdfDe(arquivo: string): Promise<Buffer> {
   let pdf = gerados.get(arquivo)
   if (!pdf) {
-    pdf = await gerarCertificadoPdf(EXEMPLOS.find((e) => e.arquivo === arquivo)!.dados())
+    pdf = await gerarCertificadoPdf(TODOS.find((e) => e.arquivo === arquivo)!.dados())
     gerados.set(arquivo, pdf)
   }
   return pdf
@@ -326,13 +404,14 @@ function conferirComum(texto: string, d: DadosCertificadoPdf) {
 }
 
 describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
-  it.each(EXEMPLOS)('gera um PDF válido e grava a amostra: $arquivo', async ({ arquivo }) => {
+  it.each(TODOS)('gera um PDF válido e grava a amostra: $arquivo', async ({ arquivo }) => {
     const pdf = await pdfDe(arquivo)
     expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-')
     expect(pdf.length).toBeGreaterThan(20_000)
     expect(pdf.subarray(-6).toString('latin1')).toContain('%%EOF')
-    mkdirSync(PASTA_EXEMPLOS, { recursive: true })
-    writeFileSync(join(PASTA_EXEMPLOS, `${arquivo}.pdf`), pdf)
+    const caminho = join(PASTA_EXEMPLOS, `${arquivo}.pdf`)
+    mkdirSync(dirname(caminho), { recursive: true })
+    writeFileSync(caminho, pdf)
   })
 
   it('é determinístico: gerar de novo dá o mesmo arquivo, byte a byte', async () => {
@@ -342,7 +421,7 @@ describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
   })
 
   it('usa a data da emissão como data do documento e põe os metadados', () => {
-    const d = exemploPlataforma()
+    const d = exemploPlataforma300kg()
     const doc = definicaoCertificado(d) as { info: Record<string, unknown>; language: string }
     expect(doc.info.creationDate).toEqual(new Date(d.emissao.emitidoEm))
     expect(doc.info.title).toBe('Certificado de calibração nº CC-2026-00123')
@@ -353,7 +432,7 @@ describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
   it('instrumento: identificação pelo indicador e a plataforma numa linha à parte', () => {
     /** Textos do quadro do instrumento (rótulo seguido do valor). */
     const textos = (d: DadosCertificadoPdf) => JSON.stringify(definicaoCertificado(d))
-    const d = exemploPlataforma()
+    const d = exemploPlataforma300kg()
     const t = textos(d)
     expect(t).toContain('"text":"9091-118832"')
     expect(t).toContain('"text":"PLATAFORMA"')
@@ -361,12 +440,12 @@ describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
     expect(t).not.toContain('"text":"INDICADOR"')
 
     // Sem plataforma cadastrada, não há a linha
-    const semPlataforma = exemploPlataforma()
+    const semPlataforma = exemploPlataforma300kg()
     semPlataforma.emissao.balanca = { ...d.emissao.balanca, plataformaFabricante: '', plataformaModelo: '', plataformaSerie: '' }
     expect(textos(semPlataforma)).not.toContain('"text":"PLATAFORMA"')
 
     // Certificado emitido com o cadastro antigo (cópia congelada): sai como foi emitido, com a linha do indicador
-    const antigo = exemploPlataforma()
+    const antigo = exemploPlataforma300kg()
     const { plataformaFabricante: _f, plataformaModelo: _m, plataformaSerie: _s, ...resto } = d.emissao.balanca
     antigo.emissao.balanca = {
       ...resto,
@@ -384,14 +463,14 @@ describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
   })
 
   it("só põe a marca d'água quando ela é informada", () => {
-    expect(definicaoCertificado(exemploPlataforma())).not.toHaveProperty('watermark')
-    const comMarca = definicaoCertificado(exemploRodoviaria()) as { watermark?: { text: string } }
+    expect(definicaoCertificado(exemploPlataforma300kg())).not.toHaveProperty('watermark')
+    const comMarca = definicaoCertificado(exemploRodoviariaLegado()) as { watermark?: { text: string } }
     expect(comMarca.watermark?.text).toBe('PRÉVIA — SEM VALOR')
   })
 
   it('prévia do rascunho: sem as imagens das assinaturas (só as linhas) e sem "emitido em"', () => {
     const imagens = (d: DadosCertificadoPdf) => JSON.stringify(definicaoCertificado(d)).match(/"image":/g)?.length ?? 0
-    const emitido = exemploPlataforma()
+    const emitido = exemploPlataforma300kg()
     expect(imagens(emitido)).toBe(2)
     const previa: DadosCertificadoPdf = { ...emitido, marcaDagua: 'PRÉVIA — SEM VALOR', previa: true }
     expect(imagens(previa)).toBe(0)
@@ -401,8 +480,8 @@ describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
     // Os nomes e as linhas continuam (quem vai executar e autorizar)
     expect(json).toContain('Carlos Eduardo Lima')
     expect(json).toContain('Fábio de Godoy Lima')
-    // A amostra da prévia (rodoviária) também
-    expect(imagens(exemploRodoviaria())).toBe(0)
+    // A amostra da prévia (rodoviária, legado) também
+    expect(imagens(exemploRodoviariaLegado())).toBe(0)
   })
 
   it('pressão atmosférica só com o barômetro entre os padrões', () => {
@@ -416,11 +495,12 @@ describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
     // Digitada sem barômetro (a emissão não deixa; um certificado antigo): não sai
     semBarometro.calibracao.ambiente.pressao = 925
     expect(celula(semBarometro)).not.toContain('925 hPa')
-    expect(celula(exemploRodoviaria())).toContain('941 hPa')
+    expect(celula(exemploRodoviariaLegado())).toContain('941 hPa')
+    expect(celula(exemploPiorCasoAtual())).toContain('944 hPa')
   })
 
   it('sai com a linha de assinatura quando a imagem não é PNG/JPEG válido', async () => {
-    const d = exemploPlataforma()
+    const d = exemploPlataforma300kg()
     d.emissao.tecnico = { ...d.emissao.tecnico, assinatura: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' }
     // Cabeçalho de PNG com o resto corrompido: o pdfkit falha e o certificado é refeito sem as imagens
     const quebrada = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 7)])
@@ -451,17 +531,108 @@ describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
   })
 })
 
+describe('as amostras publicadas seguem as regras da 1.0.3 (o POP); as de antes ficam à parte', () => {
+  /** As pendências que bloqueiam a emissão: as do cálculo e as da emissão, como o servidor junta (`pendenciasDa`). */
+  function pendencias(d: DadosCertificadoPdf): string[] {
+    const k = d.calibracao
+    const { balanca: b, padroes } = d.emissao
+    return [
+      ...d.resultado.pendencias,
+      ...(d.comoEncontrado?.pendencias ?? []),
+      ...pendenciasEmissao(k, {
+        padroes,
+        hoje: k.dataEmissao,
+        temPesos: padroes.some((p) => p.tipo === 'PESOS'),
+        ...(b.classe ? { classe: b.classe } : {}),
+        balanca: b,
+      }),
+    ]
+  }
+
+  it.each(EXEMPLOS)(
+    '$arquivo: sem ajuste externo, "como encontrado", reparo nem verificação preliminar; os métodos da classe; nada pendente',
+    ({ dados }) => {
+      const d = dados()
+      const k = d.calibracao
+      const b = d.emissao.balanca
+      expect(registroAnterior(k)).toBeNull()
+      expect(k.ajuste.realizado).not.toBe('EXTERNO')
+      expect(k.comoEncontrado).toBeNull()
+      expect(d.comoEncontrado).toBeNull()
+      expect(k.reparo.houve).toBe(false)
+      // A verificação preliminar não é registrada (POP 7): a da calibração nova
+      expect(k.preliminar).toEqual(calibracaoVazia().preliminar)
+      // Os métodos fixos pela classe (POP 7.7 e 7.10)
+      expect(k.excentricidade.metodo).toBe(metodoExcentricidadePadrao(b.classe))
+      expect(k.indicacao.metodo).toBe(metodoIndicacaoPadrao(b.classe))
+      // Nada de rodoviária, ferroviária nem cargas de substituição (POP 2.1)
+      expect(TIPOS_FORA_DO_POP).not.toContain(b.tipo)
+      expect(b.receptor).not.toBe('RODOVIARIA')
+      expect(k.indicacao.substituicao.ativa).toBe(false)
+      // Emitida com as regras do POP: os mínimos cumpridos e os erros dentro do EMA em serviço (a balança que não pesa
+      // corretamente não recebe certificado), sem nenhuma pendência para emitir
+      expect(d.emissao.regrasDoPop).toBe(true)
+      expect(pendencias(d)).toEqual([])
+    },
+  )
+
+  it('nas amostras, o ajuste interno (CAL) antes dos ensaios só na classe I (a rotina dela); nas outras, sem ajuste', () => {
+    for (const { arquivo, dados } of EXEMPLOS) {
+      const { calibracao: k, emissao } = dados()
+      expect(k.ajuste.realizado, arquivo).toBe(emissao.balanca.classe === 'I' ? 'INTERNO' : 'NAO')
+    }
+  })
+
+  it.each(LEGADOS)(
+    '$arquivo: registro de antes do POP (ou balança fora dele), só nos testes e na pasta legado/',
+    ({ arquivo, dados }) => {
+      const d = dados()
+      expect(arquivo.startsWith(`${LEGADO}/`)).toBe(true)
+      expect(registroAnterior(d.calibracao) !== null || TIPOS_FORA_DO_POP.includes(d.emissao.balanca.tipo)).toBe(true)
+      expect(d.emissao.regrasDoPop).toBeUndefined()
+    },
+  )
+
+  it('cada amostra num arquivo próprio: as de hoje na pasta das amostras, as de antes em legado/', () => {
+    const nomes = TODOS.map((e) => e.arquivo)
+    expect(new Set(nomes).size).toBe(nomes.length)
+    for (const e of EXEMPLOS) expect(e.arquivo, e.arquivo).not.toContain('/')
+  })
+
+  it('a descrição do "Crescente contínuo" não fala de rodoviária (a empresa não calibra rodoviárias)', () => {
+    expect(METODOS_CARREGAMENTO.CONTINUO).toEqual({ label: 'Crescente contínuo', descricao: 'Sobe sem descarregar.' })
+    for (const m of Object.values(METODOS_CARREGAMENTO)) expect(m.descricao).not.toMatch(/rodovi|ferrovi/i)
+  })
+
+  it.runIf(temPdftotext)(
+    'o texto das amostras de hoje não fala de rodoviária, substituição, ajuste externo nem reparo',
+    async () => {
+      for (const e of EXEMPLOS) {
+        const t = corrido(textoDoPdf(await pdfDe(e.arquivo)))
+        expect(t, e.arquivo).not.toMatch(
+          /rodoviári|ferroviári|cargas? de substituição|ajuste externo|como encontrado|Reparo:|reparo\/manutenção|Verificação preliminar|Não conforme/i,
+        )
+      }
+    },
+  )
+})
+
 describe('empuxo e convecção no método (classe I)', () => {
-  /** A classe I de exemplo com outras opções ou outro ambiente, recalculada. */
-  function classeI(mudar: (d: DadosCertificadoPdf) => void): DadosCertificadoPdf {
-    const d = exemploClasseI()
+  /**
+   * A classe I de exemplo com outras opções ou outro ambiente, recalculada. Por padrão, a do registro de antes (com o
+   * "como encontrado" medido antes do ajuste interno), que ainda abre e sai como saía.
+   */
+  function classeI(mudar: (d: DadosCertificadoPdf) => void, base = exemploClasseILegado): DadosCertificadoPdf {
+    const d = base()
     mudar(d)
     return recalculado(d)
   }
   const nota = (d: DadosCertificadoPdf) => notaEmpuxoConveccao({ d, k: d.calibracao, e: d.emissao })
 
   it('as amostras das outras classes (sem as opções da classe I): nada, e o método de sempre', () => {
-    for (const f of [exemploPlataforma, exemploBancada, exemploRodoviaria, exemploPiorCaso]) {
+    const outras = TODOS.map((e) => e.dados).filter((f) => f().emissao.balanca.classe !== 'I')
+    expect(outras).toHaveLength(TODOS.length - 2)
+    for (const f of outras) {
       const d = f()
       expect(nota(d), d.calibracao.numero).toBeNull()
       // Os campos novos ausentes ou desligados dão o mesmo documento (as amostras ficam iguais, byte a byte)
@@ -474,17 +645,36 @@ describe('empuxo e convecção no método (classe I)', () => {
   })
 
   it('a amostra da classe I segue o plano do sistema (160 g = 100 g + 50 g + 10 g): sem "Classe dos pesos insuficiente"', () => {
-    const d = exemploClasseI()
+    const d = exemploClasseI220g()
     expect(d.calibracao.indicacao.pontos.map((p) => p.carga)).toEqual([0, 0.01, 50, 60, 110, 160, 200, 220])
-    expect(d.calibracao.comoEncontrado!.pontos.map((p) => p.carga)).toEqual([0, 50, 110, 160, 220])
+    // Ajuste interno (CAL) antes dos ensaios, sem "como encontrado": só os resultados de depois do ajuste
+    expect(d.calibracao.ajuste.realizado).toBe('INTERNO')
+    expect(d.calibracao.comoEncontrado).toBeNull()
     const r = calcularCalibracao(d.calibracao, d.emissao.balanca, d.emissao.padroes)
-    expect(r.comoEncontrado).not.toBeNull()
-    const avisos = [...r.resultado.avisos, ...r.comoEncontrado!.avisos].map((a) => a.mensagem)
+    expect(r.comoEncontrado).toBeNull()
+    expect(r.resultado.avisos.map((a) => a.mensagem).join('\n')).not.toMatch(/Classe dos pesos insuficiente/)
+    // O registro de antes: o "como encontrado" com os mesmos pesos
+    const legado = exemploClasseILegado()
+    expect(legado.calibracao.indicacao.pontos.map((p) => p.carga)).toEqual([0, 0.01, 50, 60, 110, 160, 200, 220])
+    expect(legado.calibracao.comoEncontrado!.pontos.map((p) => p.carga)).toEqual([0, 50, 110, 160, 220])
+    const rl = calcularCalibracao(legado.calibracao, legado.emissao.balanca, legado.emissao.padroes)
+    expect(rl.comoEncontrado).not.toBeNull()
+    const avisos = [...rl.resultado.avisos, ...rl.comoEncontrado!.avisos].map((a) => a.mensagem)
     expect(avisos.join('\n')).not.toMatch(/Classe dos pesos insuficiente/)
   })
 
-  it('classe I: o ar e os pesos, a variação do local no "como encontrado" e a diferença pesos − ar', () => {
-    const t = nota(exemploClasseI())!
+  it('classe I de hoje (ajuste interno (CAL) antes dos ensaios): o ar e os pesos e a diferença pesos − ar, sem a variação do local', () => {
+    const t = nota(exemploClasseI220g())!
+    expect(t).toMatch(
+      /^Empuxo do ar corrigido com a densidade do ar de 1,1\d\d kg\/m³, calculada pela temperatura, umidade e pressão medidas, e a densidade dos pesos de 7950 kg\/m³ \(EURAMET cg-18, 7\.1\.2-4 e A1\.1-1\)\. Convecção dos pesos incluída na incerteza, com a diferença de temperatura pesos − ar medida de 0,3 °C \(cg-18, 7\.1\.2\.4 e Tabela F2\.1\)\.$/,
+    )
+    // Ajustada logo antes dos ensaios e sem "como encontrado": a variação do local de uso não entra
+    expect(t).not.toContain('variação de temperatura')
+    expect(t).not.toContain('como encontrado')
+  })
+
+  it('classe I (legado): o ar e os pesos, a variação do local no "como encontrado" e a diferença pesos − ar', () => {
+    const t = nota(exemploClasseILegado())!
     expect(t).toMatch(
       /^Empuxo do ar corrigido com a densidade do ar de 1,1\d\d kg\/m³, calculada pela temperatura, umidade e pressão medidas, e a densidade dos pesos de 7950 kg\/m³ \(EURAMET cg-18, 7\.1\.2-4 e A1\.1-1\)\. /,
     )
@@ -500,7 +690,7 @@ describe('empuxo e convecção no método (classe I)', () => {
       if ((no as { text?: unknown }).text === `\n${t}`) achados.push(no)
       Object.values(no).forEach(visitar)
     }
-    visitar((definicaoCertificado(exemploClasseI()) as { content: unknown }).content)
+    visitar((definicaoCertificado(exemploClasseILegado()) as { content: unknown }).content)
     expect(achados).toEqual([{ text: `\n${t}`, fontSize: 7, color: COR.textoSecundario }])
   })
 
@@ -555,7 +745,8 @@ describe('empuxo e convecção no método (classe I)', () => {
   }
 
   it('legenda: com a densidade do ar medida, a carga já vem corrigida do empuxo do ar (e diz)', () => {
-    expect(legendaCarga(exemploClasseI())).toBe('Carga: valor convencional dos pesos padrão, corrigido do empuxo do ar.')
+    expect(legendaCarga(exemploClasseI220g())).toBe('Carga: valor convencional dos pesos padrão, corrigido do empuxo do ar.')
+    expect(legendaCarga(exemploClasseILegado())).toBe('Carga: valor convencional dos pesos padrão, corrigido do empuxo do ar.')
     // "Ajustada logo antes": só o "como encontrado" vai pela densidade do ar medida
     const aj = classeI((d) => {
       d.calibracao.opcoes = { ...d.calibracao.opcoes, empuxo: 'AJUSTADO' }
@@ -574,15 +765,16 @@ describe('empuxo e convecção no método (classe I)', () => {
   })
 
   it('legenda: as outras classes como sempre (com a substituição, quando houver)', () => {
-    expect(legendaCarga(exemploPlataforma())).toBe('Carga: valor convencional dos pesos padrão.')
+    expect(legendaCarga(exemploPlataforma300kg())).toBe('Carga: valor convencional dos pesos padrão.')
     expect(legendaCarga(exemploBancada())).toBe('Carga: valor convencional dos pesos padrão.')
-    expect(legendaCarga(exemploRodoviaria())).toBe(
+    expect(legendaCarga(exemploPiorCasoAtual())).toBe('Carga: valor convencional dos pesos padrão.')
+    expect(legendaCarga(exemploRodoviariaLegado())).toBe(
       'Carga: valor convencional dos pesos padrão, somado às cargas de substituição.',
     )
   })
 
   it('jogos com densidades diferentes nas cargas: "a densidade de cada jogo de pesos"; o jogo que não entrou, não conta', () => {
-    const d = exemploClasseI()
+    const d = exemploClasseI220g()
     const jogo = d.emissao.padroes[0]
     const outro = { ...jogo, id: 'pad-je2-b', identificacao: 'JE2-02', densidade: 8000 }
     d.emissao.padroes = [...d.emissao.padroes, outro]
@@ -599,7 +791,7 @@ describe('empuxo e convecção no método (classe I)', () => {
 
   it('jogo sem a densidade (ou u(ρ)) ou com ela implausível: a nota não cita a densidade dos pesos (a emissão fica bloqueada)', () => {
     for (const mudar of [{ densidade: 0 }, { incertezaDensidade: 0 }, { densidade: 7.95 }]) {
-      const d = exemploClasseI()
+      const d = exemploClasseI220g()
       d.emissao.padroes = d.emissao.padroes.map((p) => (p.tipo === 'PESOS' ? { ...p, ...mudar } : p))
       const t = nota(d)!
       expect(t, JSON.stringify(mudar)).toMatch(
@@ -668,9 +860,61 @@ describe('empuxo e convecção no método (classe I)', () => {
 })
 
 describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 60_000 }, () => {
-  it('plataforma 300 kg: ajuste, como encontrado, reparo, conformidade e próxima calibração a pedido', async () => {
-    const d = exemploPlataforma()
+  it('plataforma 300 kg: sem ajuste, sem reparo, conformidade (banda de guarda) e próxima calibração a pedido', async () => {
+    const d = exemploPlataforma300kg()
     const texto = textoDoPdf(await pdfDe('certificado-plataforma-300kg'))
+    conferirComum(texto, d)
+    const t = corrido(texto)
+    expect(t).toContain('FRIGORÍFICO VALE DO CORUMBATAÍ LTDA')
+    expect(t).toContain('11.444.777/0001-61')
+    expect(t).toContain('Toledo do Brasil')
+    expect(t).toContain('9091-118832')
+    expect(t).toContain('PLATAFORMA')
+    expect(t).toContain('2180-0041273')
+    expect(t).toContain('Portaria Inmetro/Dimel nº 0236/2009')
+    expect(t).toContain('OS-2026-0456')
+    // A calibração não inclui ajuste nem reparo (POP 7.8): os resultados são os da balança como foi encontrada
+    expect(t).toContain(
+      'Ajuste: não foi realizado ajuste no instrumento; os resultados referem-se ao instrumento na condição em que foi encontrado.',
+    )
+    expect(t).not.toMatch(/como encontrado|como deixado|antes do ajuste|após o ajuste/)
+    expect(t).not.toContain('Reparo:')
+    expect(t).not.toContain('marca de reparo')
+    // Resultados: uma tabela só do erro de indicação (5.3), sem a 5.4
+    expect(t).toContain('Repetibilidade')
+    expect(t).toContain('Excentricidade')
+    expect(t).toMatch(/\|ΔI\|máx = 0,05 kg/)
+    expect(t).toContain('ΔI: indicação na posição − indicação na posição 1.')
+    expect(t).toContain('Retorno ao zero')
+    expect(t).toMatch(/5\.3 Erro de indicação/)
+    expect(t).not.toMatch(/5\.4 /)
+    expect(t).not.toContain('Não conforme')
+    // Declaração de conformidade
+    expect(t).toContain('DECLARAÇÃO DE CONFORMIDADE')
+    expect(t).toContain('Portaria Inmetro 157/2022 — em serviço')
+    expect(t).toContain('Banda de guarda')
+    expect(t).toContain('Esta declaração não constitui verificação metrológica legal')
+    expect(t).toMatch(/CONFORME Resultado: conforme em todos os pontos calibrados\./)
+    // O gráfico do erro de indicação (sem "como deixado"), com os limites ±EMA da conformidade
+    expect(t).toContain('Erro de indicação em função da carga. Barras: incerteza expandida U; tracejado: limites ±EMA.')
+    // P-10b: próxima calibração só porque o cliente pediu
+    expect(t).toContain('Data da próxima calibração informada a pedido do cliente: 13/10/2027')
+    expect(t).not.toContain('não contém recomendação de intervalo de calibração')
+    // Assinaturas
+    expect(t).toContain('EXECUTADO POR')
+    expect(t).toContain('AUTORIZADO POR')
+    expect(t).toContain('Carlos Eduardo Lima')
+    expect(t).toContain('CREA-SP 5062345678')
+    expect(t).toContain('emitido em 14/10/2026, às 10:42 (horário de Brasília)')
+    // A data da emissão e a linha de fim numa linha só
+    expect(texto.split('\n').find((l) => l.includes('emitido em 14/10/2026'))).toMatch(
+      /emitido em 14\/10\/2026, às 10:42 \(horário de Brasília\)\. +— Fim do Certificado de Calibração nº CC-2026-00123 —/,
+    )
+  })
+
+  it('plataforma 300 kg (legado): ajuste externo, como encontrado, reparo, conformidade e próxima calibração a pedido', async () => {
+    const d = exemploPlataformaLegado()
+    const texto = textoDoPdf(await pdfDe(`${LEGADO}/certificado-plataforma-300kg-ajuste-externo`))
     conferirComum(texto, d)
     const t = corrido(texto)
     expect(t).toContain('FRIGORÍFICO VALE DO CORUMBATAÍ LTDA')
@@ -765,7 +1009,7 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
   })
 
   it('a rastreabilidade ("padrões abaixo") sai logo abaixo do título dos padrões, antes da tabela', async () => {
-    for (const e of EXEMPLOS) {
+    for (const e of TODOS) {
       const t = corrido(textoDoPdf(await pdfDe(e.arquivo)))
       const titulo = t.indexOf('4 PADRÕES UTILIZADOS')
       const frase = t.indexOf('por meio dos padrões abaixo')
@@ -809,9 +1053,53 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     expect(paginas(texto).total).toBeLessThanOrEqual(3)
   })
 
-  it('analítica classe I 220 g: empuxo pela densidade do ar medida e convecção, numa frase no método', async () => {
-    const d = exemploClasseI()
+  it('analítica classe I 220 g: ajuste interno (CAL) antes dos ensaios, sem "como encontrado"; empuxo e convecção no método', async () => {
+    const d = exemploClasseI220g()
     const texto = textoDoPdf(await pdfDe('certificado-classe-i-220g'))
+    conferirComum(texto, d)
+    const t = corrido(texto)
+    expect(t).toContain('LABORATÓRIO FARMACÊUTICO HORTO FLORESTAL LTDA')
+    expect(t).toContain('Balança analítica')
+    expect(t).toContain('I (especial)')
+    expect(t).toMatch(/220 g +0,01 g +0,1 mg +1 mg/)
+    // Pressão com o barômetro; o jogo E2 e o termômetro de 2 entradas entre os padrões
+    expect(t).toMatch(/PRESSÃO ATMOSFÉRICA .*942 hPa/)
+    for (const x of ['JE2-01', 'E2', 'M-0412/2026', 'TD-01', 'Termômetro digital de duas entradas']) expect(t).toContain(x)
+    // O ajuste interno (CAL) de rotina, feito pelo cliente antes dos ensaios: os resultados são os de depois dele, sem
+    // "como encontrado" (nem a tabela 5.4)
+    expect(t).toContain(
+      'Ajuste: antes da calibração foi realizado ajuste interno (automático) (função CAL feita pelo cliente). Os resultados referem-se ao instrumento após o ajuste (“como deixado”). O ajuste não faz parte da calibração.',
+    )
+    expect(t).not.toMatch(/como encontrado|antes do ajuste|Resultados antes/)
+    expect(t).not.toMatch(/5\.4 /)
+    expect(t).not.toContain('Reparo:')
+    // O método: o empuxo pela densidade do ar medida e a convecção, sem a variação do local de uso (ajustada logo antes)
+    const rho = d.resultado.ar!.densidade
+    expect(rho).toBeCloseTo(densidadeAr((22.4 + 22.9) / 2, (54 + 55) / 2, 942), 9)
+    const metodo = t.slice(t.indexOf('MÉTODO — PROCEDIMENTO (POP)'), t.indexOf('2 CLIENTE'))
+    expect(metodo).toContain(
+      `Empuxo do ar corrigido com a densidade do ar de ${rho.toFixed(3).replace('.', ',')} kg/m³, calculada pela temperatura, umidade e pressão medidas, e a densidade dos pesos de 7950 kg/m³ (EURAMET cg-18, 7.1.2-4 e A1.1-1).`,
+    )
+    expect(metodo).toContain(
+      'Convecção dos pesos incluída na incerteza, com a diferença de temperatura pesos − ar medida de 0,3 °C (cg-18, 7.1.2.4 e Tabela F2.1).',
+    )
+    expect(metodo).not.toContain('variação de temperatura')
+    expect(t.match(/Empuxo do ar corrigido/g)).toHaveLength(1)
+    expect(t).toMatch(/TEMPERATURA \(INÍCIO → FIM\) .*22,4 °C → 22,9 °C/)
+    // 10 leituras na repetibilidade; excentricidade pelo método 3 (zero antes de cada posição)
+    expect(t).toMatch(/200,0000 .* 10 200,000300 0,000067/)
+    expect(t).toContain('Zero lido')
+    expect(t).toMatch(/2 Frente \(0°\) 0,0000 100,0003 \+0,0002/)
+    expect(t).toContain('ΔI: (indicação − zero lido) na posição − o mesmo na posição 1.')
+    expect(d.resultado.excentricidade.desvios[2]).toBe(0)
+    // O gráfico do erro de indicação, sem "como deixado"
+    expect(t).toContain('Erro de indicação em função da carga. Barras: incerteza expandida U.')
+    expect(paginas(texto).total).toBe(3)
+  })
+
+  it('analítica classe I 220 g (legado): "como encontrado" antes do ajuste interno, empuxo e convecção no método', async () => {
+    const d = exemploClasseILegado()
+    const texto = textoDoPdf(await pdfDe(`${LEGADO}/certificado-classe-i-220g-como-encontrado`))
     conferirComum(texto, d)
     const t = corrido(texto)
     expect(t).toContain('LABORATÓRIO FARMACÊUTICO HORTO FLORESTAL LTDA')
@@ -852,9 +1140,9 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     expect(paginas(texto).total).toBe(3)
   })
 
-  it('rodoviária 80 t: revisão, prévia, cargas de substituição e faixa parcial', async () => {
-    const d = exemploRodoviaria()
-    const texto = textoDoPdf(await pdfDe('certificado-rodoviaria-80t'))
+  it('rodoviária 80 t (legado): revisão, prévia, cargas de substituição e faixa parcial', async () => {
+    const d = exemploRodoviariaLegado()
+    const texto = textoDoPdf(await pdfDe(`${LEGADO}/certificado-rodoviaria-80t`))
     conferirComum(texto, d)
     const t = corrido(texto)
     // P-14a (revisão)
@@ -880,7 +1168,7 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
 })
 
 describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', { timeout: 60_000 }, () => {
-  it.each(EXEMPLOS)(
+  it.each(TODOS)(
     '$arquivo: $paginas páginas, com o desenho das posições e o gráfico ($grafico pt)',
     async ({ arquivo, dados, paginas: esperado, grafico, compacto }) => {
       const texto = textoDoPdf(await pdfDe(arquivo))
@@ -895,9 +1183,65 @@ describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', {
     },
   )
 
-  it('pior caso: multi-intervalo, substituição, ajuste com "como encontrado", reparo, revisão e conformidade em 3 páginas', async () => {
-    const d = exemploPiorCaso()
+  it('pior caso de hoje: multi-intervalo, revisão, conformidade, próxima calibração, 4 padrões e textos longos em 3 páginas', async () => {
+    const d = exemploPiorCasoAtual()
     const texto = textoDoPdf(await pdfDe('certificado-pior-caso'))
+    conferirComum(texto, d)
+    expect(paginas(texto).total).toBe(3)
+    const t = corrido(texto)
+    // Características metrológicas do multi-intervalo numa linha só da grade (sem tabela de faixas)
+    expect(t).toMatch(/CAPACIDADE \(MAX\) · MULTI-INTERVALO .*60 \/ 150 \/ 300 kg/)
+    expect(t).toContain('20 / 50 / 100 g')
+    expect(t).toContain('Balança de piso')
+    expect(t).toContain('Alfa Instrumentos PL-1515 Inox · nº de série PL1515-2024-0093')
+    // Os textos longos inteiros: a razão social, o local, o motivo da revisão, as observações e a opinião
+    // (a razão social quebra a linha ao lado do CNPJ, que o pdftotext põe no meio dela)
+    expect(t).toMatch(/COOPERATIVA AGROINDUSTRIAL DOS PRODUTORES RURAIS DO VALE DO CORUMBATAÍ E (33\.592\.510\/0001-54 )?REGIÃO/)
+    expect(t).toContain(corrido(d.calibracao.localEndereco))
+    expect(t).toContain('Revisão: este certificado substitui integralmente o Certificado nº CC-2026-00151, emitido em 30/10/2026')
+    expect(t).toContain(`Motivo: ${d.calibracao.motivoRevisao}`)
+    for (const l of linhasDoTexto(d.calibracao.observacoes)) expect(t).toContain(l)
+    expect(t).toContain(d.calibracao.opinioes)
+    expect(t).toContain('OPINIÕES E INTERPRETAÇÕES')
+    // Sem ajuste, "como encontrado", reparo, verificação preliminar nem cargas de substituição
+    expect(t).toContain('Ajuste: não foi realizado ajuste no instrumento')
+    expect(t).not.toMatch(/como encontrado|como deixado|Reparo:|Verificação preliminar|substituição/)
+    // As 3 repetibilidades (uma por intervalo) e os 10 pontos, subindo e descendo, com o EMA de cada intervalo
+    expect(t).toMatch(/48,00 48,00 48,02 48,00 48,00 48,02 5 /)
+    expect(t).toMatch(/120,00 120,00 120,00 120,05 120,00 120,00 5 /)
+    expect(t).toMatch(/250,0 250,0 250,1 250,0 250,0 250,0 5 /)
+    expect(d.resultado.pontos).toHaveLength(10)
+    expect(t).toMatch(/0,400 0,40 0,000 0,40 0,000 /)
+    expect(t).toMatch(/300,00 300,1 \+0,10 300,1 \+0,10 /)
+    // Cada ponto com o EMA em serviço do intervalo dele (e = 20, 50 e 100 g)
+    expect(d.resultado.pontos.map((p) => [p.carga, p.texto.ema])).toEqual([
+      [0, '0,04'],
+      [0.4, '0,04'],
+      [10, '0,04'],
+      [40, '0,08'],
+      [75, '0,2'],
+      [100, '0,2'],
+      [150, '0,2'],
+      [200, '0,4'],
+      [225, '0,4'],
+      [300, '0,4'],
+    ])
+    // Conformidade (aceitação simples) e a próxima calibração a pedido
+    expect(t).toContain('DECLARAÇÃO DE CONFORMIDADE')
+    expect(t).toContain('Aceitação simples')
+    expect(t).toMatch(/CONFORME Resultado: conforme em todos os pontos calibrados\./)
+    expect(t).toContain('Data da próxima calibração informada a pedido do cliente: 29/10/2027')
+    // Uma legenda só para todas as tabelas dos resultados
+    expect(t.match(/Erro = indicação − carga/g)).toHaveLength(1)
+    // As 4 linhas dos padrões, com o certificado, o laboratório, a acreditação e a próxima calibração
+    for (const x of ['PP20-01 a 15', 'JP-01', 'TH-01', 'BR-01', 'CAL-12345/2026', 'Acreditação Cgcre CAL 0383', '02/12/2026'])
+      expect(t).toContain(x)
+    expect(t).toMatch(/PRESSÃO ATMOSFÉRICA .*944 hPa/)
+  })
+
+  it('pior caso (legado): multi-intervalo, substituição, ajuste com "como encontrado", reparo, revisão e conformidade em 3 páginas', async () => {
+    const d = exemploPiorCasoLegado()
+    const texto = textoDoPdf(await pdfDe(`${LEGADO}/certificado-pior-caso-rodoviaria`))
     conferirComum(texto, d)
     const t = corrido(texto)
     // Características metrológicas do multi-intervalo numa linha só da grade (sem tabela de faixas)
@@ -934,15 +1278,15 @@ describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', {
   })
 
   it('a diagramação é a 1ª que cabe em 3 páginas: o gráfico encolhe, depois os respiros apertam e, por último, ele sai', async () => {
-    /** O pior caso com mais observações (uma por linha). */
+    /** O pior caso de antes com mais observações (uma por linha). */
     const comObservacoes = (n: number) => {
-      const d = exemploPiorCaso()
+      const d = exemploPiorCasoLegado()
       d.calibracao.observacoes += Array.from({ length: n }, (_, i) => `\nObservação adicional nº ${i + 1}.`).join('')
       return d
     }
-    // Plataforma: o gráfico menor; pior caso: os respiros do layout compacto; com 6 observações a mais, nada cabe
-    // em 3 páginas e o gráfico fica (tirá-lo não pouparia a página)
-    for (const d of [exemploPlataforma(), exemploPiorCaso(), comObservacoes(6)]) {
+    // Plataforma (legado): o gráfico menor; os piores casos: os respiros do layout compacto; com 6 observações a mais,
+    // nada cabe em 3 páginas e o gráfico fica (tirá-lo não pouparia a página)
+    for (const d of [exemploPlataformaLegado(), exemploPiorCasoLegado(), exemploPiorCasoAtual(), comObservacoes(6)]) {
       const semMarca = { ...d, marcaDagua: '' }
       const todas: number[] = []
       for (const diagramacao of DIAGRAMACOES) {
@@ -984,13 +1328,13 @@ describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', {
     expect(t).toContain('Maior desvio: |ΔI|máx = 0,05 kg, na posição 2')
     expect(t).toMatch(/FRENTE .*Posições vistas de cima/)
     // O desenho: a posição 2 (a de maior desvio) cheia de verde
-    const json = JSON.stringify((definicaoCertificado(exemploPlataforma()) as { content: unknown }).content)
+    const json = JSON.stringify((definicaoCertificado(exemploPlataforma300kg()) as { content: unknown }).content)
     expect(json.match(/<circle [^>]*r=\\"7\\"/g)).toHaveLength(5)
     expect(json).toMatch(/<circle [^>]*fill=\\"#067A3B\\"/)
   })
 
   it('rótulos digitados à mão ("Apoio 1"… numa rodoviária): o desenho genérico, com as posições na ordem da tabela', async () => {
-    const d = exemploPlataforma()
+    const d = exemploPlataforma300kg()
     d.emissao.balanca = { ...d.emissao.balanca, receptor: 'RODOVIARIA' }
     d.calibracao = {
       ...d.calibracao,
@@ -1066,7 +1410,7 @@ describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', {
       }
       return JSON.stringify(doc.content).match(/<svg/g)?.length ?? 0
     }
-    for (const e of EXEMPLOS) {
+    for (const e of TODOS) {
       // O desenho e o gráfico; sem o gráfico, o desenho fica
       expect(svgs(e.dados()), e.arquivo).toBe(2)
       expect(svgs(e.dados(), 0), e.arquivo).toBe(1)
@@ -1081,8 +1425,11 @@ describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', {
     expect(doc).toMatch(/viewBox=\\"0 0 505(\.\d+)? 116\\"/)
   })
 
-  it('letra legível: dados com 8 pt ou mais, notas e declarações com 7 pt ou mais', () => {
-    const doc = definicaoCertificado(exemploPiorCaso()) as {
+  it.each([
+    { nome: 'pior caso de hoje', dados: exemploPiorCasoAtual },
+    { nome: 'pior caso (legado)', dados: exemploPiorCasoLegado },
+  ])('letra legível ($nome): dados com 8 pt ou mais, notas e declarações com 7 pt ou mais', ({ dados }) => {
+    const doc = definicaoCertificado(dados()) as {
       content: unknown
       styles: Record<string, { fontSize: number }>
       defaultStyle: { fontSize: number }
@@ -1112,7 +1459,10 @@ describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', {
     expect(Math.min(...tamanhos)).toBeGreaterThanOrEqual(7)
   })
 
-  it('letra legível: só as marcas invisíveis da montagem (um espaço, sem tinta) ficam abaixo de 7 pt', () => {
+  it.each([
+    { nome: 'pior caso de hoje', dados: exemploPiorCasoAtual },
+    { nome: 'pior caso (legado)', dados: exemploPiorCasoLegado },
+  ])('letra legível ($nome): só as marcas invisíveis da montagem (um espaço, sem tinta) ficam abaixo de 7 pt', ({ dados }) => {
     const miudos: unknown[] = []
     const visitar = (no: unknown) => {
       if (Array.isArray(no)) no.forEach(visitar)
@@ -1122,7 +1472,7 @@ describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', {
         Object.values(no).forEach(visitar)
       }
     }
-    visitar((definicaoCertificado(exemploPiorCaso()) as { content: unknown }).content)
+    visitar((definicaoCertificado(dados()) as { content: unknown }).content)
     expect(miudos.length).toBeGreaterThan(0)
     for (const x of miudos) expect(x).toMatchObject({ text: ' ', id: expect.stringMatching(/^fim:/) })
   })
@@ -1158,7 +1508,7 @@ describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', {
   })
 
   it('o procedimento (POP) da emissão sai no alto de toda página e no método, com o código que estiver configurado', async () => {
-    const d = exemploPiorCaso()
+    const d = exemploPiorCasoAtual()
     d.emissao = { ...d.emissao, textos: { ...d.emissao.textos, procedimento: 'BALANÇAS-POP-123 rev. 2' } }
     const texto = textoDoPdf(await gerarCertificadoPdf(d))
     conferirCabecalhos(texto, d.calibracao.numero, 'BALANÇAS.COM', 'BALANÇAS-POP-123 rev. 2')
@@ -1214,8 +1564,8 @@ describe('histerese pela média com o carregamento num sentido só', () => {
   it.each([
     { nome: 'bancada contínua', dados: () => emMedia(exemploBancada(), 'CONTINUO'), serie: 'Carga crescente' },
     { nome: 'bancada decrescente', dados: () => emMedia(exemploBancada(), 'DECRESCENTE'), serie: 'Carga decrescente' },
-    { nome: 'rodoviária (contínua)', dados: () => emMedia(exemploRodoviaria()), serie: 'Carga crescente' },
-    { nome: 'classe I (descontínua)', dados: () => emMedia(exemploClasseI()), serie: 'Carga crescente' },
+    { nome: 'rodoviária (contínua)', dados: () => emMedia(exemploRodoviariaLegado()), serie: 'Carga crescente' },
+    { nome: 'classe I (descontínua)', dados: () => emMedia(exemploClasseI220g()), serie: 'Carga crescente' },
   ])('$nome: o gráfico com a série do sentido, sem "média", como a tabela e a legenda', ({ dados, serie }) => {
     const json = definicao(dados())
     // A tabela e a legenda: erro de um sentido
@@ -1244,7 +1594,7 @@ describe('histerese pela média com o carregamento num sentido só', () => {
 })
 
 describe('o fim do certificado nunca fica sozinho', { timeout: 120_000 }, () => {
-  const casos = [...EXEMPLOS.map((e) => ({ nome: e.arquivo, dados: e.dados })), ...VARIANTES]
+  const casos = [...TODOS.map((e) => ({ nome: e.arquivo, dados: e.dados })), ...VARIANTES]
 
   it.each(casos)('$nome: as declarações vão inteiras, num bloco só com as assinaturas', ({ dados }) => {
     const d = dados()
@@ -1331,7 +1681,7 @@ describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
     },
   )
 
-  it.runIf(temPdftotext).each([...EXEMPLOS.map((e) => ({ nome: e.arquivo, dados: e.dados })), ...VARIANTES])(
+  it.runIf(temPdftotext).each([...TODOS.map((e) => ({ nome: e.arquivo, dados: e.dados })), ...VARIANTES])(
     '$nome: com 3 páginas ou mais, a última leva mais que as declarações e as assinaturas',
     async ({ dados }) => {
       const m = await montarCertificado({ ...dados(), marcaDagua: '' })
@@ -1351,13 +1701,15 @@ describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
   )
 
   it('a montagem só mexe na paginação de 3 páginas ou mais com a última quase vazia', async () => {
-    // Pior caso: a 3ª página já sai com a conformidade, as observações e as opiniões; nada a equilibrar
-    const pior = await montarCertificado(exemploPiorCaso())
-    expect(pior.paginas).toBe(3)
-    expect(pior.quebras).toEqual([])
-    expect(pior.ocupacao[2]).toBeGreaterThanOrEqual(OCUPACAO_MINIMA_ULTIMA)
+    // Piores casos: a 3ª página já sai com a conformidade, as observações e as opiniões; nada a equilibrar
+    for (const d of [exemploPiorCasoAtual(), exemploPiorCasoLegado()]) {
+      const pior = await montarCertificado(d)
+      expect(pior.paginas).toBe(3)
+      expect(pior.quebras).toEqual([])
+      expect(pior.ocupacao[2]).toBeGreaterThanOrEqual(OCUPACAO_MINIMA_ULTIMA)
+    }
     // A última página já com mais da metade: como sai
-    for (const d of [exemploRodoviaria(), exemploClasseI()]) {
+    for (const d of [exemploPlataforma300kg(), exemploRodoviariaLegado(), exemploClasseILegado()]) {
       const m = await montarCertificado(d)
       expect(m.paginas).toBe(3)
       expect(m.ocupacao[2]).toBeGreaterThanOrEqual(OCUPACAO_MINIMA_ULTIMA)
@@ -1411,7 +1763,7 @@ describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
           Object.values(no).forEach(visitar)
         }
       }
-      visitar((definicaoCertificado(exemploPlataforma()) as { content: unknown }).content)
+      visitar((definicaoCertificado(exemploPlataforma300kg()) as { content: unknown }).content)
       expect(imagens).toHaveLength(2)
       for (const i of imagens) expect(i.fit[1]).toBeLessThanOrEqual(22)
       // Uma assinatura (executado e autorizado pela mesma pessoa): a data e o fim na coluna ao lado
@@ -1426,7 +1778,7 @@ describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
   )
 
   it.runIf(temPdftotext)('só o obrigatório: sem separadores numa observação; o intervalo numa linha', async () => {
-    for (const e of EXEMPLOS) expect(corrido(textoDoPdf(await pdfDe(e.arquivo)))).not.toMatch(/Separador (decimal|de milhar)/)
+    for (const e of TODOS) expect(corrido(textoDoPdf(await pdfDe(e.arquivo)))).not.toMatch(/Separador (decimal|de milhar)/)
     const linhas = textoDoPdf(await pdfDe('certificado-bancada-30kg')).split('\n')
     expect(linhas.find((l) => l.includes('não contém recomendação de intervalo'))?.trim()).toBe(TEXTOS_PADRAO.intervalo)
   })
@@ -1506,17 +1858,26 @@ describe('cláusula de reprodução no rodapé', { timeout: 60_000 }, () => {
   })
 })
 
+/** `f` é uma página em PNG da amostra `nome` ("certificado-bancada-30kg-1.png"…)? */
+const paginaPng = (f: string, nome: string) => f.startsWith(`${nome}-`) && /^\d+\.png$/.test(f.slice(nome.length + 1))
+
+/** As páginas em PNG de uma amostra, na pasta dela. */
+function pngsDe(arquivo: string): string[] {
+  const pasta = dirname(join(PASTA_EXEMPLOS, arquivo))
+  return existsSync(pasta) ? readdirSync(pasta).filter((f) => paginaPng(f, basename(arquivo))) : []
+}
+
 describe.runIf(temPdftoppm)('amostras em PNG (revisão visual)', { timeout: 60_000 }, () => {
-  it.each(EXEMPLOS)('renderiza as páginas de $arquivo', async ({ arquivo }) => {
+  it.each(TODOS)('renderiza as páginas de $arquivo', async ({ arquivo }) => {
     const pdf = await pdfDe(arquivo)
     const caminho = join(PASTA_EXEMPLOS, `${arquivo}.pdf`)
-    mkdirSync(PASTA_EXEMPLOS, { recursive: true })
+    const pasta = dirname(caminho)
+    mkdirSync(pasta, { recursive: true })
     writeFileSync(caminho, pdf)
-    for (const f of readdirSync(PASTA_EXEMPLOS))
-      if (f.startsWith(`${arquivo}-`) && f.endsWith('.png')) rmSync(join(PASTA_EXEMPLOS, f))
+    for (const f of pngsDe(arquivo)) rmSync(join(pasta, f))
     const r = spawnSync('pdftoppm', ['-r', '80', '-png', caminho, join(PASTA_EXEMPLOS, arquivo)])
     expect(r.status).toBe(0)
-    expect(readdirSync(PASTA_EXEMPLOS).some((f) => f.startsWith(`${arquivo}-`) && f.endsWith('.png'))).toBe(true)
+    expect(pngsDe(arquivo)).toHaveLength(paginasDoPdf(pdf))
   })
 })
 
@@ -1668,7 +2029,7 @@ describe.runIf(temPdftotext)('nada some do certificado: bloco mais alto que a p�
     expect(doc.content.length).toBe(i + 4)
   })
 
-  it.each([...EXEMPLOS.map((e) => ({ nome: e.arquivo, dados: e.dados })), ...VARIANTES.slice(0, 3)])(
+  it.each([...TODOS.map((e) => ({ nome: e.arquivo, dados: e.dados })), ...VARIANTES.slice(0, 3)])(
     '$nome: o que cabe não muda (nada dividido) e as páginas contadas são as do PDF',
     async ({ dados }) => {
       const m = await montarCertificado({ ...dados(), marcaDagua: '' })
@@ -1764,7 +2125,7 @@ describe.runIf(temPdftotext)('nº do certificado inteiro no cabeçalho de toda p
     { numero: 'LAB-CAL-2026-00408', pop: 'POP-CAL-01 rev. 00' },
     { numero: 'LAB-CAL-2026-00447', pop: 'POP-CAL-01 rev. 00' },
   ])('$numero com o POP "$pop": o nº numa palavra só, no alto de cada página', async ({ numero, pop }) => {
-    const d = exemploPlataforma()
+    const d = exemploPlataforma300kg()
     d.calibracao.numero = numero
     d.emissao.textos = { ...d.emissao.textos, procedimento: pop }
     const m = await montarCertificado({ ...d, marcaDagua: '' })
@@ -1775,7 +2136,7 @@ describe.runIf(temPdftotext)('nº do certificado inteiro no cabeçalho de toda p
 
   it('nº muito longo (formato de até 40 caracteres): a letra diminui, o nº fica inteiro e dentro da margem', async () => {
     const numero = 'LABORATORIO-CALIBRACAO-BALANCAS-2026-00042'
-    const d = exemploPlataforma()
+    const d = exemploPlataforma300kg()
     d.calibracao.numero = numero
     const m = await montarCertificado({ ...d, marcaDagua: '' })
     for (const [i, p] of palavrasDoPdf(m.pdf).entries()) {
@@ -1808,7 +2169,7 @@ describe.runIf(temPdftotext)('grade "RÓTULO / valor": palavra longa quebra dent
       },
     },
   ])('$nome: nada passa da margem direita e o CNPJ sai inteiro', async ({ mudar }) => {
-    const d = exemploPlataforma()
+    const d = exemploPlataforma300kg()
     mudar(d)
     const pdf = await gerarCertificadoPdf({ ...d, marcaDagua: '' })
     const [p1] = palavrasDoPdf(pdf)
@@ -1818,7 +2179,7 @@ describe.runIf(temPdftotext)('grade "RÓTULO / valor": palavra longa quebra dent
   })
 
   it('no layout normal, as colunas são as de antes (colunas iguais; a última da metrologia com o resto)', () => {
-    const doc = definicaoCertificado(exemploPlataforma()) as { content: unknown }
+    const doc = definicaoCertificado(exemploPlataforma300kg()) as { content: unknown }
     const larguras: number[][] = []
     const visitar = (no: unknown) => {
       if (Array.isArray(no)) no.forEach(visitar)
@@ -1836,5 +2197,28 @@ describe.runIf(temPdftotext)('grade "RÓTULO / valor": palavra longa quebra dent
       // Cada coluna com a folga de 8 pt à direita: somadas, a largura útil (595,28 − 2 × 45)
       expect(l.reduce((a, b) => a + b + 8, 0)).toBeCloseTo(A4.largura - 90, 6)
     }
+  })
+})
+
+// ---- A pasta das amostras: só as de hoje; as de antes em legado/ (depois de gravar os PDF e os PNG) ----------------
+
+describe('pasta das amostras', () => {
+  /** Os arquivos (não as pastas) de uma pasta de exemplos/. */
+  const arquivos = (pasta: string) =>
+    existsSync(pasta) ? readdirSync(pasta).filter((f) => statSync(join(pasta, f)).isFile()) : []
+  /** Os arquivos que não são o PDF de uma das amostras nem uma página dela em PNG. */
+  const estranhos = (pasta: string, amostras: Exemplo[]) => {
+    const nomes = amostras.map((e) => basename(e.arquivo))
+    return arquivos(pasta).filter((f) => !nomes.some((n) => f === `${n}.pdf` || paginaPng(f, n)))
+  }
+
+  it('exemplos/ só tem as amostras de hoje, e legado/ só as dos registros de antes', () => {
+    expect(estranhos(PASTA_EXEMPLOS, EXEMPLOS)).toEqual([])
+    expect(estranhos(join(PASTA_EXEMPLOS, LEGADO), LEGADOS)).toEqual([])
+    // Só a pasta legado/ dentro de exemplos/
+    const pastas = existsSync(PASTA_EXEMPLOS)
+      ? readdirSync(PASTA_EXEMPLOS).filter((f) => statSync(join(PASTA_EXEMPLOS, f)).isDirectory())
+      : []
+    expect(pastas).toEqual([LEGADO])
   })
 })
