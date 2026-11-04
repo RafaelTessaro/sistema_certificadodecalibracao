@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { criarApp, hostPermitido, lerHostsPermitidos, VERSAO_APP } from './app.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
+import { dominioDoComputador, dominioDoRegistro } from './dominioWindows.ts'
 import { ARQUIVO_ID, idDaInstalacao } from './identidade.ts'
 
 let t: AppComLogin
@@ -87,10 +88,28 @@ describe('nome no endereço (Host) e DNS rebinding', () => {
     expect(hostPermitido('servidor.lan.atacante.com', vazio, 'SERVIDOR', '')).toBe(false)
   })
 
-  it('o domínio da empresa: pelo HOSTS_PERMITIDOS ou pelo domínio do Windows (USERDNSDOMAIN)', () => {
+  it('o domínio da empresa: pelo HOSTS_PERMITIDOS ou pelo domínio do Windows (o sufixo DNS primário do computador)', () => {
     expect(hostPermitido('servidor.empresa.local', lerHostsPermitidos('servidor.empresa.local'), 'SERVIDOR', '')).toBe(true)
     expect(hostPermitido('servidor.empresa.com.br:4850', vazio, 'SERVIDOR', 'EMPRESA.COM.BR')).toBe(true)
     expect(hostPermitido('servidor.outra.com.br', vazio, 'SERVIDOR', 'EMPRESA.COM.BR')).toBe(false)
+  })
+
+  it('no serviço do Windows (sem USERDNSDOMAIN): o domínio do computador, lido do registro, vale', async () => {
+    const antes = process.env.USERDNSDOMAIN
+    delete process.env.USERDNSDOMAIN
+    const s = await criarAppComLogin({ semUsuarios: true, porta: 4850, dominioWindows: 'corp.empresa.com.br' })
+    try {
+      const pelo = (host: string) =>
+        s.app.inject({ method: 'GET', url: '/api/saude', remoteAddress: '192.168.0.30', headers: { host } })
+      expect((await pelo(`${hostname()}.corp.empresa.com.br:4850`)).statusCode).toBe(200)
+      expect((await pelo(`${hostname().toUpperCase()}.CORP.EMPRESA.COM.BR.:4850`)).statusCode).toBe(200)
+      expect((await pelo(`${hostname()}.atacante.com:4850`)).statusCode).toBe(403)
+      expect((await pelo(`${hostname()}.corp.empresa.com.br.atacante.com:4850`)).statusCode).toBe(403)
+      expect((await pelo(`outro.corp.empresa.com.br:4850`)).statusCode).toBe(403)
+    } finally {
+      await s.fechar()
+      if (antes !== undefined) process.env.USERDNSDOMAIN = antes
+    }
   })
 
   it('pela API: GET /api/saude e o primeiro acesso com o nome do atacante dão 403 e não criam ninguém', async () => {
@@ -108,6 +127,59 @@ describe('nome no endereço (Host) e DNS rebinding', () => {
     expect(t.usuarios.situacao().usuarios).toBe(0)
     // O próprio nome do computador continua funcionando
     expect((await saude('192.168.0.30', `${hostname()}:4850`)).statusCode).toBe(200)
+  })
+})
+
+describe('domínio do Windows (o sufixo DNS primário do computador)', () => {
+  /** Saída do `reg query` da chave Tcpip\\Parameters (as linhas que importam, como o reg.exe as escreve). */
+  const saida = (domain: string, nvDomain: string) =>
+    [
+      '',
+      'HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters',
+      '    NV HostName    REG_SZ    SERVIDOR',
+      '    DataBasePath    REG_EXPAND_SZ    %SystemRoot%\\System32\\drivers\\etc',
+      `    Domain    REG_SZ    ${domain}`,
+      `    NV Domain    REG_SZ    ${nvDomain}`,
+      '    SearchList    REG_SZ    ',
+      '    EnableICMPRedirect    REG_DWORD    0x1',
+      '',
+      'HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces',
+      '',
+    ].join('\r\n')
+
+  it('lê o Domain (o em uso) e, vazio, o NV Domain (o configurado); sem os dois, nenhum', () => {
+    expect(dominioDoRegistro(saida('corp.empresa.com.br', 'corp.empresa.com.br'))).toBe('corp.empresa.com.br')
+    expect(dominioDoRegistro(saida('', 'Corp.Empresa.com.br'))).toBe('corp.empresa.com.br')
+    expect(dominioDoRegistro(saida('novo.empresa.com.br', 'velho.empresa.com.br'))).toBe('novo.empresa.com.br')
+    expect(dominioDoRegistro(saida('', ''))).toBe('')
+    // Sem os valores (computador fora de domínio, chave sem eles) ou saída vazia (o reg.exe falhou)
+    expect(dominioDoRegistro('    NV HostName    REG_SZ    SERVIDOR\r\n')).toBe('')
+    expect(dominioDoRegistro('')).toBe('')
+    // Linha sem o espaço depois do tipo (valor vazio) e nome que não é um nome DNS
+    expect(dominioDoRegistro('    Domain    REG_SZ\r\n    NV Domain    REG_SZ    empresa.local\r\n')).toBe('empresa.local')
+    expect(dominioDoRegistro(saida('empresa com espaço', ''))).toBe('')
+    expect(dominioDoRegistro(saida('"><x', ''))).toBe('')
+  })
+
+  it('no Windows, o do registro (o serviço não tem USERDNSDOMAIN); sem ele, o USERDNSDOMAIN da sessão', () => {
+    const registro = () => saida('corp.empresa.com.br', '')
+    expect(dominioDoComputador({ plataforma: 'win32', env: {}, consultarRegistro: registro })).toBe('corp.empresa.com.br')
+    expect(
+      dominioDoComputador({ plataforma: 'win32', env: { USERDNSDOMAIN: 'OUTRO.COM.BR' }, consultarRegistro: registro }),
+    ).toBe('corp.empresa.com.br')
+    expect(
+      dominioDoComputador({ plataforma: 'win32', env: { USERDNSDOMAIN: 'CORP.EMPRESA.COM.BR' }, consultarRegistro: () => '' }),
+    ).toBe('corp.empresa.com.br')
+    // O reg.exe que falha não derruba o servidor
+    const falha = () => {
+      throw new Error('reg.exe: acesso negado')
+    }
+    expect(dominioDoComputador({ plataforma: 'win32', env: {}, consultarRegistro: falha })).toBe('')
+    // Fora do Windows, o registro nem é consultado
+    expect(dominioDoComputador({ plataforma: 'linux', env: { USERDNSDOMAIN: 'Empresa.Local' }, consultarRegistro: falha })).toBe(
+      'empresa.local',
+    )
+    expect(dominioDoComputador({ plataforma: 'linux', env: {}, consultarRegistro: registro })).toBe('')
   })
 })
 

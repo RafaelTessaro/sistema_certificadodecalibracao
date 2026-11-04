@@ -132,7 +132,14 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
   })
 
   app.put('/api/calibracoes/:id', async (req: ComId) => {
-    const k = repo.atualizarCalibracao(req.params.id, req.body)
+    const u = autor(req)
+    const antes = repo.obterCalibracao(req.params.id)?.tecnicoId
+    const k = repo.atualizarCalibracao(req.params.id, req.body, u)
+    // A troca do técnico fica no registro de atividades (com a revisão por outra pessoa, quem trocou não emite)
+    if (antes && antes !== k.tecnicoId) {
+      const nome = (id: string) => ctx.usuarios.obter(id)?.nome ?? 'usuário excluído'
+      req.detalheAuditoria = `técnico: ${nome(antes)} → ${nome(k.tecnicoId)}`
+    }
     return { calibracao: k, pendencias: pendenciasDa(ctx, k), avisos: avisosDa(ctx, k) }
   })
 

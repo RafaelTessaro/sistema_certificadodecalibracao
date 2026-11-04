@@ -1,31 +1,51 @@
 // Ponto de entrada do servidor: `npm start`.
 //
 // Variáveis de ambiente (opcionais, podem ficar no arquivo .env):
-//   PORTA        porta HTTP (padrão 3000)
+//   PORTA        porta HTTP (padrão 4850)
 //   HOST         interface de rede (padrão 0.0.0.0 = acessível pela rede local)
 //   PASTA_DADOS  onde ficam o banco e os backups (padrão ./dados)
 //   HOSTS_PERMITIDOS  nomes extras para acessar o servidor, separados por vírgula
-//                (IPs, localhost, o nome do computador e <nome>.local sempre funcionam; o nome
-//                completo no DNS da empresa, ex.: servidor.empresa.com.br, vai aqui)
+//                (IPs, localhost, o nome do computador, <nome>.local e <nome>.<domínio do Windows> sempre
+//                funcionam; um nome completo de outro domínio, ex.: servidor.empresa.com.br, vai aqui)
+//
+// O que o ambiente já define vale mais que o .env. No servidor instalado pelo setup do Windows, o serviço define
+// PORTA, HOST e PASTA_DADOS: os do .env são ignorados, com um aviso no registro de erros.
 
-import { existsSync, writeSync } from 'node:fs'
-import { networkInterfaces } from 'node:os'
+import { existsSync, readFileSync, writeSync } from 'node:fs'
+import { hostname, networkInterfaces } from 'node:os'
 import { criarApp, VERSAO_APP } from './app.ts'
+import { avisoVariavelIgnorada, mensagemPortaEmUso, variaveisIgnoradasDoEnv } from './configuracaoEnv.ts'
+import { dominioDoComputador } from './dominioWindows.ts'
 
-if (existsSync('.env')) process.loadEnvFile('.env')
+const portaDoAmbiente = process.env.PORTA !== undefined
+if (existsSync('.env')) {
+  try {
+    for (const v of variaveisIgnoradasDoEnv(readFileSync('.env', 'utf8'), process.env)) console.warn(avisoVariavelIgnorada(v))
+  } catch {
+    /* .env ilegível: o loadEnvFile abaixo diz o motivo */
+  }
+  process.loadEnvFile('.env')
+}
 
 const porta = Number(process.env.PORTA ?? 4850)
 const host = process.env.HOST ?? '0.0.0.0'
 const pastaDados = process.env.PASTA_DADOS ?? 'dados'
+// `<nome>.<domínio do Windows>` vale no endereço (no serviço, lido do registro: lá não há USERDNSDOMAIN)
+const dominioWindows = dominioDoComputador()
 
-const { app, usuarios } = await criarApp({ pastaDados, logger: true, tarefasEmSegundoPlano: true, porta })
+const { app, usuarios } = await criarApp({
+  pastaDados,
+  logger: true,
+  tarefasEmSegundoPlano: true,
+  porta,
+  dominioWindows,
+})
 
 try {
   await app.listen({ port: porta, host })
 } catch (e) {
   const err = e as NodeJS.ErrnoException
-  if (err.code === 'EADDRINUSE')
-    console.error(`\nA porta ${porta} já está em uso. Feche o outro programa ou defina PORTA=4851 no arquivo .env.\n`)
+  if (err.code === 'EADDRINUSE') console.error(`\n${mensagemPortaEmUso(porta, portaDoAmbiente)}\n`)
   else console.error(e)
   process.exit(1)
 }
@@ -34,12 +54,13 @@ const enderecos = Object.values(networkInterfaces())
   .flat()
   .filter((i) => i && i.family === 'IPv4' && !i.internal)
   .map((i) => `http://${i!.address}:${porta}`)
+const nomeCompleto = dominioWindows ? `\n  Pelo nome completo: http://${hostname().toLowerCase()}.${dominioWindows}:${porta}` : ''
 
 console.log(`
   BC Calibração ${VERSAO_APP} — servidor iniciado
 
   Neste computador:   http://localhost:${porta}
-${enderecos.map((e) => `  Na rede da empresa: ${e}`).join('\n')}
+${enderecos.map((e) => `  Na rede da empresa: ${e}`).join('\n')}${nomeCompleto}
 
   Dados em: ${pastaDados}   (Ctrl+C para encerrar)
 `)

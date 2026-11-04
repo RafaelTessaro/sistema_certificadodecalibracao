@@ -1,13 +1,12 @@
 // Campo de um arquivo guardado no sistema (o certificado de um padrão, o POP): escolher ou arrastar, ver o
 // nome e o tamanho, abrir, trocar e remover. O arquivo escolhido só é enviado quando o formulário é salvo
-// (quem chama envia com `api.enviarArquivo`); o tipo é conferido pelo conteúdo antes, na hora.
+// (quem chama envia com `api.enviarArquivo`); o nome e o tipo são conferidos antes, na hora, e o "Abrir" de antes
+// de salvar usa o tipo conferido pelo conteúdo (`lib/arquivoLocal`).
 
 import { ExternalLink, FileImage, FileText, FileType2, RefreshCw, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import {
   acceptDa,
-  detectarTipoArquivo,
-  problemaDoArquivo,
   ROTULO_TIPO_ARQUIVO,
   tipoDoMime,
   tiposAceitos,
@@ -16,31 +15,12 @@ import {
 } from '#shared/arquivos.ts'
 import type { ArquivoAnexo } from '#shared/tipos.ts'
 import { api } from '../lib/api'
+import { conferirArquivoLocal, tipoConferido, urlParaAbrir } from '../lib/arquivoLocal'
 import { cn } from '../lib/cn'
 import { dataCurta, tamanhoArquivo } from '../lib/format'
 import { Button } from './ui/Button'
 
-/** Confere um arquivo escolhido na tela (tamanho e os primeiros bytes); devolve o problema, ou null. */
-async function conferirArquivoLocal(arquivo: File, finalidade: FinalidadeArquivo): Promise<string | null> {
-  let tipo: TipoArquivo | null = null
-  try {
-    tipo = detectarTipoArquivo(new Uint8Array(await arquivo.slice(0, 2048).arrayBuffer()), true)
-  } catch {
-    return 'Não foi possível ler o arquivo. Tente de novo.'
-  }
-  return problemaDoArquivo(arquivo.size, tipo, finalidade)
-}
-
 const ICONE: Record<TipoArquivo, typeof FileText> = { pdf: FileText, jpg: FileImage, png: FileImage, docx: FileType2 }
-
-function tipoLocal(f: File): TipoArquivo | null {
-  const ext = f.name.toLowerCase().split('.').pop() ?? ''
-  if (ext === 'pdf') return 'pdf'
-  if (ext === 'jpg' || ext === 'jpeg') return 'jpg'
-  if (ext === 'png') return 'png'
-  if (ext === 'docx') return 'docx'
-  return tipoDoMime(f.type)
-}
 
 export function CampoArquivo({
   id,
@@ -74,7 +54,7 @@ export function CampoArquivo({
     if (!arquivo || desabilitado) return
     setConferindo(true)
     try {
-      const problema = await conferirArquivoLocal(arquivo, finalidade)
+      const { problema } = await conferirArquivoLocal(arquivo, finalidade)
       setErro(problema ?? '')
       if (!problema) aoMudar(arquivo)
     } finally {
@@ -97,9 +77,10 @@ export function CampoArquivo({
     onDrop: soltar,
   }
 
-  // O arquivo escolhido (ainda não enviado) abre pelo endereço local do navegador
+  // O arquivo escolhido (ainda não enviado) abre pelo endereço local do navegador, com o tipo conferido pelo conteúdo
+  // (nunca o que o navegador deu pelo nome); sem a conferência, não abre
   const local = valor instanceof File ? valor : null
-  const urlLocal = useMemo(() => (local ? URL.createObjectURL(local) : ''), [local])
+  const urlLocal = useMemo(() => (local ? urlParaAbrir(local) : ''), [local])
   useEffect(() => () => (urlLocal ? URL.revokeObjectURL(urlLocal) : undefined), [urlLocal])
 
   const seletor = (
@@ -148,7 +129,7 @@ export function CampoArquivo({
     )
 
   const salvo = local ? null : (valor as ArquivoAnexo)
-  const tipo = local ? tipoLocal(local) : tipoDoMime(salvo!.tipo)
+  const tipo = local ? tipoConferido(local) : tipoDoMime(salvo!.tipo)
   const Icone = tipo ? ICONE[tipo] : FileText
   const nome = local ? local.name : salvo!.nome
   const tamanho = local ? local.size : salvo!.tamanho
@@ -263,7 +244,7 @@ export function BotaoAnexarArquivo({
     if (!arquivo || desabilitado) return
     setConferindo(true)
     try {
-      const problema = await conferirArquivoLocal(arquivo, finalidade)
+      const { problema } = await conferirArquivoLocal(arquivo, finalidade)
       setErro(problema ?? '')
       if (!problema) aoEscolher(arquivo)
     } finally {

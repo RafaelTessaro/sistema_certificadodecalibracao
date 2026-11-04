@@ -1,8 +1,8 @@
 import { CircleAlert, CircleCheck, Eye, FileBadge2, Hourglass, Loader2, ShieldCheck, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 import { formatarNumeroCertificado } from '#shared/dominio.ts'
-import { podeEmitir } from '#shared/permissoes.ts'
-import type { NumeroReservado } from '#shared/tipos.ts'
+import { impedimentoDoRevisor, podeEmitir } from '#shared/permissoes.ts'
+import type { Calibracao, NumeroReservado } from '#shared/tipos.ts'
 import { hojeISO } from '../../lib/format'
 import { useSessao } from '../../store/sessao'
 import { Button } from '../ui/Button'
@@ -12,6 +12,7 @@ import { AvisoItem } from './PainelResultados'
 
 export function EtapaRevisao({
   ctx,
+  tecnicoGravado,
   numeroReservado = null,
   numeroRevisao = null,
   pendencias,
@@ -23,6 +24,8 @@ export function EtapaRevisao({
   aoEmitir,
 }: {
   ctx: ContextoEtapa
+  /** O técnico gravado no servidor e quem o indicou (com a revisão por outra pessoa, quem indicou não emite). */
+  tecnicoGravado: Pick<Calibracao, 'tecnicoId' | 'tecnicoDefinidoPorId'>
   /** O nº reservado na impressão da folha de campo (o da etiqueta): o certificado é emitido com ele. */
   numeroReservado?: Pick<NumeroReservado, 'numero' | 'folha'> | null
   /** Revisão: o nº com que ela sai (o do certificado revisado, com o -R dela). */
@@ -41,7 +44,13 @@ export function EtapaRevisao({
   const r = calc?.resultado
   const signatario = podeEmitir(usuario)
   const proprio = f.tecnicoId === usuario?.id
-  const bloqueadoRevisor = config.exigirRevisor && proprio
+  // A troca do técnico ainda não gravada também vai como indicada por quem está usando (como o servidor grava)
+  const trocou = !!f.tecnicoId && f.tecnicoId !== tecnicoGravado.tecnicoId
+  const bloqueadoRevisor = !!impedimentoDoRevisor(
+    config.exigirRevisor,
+    { tecnicoId: f.tecnicoId, tecnicoDefinidoPorId: trocou ? usuario?.id : tecnicoGravado.tecnicoDefinidoPorId },
+    usuario?.id,
+  )
   const tecnico = equipe.find((u) => u.id === f.tecnicoId)
   const [emitindo, setEmitindo] = useState(false)
   // A numeração segue o ano da emissão (hoje)
@@ -217,7 +226,9 @@ export function EtapaRevisao({
           )}
           {bloqueadoRevisor && signatario && (
             <p className="rounded-xl bg-info-soft px-3.5 py-2.5 text-[13px] text-info">
-              A empresa exige revisão por outra pessoa: envie para revisão para outro signatário emitir.
+              {proprio
+                ? 'A empresa exige revisão por outra pessoa: envie para revisão para outro signatário emitir.'
+                : 'A empresa exige revisão por outra pessoa. Você indicou o técnico desta calibração: envie para revisão para outro signatário emitir.'}
             </p>
           )}
           {!signatario && status === 'RASCUNHO' && (

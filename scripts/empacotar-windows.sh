@@ -10,8 +10,9 @@
 # Passos:
 #   1. npm ci e npm run build (a interface em dist/);
 #   2. monta pacotes/payload/ com server/, shared/ (sem os testes), dist/, package.json,
-#      package-lock.json, .env.exemplo e o node_modules de produção (npm ci --omit=dev numa pasta
-#      temporária: só JavaScript puro, que funciona igual no Windows);
+#      package-lock.json, o .env.exemplo do servidor instalado (instalador/env-servidor.exemplo) e o
+#      node_modules de produção (npm ci --omit=dev numa pasta temporária: só JavaScript puro, que
+#      funciona igual no Windows);
 #   3. baixa o Node.js portátil oficial (só o node.exe do zip win-x64) e confere o SHA-256 pelo
 #      SHASUMS256.txt oficial e pelo valor fixado abaixo;
 #   4. baixa o WinSW.NET461.exe e confere o SHA-256 fixado abaixo;
@@ -122,7 +123,13 @@ mkdir -p "$payload/node" "$payload/servico" "$payload/ferramentas" "$payload/est
 # Código do servidor e do domínio, sem testes nem dados de teste
 tar -C "$raiz" --exclude='*.test.ts' --exclude='*.test.mjs' --exclude='*.test.js' \
   --exclude='__fixtures__' --exclude='__snapshots__' -cf - server shared | tar -C "$payload" -xf -
-cp "$raiz/package.json" "$raiz/package-lock.json" "$raiz/.env.exemplo" "$payload/"
+cp "$raiz/package.json" "$raiz/package-lock.json" "$payload/"
+# O exemplo do .env do servidor instalado: só o que vale nele. O serviço define PORTA, HOST e PASTA_DADOS, e o .env
+# não troca o que o ambiente define (o .env.exemplo da raiz, de desenvolvimento, ensinaria a mudar os três)
+cp "$raiz/instalador/env-servidor.exemplo" "$payload/.env.exemplo"
+if grep -Eq '^[[:space:]]*(PORTA|HOST|PASTA_DADOS)[[:space:]]*=' "$payload/.env.exemplo"; then
+  falhar "o .env.exemplo do servidor não pode ter PORTA, HOST nem PASTA_DADOS (o serviço define os três)."
+fi
 
 if [ "$pular_build" = 1 ]; then
   # Só dentro do payload: a raiz do projeto não é tocada

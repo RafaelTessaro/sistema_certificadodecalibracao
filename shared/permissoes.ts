@@ -3,7 +3,7 @@
 //
 // Emitir (autorizar) certificados não depende do nível, e sim do usuário ser "signatário"
 // (marcado pelo administrador em Usuários): ver `podeEmitir`.
-import type { NivelUsuario, UsuarioSessao } from './tipos.ts'
+import type { Calibracao, NivelUsuario, UsuarioSessao } from './tipos.ts'
 
 export type Permissao =
   'excluirCliente' | 'excluirBalanca' | 'excluirPadrao' | 'cancelarCertificado' | 'configuracoes' | 'dadosEBackup' | 'usuarios'
@@ -60,4 +60,23 @@ export function pode(nivel: NivelUsuario | null | undefined, p: Permissao | unde
 /** Pode autorizar (emitir) certificados. */
 export function podeEmitir(usuario: Pick<UsuarioSessao, 'signatario'> | null | undefined): boolean {
   return !!usuario?.signatario
+}
+
+/**
+ * Com a revisão por outra pessoa ligada (Configurações → Certificado, `exigirRevisor`): por que este usuário não pode
+ * emitir o certificado da calibração, ou null. Não emite o técnico que executou, nem quem indicou outra pessoa como
+ * técnico (sem isso, bastava trocar o técnico para emitir a própria calibração com o nome de um colega). O revisor que
+ * só corrige a digitação emite. O servidor (`emitirCertificado`) e a tela usam esta.
+ */
+export function impedimentoDoRevisor(
+  exigirRevisor: boolean,
+  k: Pick<Calibracao, 'tecnicoId' | 'tecnicoDefinidoPorId'>,
+  usuarioId: string | null | undefined,
+): string | null {
+  if (!exigirRevisor || !usuarioId) return null
+  if (k.tecnicoId === usuarioId)
+    return 'A empresa exige que outra pessoa revise e autorize: o técnico que executou não pode emitir o próprio certificado.'
+  if (k.tecnicoDefinidoPorId === usuarioId)
+    return 'A empresa exige que outra pessoa revise e autorize: quem indicou o técnico desta calibração não pode emitir o certificado.'
+  return null
 }

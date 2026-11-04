@@ -508,6 +508,13 @@ export interface Calibracao {
   localEndereco: string
   /** Técnico que executou (usuário). */
   tecnicoId: ID
+  /**
+   * Quem indicou o técnico (usuário): quem criou a calibração, quem trocou o técnico depois ou o próprio técnico ao
+   * gravar a calibração dele. Com a revisão por outra pessoa (`Configuracoes.exigirRevisor`), quem indicou outra
+   * pessoa como técnico também não emite (`impedimentoDoRevisor`). A revisão de um certificado mantém o do revisado.
+   * Quem define é o servidor; ausente = calibração de antes deste campo (só vale o técnico).
+   */
+  tecnicoDefinidoPorId?: ID
   /** Quem revisou e autorizou a emissão (usuário signatário). */
   signatarioId: ID
   /** Padrões usados: jogos de pesos, termo-higrômetro, barômetro. */
@@ -568,6 +575,14 @@ export interface Calibracao {
    */
   regrasDoPop?: boolean
   /**
+   * Calibração em andamento que já tinha leituras quando o sistema passou a seguir as regras do POP (atualização para
+   * a 1.0.3, migração 14), e a revisão do certificado dela: a visita já aconteceu e as leituras não podem ser refeitas.
+   * Os mínimos do POP (pontos, subida, retorno ao zero, leituras e ensaios da repetibilidade, posições e dispensa da
+   * excentricidade) ficam só como avisos; a balança que não pesa corretamente e as leituras fora do esperado continuam
+   * pendências (ver `minimosDoPopComoAviso` em dominio.ts). Quem define é o servidor; ausente = não.
+   */
+  minimosComoAviso?: boolean
+  /**
    * Revisão: os padrões como foram congelados na emissão do certificado que ela substitui (o certificado e as
    * correções da época, mesmo que o padrão tenha sido calibrado de novo ou desativado depois; ver
    * `padroesDaCalibracao` em dominio.ts). Quem define é o servidor, ao criar a revisão; ausente = não é revisão.
@@ -591,6 +606,7 @@ export type CalibracaoInput = Omit<
   | 'ano'
   | 'sequencia'
   | 'revisao'
+  | 'tecnicoDefinidoPorId'
   | 'emissao'
   | 'cancelamento'
   | 'criadoPor'

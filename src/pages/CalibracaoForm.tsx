@@ -475,6 +475,8 @@ function EditorCalibracao({ id }: { id: string }) {
         try {
           const r = await api.salvarCalibracao(id, atual, versao.current)
           versao.current = r.calibracao.versao
+          // O gravado (o técnico e quem o indicou: com a revisão por outra pessoa, quem indicou não emite)
+          setDados((d) => (d ? { ...d, calibracao: r.calibracao } : d))
           setPendenciasServidor(r.pendencias)
           setAvisosServidor(r.avisos ?? [])
           setSalvo(sujo.current ? 'pendente' : 'salvo')
@@ -865,6 +867,7 @@ function EditorCalibracao({ id }: { id: string }) {
               {etapa === 'revisao' && (
                 <EtapaRevisao
                   ctx={ctx}
+                  tecnicoGravado={dados.calibracao}
                   numeroReservado={numeroReservado}
                   numeroRevisao={dados.numeroRevisao}
                   pendencias={pendencias}

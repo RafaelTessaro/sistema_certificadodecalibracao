@@ -132,6 +132,14 @@ export interface EntradaCalculo {
    */
   regrasDoPop?: boolean
   /**
+   * Com `regrasDoPop`: os mínimos do POP (os 5 pontos, a subida, o retorno ao zero registrado, as leituras e um ensaio
+   * da repetibilidade por intervalo de d, todas as posições da excentricidade) voltam a ser só avisos, como na época; o
+   * resto das regras continua (a balança que não pesa corretamente, as leituras fora do esperado, as cargas e os pesos
+   * do ponto). É a calibração já medida quando o sistema passou a seguir as regras (`Calibracao.minimosComoAviso`): a
+   * visita já aconteceu. Sem `regrasDoPop`, não muda nada (tudo já é aviso).
+   */
+  minimosComoAviso?: boolean
+  /**
    * Revisão de um certificado emitido antes das regras do POP (sem `regrasDoPop`): as leituras dele. A leitura fora do
    * esperado que a revisão mudou (ou acrescentou) é pendência; a que já estava no certificado revisado, só o aviso.
    */

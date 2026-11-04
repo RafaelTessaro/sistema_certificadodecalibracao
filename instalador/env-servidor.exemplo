@@ -1,0 +1,16 @@
+# Configurações extras do servidor do BC Calibração instalado pelo setup do Windows.
+# Para usar: copie este arquivo para ".env", nesta mesma pasta, preencha e reinicie o serviço
+# (prompt de comando como administrador: net stop BCCalibracao e depois net start BCCalibracao).
+#
+# A porta, a pasta de dados e o HOST são do instalador e não mudam por aqui (o serviço define
+# os três, e eles valem mais que este arquivo):
+#   - porta: rode o setup de novo com /PORTA=NNNN;
+#   - dados: ficam sempre em C:\ProgramData\BC Calibracao\dados (a cópia de segurança precisa dessa pasta);
+#   - quem acessa pela rede: a regra "BC Calibracao (rede local)" do Firewall define.
+
+# Nomes pelos quais o sistema é aberto no navegador, além do IP, de "localhost" e do nome do
+# computador (sozinho, com .local ou com o domínio do Windows), que sempre funcionam. Só precisa
+# preencher se alguém acessa por um nome criado no roteador ou no DNS, ex.: http://calibracao:4850,
+# ou pelo nome completo em outro domínio, ex.: http://servidor.empresa.com.br:4850. Separe vários
+# com vírgula. Acesso por um nome que não está aqui é bloqueado (proteção contra sites maliciosos).
+HOSTS_PERMITIDOS=

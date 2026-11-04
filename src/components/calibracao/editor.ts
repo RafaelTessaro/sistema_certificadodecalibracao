@@ -2,7 +2,7 @@
 // que vem do servidor. Separado para ser testado.
 
 import { PENDENCIA_POP } from '#shared/arquivos.ts'
-import { padroesDaCalibracao, PENDENCIAS_SO_DO_SERVIDOR, pendenciasAmbiente, regrasDoPopComoAviso } from '#shared/dominio.ts'
+import { minimosDoPopComoAviso, padroesDaCalibracao, PENDENCIAS_SO_DO_SERVIDOR, pendenciasAmbiente } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Padrao } from '#shared/tipos.ts'
 import type { DetalheCalibracao } from '../../lib/api'
 import type { ContextoEtapa, IdEtapa } from './contexto'
@@ -117,7 +117,8 @@ export function etapaCompleta(
     balanca,
   }: Pick<ContextoEtapa, 'f' | 'calc' | 'selecionados'> & Partial<Pick<ContextoEtapa, 'balanca'>>,
 ): boolean {
-  const regrasDoPop = !regrasDoPopComoAviso(f)
+  // Os mínimos do POP valem: a dispensa da excentricidade só no gancho e o retorno ao zero (`minimosDoPopComoAviso`)
+  const minimosDoPop = !minimosDoPopComoAviso(f)
   switch (e) {
     case 'identificacao':
       return !!f.dataCalibracao && !!f.tecnicoId && (f.local !== 'CLIENTE' || !!f.localEndereco.trim())
@@ -142,13 +143,13 @@ export function etapaCompleta(
       return repetibilidadeCompleta(calc?.resultado.repetibilidade ?? [])
     case 'excentricidade':
       return !f.excentricidade.aplicavel
-        ? !!f.excentricidade.motivo.trim() && (!regrasDoPop || !balanca || balanca.receptor === 'GANCHO')
+        ? !!f.excentricidade.motivo.trim() && (!minimosDoPop || !balanca || balanca.receptor === 'GANCHO')
         : !!calc && !calc.resultado.pendencias.some((p) => p.startsWith('Excentricidade'))
     case 'indicacao':
       return (
         f.indicacao.pontos.length > 0 &&
         f.indicacao.pontos.every((p) => p.crescente !== null || p.decrescente !== null) &&
-        (!regrasDoPop || f.indicacao.retornoZero !== null)
+        (!minimosDoPop || f.indicacao.retornoZero !== null)
       )
     case 'conclusao':
       return !f.conformidade.solicitada || f.conformidade.criterio !== 'CLIENTE' || f.conformidade.toleranciaCliente > 0

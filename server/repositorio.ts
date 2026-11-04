@@ -1103,6 +1103,8 @@ export class Repositorio {
         sequencia: null,
         revisao: 0,
         tecnicoId: valor.tecnicoId || autor.id,
+        // Quem indicou o técnico: quem criou (na revisão, o do certificado revisado, abaixo)
+        tecnicoDefinidoPorId: autor.id,
         cancelamento: null,
         emissao: null,
         criadoPor: autor.nome,
@@ -1119,11 +1121,17 @@ export class Repositorio {
           .get(original.id)
         if (aberta) throw new ErroApi(409, 'Já existe uma revisão em andamento para este certificado.')
         k.revisao = original.revisao + 1
+        // O técnico do certificado revisado continua indicado por quem o indicou (o signatário que revisa pode emitir)
+        if (k.tecnicoId === original.tecnicoId) k.tecnicoDefinidoPorId = original.tecnicoDefinidoPorId
         // Certificado emitido antes do cálculo da classe I (ou revisão dele): a revisão mantém o cálculo da época
         if (calculoLegado(original)) k.calculoLegado = true
         // Emitido com as regras do POP: a revisão também as segue (os mínimos e as leituras fora do esperado são
         // pendências; `regrasDoPopComoAviso`). O de antes delas (1.0.2 ou anterior) fica como na época
-        else if (original.emissao?.regrasDoPop === true) k.regrasDoPop = true
+        else if (original.emissao?.regrasDoPop === true) {
+          k.regrasDoPop = true
+          // Medida antes das regras (a mesma visita): os mínimos continuam avisos (`minimosDoPopComoAviso`)
+          if (original.minimosComoAviso === true) k.minimosComoAviso = true
+        }
         // Os padrões como foram congelados na emissão (o certificado e as correções da época), mesmo que tenham sido
         // calibrados de novo ou desativados depois (`padroesDaCalibracao`)
         if (original.emissao?.padroes.length) k.padroesCongelados = original.emissao.padroes
@@ -1134,7 +1142,11 @@ export class Repositorio {
     })
   }
 
-  atualizarCalibracao(id: string, entrada: unknown): Calibracao {
+  /**
+   * Grava o rascunho. `autor`: quem grava. Quem troca o técnico passa a ser quem o indicou; o próprio técnico que grava
+   * a calibração dele também (confere que foi ele: com a revisão por outra pessoa, quem a digitou pode emitir).
+   */
+  atualizarCalibracao(id: string, entrada: unknown, autor: { id: string }): Calibracao {
     const valor = validar(normalizarCalibracao(entrada))
     return transacao(this.db, () => {
       const atual = this.obterCalibracao(id)
@@ -1145,12 +1157,14 @@ export class Repositorio {
       if (versao !== undefined && versao !== atual.versao) throw conflito('esta calibração')
       // A revisão é a do certificado gravado, nunca a que o corpo do PUT diz
       this.verificarLigacoes(valor, atual.substituiId)
+      const tecnicoId = valor.tecnicoId || atual.tecnicoId
       const k: Calibracao = {
         ...atual,
         ...valor,
         // A revisão continua ligada ao certificado que substitui
         substituiId: atual.substituiId,
-        tecnicoId: valor.tecnicoId || atual.tecnicoId,
+        tecnicoId,
+        tecnicoDefinidoPorId: tecnicoId !== atual.tecnicoId || tecnicoId === autor.id ? autor.id : atual.tecnicoDefinidoPorId,
         versao: atual.versao + 1,
         atualizadoEm: this.agora().toISOString(),
       }

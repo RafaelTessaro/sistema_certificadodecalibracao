@@ -111,7 +111,7 @@ npm run build    # confere os tipos e gera a interface em dist/
 npm start        # servidor de produção (serve dist/) em http://localhost:4850
 ```
 
-As configurações do servidor ficam num arquivo `.env`. Veja o modelo em [`.env.exemplo`](.env.exemplo): porta, pasta de dados e nomes permitidos.
+As configurações do servidor ficam num arquivo `.env`. Veja o modelo em [`.env.exemplo`](.env.exemplo): porta, pasta de dados e nomes permitidos. O que o ambiente já define vale mais que o `.env`. No servidor instalado pelo setup do Windows, o serviço define a porta, o HOST e a pasta de dados, e o modelo instalado é o [`instalador/env-servidor.exemplo`](instalador/env-servidor.exemplo).
 
 ### Gerar o instalador
 

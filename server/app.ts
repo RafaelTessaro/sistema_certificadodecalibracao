@@ -9,6 +9,7 @@ import { instalarAcesso, ipDe, nomeCookieSessao } from './acesso.ts'
 import { BackupsAutomaticos } from './backup.ts'
 import type { Contexto } from './contexto.ts'
 import { abrirBanco } from './db.ts'
+import { dominioDoComputador } from './dominioWindows.ts'
 import { criarModuloEmail, type CriarTransporte } from './email.ts'
 import { ErroApi } from './erros.ts'
 import { idDaInstalacao, novaInstancia } from './identidade.ts'
@@ -40,8 +41,9 @@ const SUFIXOS_DA_REDE_LOCAL = ['local', 'lan', 'home.arpa', 'internal', 'localdo
 /**
  * Nomes pelos quais o servidor pode ser acessado. Endereços IP, "localhost", o nome do computador (exato),
  * `<nome>.local` (e os outros sufixos que só existem na rede interna) e `<nome>.<domínio do Windows>`
- * (USERDNSDOMAIN, quando existe) sempre valem; outros nomes (ex.: um apelido no roteador ou o nome completo
- * no DNS da empresa, servidor.empresa.com.br) vão em HOSTS_PERMITIDOS, separados por vírgula.
+ * (`dominioWindows`: o sufixo DNS primário do computador, ver `dominioDoComputador`) sempre valem; outros nomes
+ * (ex.: um apelido no roteador ou o nome completo em outro domínio, servidor.empresa.com.br) vão em
+ * HOSTS_PERMITIDOS, separados por vírgula.
  * Bloqueia o "DNS rebinding": um site de fora que aponta o próprio nome para o IP do servidor
  * para ler os dados pelo navegador de quem está na rede. Por isso `<nome>.<um domínio qualquer>` nunca vale:
  * quem tem o domínio atacante.com cria servidor.atacante.com apontando para cá.
@@ -50,7 +52,7 @@ export function hostPermitido(
   host: string | undefined,
   extras: ReadonlySet<string>,
   maquina = hostname(),
-  dominioWindows = process.env.USERDNSDOMAIN ?? '',
+  dominioWindows = '',
 ): boolean {
   if (!host) return false
   let nome: string
@@ -122,6 +124,11 @@ export interface OpcoesApp {
   tarefasEmSegundoPlano?: boolean
   /** Nomes extras aceitos no cabeçalho Host; padrão: HOSTS_PERMITIDOS do ambiente. */
   hostsPermitidos?: string
+  /**
+   * Domínio do Windows: `<nome do computador>.<ele>` vale no cabeçalho Host sem HOSTS_PERMITIDOS; padrão: o sufixo DNS
+   * primário do computador (`dominioDoComputador`: o registro no Windows, senão o USERDNSDOMAIN).
+   */
+  dominioWindows?: string
   /** Aceita só endereços da rede local; padrão: ligado (SO_REDE_LOCAL=0 no .env desliga). */
   soRedeLocal?: boolean
   /** Toda requisição sem sessão vale como o administrador fictício; só com process.env.VITEST. */
@@ -134,6 +141,30 @@ export interface OpcoesApp {
 
 /** Varredura das sessões vencidas e do limite de tentativas. */
 const VARREDURA_MS = 60_000
+
+/**
+ * O hash (sha256, para a Content-Security-Policy) de cada script embutido no index.html: o que aplica o tema antes de
+ * desenhar a tela. Os carregados de arquivo (`src=`) valem pela origem ('self'). O navegador confere o texto como leu
+ * o HTML, com as quebras de linha normalizadas (CRLF → LF): o index.html gravado no Windows dá o mesmo hash.
+ */
+export function hashesDosScriptsEmbutidos(html: string): string[] {
+  const hashes: string[] = []
+  for (const [, atributos, texto] of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+    if (/\bsrc\s*=/i.test(atributos)) continue
+    const lido = texto.replace(/\r\n?/g, '\n')
+    hashes.push(`'sha256-${createHash('sha256').update(lido, 'utf8').digest('base64')}'`)
+  }
+  return hashes
+}
+
+/**
+ * Content-Security-Policy da interface: scripts só do sistema (os arquivos dele e os embutidos pelo hash), sem <base>
+ * apontando para fora e sem moldura de outro site. Vale também para o que a página abre pelo endereço local (blob:):
+ * uma página disfarçada de documento não roda script com a sessão de quem abriu. Só os scripts: as imagens data: das
+ * assinaturas, os estilos do React e as prévias de PDF (iframe blob:, que herda a política) continuam como estão.
+ */
+const politicaDeConteudo = (hashes: string[]) =>
+  [['script-src', "'self'", ...hashes].join(' '), "base-uri 'self'", "frame-ancestors 'self'"].join('; ')
 
 export function varrerSessoes(usuarios: ServicoUsuarios, tempoReal: TempoReal): string[] {
   const vencidas = usuarios.limparVencidas()
@@ -199,7 +230,11 @@ export async function criarApp(opcoes: OpcoesApp) {
 
   // ---- Segurança básica para uso em rede local ----
   const hostsExtras = lerHostsPermitidos(opcoes.hostsPermitidos)
+  const dominioWindows = opcoes.dominioWindows ?? dominioDoComputador()
+  const computador = hostname()
   const soRedeLocal = opcoes.soRedeLocal ?? process.env.SO_REDE_LOCAL !== '0'
+  /** Content-Security-Policy da interface: com o hash do script do tema quando o index.html é lido (abaixo). */
+  let csp = politicaDeConteudo([])
   app.addHook('onRequest', async (req, reply) => {
     // Só a rede da empresa: um acesso vindo da internet é recusado antes de qualquer coisa
     if (soRedeLocal && !ipDaRedeLocal(ipDe(req))) {
@@ -207,7 +242,7 @@ export async function criarApp(opcoes: OpcoesApp) {
       return reply.code(403).type('text/plain; charset=utf-8').send('Acesso permitido somente pela rede da empresa.')
     }
     // Vale também para leituras: um site de fora com o nome apontado para este servidor não lê nada
-    if (!hostPermitido(req.headers.host, hostsExtras)) {
+    if (!hostPermitido(req.headers.host, hostsExtras, computador, dominioWindows)) {
       const aviso =
         `Acesso pelo nome "${String(req.headers.host ?? '').slice(0, 100)}" bloqueado. ` +
         'Use o endereço IP do servidor, ou inclua esse nome em HOSTS_PERMITIDOS no arquivo .env e reinicie o servidor.'
@@ -218,6 +253,8 @@ export async function criarApp(opcoes: OpcoesApp) {
     reply.header('X-Frame-Options', 'SAMEORIGIN')
     reply.header('Referrer-Policy', 'same-origin')
     if (req.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store')
+    // A interface (a API é JSON e os PDFs, que abrem no leitor do navegador)
+    else reply.header('Content-Security-Policy', csp)
     // A verificação vale para QUALQUER requisição que não seja leitura, independentemente do
     // caminho (o roteador decodifica /%61pi/... para /api/..., então não dá para filtrar pelo prefixo).
     if (req.method === 'GET' || req.method === 'HEAD') return
@@ -319,11 +356,10 @@ export async function criarApp(opcoes: OpcoesApp) {
   // ---- Interface (arquivos compilados pelo Vite) ----
   const pastaEstatica = opcoes.pastaEstatica === undefined ? resolve('dist') : opcoes.pastaEstatica
   if (pastaEstatica && existsSync(join(pastaEstatica, 'index.html'))) {
+    const index = readFileSync(join(pastaEstatica, 'index.html'))
     // O index.html referencia os arquivos com hash: o hash dele identifica a versão da interface
-    tempoReal.build = createHash('sha1')
-      .update(readFileSync(join(pastaEstatica, 'index.html')))
-      .digest('hex')
-      .slice(0, 12)
+    tempoReal.build = createHash('sha1').update(index).digest('hex').slice(0, 12)
+    csp = politicaDeConteudo(hashesDosScriptsEmbutidos(index.toString('utf8')))
     await app.register(fastifyStatic, {
       root: pastaEstatica,
       setHeaders(reply, caminho) {

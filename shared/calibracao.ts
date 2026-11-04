@@ -2,7 +2,14 @@
 // converte os pesos padrão para a unidade da balança e monta a entrada do cálculo.
 // Usado no navegador (cálculo ao vivo) e no servidor (emissão e PDF).
 
-import { calculoLegado, CLASSES_PESO, massaLegivel, regrasDoPopComoAviso, valorAmbiente } from './dominio.ts'
+import {
+  calculoLegado,
+  CLASSES_PESO,
+  massaLegivel,
+  minimosDoPopComoAviso,
+  regrasDoPopComoAviso,
+  valorAmbiente,
+} from './dominio.ts'
 import { calcular, emaInstrumento, emaPeso, sugerirPontos } from './metrologia/index.ts'
 import type {
   ArCalculo,
@@ -342,8 +349,8 @@ export function opcoesComoEncontrado(opcoes: OpcoesCalculo, classe: Balanca['cla
   return { ...opcoes, empuxo: 'MEDIDO' }
 }
 
-/** Ver `regrasDoPopComoAviso` em dominio.ts (lá, para `pendenciasEmissao` também usar). */
-export { regrasDoPopComoAviso }
+/** Ver `regrasDoPopComoAviso` e `minimosDoPopComoAviso` em dominio.ts (lá, para `pendenciasEmissao` também usar). */
+export { minimosDoPopComoAviso, regrasDoPopComoAviso }
 
 /** As leituras de um certificado emitido, para a revisão dele (`EntradaCalculo.leiturasDoOriginal`). */
 export function leiturasOriginais(
@@ -367,7 +374,9 @@ type Original = Pick<CalibracaoInput, 'indicacao' | 'repetibilidade' | 'excentri
  */
 export function entradaDoCalculo(
   k: Pick<CalibracaoInput, 'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade'> &
-    Partial<Pick<CalibracaoInput, 'ambiente' | 'ajuste' | 'calculoLegado' | 'substituiId' | 'regrasDoPop'>> & {
+    Partial<
+      Pick<CalibracaoInput, 'ambiente' | 'ajuste' | 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso'>
+    > & {
       emissao?: unknown
     },
   balanca: Pick<Balanca, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>,
@@ -393,7 +402,8 @@ export function entradaDoCalculo(
     conformidade: k.conformidade,
     ar: arDoAmbiente(k.ambiente, ajustadaAntes),
     termica: termicaDoAmbiente(k.ambiente),
-    ...(comoAviso ? {} : { regrasDoPop: true }),
+    // A calibração já medida antes das regras: os mínimos como avisos (`minimosDoPopComoAviso`)
+    ...(comoAviso ? {} : { regrasDoPop: true, ...(minimosDoPopComoAviso(k, momento) ? { minimosComoAviso: true } : {}) }),
     ...(comoAviso && momento === 'FINAL' && original ? { leiturasDoOriginal: leiturasOriginais(original) } : {}),
   }
 }
@@ -407,7 +417,9 @@ export function calcularCalibracao(
     CalibracaoInput,
     'opcoes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conformidade' | 'comoEncontrado' | 'ajuste'
   > &
-    Partial<Pick<CalibracaoInput, 'ambiente' | 'calculoLegado' | 'substituiId' | 'regrasDoPop'>> & { emissao?: unknown },
+    Partial<Pick<CalibracaoInput, 'ambiente' | 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso'>> & {
+      emissao?: unknown
+    },
   balanca: Pick<Balanca, 'unidade' | 'classe' | 'tipoFaixas' | 'faixas'>,
   padroes: Padrao[],
   original?: Original | null,

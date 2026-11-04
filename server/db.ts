@@ -5,6 +5,7 @@ import { POP_DA_ATUALIZACAO, separarProcedimento } from '#shared/arquivos.ts'
 import {
   calculoLegado,
   enderecoCliente,
+  formatarDataBr,
   hojeLocalIso,
   parteSeparada,
   semIndicadorLegado,
@@ -236,6 +237,12 @@ const MIGRACOES: Migracao[] = [
   // 13: os endereços que o servidor de e-mail recusou em cada envio (JSON; vazio nos de antes). `para` guarda só quem
   // recebeu: o servidor que recusa parte dos destinatários entrega aos outros sem dar erro.
   (db) => acrescentarColuna(db, 'envios', 'recusados', "TEXT NOT NULL DEFAULT ''"),
+
+  // 14: a calibração em andamento que já tinha leituras na atualização para as regras do POP (1.0.3) fica com os mínimos
+  // como avisos (`minimosComoAviso`): a visita já aconteceu e as leituras não podem ser refeitas. Na 1.0.2 eles eram só
+  // avisos. A balança que não pesa corretamente e as leituras fora do esperado continuam pendências; as novas seguem as
+  // regras inteiras.
+  medidasAntesDasRegras,
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
@@ -332,6 +339,57 @@ function revisoesLegadas(db: Banco) {
         marcadas,
       ),
     )
+}
+
+/**
+ * Migração 14 (ver acima). Repetível: só marca a calibração em andamento (rascunho ou em revisão), que não é revisão de
+ * um certificado (essa segue as regras do revisado), com alguma leitura e ainda sem a marca. Não sobe a versão: a marca
+ * não muda nada do que a tela grava. O registro de atividades diz quais.
+ */
+function medidasAntesDasRegras(db: Banco) {
+  const linhas = db
+    .prepare(
+      `SELECT k.id, k.dados, c.nome AS cliente,
+              (SELECT n.numero FROM numeros_reservados n
+                WHERE n.calibracao_id = k.id AND n.situacao = 'reservado' ORDER BY n.id DESC LIMIT 1) AS reservado
+         FROM calibracoes k LEFT JOIN clientes c ON c.id = k.cliente_id
+        WHERE k.status IN ('RASCUNHO','REVISAO') AND k.substitui_id = ''
+        ORDER BY k.criado_em, k.id`,
+    )
+    .all() as Array<{ id: string; dados: string; cliente: string | null; reservado: string | null }>
+  const gravar = db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
+  const marcadas: string[] = []
+  for (const l of linhas) {
+    const k = JSON.parse(l.dados) as Calibracao
+    if (k.minimosComoAviso === true || !temLeitura(k)) continue
+    gravar.run(JSON.stringify({ ...k, minimosComoAviso: true }), l.id)
+    const os = String(k.ordemServico ?? '').trim()
+    marcadas.push(
+      l.reservado ||
+        (os ? `OS ${os}` : `${l.cliente || 'Cliente'}${k.dataCalibracao ? ` (${formatarDataBr(k.dataCalibracao)})` : ''}`),
+    )
+  }
+  if (marcadas.length)
+    db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)").run(
+      new Date().toISOString(),
+      detalheLista(
+        marcadas.length === 1
+          ? 'A calibração em andamento medida antes desta versão sai com os mínimos do POP como avisos (a visita já aconteceu); as novas seguem as regras. Confira: '
+          : `${marcadas.length} calibrações em andamento medidas antes desta versão saem com os mínimos do POP como avisos (a visita já aconteceu); as novas seguem as regras. Confira: `,
+        marcadas,
+      ),
+    )
+}
+
+/** A calibração tem alguma leitura registrada (erro de indicação, "como encontrado", repetibilidade ou excentricidade)? */
+function temLeitura(k: Partial<Pick<Calibracao, 'indicacao' | 'comoEncontrado' | 'repetibilidade' | 'excentricidade'>>) {
+  const lido = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
+  const pontos = [...(k.indicacao?.pontos ?? []), ...(k.comoEncontrado?.pontos ?? [])]
+  return (
+    pontos.some((p) => lido(p.crescente) || lido(p.decrescente)) ||
+    (k.repetibilidade ?? []).some((r) => (r.leituras ?? []).some(lido)) ||
+    (k.excentricidade?.posicoes ?? []).some((p) => lido(p.leitura) || lido(p.referencia))
+  )
 }
 
 /**

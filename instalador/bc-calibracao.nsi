@@ -1193,7 +1193,9 @@ Function EscreverXmlServico
   FileWriteUTF16LE $9 '  <executable>$INSTDIR\node\node.exe</executable>$\r$\n'
   FileWriteUTF16LE $9 '  <arguments>"$INSTDIR\server\iniciar.mjs"</arguments>$\r$\n'
   FileWriteUTF16LE $9 '  <workingdirectory>$INSTDIR</workingdirectory>$\r$\n'
-  ; As variáveis do serviço valem mais que o .env da pasta do programa
+  ; As variáveis do serviço valem mais que o .env da pasta do programa (o servidor avisa no err.log
+  ; quando ignora PORTA, HOST ou PASTA_DADOS de lá). O domínio do Windows, que o serviço não recebe
+  ; (USERDNSDOMAIN é só da sessão do usuário), o servidor lê do registro (server/dominioWindows.ts)
   FileWriteUTF16LE $9 '  <env name="PORTA" value="$PORTA"/>$\r$\n'
   FileWriteUTF16LE $9 '  <env name="HOST" value="0.0.0.0"/>$\r$\n'
   FileWriteUTF16LE $9 '  <env name="PASTA_DADOS" value="$DADOS"/>$\r$\n'

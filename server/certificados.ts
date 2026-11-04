@@ -24,6 +24,7 @@ import {
   PENDENCIA_TECNICO_EXCLUIDO,
   pendenciasEmissao,
 } from '#shared/dominio.ts'
+import { impedimentoDoRevisor } from '#shared/permissoes.ts'
 import type {
   AnexoEmailDisponivel,
   ArquivoAnexo,
@@ -366,11 +367,9 @@ export async function emitirCertificado(
     throw new ErroApi(403, 'Só um signatário autoriza a emissão do certificado. Envie para revisão de um signatário.', {
       codigo: 'SEM_PERMISSAO',
     })
-  if (config.exigirRevisor && atual.tecnicoId === signatarioId)
-    throw new ErroApi(
-      409,
-      'A empresa exige que outra pessoa revise e autorize: o técnico que executou não pode emitir o próprio certificado.',
-    )
+  // Nem o técnico, nem quem indicou o técnico (trocar o técnico para um colega não contorna a regra)
+  const impedimento = impedimentoDoRevisor(config.exigirRevisor, atual, signatarioId)
+  if (impedimento) throw new ErroApi(409, impedimento)
   const pendencias = pendenciasDa(ctx, atual)
   if (pendencias.length) throw new ErroApi(409, pendencias[0], { pendencias })
 

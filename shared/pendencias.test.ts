@@ -611,6 +611,21 @@ describe('pendências da emissão: excentricidade dispensada, balança sem ident
     expect(de({ ...revisao, regrasDoPop: true }, { receptor: 'RETANGULAR', ...ident })).toEqual([SO_GANCHO, MOTIVO])
   })
 
+  it('rascunho já medido antes das regras (`minimosComoAviso`): o ensaio dispensado fica como na época', () => {
+    const medido = base({ excentricidade: naoFeito('Prato pequeno'), minimosComoAviso: true })
+    expect(de(medido, { receptor: 'RETANGULAR', ...ident })).toEqual([])
+    // O motivo continua obrigatório (sai no certificado)
+    expect(de({ ...medido, excentricidade: naoFeito('') }, { receptor: 'RETANGULAR', ...ident })).toEqual([MOTIVO])
+    // A revisão do certificado dele (com as regras e a marca) também
+    const revisao = { ...medido, substituiId: 'k-original', regrasDoPop: true }
+    expect(de(revisao, { receptor: 'RETANGULAR', ...ident })).toEqual([])
+    // O padrão fora do intervalo da Tabela 3 não é um mínimo do ensaio: continua pendência
+    const velho = padrao({ dataCalibracao: '2022-03-10', validade: '2032-03-10' })
+    expect(de(base({ minimosComoAviso: true }), { receptor: 'RETANGULAR', ...ident }, [velho])).toEqual([
+      'O padrão JP-01 foi calibrado em 10/03/2022, há mais de 24 meses desta calibração (POP, Tabela 3).',
+    ])
+  })
+
   it('balança sem nº de série, sem TAG e sem a série da plataforma: não identificável (POP 7.3)', () => {
     const SEM_ID = 'Balança sem nº de série nem identificação (TAG): identifique a balança no cadastro antes de emitir (POP 7.3).'
     const vazia = { receptor: 'RETANGULAR' as const, numeroSerie: ' ', identificacao: '', plataformaSerie: '' }

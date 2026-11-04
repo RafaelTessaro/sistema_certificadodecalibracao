@@ -616,6 +616,8 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   const unidade = instrumento.unidade
   /** Registro de antes das regras do POP: os mínimos e as leituras fora do esperado ficam só como avisos. */
   const legado = entrada.regrasDoPop !== true
+  /** Os mínimos do POP só como avisos: no registro de antes e na calibração já medida antes das regras. */
+  const minimosComoAviso = legado || entrada.minimosComoAviso === true
   const avisos: Aviso[] = []
   const pendencias: string[] = []
   const repetibilidade = entrada.repetibilidade.map(resumirRepetibilidade)
@@ -989,13 +991,14 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   if (!pontosLidos) pendencias.unshift('Erro de indicação: nenhuma leitura registrada.')
   if (!ctx.repeticoes.length)
     pendencias.unshift(
-      legado
+      minimosComoAviso
         ? 'Repetibilidade: registre pelo menos 2 leituras (o mínimo recomendado é 5).'
         : `Repetibilidade: registre as leituras do ensaio (no mínimo ${instrumento.classe === 'I' ? '10' : '5; 3 com carga ≥ 100 kg'}; POP, Tabela 4).`,
     )
   if (entrada.excentricidade.aplicavel && !exc.valida)
     pendencias.push('Excentricidade: registre as leituras das posições (ou marque o ensaio como não aplicável).')
-  // Mínimos do POP (7.7 e 7.9, Tabela 4) na calibração nova; no registro anterior, avisos (mais abaixo)
+  // Mínimos do POP (7.7 e 7.9, Tabela 4) na calibração nova; no registro anterior e na calibração já medida antes das
+  // regras, avisos (mais abaixo)
   // Só as faixas que o erro de indicação alcançou (a calibração parcial acordada, POP 7.1). O ensaio sem carga não
   // cobre intervalo nenhum, mas também não esconde os que faltam (a pendência dele é outra)
   const cargasRep = ctx.repeticoes.map((r) => r.carga).filter((c) => c > 0)
@@ -1008,10 +1011,11 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     const alcancadas = faixasAlcancadas(instrumento, cargaLida ? maiorCargaLida : 0).length
     return `Repetibilidade: ${cargasRep.length} ${cargasRep.length === 1 ? 'ensaio' : 'ensaios'} para ${alcancadas} ${nome}s; falta ${onde}. O POP (7.9) pede um ensaio em cada ${nome} de d diferente.`
   }
-  if (!legado) {
-    if (pontosLidos > 0 && !cargaLida)
-      pendencias.push('Erro de indicação: registre as leituras das cargas acima de zero (POP 7.7).')
-    else if (pontosLidos > 0 && pontosLidos < 5)
+  // Só o zero lido não é ensaio de carga: pendência também na calibração já medida antes das regras
+  if (!legado && pontosLidos > 0 && !cargaLida)
+    pendencias.push('Erro de indicação: registre as leituras das cargas acima de zero (POP 7.7).')
+  if (!minimosComoAviso) {
+    if (pontosLidos > 0 && cargaLida && pontosLidos < 5)
       pendencias.push(
         `Erro de indicação: ${pontosLidos} ${pontosLidos === 1 ? 'ponto lido' : 'pontos lidos'}; o POP pede no mínimo 5, contando o zero (7.7).`,
       )
@@ -1040,11 +1044,13 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   const limiteZero = limiteServico(0)
   const zeroFora = retornoZero !== null && limiteZero !== null && !naoExcede(Math.abs(retornoZero), limiteZero)
   if (!legado && cargaLida) {
-    if (retornoZero === null)
-      pendencias.push(
-        'Erro de indicação: registre o retorno ao zero, a indicação sem carga depois de retirar toda a carga (POP 7.7).',
-      )
-    else if (zeroFora)
+    // Não anotado na calibração já medida antes das regras (era opcional): como na época
+    if (retornoZero === null) {
+      if (!minimosComoAviso)
+        pendencias.push(
+          'Erro de indicação: registre o retorno ao zero, a indicação sem carga depois de retirar toda a carga (POP 7.7).',
+        )
+    } else if (zeroFora)
       pendencias.push(
         `Erro de indicação: a balança não voltou ao zero (retorno de ${leituraTexto(retornoZero, 0)} ${unidade}; limite de ${textoLimite(limiteZero!)}); a balança não pesa corretamente e não é calibrada (POP 7.8).`,
       )
@@ -1126,7 +1132,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       continue
     }
     const minimo = converterMassa(r.carga, unidade, 'kg') >= 100 * (1 - TOL) ? 3 : 5
-    if (legado && r.n < minimo)
+    if (minimosComoAviso && r.n < minimo)
       avisos.push({
         nivel: 'atencao',
         mensagem: `Repetibilidade a ${rotulo(r.carga)}: ${r.n} leitura(s); o mínimo é ${minimo}${minimo === 3 ? ' (carga ≥ 100 kg)' : ' (3 só com carga ≥ 100 kg)'}.`,
@@ -1135,12 +1141,12 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   // Multi-intervalo e múltiplas faixas: um ensaio em cada intervalo (ou faixa) de d diferente (o rascunho novo
   // e o "recalibrar" copiam os ensaios do último certificado, que podia ter um só). Só os ensaios feitos (n ≥ 2, os
   // que entram na incerteza): os copiados vêm sem as leituras
-  if (legado && semEnsaio.length) avisos.push({ nivel: 'atencao', mensagem: textoSemEnsaio() })
+  if (minimosComoAviso && semEnsaio.length) avisos.push({ nivel: 'atencao', mensagem: textoSemEnsaio() })
   const classeI = instrumento.classe === 'I'
   if (ctx.repeticoes.some((r) => r.n < 10)) {
     // Na classe I o POP pede 10 leituras (Tabela 4): o aviso de atenção substitui o informativo (na calibração nova, a
     // pendência)
-    if (classeI && legado)
+    if (classeI && minimosComoAviso)
       avisos.push({ nivel: 'atencao', mensagem: 'Balança classe I: faça 10 leituras na repetibilidade (POP, Tabela 4).' })
     if (opcoes.metodoK === 'K2')
       avisos.push({
@@ -1154,7 +1160,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
         mensagem: 'Repetibilidade com menos de 10 leituras: o k calculado pelos graus de liberdade efetivos sai maior que 2.',
       })
   }
-  if (legado && pontosLidos > 0 && pontosLidos < 5)
+  if (minimosComoAviso && (legado || cargaLida) && pontosLidos > 0 && pontosLidos < 5)
     avisos.push({
       nivel: 'atencao',
       mensagem: `Erro de indicação com ${pontosLidos} ponto(s); o mínimo é 5, contando o zero (cg-18 §5.2).`,
@@ -1166,7 +1172,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       mensagem: `A maior carga ensaiada (${rotulo(maiorCargaLida)}) é menor que 90 % de Max (${rotulo(max)}): calibração em faixa parcial, que precisa constar no certificado.`,
     })
   // Excentricidade (POP 7.10, Tabela 6): todas as posições, com a carga informada e até Max. Na calibração nova,
-  // pendências; no registro de antes, avisos
+  // pendências; no registro de antes, avisos (as posições que faltam, também na calibração já medida antes das regras)
   const excentricidadeIncompleta: string[] = []
   if (entrada.excentricidade.aplicavel) {
     const lEcc = entrada.excentricidade.carga
@@ -1190,7 +1196,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       })
     const faltando = exc.resultado.desvios.filter((d) => d === null).length
     if (exc.valida && faltando) {
-      if (legado) avisos.push({ nivel: 'atencao', mensagem: `Excentricidade: ${faltando} posição(ões) sem leitura.` })
+      if (minimosComoAviso) avisos.push({ nivel: 'atencao', mensagem: `Excentricidade: ${faltando} posição(ões) sem leitura.` })
       else
         excentricidadeIncompleta.push(
           `Excentricidade: ${faltando} ${faltando === 1 ? 'posição' : 'posições'} sem leitura; registre todas (POP 7.10).`,

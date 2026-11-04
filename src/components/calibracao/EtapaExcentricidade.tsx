@@ -5,7 +5,7 @@ import {
   METODOS_EXCENTRICIDADE,
   metodoExcentricidadeForaDoPop,
   metodoExcentricidadePadrao,
-  regrasDoPopComoAviso,
+  minimosDoPopComoAviso,
 } from '#shared/dominio.ts'
 import {
   cargaExcentricidade,
@@ -67,8 +67,8 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
 
   // O POP (7.10, Tabela 6) só dispensa o ensaio na balança suspensa (gancho), com o motivo (sai no certificado). Nas
   // outras, "Ensaio realizado" só aparece para voltar a marcar o que já veio desmarcado (registro de antes); a revisão
-  // de um certificado de antes das regras fica como na época
-  const podeDispensar = balanca.receptor === 'GANCHO' || regrasDoPopComoAviso(f)
+  // de um certificado de antes das regras, e a calibração já medida antes delas, ficam como na época
+  const podeDispensar = balanca.receptor === 'GANCHO' || minimosDoPopComoAviso(f)
   const mostrarRealizado = podeDispensar || !ecc.aplicavel
   const semMotivo = !ecc.aplicavel && !ecc.motivo.trim()
 

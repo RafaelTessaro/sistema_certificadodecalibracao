@@ -495,6 +495,24 @@ export function regrasDoPopComoAviso(
   return momento === 'COMO_ENCONTRADO' || calculoLegado(k) || (!!k.substituiId && k.regrasDoPop !== true)
 }
 
+/**
+ * Os mínimos do POP ficam só como avisos? Sim onde todas as regras ficam (`regrasDoPopComoAviso`) e na calibração que
+ * já tinha leituras quando o sistema passou a segui-las (`minimosComoAviso`, marcada pela migração 14, e a revisão do
+ * certificado dela): a visita já aconteceu e as leituras não podem ser refeitas. Os mínimos: os 5 pontos, a subida, o
+ * retorno ao zero, as leituras e os ensaios da repetibilidade, todas as posições da excentricidade e a dispensa dela
+ * fora do gancho. A balança que não pesa corretamente, as leituras fora do esperado e o que se corrige no escritório
+ * (cargas, pesos do ponto, padrões) continuam pendências: o certificado ainda não saiu.
+ */
+export function minimosDoPopComoAviso(
+  k: Pick<CalibracaoInput, 'opcoes'> &
+    Partial<Pick<CalibracaoInput, 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso'>> & {
+      emissao?: unknown
+    },
+  momento: 'FINAL' | 'COMO_ENCONTRADO' = 'FINAL',
+): boolean {
+  return regrasDoPopComoAviso(k, momento) || k.minimosComoAviso === true
+}
+
 /** As opções da classe I diferem destas (o botão "Aplicar" da Conclusão)? Compara só empuxo e convecção. */
 export function faltamOpcoesDaClasse(o: OpcoesCalculo, classe: ClasseExatidao | null | undefined): boolean {
   const certo = opcoesDaClasse(o, classe)
@@ -2141,9 +2159,10 @@ export function pendenciasEmissao(
   if (b && !balancaIdentificada(b))
     p.push('Balança sem nº de série nem identificação (TAG): identifique a balança no cadastro antes de emitir (POP 7.3).')
   // Excentricidade dispensada: o POP (7.10, Tabela 6) só a dispensa na balança suspensa (gancho), com o motivo, que
-  // sai no certificado. Sem o ensaio, a parcela dele some da incerteza
+  // sai no certificado. Sem o ensaio, a parcela dele some da incerteza. Na calibração já medida antes das regras, a
+  // dispensa fica como na época (o ensaio não pode ser feito agora); o motivo, não
   if (regrasDoPop && !c.excentricidade.aplicavel) {
-    if (b && b.receptor !== 'GANCHO')
+    if (b && b.receptor !== 'GANCHO' && !minimosDoPopComoAviso(c))
       p.push(
         'Excentricidade: o POP (7.10, Tabela 6) só dispensa o ensaio na balança suspensa (gancho); registre as leituras das posições.',
       )

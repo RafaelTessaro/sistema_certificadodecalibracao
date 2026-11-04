@@ -14,8 +14,8 @@ import {
   massaLegivel,
   METODOS_CARREGAMENTO,
   metodosCarregamentoParaEscolher,
+  minimosDoPopComoAviso,
   registroAnterior,
-  regrasDoPopComoAviso,
 } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
 import { cargaDaDescida, formatarNumero } from '#shared/metrologia/index.ts'
@@ -126,9 +126,9 @@ export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicaca
   const resultado = antes ? calc?.comoEncontrado : calc?.resultado
   const setEnsaio = (mudar: (e: EnsaioIndicacao) => EnsaioIndicacao) => alterar((s) => mudarEnsaioDaAba(s, aba, mudar))
   const rodoviaria = ehRodoviaria(balanca)
-  // Na calibração nova (as regras do POP), o retorno ao zero é obrigatório; no "como encontrado" e no registro de antes,
-  // opcional, como na época
-  const obrigatorio = !antes && !regrasDoPopComoAviso(f)
+  // Na calibração nova (as regras do POP), o retorno ao zero é obrigatório; no "como encontrado", no registro de antes
+  // e na calibração já medida antes das regras, opcional, como na época
+  const obrigatorio = !antes && !minimosDoPopComoAviso(f)
 
   return (
     <>

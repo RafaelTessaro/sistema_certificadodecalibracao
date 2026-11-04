@@ -181,6 +181,8 @@ describe('etapas Excentricidade e Erro de indicação na lista de etapas (POP 7.
     expect(de(naoFeita('Prato pequeno'), 'RETANGULAR')).toBe(false)
     // Registro de antes das regras (revisão de certificado da 1.0.2): como na época
     expect(de({ ...naoFeita('Prato pequeno'), substituiId: 'orig' }, 'RETANGULAR')).toBe(true)
+    // Rascunho já medido antes das regras (marcado na atualização): também
+    expect(de({ ...naoFeita('Prato pequeno'), minimosComoAviso: true }, 'RETANGULAR')).toBe(true)
   })
 
   it('erro de indicação: com todos os pontos lidos, falta o retorno ao zero na calibração nova', () => {
@@ -207,6 +209,7 @@ describe('etapas Excentricidade e Erro de indicação na lista de etapas (POP 7.
     expect(de(lida(0))).toBe(true)
     expect(de(lida(null))).toBe(false)
     expect(de({ ...lida(null), substituiId: 'orig' })).toBe(true)
+    expect(de({ ...lida(null), minimosComoAviso: true })).toBe(true)
   })
 })
 

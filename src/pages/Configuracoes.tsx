@@ -1303,8 +1303,8 @@ function SecaoCertificado({ config, salvarParte, aoSujo }: PropsSecao) {
           titulo="Exigir revisão por outra pessoa antes de emitir"
           descricao={
             <>
-              <b className="font-medium text-ink">Ligado:</b> quem fez a calibração não pode emitir o próprio certificado; outro
-              signatário confere e autoriza. É o que a norma recomenda quando há mais de uma pessoa habilitada.{' '}
+              <b className="font-medium text-ink">Ligado:</b> quem fez a calibração (ou indicou quem fez) não pode emitir o
+              certificado; outro signatário confere e autoriza. É o que a norma recomenda quando há mais de uma pessoa habilitada.{' '}
               <b className="font-medium text-ink">Desligado:</b> o técnico que também é signatário pode emitir as próprias
               calibrações (bom para equipes pequenas).
             </>

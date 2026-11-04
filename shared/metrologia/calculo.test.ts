@@ -1678,6 +1678,110 @@ describe('calibração nova: a balança que não pesa corretamente e os dados qu
     })
   })
 
+  describe('rascunho já medido antes das regras do POP (`minimosComoAviso`, marcado na atualização)', () => {
+    const medido = (mudar: (e: EntradaCalculo) => void, nova = true) =>
+      calc((e) => {
+        e.minimosComoAviso = true
+        mudar(e)
+      }, nova)
+    /** 4 pontos (sem o de 20 kg), 3 leituras a 15 kg, sem o retorno ao zero e uma posição da excentricidade sem leitura. */
+    const abaixoDosMinimos = (e: EntradaCalculo) => {
+      lerEm(e, 20, null)
+      e.repetibilidade = [{ id: 'r', carga: 15, leituras: [15, 15, 15.01] }]
+      e.indicacao.retornoZero = null
+      e.excentricidade.posicoes = posicoes([10, 10, 10.01, 10, null])
+    }
+
+    it('os mínimos (pontos, leituras, retorno ao zero, posições) ficam como avisos, como na época', () => {
+      // Na calibração nova, cada um é pendência
+      expect(calc(abaixoDosMinimos).pendencias).toEqual([
+        'Erro de indicação: 4 pontos lidos; o POP pede no mínimo 5, contando o zero (7.7).',
+        'Repetibilidade a 15,00 kg: 3 leituras; o mínimo é 5 (POP, Tabela 4; 3 só com carga ≥ 100 kg).',
+        'Erro de indicação: registre o retorno ao zero, a indicação sem carga depois de retirar toda a carga (POP 7.7).',
+        'Excentricidade: 1 posição sem leitura; registre todas (POP 7.10).',
+      ])
+      const { pendencias, avisos } = medido(abaixoDosMinimos)
+      expect(pendencias).toEqual([])
+      expect(avisos).toEqual(
+        expect.arrayContaining([
+          'atencao: Erro de indicação com 4 ponto(s); o mínimo é 5, contando o zero (cg-18 §5.2).',
+          'atencao: Repetibilidade a 15,00 kg: 3 leitura(s); o mínimo é 5 (3 só com carga ≥ 100 kg).',
+          'atencao: Excentricidade: 1 posição(ões) sem leitura.',
+        ]),
+      )
+    })
+
+    it('a subida e um ensaio de repetibilidade por intervalo também', () => {
+      expect(medido((e) => (e.indicacao.metodo = 'DECRESCENTE')).pendencias).toEqual([])
+      expect(medido((e) => lerEm(e, 10, null, 10)).pendencias).toEqual([])
+      const multi = medido((e) => {
+        e.instrumento = {
+          ...e.instrumento,
+          tipoFaixas: 'MULTI_INTERVALO',
+          faixas: [
+            { max: 15, e: 0.005, d: 0.005 },
+            { max: 30, e: 0.01, d: 0.01 },
+          ],
+        }
+        e.repetibilidade = [{ id: 'r', carga: 25, leituras: [25, 25, 25.01, 25, 25] }]
+      })
+      expect(multi.pendencias).toEqual([])
+      expect(multi.avisos).toContain(
+        'atencao: Repetibilidade: 1 ensaio para 2 intervalos; falta no intervalo até 15,000 kg (d = 0,005 kg). O POP (7.9) pede um ensaio em cada intervalo de d diferente.',
+      )
+    })
+
+    it('a balança que não pesa corretamente continua sem certificado (POP 7.8)', () => {
+      expect(medido((e) => lerEm(e, 30, 30.1)).pendencias).toEqual([
+        'Erro de indicação, ponto de 30,00 kg: erro de +0,100 kg, maior que o EMA em serviço (±0,04 kg); a balança não pesa corretamente e não é calibrada (POP 7.8).',
+      ])
+      expect(medido((e) => (e.indicacao.retornoZero = 0.5)).pendencias).toEqual([
+        'Erro de indicação: a balança não voltou ao zero (retorno de 0,50 kg; limite de ±0,02 kg); a balança não pesa corretamente e não é calibrada (POP 7.8).',
+      ])
+    })
+
+    it('o que se corrige no escritório continua pendência: digitação, cargas e pesos do ponto', () => {
+      expect(medido((e) => lerEm(e, 30, 300.1, 30.01)).pendencias).toEqual([
+        'Erro de indicação, ponto de 30,00 kg: leitura 300,10 fora do esperado; confira a digitação.',
+      ])
+      expect(medido((e) => (e.excentricidade.carga = 0)).pendencias).toEqual([
+        'Excentricidade: informe a carga usada no ensaio (POP 7.10).',
+      ])
+      expect(medido((e) => (e.repetibilidade[0].carga = 0)).pendencias).toEqual([
+        'Repetibilidade: informe a carga do ensaio (POP 7.9).',
+      ])
+      expect(
+        medido((e) => {
+          e.indicacao.pontos = e.indicacao.pontos.map((p) => (p.carga === 10 ? { ...p, pecas: [] } : p))
+        }).pendencias,
+      ).toEqual([
+        'Erro de indicação, ponto de 10,00 kg: nenhum peso padrão no ponto; escolha os pesos do ponto ou, nos padrões, um jogo que faça essa carga.',
+      ])
+      expect(medido((e) => e.indicacao.pontos.push(ponto('novo', 0, [], 25, 25))).pendencias).toEqual([
+        'Erro de indicação: o ponto 6 está sem carga; informe a carga do ponto (só o primeiro, o do zero, fica sem carga).',
+      ])
+      // Só o zero lido não é ensaio de carga
+      expect(
+        medido((e) => {
+          for (const c of [5, 10, 20, 30]) lerEm(e, c, null)
+        }).pendencias,
+      ).toEqual(['Erro de indicação: registre as leituras das cargas acima de zero (POP 7.7).'])
+    })
+
+    it('sem as regras do POP (registro de antes), a marca não muda nada', () => {
+      const semMarca = calc((e) => {
+        abaixoDosMinimos(e)
+        lerEm(e, 30, 30.1)
+      }, false)
+      const comMarca = medido((e) => {
+        abaixoDosMinimos(e)
+        lerEm(e, 30, 30.1)
+      }, false)
+      expect(comMarca.pendencias).toEqual([])
+      expect(comMarca.avisos).toEqual(semMarca.avisos)
+    })
+  })
+
   describe('calibração parcial acordada só da faixa de baixo (POP 7.1)', () => {
     const duasFaixas = (tipoFaixas: 'MULTIPLAS_FAIXAS' | 'MULTI_INTERVALO', ate: number) =>
       calc((e) => {

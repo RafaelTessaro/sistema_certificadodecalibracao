@@ -8,6 +8,7 @@
 // Migração 11: a revisão em andamento levada para o novo dono da balança volta para o cliente do certificado revisado.
 // Migração 12: as balanças de cada lembrete de calibração (vazio nos de antes).
 // Migração 13: os endereços que o servidor de e-mail recusou em cada envio (vazio nos de antes).
+// Migração 14: o rascunho já medido antes das regras do POP mantém os mínimos como avisos (a visita já aconteceu).
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
@@ -19,7 +20,7 @@ import { detalheTrocaIndicador, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 13
+const ULTIMA = 14
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -633,7 +634,8 @@ describe('migração 9: revisão aberta antes do cálculo da classe I', () => {
        VALUES ('k3', 'RASCUNHO', 'c1', 'b1', ?, 1, ?, ?)`,
     ).run(JSON.stringify(rascunho), EM, EM)
     const antes = db.prepare('SELECT id, dados FROM calibracoes ORDER BY id').all()
-    migrar(db)
+    // Só a 9 (o rascunho comum com leituras é marcado pela 14, com os mínimos como avisos)
+    migrar(db, 9)
     expect(db.prepare('SELECT id, dados FROM calibracoes ORDER BY id').all()).toEqual(antes)
     expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toEqual([])
     // Revisão emitida (SUBSTITUIDO/EMITIDO) de um original legado: já é legada pela própria emissão, não muda
@@ -861,5 +863,135 @@ describe('migração 13: os endereços recusados de cada envio', () => {
     db.exec('PRAGMA user_version = 12')
     migrar(db)
     expect(envios(db)).toEqual([{ id: 'e1', para: 'c@d.com', recusados: '["a@b.com"]' }])
+  })
+})
+
+describe('migração 14: a calibração em andamento já medida antes das regras do POP', () => {
+  /** Leituras (null = não lida) do erro de indicação, da repetibilidade e da excentricidade. */
+  const ensaios = (o: {
+    pontos?: Array<number | null>
+    repetibilidade?: Array<number | null>
+    posicoes?: Array<number | null>
+  }) => ({
+    indicacao: {
+      metodo: 'CRESCENTE',
+      retornoZero: null,
+      pontos: [0, 10, 20].map((carga, i) => ({ id: `p${i}`, carga, crescente: o.pontos?.[i] ?? null, decrescente: null })),
+    },
+    repetibilidade: [{ id: 'r1', carga: 15, leituras: o.repetibilidade ?? [] }],
+    excentricidade: {
+      aplicavel: true,
+      carga: 10,
+      posicoes: [0, 1, 2, 3, 4].map((i) => ({ rotulo: `P${i + 1}`, leitura: o.posicoes?.[i] ?? null, referencia: null })),
+    },
+    comoEncontrado: null,
+  })
+  /**
+   * Banco na versão 13 com: k1 (rascunho com 3 leituras a 15 kg, OS 123), k2 (enviado ao signatário, só os pontos lidos,
+   * sem OS), k3 (rascunho só com a excentricidade lida, com o nº reservado na folha), k4 (rascunho ainda sem leitura),
+   * k5 (emitido) e k6 (revisão aberta de k5, que segue as regras do certificado revisado).
+   */
+  function bancoV13() {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 1)
+    db.prepare(
+      `INSERT INTO clientes (id, tipo, documento, nome, busca, ativo, dados, versao, criado_em, atualizado_em)
+       VALUES ('c1', 'PJ', '', 'Frigorífico', 'frigorifico', 1, '{}', 1, ?, ?)`,
+    ).run(EM, EM)
+    inserirBalanca(db, 'b1', { numeroSerie: 'TL-2231', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
+    migrar(db, 13)
+    const inserir = db.prepare(
+      `INSERT INTO calibracoes (id, status, numero, cliente_id, balanca_id, ordem_servico, substitui_id, dados, versao,
+                                criado_em, atualizado_em)
+       VALUES (?, ?, ?, 'c1', 'b1', ?, ?, ?, 3, ?, ?)`,
+    )
+    const calibracao = (
+      id: string,
+      status: string,
+      o: { os?: string; substitui?: string; numero?: string; data?: string; minutos: number },
+      leituras: Parameters<typeof ensaios>[0],
+    ) => {
+      const em = new Date(Date.parse(EM) + o.minutos * 60_000).toISOString()
+      const dados = {
+        id,
+        status,
+        numero: o.numero ?? '',
+        clienteId: 'c1',
+        balancaId: 'b1',
+        ordemServico: o.os ?? '',
+        dataCalibracao: o.data ?? '2026-10-20',
+        substituiId: o.substitui ?? '',
+        ...ensaios(leituras),
+      }
+      inserir.run(id, status, o.numero ?? '', o.os ?? '', o.substitui ?? '', JSON.stringify(dados), em, em)
+    }
+    calibracao('k1', 'RASCUNHO', { os: '123', minutos: 1 }, { pontos: [0, 10, 20], repetibilidade: [15, 15.01, 15] })
+    calibracao('k2', 'REVISAO', { data: '2026-10-21', minutos: 2 }, { pontos: [0, 10.01, null] })
+    calibracao('k3', 'RASCUNHO', { os: '77', minutos: 3 }, { posicoes: [10, null, null, null, null] })
+    calibracao('k4', 'RASCUNHO', { os: '999', minutos: 4 }, { repetibilidade: [null, null] })
+    calibracao('k5', 'EMITIDO', { numero: 'CC-2026-00001', minutos: 5 }, { pontos: [0, 10, 20], repetibilidade: [15, 15, 15] })
+    calibracao('k6', 'RASCUNHO', { substitui: 'k5', minutos: 6 }, { pontos: [0, 10, 20], repetibilidade: [15, 15, 15] })
+    db.prepare(
+      `INSERT INTO numeros_reservados (numero, ano, sequencia, calibracao_id, folha, reservado_em, situacao)
+       VALUES ('CC-2026-00042', 2026, 42, 'k3', 'FC-2026-00042', ?, 'reservado')`,
+    ).run(EM)
+    return db
+  }
+  const dados = (db: DatabaseSync) =>
+    Object.fromEntries(
+      (
+        db.prepare('SELECT id, dados, versao FROM calibracoes ORDER BY id').all() as Array<{
+          id: string
+          dados: string
+          versao: number
+        }>
+      ).map((l) => [l.id, { ...(JSON.parse(l.dados) as Record<string, unknown>), _versao: l.versao }]),
+    )
+
+  it('marca só a calibração em andamento que já tem leituras; o resto do registro fica como estava', () => {
+    const db = bancoV13()
+    const antes = dados(db)
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    const depois = dados(db)
+    for (const id of ['k1', 'k2', 'k3']) expect(depois[id], id).toEqual({ ...antes[id], minimosComoAviso: true })
+    // Sem leitura nenhuma (ainda não medido), emitido e revisão de um emitido: como estavam
+    for (const id of ['k4', 'k5', 'k6']) expect(depois[id], id).toEqual(antes[id])
+  })
+
+  it('o registro de atividades diz quais: o nº reservado, a OS ou o cliente com a data', () => {
+    const db = bancoV13()
+    migrar(db)
+    expect(
+      registros(db)
+        .filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
+        .map((r) => r.detalhe),
+    ).toEqual([
+      '3 calibrações em andamento medidas antes desta versão saem com os mínimos do POP como avisos (a visita já aconteceu); as novas seguem as regras. Confira: OS 123, Frigorífico (21/10/2026), CC-2026-00042.',
+    ])
+    // Uma só
+    const uma = bancoV13()
+    uma.exec("DELETE FROM calibracoes WHERE id IN ('k2', 'k3')")
+    migrar(uma)
+    expect(registros(uma).find((r) => r.acao === 'SISTEMA_ATUALIZADO')?.detalhe).toBe(
+      'A calibração em andamento medida antes desta versão sai com os mínimos do POP como avisos (a visita já aconteceu); as novas seguem as regras. Confira: OS 123.',
+    )
+  })
+
+  it('nenhuma medida: não registra nada', () => {
+    const db = bancoV13()
+    db.exec("DELETE FROM calibracoes WHERE id IN ('k1', 'k2', 'k3')")
+    migrar(db)
+    expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toEqual([])
+  })
+
+  it('pode ser repetida sem falhar nem registrar de novo', () => {
+    const db = bancoV13()
+    migrar(db)
+    const depois = dados(db)
+    db.exec('PRAGMA user_version = 13')
+    migrar(db)
+    expect(dados(db)).toEqual(depois)
+    expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(1)
   })
 })
