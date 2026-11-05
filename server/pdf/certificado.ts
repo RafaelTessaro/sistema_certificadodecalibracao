@@ -640,7 +640,9 @@ function secaoDadosCalibracao(ctx: Contexto, n: number): No[] {
     [{ rotulo: 'Método — procedimento (POP)', valor: valorMetodo(metodo, notaEmpuxoConveccao(ctx)), span: 4 }],
   ]
   const blocos: No[] = [inteiro([...secao(ctx.r, n, 'Dados da calibração'), grade(ctx.r, linhas)])]
-  if (!vazio(e.substituiNumero)) {
+  // A revisão "-R1" de antes da 1.0.4 diz o que substitui e por quê; a correção com o mesmo nº sai como um
+  // certificado comum (o motivo fica só no sistema)
+  if (!vazio(e.substituiNumero) && !e.mesmoNumero) {
     const emitido = formatarDataBr(e.substituiEmissao) || dataHoraBrasilia(e.substituiEmissao)?.data || ''
     blocos.push(
       destaque(ctx.r, {
@@ -1757,13 +1759,30 @@ function assinatura(papel: string, s: Signatario, comImagem: boolean): NoObjeto 
 }
 
 /**
+ * Quem assina e com que rótulo (`EmissaoCertificado.assinaturas`): só quem executou (revisão por outra pessoa
+ * desligada na emissão); quem executou e quem autorizou (ligada); no emitido antes da 1.0.4 (sem o campo), as duas, ou
+ * uma só "Executado e autorizado por" quando eram a mesma pessoa, como saía.
+ */
+export function assinantes(e: Pick<EmissaoCertificado, 'tecnico' | 'signatario' | 'assinaturas'>): Array<{
+  papel: string
+  s: Signatario
+}> {
+  if (e.assinaturas === 'TECNICO') return [{ papel: 'Executado por', s: e.tecnico }]
+  if (e.tecnico.id && e.tecnico.id === e.signatario.id) return [{ papel: 'Executado e autorizado por', s: e.signatario }]
+  return [
+    { papel: 'Executado por', s: e.tecnico },
+    { papel: 'Autorizado por', s: e.signatario },
+  ]
+}
+
+/**
  * Fim do certificado: as assinaturas, a data da emissão e a linha de fim (vai inteiro, com as declarações).
- * Com uma assinatura só (quem executou também autorizou), a data e a linha de fim vão na coluna ao lado dela,
- * alinhadas ao pé (sem linha a mais); com duas, numa linha embaixo delas.
+ * Com uma assinatura só (só quem executou, ou quem executou também autorizou), a data e a linha de fim vão na
+ * coluna ao lado dela, alinhadas ao pé (sem linha a mais); com duas, numa linha embaixo delas.
  */
 function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
   const { e } = ctx
-  const mesmo = e.tecnico.id && e.tecnico.id === e.signatario.id
+  const quem = assinantes(e)
   const emissao = dataHoraBrasilia(e.emitidoEm)
   const cidade = [e.empresa.cidade, e.empresa.uf].filter((x) => !vazio(x)).join('/')
   // A prévia não foi emitida: diz quando foi gerada e que não tem valor
@@ -1780,12 +1799,12 @@ function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
     fontSize: 7.4,
     characterSpacing: 0.3,
   }
-  if (mesmo)
+  if (quem.length === 1)
     return [
       fio(COR.fio, 0.5, [0, ctx.r.assinaturas, 0, 5]),
       {
         columns: [
-          { width: 210, ...assinatura('Executado e autorizado por', e.signatario, comImagem) },
+          { width: 210, ...assinatura(quem[0].papel, quem[0].s, comImagem) },
           {
             width: '*',
             // As duas linhas no pé da coluna da assinatura (alinhadas com o nome e o cargo)
@@ -1801,7 +1820,7 @@ function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
   return [
     fio(COR.fio, 0.5, [0, ctx.r.assinaturas, 0, 5]),
     {
-      columns: [assinatura('Executado por', e.tecnico, comImagem), assinatura('Autorizado por', e.signatario, comImagem)],
+      columns: quem.map((x) => assinatura(x.papel, x.s, comImagem)),
       columnGap: 24,
     },
     // A data da emissão à esquerda e a linha de fim à direita, numa linha só

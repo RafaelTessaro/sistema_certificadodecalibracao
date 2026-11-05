@@ -23,12 +23,13 @@ import {
   lerNumeroCertificado,
   LIMITES,
   nomeArquivoCertificado,
+  nomeArquivoDaVersao,
+  nomeArquivoGuardado,
   normalizarBalanca,
   normalizarCalibracao,
   normalizarCliente,
   normalizarConfig,
   normalizarPadrao,
-  numeroDaRevisao,
   OPCOES_CALCULO_PADRAO,
   temCargaSemDescida,
   textoBusca,
@@ -68,6 +69,7 @@ import type {
   ResumoPainel,
   StatusCalibracao,
   Vencimento,
+  VersaoCertificado,
   VersaoPop,
 } from '#shared/tipos.ts'
 import { type Banco, gravarMeta, lerMeta, transacao } from './db.ts'
@@ -241,8 +243,23 @@ const conflito = (oQue: string) =>
     codigo: 'CONFLITO',
   })
 
+/**
+ * Condição SQL (sobre a linha `k`): a calibração é a versão anterior de um certificado corrigido com o mesmo nº (a
+ * correção emitida dela tem o mesmo nº). A revisão "-R1" de antes da 1.0.4 tem outro nº e não conta.
+ */
+const VERSAO_ANTERIOR = 'EXISTS (SELECT 1 FROM calibracoes n WHERE n.substitui_id = k.id AND n.numero = k.numero)'
+
+/**
+ * Condição SQL (sobre a linha `k`): a 1ª emissão de um certificado que vale, para contar cada certificado uma vez, no
+ * mês em que saiu. Vale o emitido e o corrigido cuja versão atual está emitida: as versões de um nº (e a revisão
+ * "-R1" de antes da 1.0.4) têm o mesmo ano e sequência. O corrigido e depois cancelado não conta, como o cancelado
+ * sem correção (igual à aba Emitidos e às páginas do cliente e da balança).
+ */
+const PRIMEIRA_EMISSAO_QUE_VALE = `k.revisao = 0 AND (k.status = 'EMITIDO' OR (k.status = 'SUBSTITUIDO' AND EXISTS (
+  SELECT 1 FROM calibracoes x WHERE x.ano = k.ano AND x.sequencia = k.sequencia AND x.status = 'EMITIDO')))`
+
 /** O certificado com a revisão em andamento não é cancelado (`Repositorio.cancelar`). */
-export const MSG_CANCELAR_COM_REVISAO = 'Há uma revisão deste certificado em andamento: emita-a ou exclua-a antes de cancelar.'
+export const MSG_CANCELAR_COM_REVISAO = 'Há uma correção deste certificado em andamento: emita-a ou exclua-a antes de cancelar.'
 
 /** Versão enviada pela tela (obrigatória nas alterações). */
 function versaoDe(entrada: unknown): number | undefined {
@@ -972,7 +989,10 @@ export class Repositorio {
   }
 
   listarCalibracoes(filtro: FiltroCalibracoes = {}): { itens: CalibracaoResumo[]; total: number } {
-    const condicoes: string[] = []
+    // Uma linha por nº: a versão anterior de um certificado corrigido com o mesmo nº fica só no histórico dele
+    // (`versoesDoCertificado`) e na aba "Substituídos", marcada; a revisão "-R1" de antes é outro nº e o certificado que
+    // ela substituiu continua na lista
+    const condicoes: string[] = filtro.status === 'SUBSTITUIDO' ? [] : [`NOT (k.status = 'SUBSTITUIDO' AND ${VERSAO_ANTERIOR})`]
     const params: Array<string | number> = []
     if (filtro.status === 'ABERTAS') condicoes.push("k.status IN ('RASCUNHO','REVISAO')")
     else if (filtro.status) {
@@ -1014,7 +1034,10 @@ export class Repositorio {
       .prepare(
         `SELECT k.dados, c.nome AS cliente_nome, b.dados AS balanca_dados,
            (SELECT COUNT(*) FROM envios e WHERE e.calibracao_id = k.id) AS envios,
-           (SELECT r.numero FROM numeros_reservados r WHERE r.calibracao_id = k.id AND r.situacao = 'reservado') AS numero_reservado
+           (SELECT r.numero FROM numeros_reservados r WHERE r.calibracao_id = k.id AND r.situacao = 'reservado') AS numero_reservado,
+           (k.status = 'SUBSTITUIDO' AND ${VERSAO_ANTERIOR}) AS versao_anterior,
+           (SELECT o.numero FROM calibracoes o WHERE o.id = k.substitui_id AND o.status = 'EMITIDO'
+              AND k.status IN ('RASCUNHO','REVISAO')) AS numero_corrigido
          FROM calibracoes k
          JOIN clientes c ON c.id = k.cliente_id
          JOIN balancas b ON b.id = k.balanca_id
@@ -1024,7 +1047,14 @@ export class Repositorio {
          LIMIT ? OFFSET ?`,
       )
       .all(...params, limite, (pagina - 1) * limite) as Array<
-      Linha & { cliente_nome: string; balanca_dados: string; envios: number; numero_reservado: string | null }
+      Linha & {
+        cliente_nome: string
+        balanca_dados: string
+        envios: number
+        numero_reservado: string | null
+        versao_anterior: number
+        numero_corrigido: string | null
+      }
     >
     const nomes = this.nomesUsuarios()
     return {
@@ -1037,6 +1067,7 @@ export class Repositorio {
           l.envios,
           nomes,
           l.numero_reservado ?? '',
+          { versaoAnterior: !!l.versao_anterior, numeroCorrigido: l.numero_corrigido ?? '' },
         ),
       ),
     }
@@ -1054,9 +1085,11 @@ export class Repositorio {
     envios: number,
     nomes: Map<string, string>,
     numeroReservado: string,
+    versoes: { versaoAnterior: boolean; numeroCorrigido: string },
   ): CalibracaoResumo {
     // Emitido: os dados congelados no certificado (o cadastro pode ter mudado depois)
     const balanca = k.emissao?.balanca ?? b
+    const aberta = k.status === 'RASCUNHO' || k.status === 'REVISAO'
     return {
       id: k.id,
       versao: k.versao,
@@ -1070,12 +1103,16 @@ export class Repositorio {
       balancaSerie: balanca.numeroSerie,
       ordemServico: k.ordemServico,
       dataCalibracao: k.dataCalibracao,
-      dataEmissao: k.dataEmissao,
+      // Em andamento ainda não foi emitida (a correção aberta antes da 1.0.4 tinha a data do certificado corrigido)
+      dataEmissao: aberta ? '' : k.dataEmissao,
       proximaCalibracao: k.proximaCalibracao,
       tecnicoNome: k.emissao?.tecnico.nome ?? nomes.get(k.tecnicoId) ?? '',
       substituiId: k.substituiId,
       atualizadoEm: k.atualizadoEm,
       envios,
+      ...(k.emissao?.mesmoNumero ? { editadoEm: k.emissao.emitidoEm } : {}),
+      ...(versoes.versaoAnterior ? { versaoAnterior: true } : {}),
+      ...(aberta && versoes.numeroCorrigido ? { numeroCorrigido: versoes.numeroCorrigido } : {}),
       ...(numeroReservado ? { numeroReservado } : {}),
     }
   }
@@ -1087,7 +1124,12 @@ export class Repositorio {
     const b = this.obterBalanca(k.balancaId)
     if (!c || !b) return undefined
     const envios = (this.db.prepare('SELECT COUNT(*) AS n FROM envios WHERE calibracao_id = ?').get(id) as { n: number }).n
-    return this.resumo(k, c.nome, b, envios, this.nomesUsuarios(), this.numeroReservadoDa(id)?.numero ?? '')
+    const anterior =
+      k.status === 'SUBSTITUIDO' && !!this.db.prepare(`SELECT 1 FROM calibracoes k WHERE k.id = ? AND ${VERSAO_ANTERIOR}`).get(id)
+    return this.resumo(k, c.nome, b, envios, this.nomesUsuarios(), this.numeroReservadoDa(id)?.numero ?? '', {
+      versaoAnterior: anterior,
+      numeroCorrigido: this.numeroPrevistoDaRevisao(k) ?? '',
+    })
   }
 
   criarCalibracao(entrada: unknown, autor: { id: string; nome: string }): Calibracao {
@@ -1104,6 +1146,8 @@ export class Repositorio {
         ano: null,
         sequencia: null,
         revisao: 0,
+        // Ainda não foi emitida (a correção e a recalibração copiam os dados de um certificado emitido)
+        dataEmissao: '',
         tecnicoId: valor.tecnicoId || autor.id,
         // Quem indicou o técnico: quem criou (na revisão, o do certificado revisado, abaixo)
         tecnicoDefinidoPorId: autor.id,
@@ -1113,15 +1157,15 @@ export class Repositorio {
         criadoEm: em,
         atualizadoEm: em,
       }
-      // Revisão de um certificado emitido: herda o número e ganha o sufixo -R1, -R2…
+      // Correção de um certificado emitido: sai com o mesmo nº (ver `emitir`); o contador interno passa à versão seguinte
       if (valor.substituiId) {
         const original = this.obterCalibracao(valor.substituiId)
         if (!original || original.status !== 'EMITIDO')
-          throw new ErroApi(409, 'Só um certificado emitido (e ainda não substituído) pode ser revisado.')
+          throw new ErroApi(409, 'Só um certificado emitido (e ainda não substituído) pode ser corrigido.')
         const aberta = this.db
           .prepare("SELECT 1 FROM calibracoes WHERE substitui_id = ? AND status IN ('RASCUNHO','REVISAO')")
           .get(original.id)
-        if (aberta) throw new ErroApi(409, 'Já existe uma revisão em andamento para este certificado.')
+        if (aberta) throw new ErroApi(409, 'Já existe uma correção em andamento para este certificado.')
         k.revisao = original.revisao + 1
         // O técnico do certificado revisado continua indicado por quem o indicou (o signatário que revisa pode emitir)
         if (k.tecnicoId === original.tecnicoId) k.tecnicoDefinidoPorId = original.tecnicoDefinidoPorId
@@ -1157,7 +1201,10 @@ export class Repositorio {
       const atual = this.obterCalibracao(id)
       if (!atual) throw new ErroApi(404, 'Calibração não encontrada.')
       if (atual.status !== 'RASCUNHO' && atual.status !== 'REVISAO')
-        throw new ErroApi(409, 'Este certificado já foi emitido e não pode mais ser alterado. Para corrigir, faça uma revisão.')
+        throw new ErroApi(
+          409,
+          'Este certificado já foi emitido e não pode mais ser alterado. Para corrigir, use "Corrigir certificado".',
+        )
       const versao = versaoDe(entrada)
       if (versao !== undefined && versao !== atual.versao) throw conflito('esta calibração')
       // A revisão é a do certificado gravado, nunca a que o corpo do PUT diz
@@ -1168,6 +1215,8 @@ export class Repositorio {
         ...valor,
         // A revisão continua ligada ao certificado que substitui
         substituiId: atual.substituiId,
+        // A data de emissão é dada na emissão
+        dataEmissao: '',
         tecnicoId,
         tecnicoDefinidoPorId: tecnicoId !== atual.tecnicoId || tecnicoId === autor.id ? autor.id : atual.tecnicoDefinidoPorId,
         versao: atual.versao + 1,
@@ -1241,13 +1290,15 @@ export class Repositorio {
   }
 
   /**
-   * Emite: dá o número, grava os dados congelados e, numa revisão, marca o certificado original como
-   * substituído. O número é o reservado na impressão da folha de campo (o da etiqueta; mesmo de outro ano),
-   * que passa a emitido; sem reserva, o próximo da sequência do ano (nunca reutilizada). A revisão herda o
-   * do original como saiu nele (`numeroDaRevisao`: o formato atual da numeração não conta), com -R1, -R2…
-   * Um nº que já tem PDF na pasta dos certificados (emitido depois da cópia do banco que voltou) nunca é
-   * dado de novo: o reservado fica não utilizado e a calibração recebe outro; a revisão passa para o -R
-   * seguinte. O PDF é gerado depois, a partir desses dados (ver server/certificados.ts).
+   * Emite: dá o número, grava os dados congelados e, numa correção, marca o certificado corrigido como
+   * substituído (a versão anterior, guardada só no sistema). O número é o reservado na impressão da folha de campo
+   * (o da etiqueta; mesmo de outro ano), que passa a emitido; sem reserva, o próximo da sequência do ano (nunca
+   * reutilizada). A correção sai com o mesmo nº do corrigido, como saiu nele (o formato atual da numeração não conta;
+   * uma revisão "-R1" de antes continua "-R1"), sem sufixo: só o contador interno `revisao` muda (a unicidade no banco)
+   * e o PDF dela fica em outro arquivo ("…-versao-2.pdf"). Um nº que já tem PDF na pasta dos certificados (emitido
+   * depois da cópia do banco que voltou) nunca é dado de novo: o reservado fica não utilizado e a calibração recebe
+   * outro; a correção passa para a versão seguinte. O PDF é gerado depois, a partir desses dados (ver
+   * server/certificados.ts).
    */
   emitir(
     id: string,
@@ -1292,17 +1343,18 @@ export class Repositorio {
       let revisao = atual.revisao
       if (atual.substituiId) {
         if (!original || original.status !== 'EMITIDO' || original.ano === null || original.sequencia === null)
-          throw new ErroApi(409, 'O certificado que esta revisão substitui não está mais emitido.')
+          throw new ErroApi(409, 'O certificado desta correção não está mais emitido.')
         ano = original.ano
         sequencia = original.sequencia
-        // O nº do original como saiu nele, com o -R seguinte que não tem PDF na pasta nem está no banco
+        // O nº do corrigido como saiu nele; a versão seguinte que não está no banco nem tem PDF na pasta
         const ocupada = (r: number) =>
-          this.temPdfNaPasta(original.ano!, numeroDaRevisao(original.numero, original.revisao, r)) ||
+          this.temArquivoNaPasta(original.ano!, nomeArquivoDaVersao(original.numero, r + 1)) ||
           !!this.db
             .prepare('SELECT 1 FROM calibracoes WHERE ano = ? AND sequencia = ? AND revisao = ? AND id <> ?')
             .get(original.ano, original.sequencia, r, id)
+        revisao = Math.max(revisao, original.revisao + 1)
         while (ocupada(revisao)) revisao++
-        numero = numeroDaRevisao(original.numero, original.revisao, revisao)
+        numero = original.numero
       } else if (reservado) {
         ano = reservado.ano
         sequencia = reservado.sequencia
@@ -1347,15 +1399,52 @@ export class Repositorio {
   }
 
   /**
-   * O nº com que a revisão em andamento sai: o do certificado revisado, como saiu nele, com o -R dela
-   * (`numeroDaRevisao`; ver `emitir`); null se não é revisão ou o revisado não existe mais ou não está mais
-   * emitido (cancelado antes da trava de `cancelar`: a revisão não sai, e a tela não mostra um nº que não vem).
+   * O nº com que a correção em andamento sai: o mesmo do certificado corrigido, como saiu nele (ver `emitir`); null
+   * se não é correção ou o corrigido não existe mais ou não está mais emitido (cancelado antes da trava de
+   * `cancelar`: a correção não sai, e a tela não mostra um nº que não vem).
    */
-  numeroPrevistoDaRevisao(k: Pick<Calibracao, 'substituiId' | 'revisao'>): string | null {
+  numeroPrevistoDaRevisao(k: Pick<Calibracao, 'substituiId'>): string | null {
     const original = k.substituiId ? this.obterCalibracao(k.substituiId) : undefined
-    return original?.numero && original.status === 'EMITIDO'
-      ? numeroDaRevisao(original.numero, original.revisao, k.revisao)
-      : null
+    return original?.numero && original.status === 'EMITIDO' ? original.numero : null
+  }
+
+  /**
+   * As versões de um certificado corrigido com o mesmo nº (`EmissaoCertificado.mesmoNumero`), da primeira à atual:
+   * quando e por quem cada uma foi emitida e o motivo da correção (só no sistema). [] = o nº nunca foi corrigido
+   * assim (a revisão "-R1" de antes é outro nº e continua à parte).
+   */
+  versoesDoCertificado(id: string): VersaoCertificado[] {
+    const k = this.obterCalibracao(id)
+    if (!k?.emissao || !k.numero) return []
+    const cadeia: Calibracao[] = [k]
+    // As anteriores: a que cada correção substituiu, com o mesmo nº
+    for (let v = k; v.emissao?.mesmoNumero && v.substituiId && cadeia.length < 1000;) {
+      const anterior = this.obterCalibracao(v.substituiId)
+      if (!anterior?.emissao || anterior.numero !== v.numero || cadeia.some((x) => x.id === anterior.id)) break
+      cadeia.unshift(anterior)
+      v = anterior
+    }
+    // As seguintes: a correção emitida de cada uma
+    const seguinte = this.db.prepare(
+      `SELECT dados FROM calibracoes WHERE substitui_id = ? AND numero = ? AND status IN ('EMITIDO','SUBSTITUIDO','CANCELADO')
+        ORDER BY revisao LIMIT 1`,
+    )
+    for (let v = k; cadeia.length < 1000;) {
+      const l = seguinte.get(v.id, v.numero) as Linha | undefined
+      const proxima = l ? (JSON.parse(l.dados) as Calibracao) : undefined
+      if (!proxima?.emissao?.mesmoNumero || cadeia.some((x) => x.id === proxima.id)) break
+      cadeia.push(proxima)
+      v = proxima
+    }
+    if (cadeia.length < 2) return []
+    return cadeia.map((v, i) => ({
+      id: v.id,
+      versao: i + 1,
+      status: v.status,
+      emitidoEm: v.emissao?.emitidoEm ?? '',
+      emitidoPor: v.emissao?.emitidoPor ?? '',
+      motivo: i > 0 ? v.motivoRevisao : '',
+    }))
   }
 
   /**
@@ -1413,7 +1502,7 @@ export class Repositorio {
     const revisado = substituiId ? this.obterCalibracao(substituiId) : undefined
     if (revisado) {
       if (k.balancaId !== revisado.balancaId || k.clienteId !== revisado.clienteId)
-        throw new ErroApi(400, 'A revisão é do mesmo cliente e da mesma balança do certificado revisado.')
+        throw new ErroApi(400, 'A correção é do mesmo cliente e da mesma balança do certificado corrigido.')
     } else if (balanca.clienteId !== k.clienteId) throw new ErroApi(400, 'A balança escolhida é de outro cliente.')
     if (!this.obterCliente(k.clienteId)) throw new ErroApi(400, 'Cliente não encontrado.')
   }
@@ -1495,7 +1584,7 @@ export class Repositorio {
       if (e.nova && !porChave && atual?.herdada)
         throw new ErroApi(
           409,
-          `Esta revisão usa a folha ${atual.numero}, do certificado revisado (a mesma visita): não há folha nova para ela.`,
+          `Esta correção usa a folha ${atual.numero}, do certificado corrigido (a mesma visita): não há folha nova para ela.`,
         )
       // Sem folha: só a calibração em andamento que não é revisão ganha nº novo (o certificado concluído, ou o
       // revisado, foi feito sem folha; um nº novo agora não seria o registro dos dados brutos dele)
@@ -1633,7 +1722,12 @@ export class Repositorio {
 
   /** O nº tem PDF na pasta dos certificados (`<ano>/Certificado-<nº>.pdf`)? */
   private temPdfNaPasta(ano: number, numero: string): boolean {
-    return !!this.pastaCertificados && existsSync(join(this.pastaCertificados, String(ano), nomeArquivoCertificado(numero)))
+    return this.temArquivoNaPasta(ano, nomeArquivoCertificado(numero))
+  }
+
+  /** O arquivo `<ano>/<nome>` existe na pasta dos certificados? */
+  private temArquivoNaPasta(ano: number, nome: string): boolean {
+    return !!this.pastaCertificados && existsSync(join(this.pastaCertificados, String(ano), nome))
   }
 
   /** Reserva o próximo nº do ano (formatado como sai no certificado, sem revisão). Dentro da transação. */
@@ -1788,13 +1882,13 @@ export class Repositorio {
     if (k.substituiId) {
       const revisado = this.obterCalibracao(k.substituiId)?.numero || 'revisado'
       if (doPapel?.situacao === 'reservado' && !doPapel.calibracaoId) {
-        const motivo = `A folha ${numeroFolha} foi ligada à revisão do certificado ${revisado}, que sai com o nº do certificado revisado.`
+        const motivo = `A folha ${numeroFolha} foi ligada à correção do certificado ${revisado}, que sai com o mesmo nº dele.`
         // Fica com a revisão: se a folha sair dela (engano no nº), o nº volta para o papel
         this.naoUtilizado(doPapel.id, motivo, por, calibracaoId)
         this.numeroNaFolha(doPapel.id, numeroFolha)
         eventos.push({ acao: 'NUMERO_NAO_UTILIZADO', numero: papel, calibracaoId, detalhe: `${papel} · ${motivo}` })
       }
-      return naoUsa(`Uma revisão sai com o nº do certificado revisado (${revisado}).`)
+      return naoUsa(`Uma correção sai com o mesmo nº do certificado corrigido (${revisado}).`)
     }
     const dono = doPapel?.calibracaoId ?? ''
     const livre = doPapel?.situacao === 'reservado' && !dono
@@ -2133,11 +2227,16 @@ export class Repositorio {
     const conhecidos = new Set<string>()
     const numeros = new Set<string>()
     const linhas = this.db
-      .prepare("SELECT ano, numero, json_extract(dados, '$.emissao.arquivo') AS arquivo FROM calibracoes WHERE numero <> ''")
-      .all() as Array<{ ano: number | null; numero: string; arquivo: string | null }>
+      .prepare(
+        `SELECT ano, numero, revisao, json_extract(dados, '$.emissao.arquivo') AS arquivo,
+           json_extract(dados, '$.emissao.mesmoNumero') AS mesmo FROM calibracoes WHERE numero <> ''`,
+      )
+      .all() as Array<{ ano: number | null; numero: string; revisao: number; arquivo: string | null; mesmo: number | null }>
     for (const l of linhas) {
       if (l.arquivo) conhecidos.add(l.arquivo)
-      conhecidos.add(`${l.ano ?? 'sem-ano'}/${nomeArquivoCertificado(l.numero)}`)
+      // O nome que o nº tem (o da correção com o mesmo nº, com a versão)
+      const nome = nomeArquivoGuardado({ numero: l.numero, revisao: l.revisao, emissao: { mesmoNumero: !!l.mesmo } })
+      conhecidos.add(`${l.ano ?? 'sem-ano'}/${nome}`)
       numeros.add(l.numero)
     }
     const fora: Array<{ arquivo: string; ano: number }> = []
@@ -2162,9 +2261,12 @@ export class Repositorio {
       for (const f of fora) {
         const caminho = join(pasta, f.arquivo)
         const pdf = readFileSync(caminho)
-        const numero = numeroDoCertificadoNoPdf(pdf) || f.arquivo.replace(/^\d{4}\/Certificado-|\.pdf$/gi, '')
+        const numero = numeroDoCertificadoNoPdf(pdf) || f.arquivo.replace(/^\d{4}\/Certificado-|(-versao-\d+)?\.pdf$/gi, '')
+        // A correção com o mesmo nº emitida depois da cópia ("…-versao-2.pdf"): o nº já é do banco (nada a reservar),
+        // mas o cliente pode estar com ela, e o registro de atividades avisa
+        const versao = /-versao-(\d+)\.pdf$/i.exec(f.arquivo)?.[1]
         // Outro arquivo de um certificado que o banco tem (uma cópia salva à mão na pasta): nada a fazer
-        if (numeros.has(numero)) continue
+        if (numeros.has(numero) && !versao) continue
         // A revisão (-R1…) usa o nº do original, que o banco já tem: só o original reserva a sequência
         const lido = /-R\d+$/.test(numero)
           ? null
@@ -2192,7 +2294,7 @@ export class Repositorio {
         }
         if (!avisados.includes(f.arquivo)) {
           avisados.push(f.arquivo)
-          novos.push(numero)
+          novos.push(versao ? `${numero} (versão ${versao})` : numero)
         }
       }
       if (novos.length) {
@@ -2755,8 +2857,8 @@ export class Repositorio {
     const inicio12 = hojeLocalIso(new Date(d.getFullYear(), d.getMonth() - 11, 1)).slice(0, 7)
     const porMesLinhas = this.db
       .prepare(
-        `SELECT substr(data_emissao, 1, 7) AS mes, COUNT(*) AS n FROM calibracoes
-         WHERE status IN ('EMITIDO','SUBSTITUIDO') AND revisao = 0 AND substr(data_emissao, 1, 7) >= ? GROUP BY mes`,
+        `SELECT substr(k.data_emissao, 1, 7) AS mes, COUNT(*) AS n FROM calibracoes k
+         WHERE ${PRIMEIRA_EMISSAO_QUE_VALE} AND substr(k.data_emissao, 1, 7) >= ? GROUP BY mes`,
       )
       .all(inicio12) as Array<{ mes: string; n: number }>
     const porMes: ResumoPainel['porMes'] = []
@@ -2770,7 +2872,7 @@ export class Repositorio {
       .map((p) => ({ id: p.id, identificacao: p.identificacao, descricao: p.descricao, validade: p.validade }))
     const emitidos = (prefixo: string) =>
       contar(
-        "SELECT COUNT(*) AS n FROM calibracoes WHERE status IN ('EMITIDO','SUBSTITUIDO') AND revisao = 0 AND data_emissao LIKE ?",
+        `SELECT COUNT(*) AS n FROM calibracoes k WHERE ${PRIMEIRA_EMISSAO_QUE_VALE} AND k.data_emissao LIKE ?`,
         `${prefixo}%`,
       )
     return {

@@ -69,7 +69,7 @@ export const LIMITES = {
   padroesPorCalibracao: 20,
   /** Assinatura digitalizada (data URL PNG). */
   assinatura: 300_000,
-  /** Motivo da revisão e do cancelamento (o da revisão sai no certificado novo). */
+  /** Motivo da correção (fica só no sistema) e do cancelamento. */
   motivo: 500,
   /** Por que a excentricidade não foi feita (sai no certificado). */
   motivoExcentricidade: 200,
@@ -560,7 +560,7 @@ export function preencherModelo(t: string, valores: Record<string, string>) {
 
 /**
  * Número do certificado a partir do formato: {seq} (sequência com zeros), {ano} (4 dígitos), {aa} (2 dígitos).
- * Revisões ganham o sufixo "-R1", "-R2"…
+ * `revisao` > 0 dá o sufixo "-R1", "-R2"… das revisões emitidas antes da 1.0.4 (a correção de hoje mantém o nº).
  */
 export function formatarNumeroCertificado(
   numeracao: { formato: string; digitos: number },
@@ -604,23 +604,27 @@ export function lerNumeroCertificado(
   return sequencia && sequencia > 0 && ano > 0 ? { ano, sequencia } : null
 }
 
-/**
- * O nº da revisão `revisao` de um certificado: o nº do revisado (`numero`; `revisaoDele` > 0 quando ele já é uma
- * revisão, com o sufixo "-R<revisaoDele>") sem o sufixo, mais "-R<revisao>". Segue o nº que saiu no original (o da
- * etiqueta e do PDF entregue), não o formato atual da numeração, que pode ter mudado depois.
- */
-export function numeroDaRevisao(numero: string, revisaoDele: number, revisao: number): string {
-  const sufixo = revisaoDele > 0 ? `-R${revisaoDele}` : ''
-  const base = sufixo && numero.endsWith(sufixo) ? numero.slice(0, -sufixo.length) : numero
-  return `${base}-R${revisao}`
-}
-
 /** Nome de arquivo seguro a partir do número do certificado. */
 export const nomeArquivoCertificado = (numero: string) =>
   `Certificado-${numero
     .replace(/[^0-9A-Za-z-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')}.pdf`
+
+/**
+ * Nome do PDF guardado na pasta dos certificados para a `versao` (1, 2…) de um nº. A correção com o mesmo nº não
+ * fica no lugar do PDF da versão anterior: "Certificado-<nº>-versao-2.pdf". O download e o anexo do e-mail continuam
+ * com `nomeArquivoCertificado` (o nº, sem a versão).
+ */
+export const nomeArquivoDaVersao = (numero: string, versao: number) =>
+  versao > 1 ? nomeArquivoCertificado(numero).replace(/\.pdf$/, `-versao-${versao}.pdf`) : nomeArquivoCertificado(numero)
+
+/**
+ * O PDF guardado de um certificado emitido (dentro da pasta do ano): o da correção com o mesmo nº
+ * (`EmissaoCertificado.mesmoNumero`) leva a versão, pelo contador interno (`revisao` + 1); os outros, o nº.
+ */
+export const nomeArquivoGuardado = (k: { numero: string; revisao: number; emissao?: { mesmoNumero?: boolean } | null }) =>
+  k.emissao?.mesmoNumero ? nomeArquivoDaVersao(k.numero, k.revisao + 1) : nomeArquivoCertificado(k.numero)
 
 // ---- Situações (validade de padrões e vencimento das balanças) ------------------------
 
@@ -2104,13 +2108,13 @@ export const balancaIdentificada = (b: Partial<Pick<Balanca, 'numeroSerie' | 'id
 export const PENDENCIA_TECNICO_EXCLUIDO = 'O técnico desta calibração foi excluído: escolha quem executou.'
 
 /**
- * Revisão cujo certificado revisado não está mais emitido (cancelado antes da trava do cancelamento, que hoje pede
- * emitir ou excluir a revisão antes): ela não pode mais ser emitida. O servidor confere (`pendenciasDa`).
+ * Correção cujo certificado corrigido não está mais emitido (cancelado antes da trava do cancelamento, que hoje pede
+ * emitir ou excluir a correção antes): ela não pode mais ser emitida. O servidor confere (`pendenciasDa`).
  */
 export const PENDENCIA_REVISADO_CANCELADO =
-  'O certificado que esta revisão substitui foi cancelado: a revisão não pode mais ser emitida. Exclua-a.'
+  'O certificado desta correção foi cancelado: a correção não pode mais ser emitida. Exclua-a.'
 export const PENDENCIA_REVISADO_NAO_EMITIDO =
-  'O certificado que esta revisão substitui não está mais emitido: a revisão não pode ser emitida. Exclua-a.'
+  'O certificado desta correção não está mais emitido: a correção não pode ser emitida. Exclua-a.'
 
 /** As pendências que só o servidor sabe e que valem mesmo com alteração por gravar na tela (`pendenciasDaTela`). */
 export const PENDENCIAS_SO_DO_SERVIDOR: readonly string[] = [

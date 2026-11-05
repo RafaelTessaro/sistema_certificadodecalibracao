@@ -44,6 +44,24 @@ Numa instalação nova, antes da tela "Tipo de instalação", o setup procura um
 4. **Voltar uma cópia** (passo 3 de [Depois de instalado](#depois-de-instalado)): a revisão do POP citada pelos certificados que passam vai junto, e eles continuam mostrando a revisão certa.
 5. **Método de carregamento pela classe (POP 7.7):** "Crescente e decrescente" nas classes II a IIII e sem classe, "Crescente com descarga" na classe I, sem lista para escolher. Na calibração nova, a carga sem a leitura de descida (menos Max) impede a emissão. Na calibração em andamento que já tinha leituras ou a folha impressa na atualização (o zero de "Sugerir os pontos" não conta), e na revisão de um certificado emitido sem a descida, é só aviso, porque a visita já aconteceu. O registro de atividades lista essas calibrações.
 6. **Calibração em andamento com outro método** (por exemplo, "Crescente contínuo" na classe III), já medida ou com a folha de campo impressa antes desta versão: continua valendo com o método gravado, mesmo sem leituras, e mostra um aviso. O certificado sai com o método usado, e a folha impressa de novo traz esse método. **Usar o método do POP** pergunta antes e só serve se as cargas foram aplicadas assim ou se for medir de novo: sem as leituras que ele pede (a descida de cada carga), o certificado não sai. **Voltar para …** desfaz a troca.
+7. **Assinaturas do certificado:** seguem a opção **Exigir revisão por outra pessoa antes de emitir** (Configurações → Certificado). Ligada: duas assinaturas, a de quem executou e a de quem autorizou. Desligada: só a de quem executou, mesmo que outra pessoa emita (o sistema guarda quem emitiu). Os certificados já emitidos não mudam.
+8. **Corrigir certificado:** a correção sai com o mesmo nº, a data de emissão nova e nada que mostre a correção: sem "-R1", sem o quadro da revisão e sem o motivo. O motivo, quem corrigiu e as versões anteriores (com os PDFs) ficam só no sistema, no histórico do certificado. As revisões "-R1" já emitidas continuam como estão.
+
+**Apagar os testes (uma vez, antes de começar a usar):** **atenção, apaga TODAS as calibrações e todos os certificados** feitos até agora. Depois de começar a usar de verdade, não rode mais.
+
+1. Abra o Prompt de Comando como administrador e pare o serviço: `net stop BCCalibracao`.
+2. Rode a ferramenta:
+   ```
+   cd "C:\Program Files\BC Calibracao"
+   node\node.exe server\ferramentas\apagar-testes.mjs "C:\ProgramData\BC Calibracao\dados"
+   ```
+3. Confira o que vai sair, digite `APAGAR` e tecle Enter (só Enter desiste, sem apagar nada).
+4. Inicie o serviço: `net start BCCalibracao`.
+
+- **Sai:** as calibrações e os certificados (rascunhos, emitidos, corrigidos com as versões anteriores e cancelados), as folhas de campo, os nºs reservados e não utilizados e os registros de e-mails. A numeração recomeça: o próximo certificado é o nº 1 do ano (ex.: `CC-2026-00001`) e a próxima folha, `FC-2026-00001`.
+- **Fica:** os usuários (com as assinaturas), os dados da empresa, as configurações, o POP, os padrões (com os certificados deles), os clientes, as balanças e o registro de atividades, que ganha uma linha com o que saiu e onde ficaram a cópia e os arquivos.
+- **Cópia e arquivos:** antes de apagar, ela grava uma cópia conferida do banco em `dados\backups\antes-de-apagar-testes-AAAA-MM-DD_HH-mm.db`. Nenhum arquivo é apagado: os PDFs de `certificados\` e `folhas-campo\` vão para `dados\testes-apagados-AAAA-MM-DD_HH-mm\`, e as cópias antigas do banco de `backups\` (com os testes) para a subpasta `backups\` dela. O sistema faz uma cópia nova, já sem os testes, quando o serviço inicia.
+- Com o serviço ligado, a ferramenta recusa e não mexe em nada. Rodada de novo, diz que não há testes para apagar. Não volte a cópia `antes-de-apagar-testes-…` nem as de `testes-apagados-…`: elas trazem os testes de volta.
 
 **Depois de atualizar para a 1.0.3:**
 
@@ -124,7 +142,7 @@ Desinstalar.exe /S /REMOVERDADOS   (apaga os dados)
 - **Voltar uma cópia do banco** (o `antes-da-versao-X.db` de uma atualização ou uma cópia da pasta `backups\`), num prompt de comando como administrador:
   1. pare o serviço: `net stop BCCalibracao`;
   2. copie a cópia para `dados\restaurar.db` (a de `backups\` fica como está);
-  3. passe para ela as contas, os certificados e as folhas de campo de hoje, **antes** de pôr a cópia no lugar. Os certificados emitidos (ou cancelados e revisados) depois da cópia já estão com os clientes: continuam como estão, com o mesmo nº, o mesmo código e a revisão do POP que citam (ela passa junto), e o QR code do papel continua conferindo. As folhas impressas depois da cópia já estão no papel, com os técnicos: continuam registradas (e ligadas às calibrações que a cópia tem, com a revisão do POP impressa nelas), e os nºs delas nunca se repetem. Cada certificado emitido, cancelado ou revisado fica com a folha de campo que tinha, e os nºs reservados, com a situação de hoje:
+  3. passe para ela as contas, os certificados e as folhas de campo de hoje, **antes** de pôr a cópia no lugar. Os certificados emitidos (ou cancelados e corrigidos) depois da cópia já estão com os clientes: continuam como estão, com o mesmo nº, o mesmo código e a revisão do POP que citam (ela passa junto), e o QR code do papel continua conferindo. As folhas impressas depois da cópia já estão no papel, com os técnicos: continuam registradas (e ligadas às calibrações que a cópia tem, com a revisão do POP impressa nelas), e os nºs delas nunca se repetem. Cada certificado emitido, cancelado ou revisado fica com a folha de campo que tinha, e os nºs reservados, com a situação de hoje:
      ```
      cd "C:\Program Files\BC Calibracao"
      node\node.exe server\ferramentas\redefinir-senha.mjs transplantar "C:\ProgramData\BC Calibracao\dados\bc-calibracao.db" "C:\ProgramData\BC Calibracao\dados\restaurar.db"
@@ -139,6 +157,7 @@ Desinstalar.exe /S /REMOVERDADOS   (apaga os dados)
 
   Não apague nem troque as pastas `folhas-campo\` e `certificados\`: voltar uma cópia mexe só no banco, e os nºs que têm PDF nessas pastas nunca são emitidos de novo.
 
+- **Apagar os testes** (uma vez só, antes de começar a usar o sistema de verdade): veja **Apagar os testes** em "Depois de atualizar para a 1.0.4", em [O que o instalador faz no servidor](#o-que-o-instalador-faz-no-servidor).
 - **Pasta dos certificados e backups:** o Windows diz que você não tem permissão e oferece "Continuar". Clicar dá à sua conta acesso permanente à pasta; a próxima atualização desfaz isso.
 
 ## Não testado

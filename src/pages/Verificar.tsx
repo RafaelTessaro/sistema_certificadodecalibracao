@@ -275,10 +275,13 @@ function NaoEncontrado({ codigo }: { codigo: string }) {
   )
 }
 
-function Resultado({ dados, codigo }: { dados: VerificacaoCertificado; codigo: string }) {
+export function Resultado({ dados, codigo }: { dados: VerificacaoCertificado; codigo: string }) {
   const status = (dados.status in STATUS_CALIBRACAO ? dados.status : 'EMITIDO') as StatusCalibracao
   const emVigor = status === 'EMITIDO'
   const cancelado = status === 'CANCELADO'
+  // Corrigido depois, e a versão corrigida foi cancelada: não há versão que valha (nada de "use a mais nova")
+  const semVersaoValida = status === 'SUBSTITUIDO' && !!dados.substitutoCancelado
+  const perigo = cancelado || semVersaoValida
   return (
     <>
       <div className="flex flex-col items-center px-6 pt-8 pb-6 text-center sm:px-10">
@@ -288,7 +291,7 @@ function Resultado({ dados, codigo }: { dados: VerificacaoCertificado; codigo: s
           transition={{ type: 'spring', stiffness: 380, damping: 20 }}
           className={cn(
             'flex h-16 w-16 items-center justify-center rounded-2xl',
-            emVigor ? 'bg-success-soft text-success' : cancelado ? 'bg-danger-soft text-danger' : 'bg-warning-soft text-warning',
+            emVigor ? 'bg-success-soft text-success' : perigo ? 'bg-danger-soft text-danger' : 'bg-warning-soft text-warning',
           )}
         >
           {emVigor ? <ShieldCheck className="h-8 w-8" /> : <ShieldAlert className="h-8 w-8" />}
@@ -299,7 +302,9 @@ function Resultado({ dados, codigo }: { dados: VerificacaoCertificado; codigo: s
             ? 'Este certificado foi emitido pela Balanças.com e está registrado no sistema da empresa.'
             : cancelado
               ? 'Foi emitido pela Balanças.com, mas depois cancelado. Ele não vale mais.'
-              : 'Foi emitido pela Balanças.com, mas depois substituído por uma versão corrigida.'}
+              : semVersaoValida
+                ? 'Foi emitido pela Balanças.com, mas depois corrigido e cancelado. Ele não vale mais.'
+                : 'Foi emitido pela Balanças.com, mas depois substituído por uma versão corrigida.'}
         </p>
       </div>
 
@@ -311,18 +316,26 @@ function Resultado({ dados, codigo }: { dados: VerificacaoCertificado; codigo: s
           transition={{ delay: 0.15 }}
           className={cn(
             'mx-5 mb-6 flex items-start gap-3 rounded-2xl border p-4 sm:mx-8',
-            cancelado ? 'border-danger/30 bg-danger-soft' : 'border-warning/30 bg-warning-soft',
+            perigo ? 'border-danger/30 bg-danger-soft' : 'border-warning/30 bg-warning-soft',
           )}
         >
-          <FileX2 className={cn('mt-0.5 h-5 w-5 shrink-0', cancelado ? 'text-danger' : 'text-warning')} />
+          <FileX2 className={cn('mt-0.5 h-5 w-5 shrink-0', perigo ? 'text-danger' : 'text-warning')} />
           <div className="min-w-0 text-[13px]">
-            <p className={cn('text-sm font-semibold', cancelado ? 'text-danger' : 'text-warning')}>
-              {cancelado ? 'Atenção: certificado CANCELADO' : 'Atenção: certificado SUBSTITUÍDO'}
+            <p className={cn('text-sm font-semibold', perigo ? 'text-danger' : 'text-warning')}>
+              {cancelado
+                ? 'Atenção: certificado CANCELADO'
+                : semVersaoValida
+                  ? 'Atenção: este certificado não vale mais'
+                  : 'Atenção: certificado SUBSTITUÍDO'}
             </p>
             <p className="mt-1 text-ink-2">
               {cancelado
                 ? 'A Balanças.com cancelou este certificado depois de emiti-lo. Ele não serve como comprovante da calibração. Peça à empresa o documento correto.'
-                : 'Este certificado foi trocado por uma revisão, um novo certificado que corrige este. Use sempre o mais novo: peça à Balanças.com.'}
+                : semVersaoValida
+                  ? 'Este documento foi corrigido depois, e a Balanças.com cancelou a versão corrigida. Nenhuma versão dele serve como comprovante da calibração. Peça à empresa o documento correto.'
+                  : dados.versaoAtualEmitidaEm
+                    ? `Este documento foi trocado por uma versão corrigida, com o mesmo número, emitida em ${dados.versaoAtualEmitidaEm}. Use sempre a mais nova: peça à Balanças.com.`
+                    : 'Este certificado foi trocado por uma revisão, um novo certificado que corrige este. Use sempre o mais novo: peça à Balanças.com.'}
             </p>
           </div>
         </motion.div>
@@ -330,7 +343,13 @@ function Resultado({ dados, codigo }: { dados: VerificacaoCertificado; codigo: s
 
       <dl className="grid grid-cols-1 gap-x-6 gap-y-4 border-t border-line px-6 py-6 sm:grid-cols-2 sm:px-8">
         <Dado rotulo="Número do certificado">
-          <span className={cn('tnum text-[17px] font-semibold text-ink', !emVigor && 'line-through decoration-2 opacity-80')}>
+          {/* O nº riscado só quando ele não vale mais (a versão corrigida mantém o mesmo nº) */}
+          <span
+            className={cn(
+              'tnum text-[17px] font-semibold text-ink',
+              !emVigor && !dados.versaoAtualEmitidaEm && 'line-through decoration-2 opacity-80',
+            )}
+          >
             {dados.numero}
           </span>
         </Dado>

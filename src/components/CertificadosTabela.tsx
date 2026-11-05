@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import type { CalibracaoResumo } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
 import { dataCurta } from '../lib/format'
-import { numeroDaLinha, textoNumeroReservado } from '../lib/numeros'
+import { numeroDaLinha, quandoDaLinha, textoNumeroReservado } from '../lib/numeros'
 import { StatusCalibracaoBadge } from './Selos'
 import { Linha, Tabela, Td, Th } from './ui/Table'
 
@@ -12,15 +12,25 @@ export const rotaCalibracao = (k: Pick<CalibracaoResumo, 'id' | 'status'>) =>
   k.status === 'RASCUNHO' || k.status === 'REVISAO' ? `/calibracoes/${k.id}/editar` : `/calibracoes/${k.id}`
 
 /**
- * Nº do certificado na lista: o emitido; em andamento, o reservado na impressão da folha de campo, com
- * "(reservado)"; sem nº ainda, "Em andamento".
+ * Nº do certificado na lista: o emitido; em andamento, o do certificado que a correção corrige, com "(correção)" (sai
+ * com o mesmo nº), ou o reservado na impressão da folha de campo, com "(reservado)"; sem nº ainda, "Em andamento".
  */
-export function NumeroDaLinha({ k }: { k: Pick<CalibracaoResumo, 'numero' | 'numeroReservado'> }) {
-  const { numero, reservado } = numeroDaLinha(k)
+export function NumeroDaLinha({ k }: { k: Pick<CalibracaoResumo, 'numero' | 'numeroReservado' | 'numeroCorrigido'> }) {
+  const { numero, reservado, correcao } = numeroDaLinha(k)
   return (
-    <p className="font-medium whitespace-nowrap text-ink" title={reservado ? textoNumeroReservado(numero) : undefined}>
+    <p
+      className="font-medium whitespace-nowrap text-ink"
+      title={
+        reservado
+          ? textoNumeroReservado(numero)
+          : correcao
+            ? `Correção do certificado nº ${numero} (sai com o mesmo nº)`
+            : undefined
+      }
+    >
       {numero ? <span className="tnum">{numero}</span> : 'Em andamento'}
       {reservado && <span className="ml-1 text-xs font-normal text-muted">(reservado)</span>}
+      {correcao && <span className="ml-1 text-xs font-normal text-muted">(correção)</span>}
     </p>
   )
 }
@@ -64,7 +74,8 @@ export function CertificadosTabela({
                 <div className="min-w-0">
                   <NumeroDaLinha k={k} />
                   <p className="text-xs whitespace-nowrap text-muted">
-                    {k.dataEmissao ? `Emitido em ${dataCurta(k.dataEmissao)}` : `Atualizado em ${dataCurta(k.atualizadoEm)}`}
+                    {/* Corrigido com o mesmo nº: a anotação interna (a versão anterior fica no histórico do certificado) */}
+                    {quandoDaLinha(k)}
                     {k.envios > 0 && (
                       <span className="ml-1.5 inline-flex items-center gap-0.5" title={`Enviado por e-mail ${k.envios}×`}>
                         <Mail className="h-3 w-3" />

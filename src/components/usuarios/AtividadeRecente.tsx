@@ -58,6 +58,7 @@ const ICONE_ACAO: Partial<Record<AcaoAuditoria, LucideIcon>> = {
   COPIA_RESTAURADA: DatabaseBackup,
   BACKUP_BAIXADO: Download,
   SISTEMA_ATUALIZADO: DatabaseZap,
+  TESTES_APAGADOS: Trash2,
   CERTIFICADO_EMITIDO: FileCheck2,
   CERTIFICADO_CANCELADO: FileX2,
   CERTIFICADO_ENVIADO: Send,

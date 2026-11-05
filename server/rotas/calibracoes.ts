@@ -94,10 +94,12 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       // Para conferir, sem impedir a emissão (ex.: a folha de campo saiu com outra revisão do POP que a da data)
       avisos: aberta ? avisosDa(ctx, k) : [],
       revisoes: repo.revisoesDe(k.id),
+      // Corrigido com o mesmo nº: as versões, da primeira à atual (o histórico interno; [] = nunca corrigido assim)
+      versoes: k.emissao ? repo.versoesDoCertificado(k.id) : [],
       folhaCampo: repo.folhaCampoDaCalibracao(k.id),
       // Em andamento: o nº de certificado já reservado (impresso na folha de campo), com que ela vai ser emitida
       numeroReservado: aberta ? repo.numeroReservadoDa(k.id) : null,
-      // Revisão em andamento: o nº com que ela sai (o do certificado revisado, com o -R dela)
+      // Correção em andamento: o nº com que ela sai (o mesmo do certificado corrigido)
       numeroRevisao: aberta ? repo.numeroPrevistoDaRevisao(k) : null,
       certificadosPadroes: certificadosDosPadroes(ctx, k),
       // Emitido: a revisão do POP da emissão (com o arquivo, mesmo se anexado depois); em andamento: a que o
@@ -170,6 +172,10 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     // Com o nº reservado na impressão da folha de campo, o registro diz de qual folha; e se o PDF ficou para depois
     req.detalheAuditoria = [
       reservado && k.numero === reservado.numero ? `${k.numero}, reservado na folha de campo ${reservado.folha}` : '',
+      // A correção com o mesmo nº: a anotação interna (o motivo não sai no certificado)
+      k.emissao?.mesmoNumero
+        ? `${k.numero} corrigido (a versão anterior fica guardada como substituída): ${k.motivoRevisao}`
+        : '',
       aviso ? 'o PDF não foi gravado na emissão (é gerado ao abrir)' : '',
     ]
       .filter(Boolean)
@@ -182,15 +188,19 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     return { calibracao: repo.cancelar(req.params.id, String(c.motivo ?? ''), autor(req), versaoDe(c)) }
   })
 
-  /** Revisão de um certificado emitido: rascunho com os mesmos dados, que ao ser emitido substitui o original. */
+  /**
+   * Correção de um certificado emitido: rascunho com os mesmos dados, que ao ser emitido sai com o mesmo nº e
+   * substitui o corrigido (que fica guardado como versão anterior). O motivo fica só no sistema.
+   */
   app.post('/api/calibracoes/:id/revisar', async (req: ComId, reply) => {
     const u = autor(req)
     const original = obter(req.params.id)
     const motivo = String(corpo(req).motivo ?? '').trim()
-    if (motivo.length < 5) throw new ErroApi(400, 'Explique o motivo da revisão (sai no certificado novo).')
-    // Inteiro no certificado: o que passa do limite é recusado, nunca cortado no meio da palavra
-    if (motivo.length > LIMITES.motivo) throw new ErroApi(400, `O motivo da revisão pode ter até ${LIMITES.motivo} caracteres.`)
+    if (motivo.length < 5) throw new ErroApi(400, 'Explique o que vai ser corrigido (fica registrado no sistema).')
+    // Inteiro no registro: o que passa do limite é recusado, nunca cortado no meio da palavra
+    if (motivo.length > LIMITES.motivo) throw new ErroApi(400, `O motivo da correção pode ter até ${LIMITES.motivo} caracteres.`)
     const k = repo.criarCalibracao({ ...naUnidadeAtual(original), substituiId: original.id, motivoRevisao: motivo }, u)
+    req.detalheAuditoria = `${original.numero}: ${motivo}`
     return reply.code(201).send({ calibracao: k })
   })
 
@@ -349,9 +359,24 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     const k = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(codigo) ? repo.calibracaoPorCodigo(codigo) : undefined
     if (!k?.emissao)
       throw new ErroApi(404, 'Nenhum certificado encontrado com este código. Confira o código impresso no certificado.')
+    // Substituído: o que está no lugar dele hoje, seguindo as correções emitidas até a última
+    let atual: Calibracao | undefined
+    for (let v: Calibracao | undefined = k, n = 0; v?.status === 'SUBSTITUIDO' && n < 1000; n++) {
+      const seguinte: { id: string } | undefined = repo
+        .revisoesDe(v.id)
+        .find((r) => ['EMITIDO', 'SUBSTITUIDO', 'CANCELADO'].includes(r.status))
+      v = seguinte && repo.obterCalibracao(seguinte.id)
+      if (v?.emissao) atual = v
+    }
     return {
       numero: k.numero,
       status: k.status,
+      // Versão anterior de um certificado corrigido com o mesmo nº: a data da versão que vale (o nº continua o mesmo)
+      ...(atual?.status === 'EMITIDO' && atual.numero === k.numero
+        ? { versaoAtualEmitidaEm: formatarDataBr(atual.dataEmissao) }
+        : {}),
+      // A versão corrigida (ou a revisão) que ficou no lugar dele foi cancelada depois: nenhuma versão vale
+      ...(atual?.status === 'CANCELADO' ? { substitutoCancelado: true } : {}),
       dataCalibracao: formatarDataBr(k.dataCalibracao),
       dataEmissao: formatarDataBr(k.dataEmissao),
       cliente: k.emissao.cliente.razaoSocial || k.emissao.cliente.nome,

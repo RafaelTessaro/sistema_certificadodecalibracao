@@ -904,10 +904,10 @@ describe('revisão de certificado emitido com as regras do POP', () => {
   })
 })
 
-// ---- Motivo da revisão: até 500 caracteres, inteiro no certificado ---------------------------------------------
+// ---- Motivo da correção: até 500 caracteres, inteiro no sistema (não sai no certificado) -------------------------
 
-describe('motivo da revisão', () => {
-  it('500 caracteres chegam inteiros ao certificado; 501, recusado (400)', async () => {
+describe('motivo da correção', () => {
+  it('500 caracteres ficam inteiros no sistema e não saem no certificado; 501, recusado (400)', async () => {
     const emitida = await c.emitido()
     const longo =
       `Correção do nº de série da balança, que foi transcrito com erro. ${'Os resultados das medições não mudam. '.repeat(20)}`
@@ -920,15 +920,19 @@ describe('motivo da revisão', () => {
       payload: { motivo: `${longo}y` },
     })
     expect(recusado.statusCode).toBe(400)
-    expect(recusado.json().erro).toBe('O motivo da revisão pode ter até 500 caracteres.')
+    expect(recusado.json().erro).toBe('O motivo da correção pode ter até 500 caracteres.')
     const rev = await revisar(emitida, longo)
     expect(rev.motivoRevisao).toBe(longo)
     const r1 = await emitir(rev)
     expect(r1.statusCode, r1.body).toBe(200)
+    // Inteiro no histórico das versões
+    const detalhe = (await t.chamar('GET', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).json()
+    expect(detalhe.versoes.at(-1).motivo).toBe(longo)
     if (!temPdftotext) return
     const pdf = await t.chamar('GET', `/api/calibracoes/${rev.id}/pdf`, { cookie: t.cookieAdmin })
     const bruto = spawnSync('pdftotext', ['-enc', 'UTF-8', '-', '-'], { input: pdf.rawPayload }).stdout.toString('utf8')
-    expect(sem(bruto).replace(/\s+/g, ' ')).toContain(longo.replace(/\s+/g, ' '))
+    expect(sem(bruto).replace(/\s+/g, ' ')).not.toContain('Correção do nº de série da balança')
+    expect(bruto).not.toContain('Motivo:')
     // No máximo 3 páginas (o pdftotext separa as páginas com \f)
     expect(bruto.split('\f').filter((x) => x.trim()).length).toBeLessThanOrEqual(3)
   })

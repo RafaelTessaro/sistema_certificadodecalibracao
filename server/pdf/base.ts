@@ -2,6 +2,7 @@
 // as fontes, as medidas do timbrado (módulo de 30 pt), o bloco da marca do cabeçalho, a assinatura do
 // rodapé e utilitários de layout. Cada documento monta o próprio conteúdo, cabeçalho e rodapé com eles.
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { createRequire } from 'node:module'
 import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -53,8 +54,78 @@ const FONTES = {
   },
 }
 
+interface PngJs {
+  prototype: { decodePixels(this: unknown, responder: (pixels: Buffer) => void): void }
+}
+
+interface PedidoImagem {
+  responder: (pixels: Buffer) => void
+  pixels?: Buffer
+}
+
+/** Fila das imagens do PDF gerado em `comImagensNaOrdemInversa` (uma por geração). */
+const ordemInversa = new AsyncLocalStorage<PedidoImagem[]>()
+
+/**
+ * As imagens PNG com transparência (as assinaturas) entram no PDF sempre na mesma ordem. O png-js do pdfkit descomprime
+ * cada PNG com zlib.inflate, que é assíncrono, e o pdfkit só cria o objeto da máscara de transparência (SMask) quando a
+ * imagem volta descomprimida: com duas assinaturas, os nºs dos objetos dependiam de qual terminava primeiro, e o mesmo
+ * certificado podia sair com bytes diferentes com o servidor ocupado. O PDF refeito dos dados congelados precisa sair
+ * igual ao emitido (`pdfEmitido` em server/certificados.ts confere pelo hash). Aqui as imagens são entregues na ordem
+ * em que foram pedidas (a do técnico, depois a do signatário). (O inflate síncrono também daria sempre o mesmo
+ * arquivo, mas outro: mudaria os bytes de todos os PDFs com assinatura já emitidos.)
+ *
+ * Até a 1.0.3 valia a ordem de chegada: quase sempre a do pedido, mas a inversa quando o PNG do técnico era maior que o
+ * do signatário (o menor termina antes), e qualquer uma das duas com os dois de tamanho parecido. O emitido antes da
+ * 1.0.4 é refeito nas duas ordens (`comImagensNaOrdemInversa`).
+ */
+function imagensNaOrdem() {
+  const PNG = createRequire(requerer.resolve('pdfkit'))('png-js') as PngJs
+  const original = PNG.prototype.decodePixels
+  if ((original as { naOrdem?: boolean }).naOrdem) return
+  const filaComum: PedidoImagem[] = []
+  // As prontas do começo da fila, em ordem; a que falhar não segura as outras
+  const entregar = (fila: PedidoImagem[]) => {
+    const proximo = fila[0]
+    if (!proximo?.pixels) return
+    fila.shift()
+    try {
+      proximo.responder(proximo.pixels)
+    } finally {
+      entregar(fila)
+    }
+  }
+  const naOrdem = function (this: unknown, responder: (pixels: Buffer) => void) {
+    // Na ordem inversa, a fila é a da geração: o pdfkit pede todas as imagens de um PDF de uma vez (no desenho das
+    // páginas, sem pausa), antes de qualquer uma voltar; quando todas voltaram, saem da última para a primeira
+    const inversa = ordemInversa.getStore()
+    const fila = inversa ?? filaComum
+    const pedido: PedidoImagem = { responder }
+    fila.push(pedido)
+    original.call(this, (pixels) => {
+      pedido.pixels = pixels
+      if (!inversa) return entregar(fila)
+      if (fila.some((p) => !p.pixels)) return
+      fila.reverse()
+      entregar(fila)
+    })
+  }
+  PNG.prototype.decodePixels = Object.assign(naOrdem, { naOrdem: true })
+}
+
+/**
+ * Gera com as imagens PNG com transparência entregues ao pdfkit na ordem inversa à do pedido (a do signatário antes da
+ * do técnico), como a 1.0.3 fazia quando o PNG do técnico era o maior (ver `imagensNaOrdem`): para refazer igual o PDF
+ * de um certificado emitido antes da 1.0.4. Cada geração tem a própria fila (várias ao mesmo tempo não se misturam).
+ */
+export function comImagensNaOrdemInversa<T>(gerar: () => Promise<T>): Promise<T> {
+  pdfmake()
+  return ordemInversa.run([], gerar)
+}
+
 let motorPdf: PdfMakeServidor | null = null
 export function pdfmake(): PdfMakeServidor {
+  if (!motorPdf) imagensNaOrdem()
   motorPdf ??= requerer('pdfmake') as PdfMakeServidor
   // O pdfmake é um objeto único no processo: fontes e políticas são reafirmadas a cada geração.
   motorPdf.setFonts(FONTES)

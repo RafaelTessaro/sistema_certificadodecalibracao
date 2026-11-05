@@ -32,6 +32,12 @@ describe('nº de certificado reservado', () => {
     expect(numeroDaLinha({ numero: 'CC-2026-00001', numeroReservado: '' })).toEqual({ numero: 'CC-2026-00001', reservado: false })
     expect(numeroDaLinha({ numero: '', numeroReservado: 'CC-2026-00042' })).toEqual({ numero: 'CC-2026-00042', reservado: true })
     expect(numeroDaLinha({ numero: '' })).toEqual({ numero: '', reservado: false })
+    // A correção em andamento: o nº do certificado corrigido (sai com o mesmo), mesmo com um nº reservado
+    expect(numeroDaLinha({ numero: '', numeroCorrigido: 'CC-2026-00003', numeroReservado: 'CC-2026-00042' })).toEqual({
+      numero: 'CC-2026-00003',
+      reservado: false,
+      correcao: true,
+    })
     expect(textoNumeroReservado('CC-2026-00042')).toBe('Certificado nº CC-2026-00042 (reservado)')
     expect(ROTULO_SITUACAO_NUMERO.nao_utilizado).toBe('Não utilizado')
   })

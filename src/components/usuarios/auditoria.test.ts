@@ -47,6 +47,21 @@ describe('descreverRegistro', () => {
     })
   })
 
+  it('correção de um certificado emitido: "Abriu uma correção de certificado", com o nº e o motivo', () => {
+    expect(
+      descreverRegistro(
+        registro({
+          alvo: 'k8',
+          detalhe: 'POST /api/calibracoes/:id/revisar | CC-2026-00001: Correção da identificação da balança',
+        }),
+      ),
+    ).toEqual({
+      titulo: 'Abriu uma correção de certificado',
+      detalhe: 'CC-2026-00001: Correção da identificação da balança',
+      link: { tipo: 'calibracao', id: 'k8' },
+    })
+  })
+
   it('emissão com o nº reservado: o detalhe diz de qual folha de campo ele veio', () => {
     expect(
       descreverRegistro(
@@ -191,10 +206,21 @@ describe('autorDoRegistro (linha de baixo: quem fez)', () => {
     expect(autor({ acao: 'BLOQUEIO', detalhe: 'senha atual errada várias vezes na troca de senha' })).toBe('Maria Souza (maria)')
   })
 
-  it('ferramenta do servidor, cópia restaurada e atualização do sistema: no computador do servidor', () => {
+  it('ferramenta do servidor, cópia restaurada, atualização do sistema e testes apagados: no computador do servidor', () => {
     expect(autor({ acao: 'FERRAMENTA_LOCAL', alvo: 'u1', ip: 'local' })).toBe('No computador do servidor')
     expect(autor({ acao: 'COPIA_RESTAURADA', usuarioId: '', login: '', ip: 'local' })).toBe('No computador do servidor')
     expect(autor({ acao: 'SISTEMA_ATUALIZADO', usuarioId: '', login: '', ip: 'local' })).toBe('No computador do servidor')
+    expect(autor({ acao: 'TESTES_APAGADOS', usuarioId: '', login: '', ip: 'local' })).toBe('No computador do servidor')
+  })
+
+  it('testes apagados (server/ferramentas/apagar-testes.mjs): título próprio, não o da atualização do sistema', () => {
+    const detalhe =
+      'Testes apagados: 3 certificados, 4 calibrações em andamento e 5 folhas de campo. Próximos nºs: CC-2026-00001 e FC-2026-00001. Cópia do banco: backups/antes-de-apagar-testes-2026-11-04_22-57.db.'
+    expect(descreverRegistro(registro({ acao: 'TESTES_APAGADOS', usuarioId: '', login: '', detalhe }))).toEqual({
+      titulo: 'Apagou os certificados e as calibrações de teste',
+      detalhe,
+    })
+    expect(grupoDaAcao('TESTES_APAGADOS')).toBe('dados')
   })
 
   it('atualização do sistema: o detalhe diz o que mudou, para conferir', () => {

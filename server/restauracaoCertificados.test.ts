@@ -100,7 +100,7 @@ beforeEach(async () => {
   expect(folha.statusCode, folha.body).toBe(200)
   k3 = await c.calibracaoPronta()
   copia = await app().ctx.backups.copiar('manual')
-  // Depois da cópia: k2 emitido com o nº da folha; a revisão de k1; k4, criada e emitida depois da cópia
+  // Depois da cópia: k2 emitido com o nº da folha; a correção de k1 (o mesmo nº); k4, criada e emitida depois da cópia
   const guardar = (k: Calibracao) => {
     const pdf = readFileSync(caminho(k.emissao!.arquivo))
     expect(sha(pdf)).toBe(k.emissao!.hashPdf)
@@ -108,7 +108,7 @@ beforeEach(async () => {
     return k
   }
   expect(guardar(await emitir(k2.id)).numero).toBe(cc(2))
-  expect(guardar(await emitir((await revisar(k1.id)).id)).numero).toBe(`${cc(1)}-R1`)
+  expect(guardar(await emitir((await revisar(k1.id)).id)).numero).toBe(cc(1))
   expect(guardar(await emitir((await c.calibracaoPronta()).id)).numero).toBe(cc(3))
   await parar()
 }, 180_000)
@@ -127,8 +127,8 @@ function pdfsIntactos() {
 describe('voltar uma cópia do banco: os certificados emitidos depois dela', { timeout: 180_000 }, () => {
   it('com a ferramenta transplantar: continuam emitidos, com o mesmo nº e o mesmo código (o QR code confere)', async () => {
     const { restaurar, resposta } = transplantar()
-    // Os três emitidos depois da cópia e o original revisado depois dela
-    expect(resposta).toMatchObject({ transplantado: true, certificados: 4 })
+    // Os três nºs emitidos ou alterados depois da cópia (o corrigido conta uma vez: a versão anterior e a correção)
+    expect(resposta).toMatchObject({ transplantado: true, certificados: 3 })
     porNoLugar(restaurar)
     rmSync(restaurar)
     await subir(true)
@@ -141,9 +141,17 @@ describe('voltar uma cópia do banco: os certificados emitidos depois dela', { t
       expect(baixado.statusCode).toBe(200)
       expect(baixado.rawPayload.equals(pdf)).toBe(true)
     }
-    // O original revisado depois da cópia ficou substituído, como no banco atual
+    // O original corrigido depois da cópia ficou substituído, como no banco atual (a versão anterior da correção)
     expect((await obter(k1.id)).status).toBe('SUBSTITUIDO')
     expect((await verificar((await obter(k1.id)).emissao!.codigo)).json().status).toBe('SUBSTITUIDO')
+    const correcao = entregues.get(cc(1))!.k
+    expect(
+      (await app().chamar('GET', `/api/calibracoes/${correcao.id}`, { cookie })).json().versoes.map((v: { id: string }) => v.id),
+    ).toEqual([k1.id, correcao.id])
+    // O registro de atividades diz cada nº uma vez
+    expect(restauracoes()).toContain(
+      `3 certificados emitidos ou alterados depois da cópia (${cc(1)}, ${cc(2)}, ${cc(3)}) continuam como no banco atual (o mesmo nº, a mesma situação e o mesmo código de autenticidade): os PDFs entregues continuam valendo`,
+    )
     // O nº da folha de k2 ficou emitido; nenhum nº ficou de lado
     expect(numeros()).toEqual([{ numero: cc(2), calibracao_id: k2.id, situacao: 'emitido', motivo: '' }])
 
@@ -165,18 +173,20 @@ describe('voltar uma cópia do banco: os certificados emitidos depois dela', { t
       { numero: cc(2), calibracao_id: k2.id, situacao: 'nao_utilizado', motivo: motivo(cc(2)) },
       { numero: cc(3), calibracao_id: '', situacao: 'nao_utilizado', motivo: motivo(cc(3)) },
     ])
+    // A correção de k1 (o mesmo nº, que o banco tem) também é avisada: o cliente pode estar com ela
     expect(restauracoes().at(-1)).toBe(
-      `3 PDFs de certificado na pasta certificados que o banco não conhece (${cc(1)}-R1, ${cc(2)}, ${cc(3)}), emitidos depois da cópia do banco que voltou: os nºs não são dados de novo, e os PDFs ficam na pasta`,
+      `3 PDFs de certificado na pasta certificados que o banco não conhece (${cc(1)} (versão 2), ${cc(2)}, ${cc(3)}), emitidos depois da cópia do banco que voltou: os nºs não são dados de novo, e os PDFs ficam na pasta`,
     )
 
-    // k3 (outra calibração) e k2 (em andamento na cópia) recebem nºs novos; a revisão de k1, o -R seguinte
+    // k3 (outra calibração) e k2 (em andamento na cópia) recebem nºs novos; a correção de k1, o mesmo nº, na versão
+    // seguinte à que tem PDF na pasta
     expect((await emitir(k3.id)).numero).toBe(cc(4))
     expect((await emitir(k2.id)).numero).toBe(cc(5))
     const r2 = await emitir((await revisar(k1.id)).id)
-    expect(r2.numero).toBe(`${cc(1)}-R2`)
+    expect(r2).toMatchObject({ numero: cc(1), revisao: 2, emissao: { arquivo: `${ano}/Certificado-${cc(1)}-versao-3.pdf` } })
     pdfsIntactos()
     expect(pastaDoAno()).toEqual(
-      [cc(1), `${cc(1)}-R1`, `${cc(1)}-R2`, cc(2), cc(3), cc(4), cc(5)].map((n) => `Certificado-${n}.pdf`).sort(),
+      [cc(1), `${cc(1)}-versao-2`, `${cc(1)}-versao-3`, cc(2), cc(3), cc(4), cc(5)].map((n) => `Certificado-${n}.pdf`).sort(),
     )
 
     // Subir de novo não repete o aviso

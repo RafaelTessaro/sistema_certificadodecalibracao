@@ -499,10 +499,17 @@ export interface Calibracao {
   id: ID
   versao: number
   status: StatusCalibracao
-  /** Número como sai no certificado (ex.: "0123/2026" ou "0123/2026-R1"); vazio no rascunho. */
+  /**
+   * Número como sai no certificado (ex.: "0123/2026"); vazio no rascunho. A correção emitida a partir da 1.0.4 sai com
+   * o mesmo nº do certificado corrigido (`EmissaoCertificado.mesmoNumero`); a revisão emitida antes, com "-R1", "-R2"…
+   */
   numero: string
   ano: number | null
   sequencia: number | null
+  /**
+   * Contador interno das versões do mesmo nº (0 = a primeira; cada correção, +1; a unicidade no banco é ano, sequência
+   * e revisão): não sai no certificado. Na revisão emitida antes da 1.0.4, é o nº do sufixo "-R".
+   */
   revisao: number
   clienteId: ID
   balancaId: ID
@@ -569,7 +576,10 @@ export interface Calibracao {
   opinioes: string
   /** Anotações internas (não saem no certificado). */
   anotacoesInternas: string
-  /** Revisão: calibração emitida que esta substitui, e o motivo. */
+  /**
+   * Correção (revisão): o certificado emitido que esta substitui, e o motivo. O motivo fica só no sistema (no
+   * histórico das versões e no registro de atividades); só a revisão "-R1" de antes da 1.0.4 o mostra no PDF.
+   */
   substituiId: ID
   motivoRevisao: string
   /**
@@ -655,10 +665,40 @@ export interface CalibracaoResumo {
   /** Quantas vezes o certificado foi enviado por e-mail. */
   envios: number
   /**
+   * Certificado corrigido com o mesmo nº (`EmissaoCertificado.mesmoNumero`): quando foi editado (ISO, a emissão desta
+   * versão). A lista mostra uma linha só por nº, a versão atual, com essa anotação interna. Ausente = não foi.
+   */
+  editadoEm?: string
+  /**
+   * Versão anterior de um certificado corrigido com o mesmo nº (substituída; só aparece na aba "Substituídos"). Ausente
+   * nos outros casos.
+   */
+  versaoAnterior?: boolean
+  /**
+   * Correção em andamento de um certificado emitido: o nº dele, com que ela sai (o mesmo). Ausente nos outros casos.
+   */
+  numeroCorrigido?: string
+  /**
    * Em andamento: o nº do certificado já reservado (impresso na folha de campo, para a etiqueta), que ele
    * recebe na emissão. Ausente ou '' = ainda sem nº (é dado na emissão).
    */
   numeroReservado?: string
+}
+
+/**
+ * Uma versão de um certificado corrigido com o mesmo nº (`EmissaoCertificado.mesmoNumero`), no histórico interno: a
+ * primeira emissão e cada correção. Só a atual vale; as anteriores ficam guardadas, marcadas como substituídas.
+ */
+export interface VersaoCertificado {
+  id: ID
+  /** 1 = a primeira emissão do nº; 2 = a primeira correção… */
+  versao: number
+  status: StatusCalibracao
+  /** Quando e por quem esta versão foi emitida. */
+  emitidoEm: string
+  emitidoPor: string
+  /** O motivo da correção que gerou esta versão (só no sistema); '' na primeira. */
+  motivo: string
 }
 
 /**
@@ -709,13 +749,30 @@ export interface EmissaoCertificado {
   cliente: Cliente
   balanca: Balanca
   padroes: Padrao[]
+  /** Quem executou a calibração (sai em "Executado por"). */
   tecnico: Signatario
+  /** Quem emitiu (o signatário que autorizou a emissão); no certificado, só com as duas assinaturas (`assinaturas`). */
   signatario: Signatario
+  /**
+   * Quem assina o certificado, pela revisão por outra pessoa (`Configuracoes.exigirRevisor`) no momento da emissão:
+   * 'TECNICO' (desligada) = só quem executou ("Executado por"), mesmo que outra pessoa tenha emitido; 'TECNICO_E_SIGNATARIO'
+   * (ligada) = quem executou e quem autorizou. Quem emitiu fica registrado de todo jeito (`signatario`, `emitidoPor`).
+   * Ausente = emitido antes da 1.0.4 (as duas assinaturas, ou "Executado e autorizado por" quando eram a mesma pessoa):
+   * o PDF refeito dos dados congelados sai igual ao emitido.
+   */
+  assinaturas?: 'TECNICO' | 'TECNICO_E_SIGNATARIO'
   /** Textos do certificado na data da emissão. */
   textos: TextosCertificado
-  /** Número do certificado substituído (revisão). */
+  /** Número do certificado substituído (correção) e a data em que ele foi emitido. */
   substituiNumero: string
   substituiEmissao: string
+  /**
+   * Correção emitida com o mesmo nº do certificado corrigido (a partir da 1.0.4): o PDF sai como um certificado comum,
+   * com a data da emissão nova, sem "-R", sem o quadro da revisão e sem o motivo (que fica só no sistema). A versão
+   * anterior continua guardada, marcada como substituída só dentro do sistema. Ausente = não é correção, ou é a
+   * revisão emitida antes com "-R1", que continua saindo como saía.
+   */
+  mesmoNumero?: boolean
   /**
    * Revisão do POP usada na calibração (a da folha de campo, ou a que valia na data dela; na revisão do certificado,
    * a do original; ver `popDaCalibracao` em server/certificados.ts). O texto que sai no certificado é
@@ -1033,6 +1090,7 @@ export type AcaoAuditoria =
   | 'COPIA_RESTAURADA'
   | 'BACKUP_BAIXADO'
   | 'SISTEMA_ATUALIZADO'
+  | 'TESTES_APAGADOS'
   | 'CERTIFICADO_EMITIDO'
   | 'CERTIFICADO_CANCELADO'
   | 'CERTIFICADO_ENVIADO'

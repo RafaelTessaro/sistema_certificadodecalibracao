@@ -35,6 +35,7 @@ import type {
   Usuario,
   UsuarioSessao,
   Vencimento,
+  VersaoCertificado,
   VersaoPop,
 } from '#shared/tipos.ts'
 
@@ -94,8 +95,13 @@ export interface DetalheCalibracao {
    * calibração). Ausente numa resposta de antes desta versão.
    */
   avisos?: string[]
-  /** Revisões feitas a partir deste certificado (a que o substituiu e a que está em andamento). */
+  /** Correções feitas a partir deste certificado (a que o substituiu e a que está em andamento). */
   revisoes: Array<{ id: string; numero: string; status: StatusCalibracao }>
+  /**
+   * Certificado corrigido com o mesmo nº: as versões, da primeira à atual (o histórico interno, com o motivo de cada
+   * correção). Vazio ou ausente (resposta de antes desta versão) = nunca foi corrigido assim.
+   */
+  versoes?: VersaoCertificado[]
   /** Folha de campo já impressa desta calibração (null = ainda não). */
   folhaCampo: FolhaCampoImpressa | null
   /**
@@ -103,7 +109,7 @@ export interface DetalheCalibracao {
    * o certificado é emitido com ele). null = ainda sem nº (é dado na emissão).
    */
   numeroReservado?: NumeroReservado | null
-  /** Revisão em andamento: o nº com que ela sai (o do certificado revisado, com o -R dela); null = não é revisão. */
+  /** Correção em andamento: o nº com que ela sai (o mesmo do certificado corrigido); null = não é correção. */
   numeroRevisao?: string | null
   /** Certificado (arquivo) de cada padrão usado: o congelado na emissão, ou o do cadastro. */
   certificadosPadroes: CertificadoDoPadrao[]
@@ -163,6 +169,16 @@ export interface InfoBackup {
 export interface VerificacaoCertificado {
   numero: string
   status: string
+  /**
+   * Versão anterior de um certificado corrigido com o mesmo nº: quando a versão que vale foi emitida (dd/mm/aaaa).
+   * Ausente nos outros casos.
+   */
+  versaoAtualEmitidaEm?: string
+  /**
+   * Substituído por uma versão corrigida (ou uma revisão) que depois foi cancelada: nenhuma versão deste certificado
+   * vale. Ausente nos outros casos.
+   */
+  substitutoCancelado?: boolean
   dataCalibracao: string
   dataEmissao: string
   cliente: string

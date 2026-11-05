@@ -11,7 +11,8 @@ import { BALANCA_VAZIA, CLIENTE_VAZIO, PADRAO_VAZIO, PENDENCIA_REVISADO_CANCELAD
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
 import { anexosDoCertificado, gerarPdf } from './certificados.ts'
-import { ASSINATURA_EXEMPLO_1 } from './pdf/assinaturasExemplo.ts'
+import { ASSINATURA_EXEMPLO_1, ASSINATURA_EXEMPLO_2 } from './pdf/assinaturasExemplo.ts'
+import { comImagensNaOrdemInversa } from './pdf/base.ts'
 import { textoPdf } from './pdf/carimbo.ts'
 import { MSG_CANCELAR_COM_REVISAO } from './repositorio.ts'
 
@@ -293,6 +294,83 @@ describe('emissão do certificado', () => {
     expect(ok.json().calibracao.emissao).toMatchObject({ tecnico: { id: t.comumId }, signatario: { id: t.adminId } })
   })
 
+  describe('quem assina o certificado (congelado na emissão)', () => {
+    async function revisorObrigatorio(ligado: boolean) {
+      const config = (await t.chamar('GET', '/api/config', { cookie: t.cookieAdmin })).json().config
+      const r = await t.chamar('PUT', '/api/config', { cookie: t.cookieAdmin, payload: { ...config, exigirRevisor: ligado } })
+      expect(r.statusCode).toBe(200)
+    }
+    /** O técnico (o usuário comum) digita a calibração; o administrador, signatário, emite. */
+    async function doTecnico(): Promise<Calibracao> {
+      const k = await calibracaoPronta(t.cookieComum)
+      expect(k.tecnicoId).toBe(t.comumId)
+      return k
+    }
+
+    it('desligada: só a assinatura de quem executou, mesmo emitido por outra pessoa (quem emitiu fica registrado)', async () => {
+      await revisorObrigatorio(false)
+      const r = await emitir(await doTecnico())
+      expect(r.statusCode, r.body).toBe(200)
+      const k: Calibracao = r.json().calibracao
+      expect(k.emissao).toMatchObject({
+        assinaturas: 'TECNICO',
+        tecnico: { id: t.comumId, nome: 'Comum Teste' },
+        signatario: { id: t.adminId },
+        emitidoPor: 'Admin Teste',
+      })
+      if (temPdftotext) {
+        const texto = textoDoPdf(readFileSync(join(t.pasta, 'certificados', k.emissao!.arquivo)))
+        expect(texto).toContain('EXECUTADO POR')
+        expect(texto).toContain('Comum Teste')
+        expect(texto).not.toContain('AUTORIZADO POR')
+        expect(texto).not.toContain('Admin Teste')
+      }
+      // A configuração mudada depois não muda o emitido (o PDF refeito dos dados congelados é o mesmo)
+      await revisorObrigatorio(true)
+      const k2 = t.ctx.repo.obterCalibracao(k.id)!
+      const refeito = await gerarPdf(k2, k2.emissao!, '')
+      expect(createHash('sha256').update(refeito).digest('hex')).toBe(k2.emissao!.hashPdf)
+    })
+
+    it('desligada e o técnico emite a própria calibração: "Executado por", uma assinatura só', async () => {
+      await revisorObrigatorio(false)
+      const r = await emitir(await calibracaoPronta())
+      const k: Calibracao = r.json().calibracao
+      expect(k.emissao).toMatchObject({ assinaturas: 'TECNICO', tecnico: { id: t.adminId }, signatario: { id: t.adminId } })
+      if (temPdftotext) {
+        const texto = textoDoPdf(readFileSync(join(t.pasta, 'certificados', k.emissao!.arquivo)))
+        expect(texto).toContain('EXECUTADO POR')
+        expect(texto).not.toContain('AUTORIZADO')
+      }
+    })
+
+    it('ligada: as duas assinaturas, de quem executou e de quem autorizou', async () => {
+      await revisorObrigatorio(true)
+      const r = await emitir(await doTecnico())
+      expect(r.statusCode, r.body).toBe(200)
+      const k: Calibracao = r.json().calibracao
+      expect(k.emissao).toMatchObject({
+        assinaturas: 'TECNICO_E_SIGNATARIO',
+        tecnico: { id: t.comumId },
+        signatario: { id: t.adminId },
+      })
+      if (temPdftotext) {
+        const texto = textoDoPdf(readFileSync(join(t.pasta, 'certificados', k.emissao!.arquivo)))
+        for (const x of ['EXECUTADO POR', 'AUTORIZADO POR', 'Comum Teste', 'Admin Teste']) expect(texto).toContain(x)
+      }
+    })
+
+    it('a prévia segue a configuração de agora', async () => {
+      const k = await doTecnico()
+      for (const ligado of [false, true]) {
+        await revisorObrigatorio(ligado)
+        const previa = await t.chamar('GET', `/api/calibracoes/${k.id}/pdf`, { cookie: t.cookieAdmin })
+        expect(previa.statusCode).toBe(200)
+        if (temPdftotext) expect(textoDoPdf(previa.rawPayload).includes('AUTORIZADO POR')).toBe(ligado)
+      }
+    })
+  })
+
   it('com revisor obrigatório, quem executou não emite o próprio certificado', async () => {
     const config = (await t.chamar('GET', '/api/config', { cookie: t.cookieAdmin })).json().config
     expect(
@@ -518,6 +596,39 @@ describe('PDF do certificado emitido: o arquivo guardado é o documento (o hash 
     expect(hashNoBanco(k)).toBe(k.emissao!.hashPdf)
   })
 
+  it('emitido antes da 1.0.4 com duas assinaturas, gravado com as imagens em qualquer ordem: o arquivo sumido volta igual', async () => {
+    // A 1.0.3 gravava as imagens das assinaturas na ordem em que cada PNG terminava de descomprimir: com o PNG do
+    // técnico maior que o do signatário, a do signatário entrava antes (a ordem inversa à do pedido)
+    t.ctx.db.prepare('UPDATE usuarios SET assinatura = ? WHERE id = ?').run(ASSINATURA_EXEMPLO_1, t.comumId)
+    t.ctx.db.prepare('UPDATE usuarios SET assinatura = ? WHERE id = ?').run(ASSINATURA_EXEMPLO_2, t.adminId)
+    expect(ASSINATURA_EXEMPLO_1.length).toBeGreaterThan(ASSINATURA_EXEMPLO_2.length)
+    const emitida: Calibracao = (await emitir(await calibracaoPronta(t.cookieComum))).json().calibracao
+    expect(emitida.emissao).toMatchObject({ tecnico: { id: t.comumId }, signatario: { id: t.adminId } })
+    // Como a 1.0.3 congelava: sem `assinaturas` (as duas, "Executado por" e "Autorizado por")
+    const { assinaturas: _, ...legado } = emitida.emissao!
+    const naOrdem = await gerarPdf(emitida, legado, '')
+    const invertido = await comImagensNaOrdemInversa(() => gerarPdf(emitida, legado, ''))
+    expect(sha(invertido)).not.toBe(sha(naOrdem))
+    const imagens = (pdf: Buffer) => pdf.toString('latin1').match(/\/Subtype \/Image/g)?.length ?? 0
+    expect(imagens(naOrdem)).toBe(4) // as duas imagens e as duas máscaras da transparência
+    for (const gravado of [invertido, naOrdem]) {
+      const k = { ...emitida, emissao: { ...legado, hashPdf: sha(gravado) } }
+      t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(k), k.id)
+      rmSync(caminhoDo(k), { force: true })
+      const r = await baixar(k)
+      expect(r.statusCode, r.body).toBe(200)
+      expect(r.rawPayload.equals(gravado)).toBe(true)
+      expect(readFileSync(caminhoDo(k)).equals(gravado)).toBe(true)
+      expect(hashNoBanco(k)).toBe(sha(gravado))
+    }
+    // O emitido a partir da 1.0.4 (com `assinaturas`) sai sempre na ordem do pedido: a outra não é o documento emitido
+    const novo = { ...emitida, emissao: { ...legado, assinaturas: 'TECNICO_E_SIGNATARIO' as const, hashPdf: sha(invertido) } }
+    t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(novo), novo.id)
+    unlinkSync(caminhoDo(novo))
+    expect((await baixar(novo)).statusCode).toBe(409)
+    expect(existsSync(caminhoDo(novo))).toBe(false)
+  })
+
   it('arquivo alterado depois da emissão: 409, e o arquivo e o hash ficam como estão', async () => {
     const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
     const alterado = readFileSync(caminhoDo(k))
@@ -733,13 +844,17 @@ describe('PDF do certificado emitido: o arquivo guardado é o documento (o hash 
 })
 
 describe('revisão e cancelamento', () => {
-  it('a revisão herda o número com "-R1", e ao ser emitida substitui o original', async () => {
+  it('a correção sai com o mesmo nº e substitui o original, que fica guardado só no sistema como versão anterior', async () => {
     const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const ano = original.ano!
+    const pasta = join(t.pasta, 'certificados', String(ano))
+    const pdfOriginal = readFileSync(join(pasta, `Certificado-${original.numero}.pdf`))
     const semMotivo = await t.chamar('POST', `/api/calibracoes/${original.id}/revisar`, {
       cookie: t.cookieAdmin,
       payload: { motivo: '' },
     })
     expect(semMotivo.statusCode).toBe(400)
+    expect(semMotivo.json().erro).toBe('Explique o que vai ser corrigido (fica registrado no sistema).')
 
     const { calibracao: rev } = (await criar(`/api/calibracoes/${original.id}/revisar`, {
       motivo: 'Correção da identificação da balança',
@@ -752,7 +867,7 @@ describe('revisão e cancelamento', () => {
     })
     // Leituras copiadas
     expect(rev.indicacao.pontos.map((p) => p.crescente)).toEqual(original.indicacao.pontos.map((p) => p.crescente))
-    // Uma revisão por vez
+    // Uma correção por vez
     expect(
       (
         await t.chamar('POST', `/api/calibracoes/${original.id}/revisar`, {
@@ -763,59 +878,285 @@ describe('revisão e cancelamento', () => {
     ).toBe(409)
     const andamento = (await t.chamar('GET', `/api/calibracoes/${original.id}`, { cookie: t.cookieAdmin })).json()
     expect(andamento.revisoes).toEqual([{ id: rev.id, numero: '', status: 'RASCUNHO' }])
+    // Na lista, a correção em andamento mostra o nº que vai manter, sem a data de emissão do certificado corrigido
+    expect(rev.dataEmissao).toBe('')
+    const abertas = (await t.chamar('GET', '/api/calibracoes?status=ABERTAS', { cookie: t.cookieAdmin })).json()
+    expect(abertas.itens).toEqual([
+      expect.objectContaining({ id: rev.id, numero: '', dataEmissao: '', numeroCorrigido: original.numero }),
+    ])
+    expect(t.ctx.repo.resumoCalibracao(rev.id)).toMatchObject({ dataEmissao: '', numeroCorrigido: original.numero })
+    expect(t.ctx.repo.resumoCalibracao(original.id)!.numeroCorrigido).toBeUndefined()
+    // A tela mostra antes o nº com que a correção sai: o mesmo
+    expect((await t.chamar('GET', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).json().numeroRevisao).toBe(
+      original.numero,
+    )
 
     const emitida = await emitir(rev)
     expect(emitida.statusCode, emitida.body).toBe(200)
     const nova: Calibracao = emitida.json().calibracao
-    expect(nova.numero).toBe(`${original.numero}-R1`)
-    expect(nova.emissao).toMatchObject({ substituiNumero: original.numero })
+    // O mesmo nº, sem "-R"; por dentro, a versão seguinte (a unicidade no banco) e o PDF em outro arquivo
+    expect(nova).toMatchObject({ numero: original.numero, ano, sequencia: original.sequencia, revisao: 1 })
+    expect(nova.emissao).toMatchObject({
+      mesmoNumero: true,
+      substituiNumero: original.numero,
+      substituiEmissao: original.dataEmissao,
+      arquivo: `${ano}/Certificado-${original.numero}-versao-2.pdf`,
+    })
+    expect(nova.emissao!.codigo).not.toBe(original.emissao!.codigo)
+    // O PDF da versão anterior continua na pasta, como foi entregue; o da correção, ao lado
+    expect(readFileSync(join(pasta, `Certificado-${original.numero}.pdf`)).equals(pdfOriginal)).toBe(true)
+    const pdfNovo = await t.chamar('GET', `/api/calibracoes/${nova.id}/pdf?baixar=1`, { cookie: t.cookieAdmin })
+    expect(pdfNovo.rawPayload.equals(readFileSync(join(pasta, `Certificado-${original.numero}-versao-2.pdf`)))).toBe(true)
+    // O download sai com o nº, sem a versão
+    expect(pdfNovo.headers['content-disposition']).toBe(`attachment; filename="Certificado-${original.numero}.pdf"`)
+    if (temPdftotext) {
+      const texto = textoDoPdf(pdfNovo.rawPayload)
+      expect(texto).toContain(`Fim do Certificado de Calibração nº ${original.numero} —`)
+      expect(texto).not.toMatch(/-R\d|Revisão:|substitui integralmente|Motivo:|identificação da balança/)
+    }
 
     const antigo = (await t.chamar('GET', `/api/calibracoes/${original.id}`, { cookie: t.cookieAdmin })).json()
     expect(antigo.calibracao.status).toBe('SUBSTITUIDO')
     expect(antigo.revisoes).toEqual([{ id: rev.id, numero: nova.numero, status: 'EMITIDO' }])
+    // O histórico interno das versões, igual nas duas páginas: quando, quem e o motivo (só no sistema)
+    const versoes = [
+      {
+        id: original.id,
+        versao: 1,
+        status: 'SUBSTITUIDO',
+        emitidoEm: original.emissao!.emitidoEm,
+        emitidoPor: 'Admin Teste',
+        motivo: '',
+      },
+      {
+        id: nova.id,
+        versao: 2,
+        status: 'EMITIDO',
+        emitidoEm: nova.emissao!.emitidoEm,
+        emitidoPor: 'Admin Teste',
+        motivo: 'Correção da identificação da balança',
+      },
+    ]
+    expect(antigo.versoes).toEqual(versoes)
+    expect((await t.chamar('GET', `/api/calibracoes/${nova.id}`, { cookie: t.cookieAdmin })).json().versoes).toEqual(versoes)
+    // A conferência pública: a versão anterior diz que foi trocada (com a data da que vale); a nova vale
     const verificacao = await t.app.inject({ method: 'GET', url: `/api/verificar/${original.emissao!.codigo}` })
-    expect(verificacao.json().status).toBe('SUBSTITUIDO')
-    // O substituído continua com o PDF (servido com a marca)
+    expect(verificacao.json()).toMatchObject({
+      numero: original.numero,
+      status: 'SUBSTITUIDO',
+      versaoAtualEmitidaEm: nova.dataEmissao.split('-').reverse().join('/'),
+    })
+    const vale = (await t.app.inject({ method: 'GET', url: `/api/verificar/${nova.emissao!.codigo}` })).json()
+    expect(vale).toMatchObject({ numero: original.numero, status: 'EMITIDO' })
+    expect(vale.versaoAtualEmitidaEm).toBeUndefined()
+    // A versão anterior continua com o PDF entregue, servido com a marca "substituído" por cima
     const pdf = await t.chamar('GET', `/api/calibracoes/${original.id}/pdf`, { cookie: t.cookieAdmin })
     expect(pdf.statusCode).toBe(200)
+    expect(pdf.rawPayload.subarray(0, pdfOriginal.length).equals(pdfOriginal)).toBe(true)
+    expect(pdf.rawPayload.toString('latin1')).toContain(textoPdf('SUBSTITUÍDO'))
+
+    // A lista: uma linha só para o nº (a versão atual), com a anotação "editado"; a busca pelo nº acha a atual
+    const lista = (await t.chamar('GET', '/api/calibracoes', { cookie: t.cookieAdmin })).json()
+    expect(lista.total).toBe(1)
+    expect(lista.itens).toEqual([
+      expect.objectContaining({ id: nova.id, numero: original.numero, status: 'EMITIDO', editadoEm: nova.emissao!.emitidoEm }),
+    ])
+    const busca = (
+      await t.chamar('GET', `/api/calibracoes?busca=${encodeURIComponent(original.numero)}`, { cookie: t.cookieAdmin })
+    ).json()
+    expect(busca.itens.map((x: { id: string }) => x.id)).toEqual([nova.id])
+    // Só a aba "Substituídos" mostra a versão anterior, marcada como tal
+    const substituidos = (await t.chamar('GET', '/api/calibracoes?status=SUBSTITUIDO', { cookie: t.cookieAdmin })).json()
+    expect(substituidos.total).toBe(1)
+    expect(substituidos.itens).toEqual([
+      expect.objectContaining({ id: original.id, numero: original.numero, status: 'SUBSTITUIDO', versaoAnterior: true }),
+    ])
+    expect(lista.itens[0].versaoAnterior).toBeUndefined()
+    // O painel conta o certificado uma vez só
+    expect(t.ctx.repo.painel().emitidosAno).toBe(1)
+
+    // O registro de atividades guarda a correção e o motivo
+    const registro = (acao: string) =>
+      (t.ctx.db.prepare('SELECT detalhe FROM auditoria WHERE acao = ? ORDER BY id').all(acao) as Array<{ detalhe: string }>).map(
+        (r) => r.detalhe,
+      )
+    expect(registro('ALTERACAO')).toContain(
+      `POST /api/calibracoes/:id/revisar | ${original.numero}: Correção da identificação da balança`,
+    )
+    expect(registro('CERTIFICADO_EMITIDO').at(-1)).toBe(
+      `POST /api/calibracoes/:id/emitir | ${original.numero} corrigido (a versão anterior fica guardada como substituída): Correção da identificação da balança`,
+    )
+
+    // A numeração dos certificados novos não muda
+    const outro: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    expect(outro.numero).toBe(`CC-${ano}-00002`)
   })
 
-  it('o formato da numeração mudou depois do original: a revisão sai com o nº dele e -R1 (e a revisão da revisão, -R2)', async () => {
+  it('a correção da correção (3ª versão) também mantém o nº, mesmo com o formato da numeração mudado depois', async () => {
     const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
     const ano = original.ano!
     expect(original.numero).toBe(`CC-${ano}-00001`)
-    const revisar = async (k: Calibracao) =>
-      (
-        (await criar(`/api/calibracoes/${k.id}/revisar`, { motivo: 'Correção da identificação da balança' })) as {
-          calibracao: Calibracao
-        }
-      ).calibracao
-    const rev = await revisar(original)
-    // A troca do formato depois de aberta a revisão (vale para os certificados novos, não para os já emitidos)
+    const revisar = async (k: Calibracao, motivo: string) =>
+      ((await criar(`/api/calibracoes/${k.id}/revisar`, { motivo })) as { calibracao: Calibracao }).calibracao
+    const rev = await revisar(original, 'Correção da identificação da balança')
+    // A troca do formato depois de aberta a correção (vale para os certificados novos, não para os já emitidos)
     t.ctx.repo.salvarConfig({ ...t.ctx.repo.obterConfig(), numeracao: { formato: 'BC {seq}/{aa}', digitos: 4 } })
-    // A tela mostra antes o nº com que a revisão sai
     const andamento = (await t.chamar('GET', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).json()
-    expect(andamento.numeroRevisao).toBe(`${original.numero}-R1`)
+    expect(andamento.numeroRevisao).toBe(original.numero)
     expect((await t.chamar('GET', `/api/calibracoes/${original.id}`, { cookie: t.cookieAdmin })).json().numeroRevisao).toBeNull()
-    const r1 = await emitir(rev)
-    expect(r1.statusCode, r1.body).toBe(200)
-    const nova: Calibracao = r1.json().calibracao
-    expect(nova.numero).toBe(`${original.numero}-R1`)
-    expect(nova.emissao).toMatchObject({
-      substituiNumero: original.numero,
-      arquivo: `${ano}/Certificado-${original.numero}-R1.pdf`,
-    })
-    expect(existsSync(join(t.pasta, 'certificados', nova.emissao!.arquivo))).toBe(true)
+    const v2: Calibracao = (await emitir(rev)).json().calibracao
+    expect(v2.numero).toBe(original.numero)
 
-    // De novo, com outro formato ainda: a revisão da revisão continua a série do original
     t.ctx.repo.salvarConfig({ ...t.ctx.repo.obterConfig(), numeracao: { formato: '{seq}/{ano}', digitos: 3 } })
-    const r2 = await emitir(await revisar(nova))
-    expect(r2.statusCode, r2.body).toBe(200)
-    expect(r2.json().calibracao.numero).toBe(`${original.numero}-R2`)
-    expect(r2.json().calibracao.emissao.substituiNumero).toBe(`${original.numero}-R1`)
-    // Os certificados novos seguem o formato atual
+    const r3 = await emitir(await revisar(v2, 'Correção do endereço do cliente'))
+    expect(r3.statusCode, r3.body).toBe(200)
+    const v3: Calibracao = r3.json().calibracao
+    expect(v3).toMatchObject({ numero: original.numero, revisao: 2, substituiId: v2.id })
+    expect(v3.emissao).toMatchObject({
+      mesmoNumero: true,
+      substituiNumero: original.numero,
+      arquivo: `${ano}/Certificado-${original.numero}-versao-3.pdf`,
+    })
+    expect(existsSync(join(t.pasta, 'certificados', v3.emissao!.arquivo))).toBe(true)
+    expect(t.ctx.repo.obterCalibracao(v2.id)!.status).toBe('SUBSTITUIDO')
+    // As três versões no histórico, de qualquer uma delas; a lista com uma linha só
+    const versoes = (await t.chamar('GET', `/api/calibracoes/${v2.id}`, { cookie: t.cookieAdmin })).json().versoes
+    expect(
+      versoes.map((v: { id: string; versao: number; status: string; motivo: string }) => [v.id, v.versao, v.status, v.motivo]),
+    ).toEqual([
+      [original.id, 1, 'SUBSTITUIDO', ''],
+      [v2.id, 2, 'SUBSTITUIDO', 'Correção da identificação da balança'],
+      [v3.id, 3, 'EMITIDO', 'Correção do endereço do cliente'],
+    ])
+    const lista = (await t.chamar('GET', '/api/calibracoes', { cookie: t.cookieAdmin })).json()
+    expect(lista.itens.map((x: { id: string }) => x.id)).toEqual([v3.id])
+    // Os certificados novos seguem o formato atual, na sequência de sempre
     const outro = await emitir(await calibracaoPronta())
     expect(outro.json().calibracao.numero).toBe(`002/${ano}`)
+  })
+
+  it('verificação pública de uma versão anterior quando a versão atual foi cancelada: nenhuma versão vale', async () => {
+    const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const revisar = async (k: Calibracao, motivo: string) =>
+      (
+        await emitir(((await criar(`/api/calibracoes/${k.id}/revisar`, { motivo })) as { calibracao: Calibracao }).calibracao)
+      ).json().calibracao as Calibracao
+    const v2 = await revisar(original, 'Correção da identificação da balança')
+    const v3 = await revisar(v2, 'Correção do endereço do cliente')
+    const verificar = async (k: Calibracao) =>
+      (await t.app.inject({ method: 'GET', url: `/api/verificar/${k.emissao!.codigo}` })).json()
+    // Antes do cancelamento: as anteriores apontam para a atual (com a data dela)
+    expect(await verificar(original)).toMatchObject({ status: 'SUBSTITUIDO', versaoAtualEmitidaEm: expect.any(String) })
+    expect((await verificar(original)).substitutoCancelado).toBeUndefined()
+    const ok = await t.chamar('POST', `/api/calibracoes/${v3.id}/cancelar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Emitido por engano', versao: v3.versao },
+    })
+    expect(ok.statusCode, ok.body).toBe(200)
+    // Depois: a versão 1 e a 2 não mandam procurar "a mais nova" (ela foi cancelada)
+    for (const k of [original, v2]) {
+      const v = await verificar(k)
+      expect(v).toMatchObject({ numero: original.numero, status: 'SUBSTITUIDO', substitutoCancelado: true })
+      expect(v.versaoAtualEmitidaEm).toBeUndefined()
+    }
+    expect(await verificar(v3)).toMatchObject({ status: 'CANCELADO' })
+    expect((await verificar(v3)).substitutoCancelado).toBeUndefined()
+  })
+
+  it('o painel conta como a aba Emitidos e as páginas do cliente e da balança: o corrigido e depois cancelado não conta', async () => {
+    const revisar = async (k: Calibracao, motivo: string) =>
+      (
+        await emitir(((await criar(`/api/calibracoes/${k.id}/revisar`, { motivo })) as { calibracao: Calibracao }).calibracao)
+      ).json().calibracao as Calibracao
+    const cancelar = async (k: Calibracao) => {
+      const ok = await t.chamar('POST', `/api/calibracoes/${k.id}/cancelar`, {
+        cookie: t.cookieAdmin,
+        payload: { motivo: 'Emitido por engano', versao: k.versao },
+      })
+      expect(ok.statusCode, ok.body).toBe(200)
+    }
+    const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const v2 = await revisar(original, 'Correção da identificação da balança')
+    const v3 = await revisar(v2, 'Correção do endereço do cliente')
+    const semCorrecao: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    await emitir(await calibracaoPronta())
+    const contagens = () => {
+      const p = t.ctx.repo.painel()
+      return {
+        mes: p.emitidosMes,
+        ano: p.emitidosAno,
+        grafico: p.porMes.at(-1)!.quantidade,
+        abaEmitidos: t.ctx.repo.listarCalibracoes({ status: 'EMITIDO' }).total,
+        cliente: t.ctx.repo.listarClientes().find((c) => c.id === original.clienteId)!.certificados,
+        balanca: t.ctx.repo.listarBalancas().find((b) => b.id === original.balancaId)!.certificados,
+      }
+    }
+    // Três certificados (o corrigido conta uma vez só)
+    expect(contagens()).toEqual({ mes: 3, ano: 3, grafico: 3, abaEmitidos: 3, cliente: 3, balanca: 3 })
+    // Cancelados: o corrigido (a versão atual) e o que nunca foi corrigido; sobra um
+    await cancelar(v3)
+    await cancelar(semCorrecao)
+    expect(contagens()).toEqual({ mes: 1, ano: 1, grafico: 1, abaEmitidos: 1, cliente: 1, balanca: 1 })
+  })
+
+  it('a revisão "-R1" emitida antes da 1.0.4 continua como saiu; corrigida agora, mantém o nº dela', async () => {
+    const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const ano = original.ano!
+    // A revisão como a 1.0.3 a emitia: "-R1", sem a marca do mesmo nº e com o próprio PDF (com o quadro da revisão)
+    const rev = (
+      (await criar(`/api/calibracoes/${original.id}/revisar`, { motivo: 'Correção do endereço do cliente' })) as {
+        calibracao: Calibracao
+      }
+    ).calibracao
+    const emitida: Calibracao = (await emitir(rev)).json().calibracao
+    const { mesmoNumero: _m, ...emissao103 } = emitida.emissao!
+    const legado: Calibracao = {
+      ...emitida,
+      numero: `${original.numero}-R1`,
+      emissao: { ...emissao103, hashPdf: '', arquivo: '', assinaturas: undefined },
+    }
+    t.ctx.db
+      .prepare('UPDATE calibracoes SET numero = ?, dados = ? WHERE id = ?')
+      .run(legado.numero, JSON.stringify(legado), legado.id)
+    rmSync(join(t.pasta, 'certificados', emitida.emissao!.arquivo))
+    const pdf = await t.chamar('GET', `/api/calibracoes/${legado.id}/pdf`, { cookie: t.cookieAdmin })
+    expect(pdf.statusCode, pdf.body).toBe(200)
+    expect(t.ctx.repo.obterCalibracao(legado.id)!.emissao!.arquivo).toBe(`${ano}/Certificado-${original.numero}-R1.pdf`)
+    if (temPdftotext) {
+      const texto = textoDoPdf(pdf.rawPayload).replace(/\s+/g, ' ')
+      expect(texto).toContain(`Revisão: este certificado substitui integralmente o Certificado nº ${original.numero}`)
+      expect(texto).toContain('Motivo: Correção do endereço do cliente.')
+    }
+    // As duas linhas, como antes (são nºs diferentes), sem histórico de versões
+    const nums = async () =>
+      (await t.chamar('GET', '/api/calibracoes', { cookie: t.cookieAdmin })).json().itens.map((x: { numero: string }) => x.numero)
+    expect((await nums()).sort()).toEqual([original.numero, `${original.numero}-R1`])
+    expect((await t.chamar('GET', `/api/calibracoes/${legado.id}`, { cookie: t.cookieAdmin })).json().versoes).toEqual([])
+
+    // Corrigida agora: sai com o nº dela ("-R1"), sem quadro; a anterior sai da lista
+    const r = await emitir(
+      ((await criar(`/api/calibracoes/${legado.id}/revisar`, { motivo: 'Correção da OS' })) as { calibracao: Calibracao })
+        .calibracao,
+    )
+    expect(r.statusCode, r.body).toBe(200)
+    const v3: Calibracao = r.json().calibracao
+    expect(v3).toMatchObject({ numero: `${original.numero}-R1`, revisao: 2 })
+    expect(v3.emissao).toMatchObject({ mesmoNumero: true, arquivo: `${ano}/Certificado-${original.numero}-R1-versao-3.pdf` })
+    expect((await nums()).sort()).toEqual([original.numero, `${original.numero}-R1`])
+    expect(
+      (await t.chamar('GET', `/api/calibracoes/${v3.id}`, { cookie: t.cookieAdmin }))
+        .json()
+        .versoes.map((v: { id: string }) => v.id),
+    ).toEqual([legado.id, v3.id])
+    // O painel conta o certificado uma vez; cancelada a versão atual, não conta mais (como a aba Emitidos)
+    expect(t.ctx.repo.painel().emitidosAno).toBe(1)
+    const cancelado = await t.chamar('POST', `/api/calibracoes/${v3.id}/cancelar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Emitido por engano', versao: v3.versao },
+    })
+    expect(cancelado.statusCode, cancelado.body).toBe(200)
+    expect(t.ctx.repo.painel().emitidosAno).toBe(0)
+    expect(t.ctx.repo.listarCalibracoes({ status: 'EMITIDO' }).total).toBe(0)
   })
 
   it('só o administrador cancela, com motivo; a verificação passa a mostrar "cancelado"', async () => {
@@ -870,10 +1211,10 @@ describe('revisão e cancelamento', () => {
     expect(recusado.json().erro).toBe(MSG_CANCELAR_COM_REVISAO)
     const depois = (await t.chamar('GET', `/api/calibracoes/${original.id}`, { cookie: t.cookieAdmin })).json()
     expect(depois.calibracao).toMatchObject({ status: 'EMITIDO', versao: original.versao, cancelamento: null })
-    // A revisão continua pronta para emitir, com o nº do certificado revisado
+    // A correção continua pronta para emitir, com o nº do certificado corrigido
     const revisao = (await t.chamar('GET', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).json()
     expect(revisao.pendencias).toEqual([])
-    expect(revisao.numeroRevisao).toBe(`${original.numero}-R1`)
+    expect(revisao.numeroRevisao).toBe(original.numero)
 
     // Sem a revisão, o cancelamento passa
     expect((await t.chamar('DELETE', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })).statusCode).toBe(204)
@@ -1103,11 +1444,11 @@ describe('troca do cliente dono da balança', () => {
     })
     expect(salvar.statusCode, salvar.body).toBe(200)
     expect(salvar.json().pendencias).toEqual([])
-    // Sai em nome do cliente do certificado revisado, com o nº dele e -R1
+    // Sai em nome do cliente do certificado corrigido, com o mesmo nº
     const emitida = await emitir(salvar.json().calibracao)
     expect(emitida.statusCode, emitida.body).toBe(200)
     const nova: Calibracao = emitida.json().calibracao
-    expect(nova.numero).toBe(`${original.numero}-R1`)
+    expect(nova.numero).toBe(original.numero)
     expect(nova.clienteId).toBe(cliente.id)
     expect(nova.emissao?.cliente).toMatchObject({ id: cliente.id, nome: 'Mercado Bom Preço' })
     // Calibrar de novo segue o dono de hoje
@@ -1159,7 +1500,7 @@ describe('troca do cliente dono da balança', () => {
     for (const troca of [{ clienteId: novo.id, balancaId: outra.id }, { clienteId: novo.id }]) {
       const r = await t.chamar('PUT', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin, payload: { ...rev, ...troca } })
       expect(r.statusCode, r.body).toBe(400)
-      expect(r.json().erro).toBe('A revisão é do mesmo cliente e da mesma balança do certificado revisado.')
+      expect(r.json().erro).toBe('A correção é do mesmo cliente e da mesma balança do certificado corrigido.')
     }
     // A balança movida para outro cliente também não vale para o rascunho comum
     const { calibracao: comum } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }

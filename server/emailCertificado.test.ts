@@ -111,6 +111,38 @@ describe('destinatário sugerido do e-mail do certificado', () => {
   })
 })
 
+describe('e-mail do certificado corrigido', () => {
+  it('a correção vai com o mesmo nº (no assunto e no nome do anexo) e o PDF dela; a versão anterior não é enviada', async () => {
+    const original = await c.emitido()
+    const aberta = await t.chamar('POST', `/api/calibracoes/${original.id}/revisar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Correção do nº de série da balança' },
+    })
+    expect(aberta.statusCode, aberta.body).toBe(201)
+    const r = await c.emitir(aberta.json().calibracao as Calibracao)
+    expect(r.statusCode, r.body).toBe(200)
+    const k = r.json().calibracao as Calibracao
+    expect(k.numero).toBe(original.numero)
+
+    const { anexos } = await anexosDe(k)
+    expect(anexos[0]).toMatchObject({ id: 'certificado', nome: `Certificado-${original.numero}.pdf` })
+    // Sem assunto escrito na tela: o padrão, com o nº
+    const envio = await t.chamar('POST', `/api/calibracoes/${k.id}/email`, {
+      cookie: t.cookieAdmin,
+      payload: { para: 'qualidade@mercado.com.br', texto: 'Segue o certificado corrigido.' },
+    })
+    expect(envio.statusCode, envio.body).toBe(200)
+    const [m] = enviados
+    expect(m.subject).toBe(`Certificado de calibração ${original.numero}`)
+    expect(m.attachments[0].filename).toBe(`Certificado-${original.numero}.pdf`)
+    // O PDF da correção (o guardado como "…-versao-2.pdf"), não o da versão anterior
+    expect(sha(Buffer.from(m.attachments[0].content, 'base64'))).toBe(k.emissao!.hashPdf)
+    expect(k.emissao!.hashPdf).not.toBe(original.emissao!.hashPdf)
+    // A versão anterior (substituída) não é mais enviada
+    expect((await enviar(original)).statusCode).toBe(409)
+  })
+})
+
 describe('anexos do e-mail do certificado', () => {
   it('vão o PDF e os certificados dos padrões; avisa os padrões sem arquivo; o histórico guarda os nomes', async () => {
     const pdfJp = ARQUIVOS_TESTE.pdf('certificado do jogo JP-01')

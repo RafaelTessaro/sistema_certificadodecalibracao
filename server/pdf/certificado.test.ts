@@ -5,9 +5,11 @@
 // registros de antes do POP (ajuste externo, "como encontrado", reparo, rodoviária) vão para exemplos/legado/.
 
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import zlib from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
 import {
@@ -25,8 +27,9 @@ import {
   TIPOS_FORA_DO_POP,
 } from '#shared/dominio.ts'
 import { densidadeAr, posicoesExcentricidade } from '#shared/metrologia/index.ts'
-import { A4, pdfmake } from './base.ts'
+import { A4, comImagensNaOrdemInversa, pdfmake } from './base.ts'
 import {
+  assinantes,
   comSondas,
   descartados,
   DIAGRAMACOES,
@@ -102,8 +105,9 @@ const EXEMPLOS: Exemplo[] = [
   { arquivo: 'certificado-classe-i-220g', dados: exemploClasseI220g, paginas: 3, grafico: 150 },
   // O caso mais comum: balcão 32 kg × 5 g, com os pontos que o sistema sugere
   { arquivo: 'certificado-balanca-32kg', dados: exemploBalanca32kg, paginas: 3, grafico: 150 },
-  // Tudo o que uma calibração de hoje pode ter: o gráfico menor e os respiros do layout compacto
-  { arquivo: 'certificado-pior-caso', dados: exemploPiorCasoAtual, paginas: 3, grafico: 100, compacto: true },
+  // Tudo o que uma calibração de hoje pode ter: o gráfico menor (a correção com o mesmo nº não tem mais o quadro da
+  // revisão, e o layout normal cabe)
+  { arquivo: 'certificado-pior-caso', dados: exemploPiorCasoAtual, paginas: 3, grafico: 132 },
 ]
 
 /** Pasta das amostras dos registros de antes do POP (dentro de exemplos/), à parte das de hoje. */
@@ -444,6 +448,82 @@ describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
     const a = await gerarCertificadoPdf(exemploBancada())
     const b = await gerarCertificadoPdf(exemploBancada())
     expect(a.equals(b)).toBe(true)
+  })
+
+  it('duas assinaturas (PNG com transparência): os bytes não dependem de qual imagem termina de descomprimir antes', async () => {
+    // O png-js descomprime cada PNG com zlib.inflate (assíncrono) e o pdfkit só cria a máscara da transparência no
+    // retorno: aqui os retornos chegam na ordem dos pedidos e na ordem inversa, como acontece com o servidor ocupado
+    const gerar = async (d: () => DadosCertificadoPdf, ordem: 'pedido' | 'inversa') => {
+      const inflar = zlib.inflate
+      const pedidos: Array<{ responder: (e: Error | null, r: Buffer) => void; resposta?: [Error | null, Buffer] }> = []
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const entregar = () => {
+        if (pedidos.some((p) => !p.resposta)) return
+        const lista = pedidos.splice(0)
+        for (const p of ordem === 'pedido' ? lista : lista.reverse()) p.responder(...p.resposta!)
+      }
+      ;(zlib as { inflate: unknown }).inflate = (dados: Buffer, responder: (e: Error | null, r: Buffer) => void) => {
+        const p: (typeof pedidos)[number] = { responder }
+        pedidos.push(p)
+        inflar(dados, (e, r) => {
+          p.resposta = [e, r]
+          clearTimeout(timer)
+          timer = setTimeout(entregar, 5)
+        })
+      }
+      try {
+        return await gerarCertificadoPdf(d())
+      } finally {
+        zlib.inflate = inflar
+      }
+    }
+    const hash = (b: Buffer) => createHash('sha256').update(b).digest('hex')
+    for (const d of [exemploPlataforma300kg, exemploPiorCasoLegado]) {
+      const dados = d()
+      expect([dados.emissao.tecnico.assinatura, dados.emissao.signatario.assinatura].every((a) => a.length > 100)).toBe(true)
+      const naOrdem = await gerar(d, 'pedido')
+      const invertido = await gerar(d, 'inversa')
+      expect(hash(invertido), d.name).toBe(hash(naOrdem))
+      // E várias ao mesmo tempo (o servidor gerando outros PDFs): sempre o mesmo arquivo
+      const juntos = await Promise.all(Array.from({ length: 4 }, () => gerarCertificadoPdf(d())))
+      expect(new Set(juntos.map(hash)), d.name).toEqual(new Set([hash(naOrdem)]))
+    }
+    // O certificado de antes da 1.0.4 (duas assinaturas) sai igual ao gravado: a amostra é a do HEAD da 1.0.3
+    expect(hash(await gerar(exemploPiorCasoLegado, 'inversa'))).toBe(
+      'de616d92d9dcf87cb759628295211d6ea7b627d0c65dcb3c8ffa6da5b0477f6d',
+    )
+  })
+
+  it('a ordem inversa das imagens refaz o PDF da 1.0.3 em que a assinatura do signatário terminou antes', async () => {
+    // A 1.0.3 seguia a ordem de chegada: com o PNG do técnico maior (ou os dois de tamanho parecido), a imagem do
+    // signatário podia entrar antes. Esse é o arquivo que o HEAD da 1.0.3 grava com a do signatário chegando antes
+    const hash = (b: Buffer) => createHash('sha256').update(b).digest('hex')
+    const LEGADO_NA_ORDEM = 'de616d92d9dcf87cb759628295211d6ea7b627d0c65dcb3c8ffa6da5b0477f6d'
+    const LEGADO_INVERTIDO = 'd7819e3845e70c109d1a8c49d3e437fa79a4c13a86680274911be3d9e75d10ae'
+    expect(hash(await comImagensNaOrdemInversa(() => gerarCertificadoPdf(exemploPiorCasoLegado())))).toBe(LEGADO_INVERTIDO)
+    // As máscaras (SMask) trocam de nº: a da imagem do signatário (a 2ª pedida) é criada antes
+    const mascaras = (pdf: Buffer) =>
+      [...pdf.toString('latin1').matchAll(/(\d+) 0 obj\s*<<([^]*?)>>\s*stream/g)]
+        .flatMap((m) => {
+          const s = /\/SMask (\d+) 0 R/.exec(m[2])
+          return s ? [{ imagem: Number(m[1]), mascara: Number(s[1]) }] : []
+        })
+        .sort((a, b) => a.imagem - b.imagem)
+    const [tecnico, signatario] = mascaras(await gerarCertificadoPdf(exemploPiorCasoLegado()))
+    expect(tecnico.mascara).toBeLessThan(signatario.mascara)
+    expect(mascaras(await comImagensNaOrdemInversa(() => gerarCertificadoPdf(exemploPiorCasoLegado())))).toEqual([
+      { imagem: tecnico.imagem, mascara: signatario.mascara },
+      { imagem: signatario.imagem, mascara: tecnico.mascara },
+    ])
+    // Várias gerações ao mesmo tempo, nas duas ordens, não se misturam (cada uma com a própria fila)
+    const juntos = await Promise.all(
+      Array.from({ length: 6 }, (_, i) =>
+        i % 2
+          ? gerarCertificadoPdf(exemploPiorCasoLegado())
+          : comImagensNaOrdemInversa(() => gerarCertificadoPdf(exemploPiorCasoLegado())),
+      ),
+    )
+    expect(juntos.map(hash)).toEqual(Array.from({ length: 6 }, (_, i) => (i % 2 ? LEGADO_NA_ORDEM : LEGADO_INVERTIDO)))
   })
 
   it('usa a data da emissão como data do documento e põe os metadados', () => {
@@ -1016,8 +1096,9 @@ describe.runIf(temPdftotext)('conteúdo do certificado (pdftotext)', { timeout: 
     // Opiniões e interpretações, separadas dos resultados
     expect(t).toContain('OPINIÕES E INTERPRETAÇÕES')
     expect(t).toContain('não fazem parte dos resultados de medição')
-    // Mesma pessoa executou e autorizou
-    expect(t).toContain('EXECUTADO E AUTORIZADO POR')
+    // Revisão por outra pessoa desligada: só quem executou assina (aqui, ele mesmo emitiu)
+    expect(t).toContain('EXECUTADO POR')
+    expect(t).not.toContain('AUTORIZADO POR')
     // As seções da 1ª versão, numeradas sem buracos (sem conformidade): 6 Observações, 7 Opiniões, 8 Declarações
     expect(t).toMatch(/1 DADOS DA CALIBRAÇÃO/)
     expect(t).toMatch(/2 CLIENTE/)
@@ -1209,7 +1290,7 @@ describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', {
     },
   )
 
-  it('pior caso de hoje: multi-intervalo, revisão, conformidade, próxima calibração, 4 padrões e textos longos em 3 páginas', async () => {
+  it('pior caso de hoje: multi-intervalo, correção, conformidade, próxima calibração, 4 padrões e textos longos em 3 páginas', async () => {
     const d = exemploPiorCasoAtual()
     const texto = textoDoPdf(await pdfDe('certificado-pior-caso'))
     conferirComum(texto, d)
@@ -1220,12 +1301,19 @@ describe.runIf(temPdftotext)('visual da 1ª versão em no máximo 3 páginas', {
     expect(t).toContain('20 / 50 / 100 g')
     expect(t).toContain('Balança de piso')
     expect(t).toContain('Alfa Instrumentos PL-1515 Inox · nº de série PL1515-2024-0093')
-    // Os textos longos inteiros: a razão social, o local, o motivo da revisão, as observações e a opinião
+    // Os textos longos inteiros: a razão social, o local, as observações e a opinião
     // (a razão social quebra a linha ao lado do CNPJ, que o pdftotext põe no meio dela)
     expect(t).toMatch(/COOPERATIVA AGROINDUSTRIAL DOS PRODUTORES RURAIS DO VALE DO CORUMBATAÍ E (33\.592\.510\/0001-54 )?REGIÃO/)
-    expect(t).toContain(corrido(d.calibracao.localEndereco))
-    expect(t).toContain('Revisão: este certificado substitui integralmente o Certificado nº CC-2026-00151, emitido em 30/10/2026')
-    expect(t).toContain(`Motivo: ${d.calibracao.motivoRevisao}`)
+    // (o pdftotext separa "Rio Claro/" e "SP" quando a linha quebra na barra)
+    expect(t.replace(/\/ (?=\S)/g, '/')).toContain(corrido(d.calibracao.localEndereco))
+    // A correção (1.0.4) sai com o mesmo nº, como um certificado comum: sem "-R", sem o quadro da revisão e sem o
+    // motivo (que fica só no sistema)
+    expect(d.emissao.mesmoNumero).toBe(true)
+    expect(d.calibracao.numero).toBe('CC-2026-00151')
+    expect(t).not.toMatch(/-R\d|Revisão:|substitui integralmente|Motivo:/)
+    expect(t).not.toContain(d.calibracao.motivoRevisao.slice(0, 40))
+    // As duas assinaturas (revisão por outra pessoa ligada na emissão)
+    expect(t).toMatch(/EXECUTADO POR .*AUTORIZADO POR/)
     for (const l of linhasDoTexto(d.calibracao.observacoes)) expect(t).toContain(l)
     expect(t).toContain(d.calibracao.opinioes)
     expect(t).toContain('OPINIÕES E INTERPRETAÇÕES')
@@ -1722,7 +1810,8 @@ describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
       expect(antesDasDeclaracoes).toMatch(
         /\d(\.\d)? (DECLARAÇÃO DE CONFORMIDADE|OBSERVAÇÕES|OPINIÕES E INTERPRETAÇÕES|RESULTADOS|Erro de indicação|Excentricidade)/,
       )
-      expect(m.ocupacao.at(-1)!).toBeGreaterThanOrEqual(OCUPACAO_MINIMA_ULTIMA - 0.1)
+      // (com uma assinatura só, o padrão da 1.0.4, o fim fica um pouco mais baixo: o balcão 32 kg sai com 39 %)
+      expect(m.ocupacao.at(-1)!).toBeGreaterThanOrEqual(OCUPACAO_MINIMA_ULTIMA - 0.12)
     },
   )
 
@@ -2246,5 +2335,120 @@ describe('pasta das amostras', () => {
       ? readdirSync(PASTA_EXEMPLOS).filter((f) => statSync(join(PASTA_EXEMPLOS, f)).isDirectory())
       : []
     expect(pastas).toEqual([LEGADO])
+  })
+})
+
+describe('quem assina e a correção com o mesmo nº (1.0.4)', () => {
+  /** A definição do documento, em texto (os rótulos das assinaturas saem em maiúsculas). */
+  const texto = (d: DadosCertificadoPdf) => JSON.stringify(definicaoCertificado(d))
+  /** O mesmo certificado emitido antes da 1.0.4 (sem os campos novos congelados na emissão). */
+  const de103 = (d: DadosCertificadoPdf): DadosCertificadoPdf => {
+    const { assinaturas: _a, mesmoNumero: _m, ...emissao } = d.emissao
+    return { ...d, emissao }
+  }
+  const sha = (d: DadosCertificadoPdf) => createHash('sha256').update(texto(d)).digest('hex')
+  /** As imagens das assinaturas desenhadas (data URL), na ordem. */
+  const imagens = (d: DadosCertificadoPdf) => [...texto(d).matchAll(/"image":"(data:image[^"]+)"/g)].map((m) => m[1])
+
+  it('revisão por outra pessoa desligada: só "Executado por", com o técnico (nome, cargo, registro e assinatura), mesmo emitido por outra pessoa', () => {
+    const d = exemploBalanca32kg()
+    expect(d.emissao.assinaturas).toBe('TECNICO')
+    expect(d.emissao.tecnico.id).not.toBe(d.emissao.signatario.id)
+    expect(assinantes(d.emissao)).toEqual([{ papel: 'Executado por', s: d.emissao.tecnico }])
+    const t = texto(d)
+    expect(t).toContain('"EXECUTADO POR"')
+    expect(t).not.toMatch(/AUTORIZADO POR/)
+    for (const x of [d.emissao.tecnico.nome, d.emissao.tecnico.cargo, d.emissao.tecnico.registro]) expect(t).toContain(x)
+    // Quem emitiu não sai no certificado (fica registrado no sistema)
+    expect(t).not.toContain(d.emissao.signatario.nome)
+    expect(t).not.toContain(d.emissao.signatario.registro)
+    expect(imagens(d)).toEqual([d.emissao.tecnico.assinatura])
+  })
+
+  it('o técnico emitiu a própria calibração (desligada): "Executado por", não "Executado e autorizado por"', () => {
+    const d = exemploBancada()
+    expect([d.emissao.assinaturas, d.emissao.tecnico.id === d.emissao.signatario.id]).toEqual(['TECNICO', true])
+    expect(assinantes(d.emissao).map((x) => x.papel)).toEqual(['Executado por'])
+    expect(texto(d)).toContain('"EXECUTADO POR"')
+    expect(texto(d)).not.toMatch(/AUTORIZADO POR/)
+  })
+
+  it('revisão por outra pessoa ligada: as duas assinaturas, de quem executou e de quem autorizou', () => {
+    const d = exemploPlataforma300kg()
+    expect(d.emissao.assinaturas).toBe('TECNICO_E_SIGNATARIO')
+    expect(assinantes(d.emissao)).toEqual([
+      { papel: 'Executado por', s: d.emissao.tecnico },
+      { papel: 'Autorizado por', s: d.emissao.signatario },
+    ])
+    const t = texto(d)
+    expect(t).toMatch(/"EXECUTADO POR".*"AUTORIZADO POR"/)
+    expect(t).toContain(d.emissao.tecnico.nome)
+    expect(t).toContain(d.emissao.signatario.nome)
+    expect(imagens(d)).toEqual([d.emissao.tecnico.assinatura, d.emissao.signatario.assinatura])
+  })
+
+  it('emitido antes da 1.0.4 (sem o campo): as assinaturas como saíam', () => {
+    // Pessoas diferentes: as duas; a mesma pessoa: uma só, "Executado e autorizado por"
+    expect(assinantes(de103(exemploBalanca32kg()).emissao).map((x) => x.papel)).toEqual(['Executado por', 'Autorizado por'])
+    expect(assinantes(de103(exemploBancada()).emissao).map((x) => x.papel)).toEqual(['Executado e autorizado por'])
+    expect(texto(de103(exemploBancada()))).toContain('"EXECUTADO E AUTORIZADO POR"')
+    expect(texto(de103(exemploBalanca32kg()))).toMatch(/"EXECUTADO POR".*"AUTORIZADO POR"/)
+  })
+
+  it('emitido antes da 1.0.4: o PDF refeito dos dados congelados é o mesmo documento, byte a byte', () => {
+    // A definição do documento como a 1.0.3 a montava (sha256 gravados com ela): as assinaturas (uma só ou as duas),
+    // o quadro da revisão "-R1" com o motivo e os registros de antes do POP. Se o layout mudar de propósito para
+    // todos, os PDFs emitidos continuam servidos do arquivo guardado (server/certificados.ts, `pdfEmitido`)
+    const piorCasoRevisao103 = () => {
+      const d = de103(exemploPiorCasoAtual())
+      d.calibracao = { ...d.calibracao, numero: 'CC-2026-00151-R1' }
+      return d
+    }
+    const casos: Array<[string, () => DadosCertificadoPdf, string]> = [
+      ['plataforma (legado)', exemploPlataformaLegado, '4831104ed504d268e5ec41dd212668f5991fa8076dc7e6685f0dff732e3b66d5'],
+      ['rodoviária (legado)', exemploRodoviariaLegado, 'b7511a3f8bc4e62eb4cd1cc1ef9e90f4a9e3c2d1ac947cc2d7ae3ad0a76226d7'],
+      ['pior caso (legado)', exemploPiorCasoLegado, '5e05a72b1891f60b630dceb2ec65d68b1210dcbb683d8b2e2c961c48f36d174d'],
+      ['classe I (legado)', exemploClasseILegado, '7fff8618caf7be282fc6563e3216de096d80a33afbd183e745244b7c0b68481b'],
+      [
+        'executado e autorizado pela mesma pessoa',
+        () => de103(exemploBancada()),
+        'ac1fbd815d476adf8a0a62b96002bb054b5e81cb1464506acc59dcad05aed689',
+      ],
+      [
+        'executado e autorizado por pessoas diferentes',
+        () => de103(exemploPlataforma300kg()),
+        '1a0fdbd09a324d6765873652d3b74708f39ba04c4fbde2cb9461a6c3130e0519',
+      ],
+      [
+        'revisão "-R1" emitida pela 1.0.3',
+        piorCasoRevisao103,
+        '1fa4400c4de19d43151c31d78aa258a0f9ab4714a5d15d31c5efcd5d95f49660',
+      ],
+    ]
+    for (const [nome, dados, esperado] of casos) expect(sha(dados()), nome).toBe(esperado)
+  })
+
+  it('a correção com o mesmo nº sai como um certificado comum: sem "-R", sem o quadro da revisão e sem o motivo', () => {
+    const d = exemploPiorCasoAtual()
+    expect([d.emissao.mesmoNumero, d.calibracao.substituiId !== '', d.emissao.substituiNumero]).toEqual([
+      true,
+      true,
+      'CC-2026-00151',
+    ])
+    const t = texto(d)
+    expect(t).toContain('— Fim do Certificado de Calibração nº CC-2026-00151 —')
+    expect(t).not.toMatch(/-R\d|Revisão: |substitui integralmente|que fica cancelado|Motivo: /)
+    expect(t).not.toContain(d.calibracao.motivoRevisao.slice(0, 40))
+    // Sem a marca, a mesma definição de um certificado que nunca foi corrigido (só a data da emissão é a nova)
+    const comum: DadosCertificadoPdf = {
+      ...d,
+      calibracao: { ...d.calibracao, substituiId: '', motivoRevisao: '' },
+      emissao: { ...d.emissao, substituiNumero: '', substituiEmissao: '', mesmoNumero: undefined },
+    }
+    expect(t).toBe(texto(comum))
+    // A revisão "-R1" de antes (sem a marca) continua com o quadro e o motivo
+    const antiga = texto({ ...d, emissao: { ...d.emissao, mesmoNumero: undefined } })
+    expect(antiga).toContain('substitui integralmente o Certificado nº ')
+    expect(antiga).toContain(`Motivo: ${d.calibracao.motivoRevisao}`)
   })
 })

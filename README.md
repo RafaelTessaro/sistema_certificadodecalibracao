@@ -41,14 +41,15 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
   - rastreabilidade (todo padrão precisa da acreditação Cgcre do laboratório que o calibrou), incerteza expandida com k e νeff, condições ambientais (a pressão só com o barômetro entre os padrões, e o barômetro escolhido só com a pressão registrada) e resultados antes e depois do ajuste;
   - a prévia do rascunho sai com a marca "PRÉVIA — SEM VALOR", sem as imagens das assinaturas (ninguém autorizou ainda) e com "Prévia gerada em …" no lugar de "emitido em";
   - declaração de laboratório não acreditado.
-- **Revisão** (o certificado novo sai com o nº do revisado, como saiu nele, mais o sufixo "-R1", e diz qual substitui) e **cancelamento** com motivo. O PDF emitido nunca muda: a cópia de um certificado cancelado ou substituído é ele mesmo, com a marca d'água por cima, e não um PDF refeito com o cálculo de hoje.
+- **Assinaturas**: com a revisão por outra pessoa desligada (Configurações → Certificado), o certificado sai só com a assinatura de quem executou ("Executado por"), mesmo que outra pessoa emita; ligada, com a de quem executou e a de quem autorizou. Quem emitiu fica sempre registrado no sistema. Fica gravado na emissão: mudar a configuração depois não muda os já emitidos.
+- **Correção** de um certificado emitido: sai com o mesmo nº e a data de emissão nova, como um certificado comum (sem sufixo, sem quadro de revisão e sem o motivo). Por dentro fica tudo: a versão anterior (o PDF dela continua na pasta, e o da correção é guardado como `Certificado-<nº>-versao-2.pdf`), quem corrigiu, quando e o motivo, no histórico das versões do certificado e no registro de atividades. A lista mostra uma linha por nº, com "Editado em". As revisões emitidas antes da 1.0.4, com "-R1", continuam como saíram. **Cancelamento** com motivo. O PDF emitido nunca muda: a cópia de um certificado cancelado ou substituído é ele mesmo, com a marca d'água por cima, e não um PDF refeito com o cálculo de hoje.
 - **POP** (Procedimento Operacional Padrão) em Configurações → Certificado: código, revisão, data e o arquivo (PDF ou Word), com o histórico das revisões. O código e a revisão saem em todas as páginas do certificado e da folha de campo. O certificado cita a revisão usada na calibração: a impressa na folha de campo; sem folha, a que valia na data da calibração; na revisão de um certificado, a do original. A data da revisão não pode ser no futuro; sem POP registrado, o certificado não é emitido. O botão **POP** (Certificados e calibração) abre o arquivo para qualquer pessoa da equipe.
 - **Padrões** com o arquivo do certificado de calibração (PDF, JPG ou PNG, até 10 MB), conferido pelo conteúdo. Trocar o arquivo com o mesmo nº de certificado corrige também os certificados já emitidos com ele; quando o padrão é calibrado de novo (outro nº), os já emitidos continuam com o arquivo do certificado deles, guardado no cadastro. Mudar o nº mantendo o arquivo antigo é recusado (o arquivo iria aos clientes com o nº novo), salvo confirmação de que só se corrigiu o nº.
 - **Envio por e-mail** do PDF ao cliente junto com os certificados dos padrões usados (o arquivo do certificado de cada padrão com o nº que saiu no certificado; até 20 anexos e 18 MB), com histórico de envios e dos anexos, e **lembretes** de calibração para as balanças que vão vencer.
 - **Usuários**:
   - administrador;
   - técnico;
-  - signatário, quem autoriza a emissão, com a assinatura digitalizada.
+  - signatário, quem emite (e, com a revisão por outra pessoa ligada, autoriza) o certificado, com a assinatura digitalizada.
 
   Há também o registro de atividades.
 
@@ -81,6 +82,7 @@ Detalhes, atualização e desinstalação estão em [`instalador/LEIA-ME.md`](in
    - o e-mail de envio (SMTP).
 4. Em **Usuários**, cadastre os técnicos. Marque como **signatário** quem pode autorizar a emissão e envie a assinatura digitalizada de cada um.
 5. Em **Padrões**, cadastre os pesos e os instrumentos com os dados dos certificados de calibração deles.
+6. Terminados os testes, antes de começar a usar de verdade, **apague os testes** uma vez (com o serviço parado, no prompt de comando como administrador: `node\node.exe server\ferramentas\apagar-testes.mjs "C:\ProgramData\BC Calibracao\dados"`, na pasta do programa). Saem as calibrações, os certificados, as folhas de campo e os nºs reservados, e a numeração recomeça do 1; ficam os usuários, a empresa, as configurações, o POP, os padrões, os clientes e as balanças. O passo a passo está no [LEIA-ME do instalador](instalador/LEIA-ME.md#depois-de-instalado).
 
 ### Acesso pelos outros computadores (estações)
 

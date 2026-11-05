@@ -208,11 +208,11 @@ export function BalancaDetalhe() {
                 !emAndamento
                   ? 'O checklist para levar ao cliente, com os pontos e os padrões da última calibração'
                   : !daCalibracao
-                    ? 'Folha avulsa desta balança, para uma visita nova: a revisão em andamento não tem folha (o certificado revisado foi feito sem ela)'
+                    ? 'Folha avulsa desta balança, para uma visita nova: a correção em andamento não tem folha (o certificado corrigido foi feito sem ela)'
                     : !folha
                       ? 'Folha de campo da calibração em andamento desta balança'
                       : folha.herdada
-                        ? `${textoReimprimir(folha)}, do certificado revisado`
+                        ? `${textoReimprimir(folha)}, do certificado corrigido`
                         : `${textoReimprimir(folha)} ou ${TEXTO_FOLHA_NOVA.toLowerCase()} (calibração em andamento)`
               }
             >

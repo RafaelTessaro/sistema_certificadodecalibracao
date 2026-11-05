@@ -530,11 +530,12 @@ function plataformaToledo(): { k: Calibracao; e: EmissaoCertificado; pesos: Padr
 
 /**
  * A amostra da plataforma (1.0.3): calibração sem ajuste, sem "como encontrado" e sem reparo (POP 7.8), com a
- * declaração de conformidade (banda de guarda) e a próxima calibração a pedido do cliente.
+ * declaração de conformidade (banda de guarda) e a próxima calibração a pedido do cliente. Emitida com a revisão por
+ * outra pessoa ligada: as duas assinaturas, de quem executou e de quem autorizou.
  */
 export function exemploPlataforma300kg(): DadosCertificadoPdf {
   const { k, e } = plataformaToledo()
-  return montar(k, { ...e, ...COM_REGRAS })
+  return montar(k, { ...e, ...COM_REGRAS, assinaturas: 'TECNICO_E_SIGNATARIO' })
 }
 
 /**
@@ -661,6 +662,8 @@ export function exemploBancada(): DadosCertificadoPdf {
     padroes,
     tecnico: { ...RESPONSAVEL, assinatura: '' },
     signatario: { ...RESPONSAVEL, assinatura: '' },
+    // Revisão por outra pessoa desligada: só a assinatura de quem executou (aqui, ele mesmo emitiu)
+    assinaturas: 'TECNICO',
     textos: TEXTOS_EXEMPLO,
     substituiNumero: '',
     substituiEmissao: '',
@@ -806,11 +809,12 @@ function analiticaHorto(): {
 
 /**
  * A amostra da classe I (1.0.3): o ajuste interno (CAL) feito pelo cliente antes dos ensaios, sem "como encontrado"
- * nem "como deixado": os resultados são os de depois do ajuste.
+ * nem "como deixado": os resultados são os de depois do ajuste. Revisão por outra pessoa desligada: só a assinatura
+ * de quem executou, mesmo emitido por outra pessoa.
  */
 export function exemploClasseI220g(): DadosCertificadoPdf {
   const { k, e } = analiticaHorto()
-  return montar(k, { ...e, ...COM_REGRAS })
+  return montar(k, { ...e, ...COM_REGRAS, assinaturas: 'TECNICO' })
 }
 
 /**
@@ -964,6 +968,8 @@ export function exemploBalanca32kg(): DadosCertificadoPdf {
     padroes,
     tecnico: TECNICO,
     signatario: RESPONSAVEL,
+    // Revisão por outra pessoa desligada (o padrão): só a assinatura de quem executou, mesmo emitido por outra pessoa
+    assinaturas: 'TECNICO',
     textos: TEXTOS_EXEMPLO,
     substituiNumero: '',
     substituiEmissao: '',
@@ -972,15 +978,17 @@ export function exemploBalanca32kg(): DadosCertificadoPdf {
   return montar(k, e)
 }
 
-// ---- 5. Pior caso de hoje: piso multi-intervalo 60/150/300 kg (revisão, conformidade, textos longos) ---------
+// ---- 5. Pior caso de hoje: piso multi-intervalo 60/150/300 kg (correção, conformidade, textos longos) --------
 
 /**
- * O pior caso de hoje, para conferir o limite de 3 páginas com tudo o que uma calibração da 1.0.3 pode ter: balança
+ * O pior caso de hoje, para conferir o limite de 3 páginas com tudo o que uma calibração da 1.0.4 pode ter: balança
  * de piso multi-intervalo 60/150/300 kg × 20/50/100 g, classe III, com os pontos (subindo e descendo), as
- * repetibilidades (uma por intervalo, POP 7.9) e a carga de excentricidade que o sistema sugere; revisão (substitui
- * o nº …), declaração de conformidade (aceitação simples), próxima calibração a pedido do cliente, 4 padrões (com o
- * barômetro) e textos longos: a razão social, o contato, o local, as observações (uma por linha) e as opiniões. Sem
- * ajuste, sem "como encontrado", sem reparo e sem a verificação preliminar (POP 7 e 7.8).
+ * repetibilidades (uma por intervalo, POP 7.9) e a carga de excentricidade que o sistema sugere; correção de um
+ * certificado emitido (sai com o mesmo nº, como um certificado comum: o motivo fica só no sistema), as duas
+ * assinaturas (revisão por outra pessoa ligada), declaração de conformidade (aceitação simples), próxima calibração a
+ * pedido do cliente, 4 padrões (com o barômetro) e textos longos: a razão social, o contato, o local, as observações
+ * (uma por linha) e as opiniões. Sem ajuste, sem "como encontrado", sem reparo e sem a verificação preliminar (POP 7 e
+ * 7.8).
  */
 export function exemploPiorCasoAtual(): DadosCertificadoPdf {
   const padroes = [PP20, JP01, TH01, BR01]
@@ -1031,7 +1039,7 @@ export function exemploPiorCasoAtual(): DadosCertificadoPdf {
   const kg = (id: string, carga: number, sobe: number, desce: number) => ponto(id, carga, sobe, desce, pesos, 'kg')
   const k: Calibracao = {
     ...calibracaoBase('cal-pior-atual'),
-    numero: 'CC-2026-00151-R1',
+    numero: 'CC-2026-00151',
     sequencia: 151,
     revisao: 1,
     clienteId: c.id,
@@ -1110,9 +1118,11 @@ export function exemploPiorCasoAtual(): DadosCertificadoPdf {
     padroes,
     tecnico: TECNICO,
     signatario: RESPONSAVEL,
+    assinaturas: 'TECNICO_E_SIGNATARIO',
     textos: TEXTOS_EXEMPLO,
     substituiNumero: 'CC-2026-00151',
     substituiEmissao: '2026-10-30T17:45:00.000Z',
+    mesmoNumero: true,
     ...COM_REGRAS,
   }
   return montar(k, e)

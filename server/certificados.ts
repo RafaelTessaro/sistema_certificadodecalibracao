@@ -18,6 +18,7 @@ import {
   formatarNumeroCertificado,
   hojeLocalIso,
   nomeArquivoCertificado,
+  nomeArquivoGuardado,
   padroesDaCalibracao,
   PENDENCIA_REVISADO_CANCELADO,
   PENDENCIA_REVISADO_NAO_EMITIDO,
@@ -42,6 +43,7 @@ import type {
 import type { Contexto } from './contexto.ts'
 import { PROCEDIMENTO_EXEMPLO_ANTIGO } from './db.ts'
 import { ErroApi } from './erros.ts'
+import { comImagensNaOrdemInversa } from './pdf/base.ts'
 import { carimbarMarcaDagua, ErroCarimbo } from './pdf/carimbo.ts'
 import { gerarCertificadoPdf } from './pdf/certificado.ts'
 import { naUnidadeAtual } from './rascunhos.ts'
@@ -240,12 +242,17 @@ export function montarEmissao(
     })),
     tecnico: signatarioDe(ctx.usuarios.obter(k.tecnicoId)),
     signatario: signatarioDe(ctx.usuarios.obter(extra.signatarioId)),
+    // Com a revisão por outra pessoa desligada, só quem executou assina (mesmo que outra pessoa emita); ligada, quem
+    // executou e quem autorizou. Fica congelado: mudar a configuração depois não muda os já emitidos
+    assinaturas: config.exigirRevisor ? 'TECNICO_E_SIGNATARIO' : 'TECNICO',
     // O código e a revisão do POP usado na calibração (sai em toda página); a prévia sem POP avisa no lugar
     // (sem POP não há emissão: é pendência)
     textos: { ...config.textos, procedimento: pop ? pop.procedimento : PREVIA_SEM_POP },
     pop: pop?.pop ?? null,
     substituiNumero: original?.numero ?? '',
     substituiEmissao: original?.dataEmissao ?? '',
+    // A correção sai com o mesmo nº do corrigido, como um certificado comum (o motivo fica só no sistema)
+    ...(k.substituiId ? { mesmoNumero: true } : {}),
     // Calculado com as regras do POP: a revisão dele também as segue (`Repositorio.criarCalibracao`); o "crescente e
     // decrescente" sai "sem zerar" só no emitido a partir desta versão (`carregamentoSemZerar`)
     ...(regrasDoPopComoAviso(k) ? {} : { regrasDoPop: true, carregamentoSemZerar: true }),
@@ -339,8 +346,11 @@ export async function gerarPdf(k: Calibracao, emissao: EmissaoCertificado, marca
   return gerarCertificadoPdf({ calibracao: k, emissao, resultado, comoEncontrado, marcaDagua, previa })
 }
 
-/** Onde fica o PDF do certificado, dentro de <dados>/certificados: "<ano>/Certificado-<nº>.pdf". */
-const arquivoDoPdf = (k: Calibracao) => `${k.ano ?? 'sem-ano'}/${nomeArquivoCertificado(k.numero)}`
+/**
+ * Onde fica o PDF do certificado, dentro de <dados>/certificados: "<ano>/Certificado-<nº>.pdf"; a correção com o mesmo
+ * nº, com a versão ("<ano>/Certificado-<nº>-versao-2.pdf"; ver `nomeArquivoGuardado`), ao lado do PDF da anterior.
+ */
+const arquivoDoPdf = (k: Calibracao) => `${k.ano ?? 'sem-ano'}/${nomeArquivoGuardado(k)}`
 
 const sha256 = (b: Buffer) => createHash('sha256').update(b).digest('hex')
 
@@ -446,6 +456,19 @@ function gravarSemSobrescrever(ctx: Contexto, k: Calibracao, arquivo: string, pd
 }
 
 /**
+ * O PDF emitido refeito dos dados congelados, se sair idêntico ao da emissão (pelo hash), ou null. O emitido antes da
+ * 1.0.4 (sem `assinaturas`) com duas assinaturas pode ter as imagens delas gravadas na ordem inversa (a 1.0.3 seguia a
+ * ordem em que cada PNG terminava de descomprimir; ver `imagensNaOrdem` em pdf/base.ts): ele é refeito nas duas ordens.
+ */
+async function refazerEmitido(k: Calibracao, emissao: EmissaoCertificado): Promise<Buffer | null> {
+  const refeito = await gerarPdf(k, emissao, '')
+  if (sha256(refeito) === emissao.hashPdf) return refeito
+  if (emissao.assinaturas) return null
+  const inverso = await comImagensNaOrdemInversa(() => gerarPdf(k, emissao, ''))
+  return sha256(inverso) === emissao.hashPdf ? inverso : null
+}
+
+/**
  * O PDF do certificado emitido, o documento entregue ao cliente: o arquivo guardado, conferido pelo SHA-256 da
  * emissão (o da verificação pública). O arquivo alterado é erro. O que sumiu é refeito dos dados congelados e
  * só volta para a pasta se sair idêntico (a mesma versão do gerador); senão — outra versão, outro layout — é
@@ -464,8 +487,8 @@ async function pdfEmitido(ctx: Contexto, k: Calibracao, emissao: EmissaoCertific
       )
     return pdf
   }
-  const refeito = await gerarPdf(k, emissao, '')
-  if (sha256(refeito) !== emissao.hashPdf)
+  const refeito = await refazerEmitido(k, emissao)
+  if (!refeito)
     throw new ErroApi(
       409,
       `O PDF do certificado ${k.numero} não está na pasta de dados (certificados/${arquivo}). Volte essa pasta da cópia de segurança externa: um PDF refeito agora não seria o mesmo documento.`,

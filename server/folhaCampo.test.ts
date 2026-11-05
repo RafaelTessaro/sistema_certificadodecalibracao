@@ -586,7 +586,7 @@ describe('nº controlado da folha: reimpressão, rascunho excluído, revisão e 
     // Folha nova numa revisão: recusada (a visita é a do original), sem reservar nº
     const nova = await folhaDe(revisao.id, '?nova=a1b2c3d4-0000-4000-8000-00000000000a')
     expect(nova.statusCode).toBe(409)
-    expect(nova.json().erro).toMatch(/certificado revisado/)
+    expect(nova.json().erro).toMatch(/certificado corrigido/)
     // Ligar o nº do original à revisão: aceito (é a mesma visita); o original continua com ela
     const ligada = await ligar(revisao.id, numero)
     expect(ligada.statusCode, ligada.body).toBe(200)
@@ -696,7 +696,7 @@ describe(
       const r = await folhaDe(rev.id)
       expect(r.statusCode).toBe(409)
       expect(r.headers['x-folha-campo']).toBeUndefined()
-      expect(r.json().erro).toMatch(/O certificado revisado foi feito sem folha de campo/)
+      expect(r.json().erro).toMatch(/O certificado corrigido foi feito sem folha de campo/)
       expect((await folhaDe(rev.id, '?nova=a1b2c3d4-0000-4000-8000-0000000000c1')).statusCode).toBe(409)
       expect(folhasNoBanco()).toEqual([])
       expect(() => t.ctx.repo.reservarFolhaCampo({ chave: `calibracao:${rev.id}`, calibracaoId: rev.id, por: 'Ana' })).toThrow(
@@ -876,7 +876,7 @@ describe('repositório: histórico das folhas de campo', { timeout: 30_000 }, ()
       })
     ).json().calibracao as Calibracao
     expect(t.ctx.repo.folhaCampoDaCalibracao(rev.id)).toMatchObject({ numero: daVisita.numero, herdada: true })
-    expect(() => reservar(rev.id, `calibracao:${rev.id}:x1`, true)).toThrow(/certificado revisado/)
+    expect(() => reservar(rev.id, `calibracao:${rev.id}:x1`, true)).toThrow(/certificado corrigido/)
     expect(reservar(rev.id, `calibracao:${rev.id}`)).toMatchObject({ numero: daVisita.numero, nova: false })
     expect(folhasNoBanco()).toHaveLength(1)
   })
@@ -1005,7 +1005,8 @@ describe('correções da revisão: avulsa trocada, cancelado, revisão cancelada
       herdada: true,
       passouPara: expect.stringContaining('OS 2'),
     })
-    expect(emitido.numero).not.toBe(r1.numero)
+    // A correção saiu com o mesmo nº do certificado corrigido
+    expect(r1.numero).toBe(emitido.numero)
   })
 
   it('o PDF da folha fica num arquivo da pasta de dados (o sha256 no banco), e não no banco', async () => {

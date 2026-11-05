@@ -76,9 +76,9 @@ export function detalheDaTroca(numero: string, notas: string[], substituiu: stri
   ].join(' ')
 }
 
-/** Revisão de um certificado feito sem folha de campo impressa pelo sistema (a 1.0.1 não tinha folha). */
+/** Correção de um certificado feito sem folha de campo impressa pelo sistema (a 1.0.1 não tinha folha). */
 export const REVISAO_SEM_FOLHA =
-  'O certificado revisado foi feito sem folha de campo impressa pelo sistema: a revisão é a mesma visita, e um nº novo agora não seria o registro dela. Se houve nova visita com uma folha avulsa, ligue o nº dela.'
+  'O certificado corrigido foi feito sem folha de campo impressa pelo sistema: a correção é da mesma visita, e um nº novo agora não seria o registro dela. Se houve nova visita com uma folha avulsa, ligue o nº dela.'
 
 export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
   const { repo } = ctx

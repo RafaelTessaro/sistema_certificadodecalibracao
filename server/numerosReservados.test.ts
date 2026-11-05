@@ -208,7 +208,7 @@ describe('reserva na primeira impressão da folha de campo', { timeout: 30_000 }
     }
   })
 
-  it('revisão: sai com o nº do certificado revisado (a folha é a dele), sem reservar outro', async () => {
+  it('correção: sai com o mesmo nº do certificado corrigido (a folha é a dele), sem reservar outro', async () => {
     await iniciar()
     const k = await c.calibracaoPronta()
     const fc = numeroDe(await folhaDe(k.id))
@@ -222,7 +222,10 @@ describe('reserva na primeira impressão da folha de campo', { timeout: 30_000 }
     expect(r.headers['x-folha-campo']).toBe(fc)
     expect(await reservadoDe(revisao.id)).toBeNull()
     expect(tabela()).toHaveLength(1)
-    expect((await emitir(revisao.id)).numero).toBe(`${cc(1)}-R1`)
+    expect((await emitir(revisao.id)).numero).toBe(cc(1))
+    // O nº reservado continua um só, emitido; nenhum não utilizado a mais, e o próximo segue a sequência
+    expect(tabela()).toMatchObject([{ numero: cc(1), situacao: 'emitido' }])
+    expect((await emitir((await c.calibracaoPronta()).id)).numero).toBe(cc(2))
   })
 
   it('a folha impressa num ano e o certificado emitido no outro: o nº continua o da folha (o do ano da reserva)', async () => {
@@ -249,7 +252,7 @@ describe('reserva na primeira impressão da folha de campo', { timeout: 30_000 }
     expect((await emitir((await c.calibracaoPronta()).id)).numero).toBe(`0002/${ano}`)
   })
 
-  it('o formato mudou depois da reserva: a revisão sai com o nº impresso na folha e -R1 (o da etiqueta), não no formato novo', async () => {
+  it('o formato mudou depois da reserva: a correção sai com o nº impresso na folha (o da etiqueta), não no formato novo', async () => {
     await iniciar()
     const k = await c.calibracaoPronta()
     await folhaDe(k.id)
@@ -263,8 +266,8 @@ describe('reserva na primeira impressão da folha de campo', { timeout: 30_000 }
     })
     expect(aberta.statusCode, aberta.body).toBe(201)
     const rev = await emitir(aberta.json().calibracao.id)
-    expect(rev.numero).toBe(`${cc(1)}-R1`)
-    expect(rev.emissao!.arquivo).toBe(`${ano}/Certificado-${cc(1)}-R1.pdf`)
+    expect(rev.numero).toBe(cc(1))
+    expect(rev.emissao!.arquivo).toBe(`${ano}/Certificado-${cc(1)}-versao-2.pdf`)
   })
 
   it('o nº com PDF na pasta certificados (de um certificado que o banco não conhece) nunca é emitido de novo', async () => {
@@ -648,15 +651,19 @@ describe('folha avulsa', { timeout: 30_000 }, () => {
     const r = await ligar(revisao.id, fc)
     expect(r.json()).toMatchObject({
       numeroReservado: null,
-      numeroDaFolha: { numero: cc(2), usado: false, motivo: `Uma revisão sai com o nº do certificado revisado (${cc(1)}).` },
+      numeroDaFolha: {
+        numero: cc(2),
+        usado: false,
+        motivo: `Uma correção sai com o mesmo nº do certificado corrigido (${cc(1)}).`,
+      },
     })
     expect(tabela()[0]).toMatchObject({
       numero: cc(2),
       calibracao_id: revisao.id,
       situacao: 'nao_utilizado',
-      motivo: `A folha ${fc} foi ligada à revisão do certificado ${cc(1)}, que sai com o nº do certificado revisado.`,
+      motivo: `A folha ${fc} foi ligada à correção do certificado ${cc(1)}, que sai com o mesmo nº dele.`,
     })
-    expect((await emitir(revisao.id)).numero).toBe(`${cc(1)}-R1`)
+    expect((await emitir(revisao.id)).numero).toBe(cc(1))
   })
 
   it('ligada por engano a uma revisão e trocada: o nº volta para a avulsa e passa para a calibração certa', async () => {
@@ -682,7 +689,7 @@ describe('folha avulsa', { timeout: 30_000 }, () => {
       numeroReservado: { numero: cc(2), calibracaoId: certa.id },
       numeroDaFolha: { numero: cc(2), usado: true },
     })
-    expect((await emitir(revisao.id)).numero).toBe(`${cc(1)}-R1`)
+    expect((await emitir(revisao.id)).numero).toBe(cc(1))
     expect((await emitir(certa.id)).numero).toBe(cc(2))
   })
 

@@ -336,7 +336,7 @@ interface Carregado {
   padroes: Padrao[]
   config: Configuracoes
   equipe: MembroEquipe[]
-  /** Revisão: o nº com que ela sai (o do certificado revisado, com o -R dela); null = não é revisão. */
+  /** Correção: o nº com que ela sai (o mesmo do certificado corrigido); null = não é correção. */
   numeroRevisao: string | null
 }
 
@@ -691,9 +691,11 @@ function EditorCalibracao({ id }: { id: string }) {
   const emitir = async () => {
     const ok = await confirmar({
       titulo: 'Emitir o certificado?',
-      descricao: numeroReservado
-        ? `O certificado sai com o nº ${numeroReservado.numero}, o da folha de campo, e não pode mais ser alterado. Se precisar corrigir depois, é feita uma revisão que substitui este certificado.`
-        : 'O certificado recebe o número definitivo e não pode mais ser alterado. Se precisar corrigir depois, é feita uma revisão que substitui este certificado.',
+      descricao: dados.numeroRevisao
+        ? `A correção sai com o mesmo nº ${dados.numeroRevisao} e a data de emissão nova, e não pode mais ser alterada. A versão anterior fica guardada só no sistema.`
+        : numeroReservado
+          ? `O certificado sai com o nº ${numeroReservado.numero}, o da folha de campo, e não pode mais ser alterado. Se precisar corrigir depois, a correção sai com o mesmo número.`
+          : 'O certificado recebe o número definitivo e não pode mais ser alterado. Se precisar corrigir depois, a correção sai com o mesmo número.',
       confirmar: 'Emitir certificado',
     })
     if (!ok) return
@@ -741,7 +743,7 @@ function EditorCalibracao({ id }: { id: string }) {
         voltar={<Voltar para="/certificados" rotulo="Certificados" />}
         titulo={
           <span className="flex flex-wrap items-center gap-3">
-            {dados.calibracao.substituiId ? 'Revisão de certificado' : 'Calibração'}
+            {dados.calibracao.substituiId ? 'Correção de certificado' : 'Calibração'}
             <StatusCalibracaoBadge status={dados.calibracao.status} />
             {numeroReservado && <SeloNumeroReservado n={numeroReservado} />}
           </span>
@@ -766,13 +768,13 @@ function EditorCalibracao({ id }: { id: string }) {
             {!(dados.calibracao.substituiId && !folha) && (
               <Button
                 icone={<Printer className="h-4 w-4" />}
-                // Revisão com a folha do certificado revisado: só reimprime (é a mesma visita)
+                // Correção com a folha do certificado corrigido: só reimprime (é a mesma visita)
                 onClick={() => (folha && !folha.herdada ? setEscolhaFolha('reimprimir') : void imprimirFolha())}
                 title={
                   !folha
                     ? 'O checklist para levar ao cliente e preencher à mão, com os pontos, as cargas e os padrões desta calibração'
                     : folha.herdada
-                      ? `${textoReimprimir(folha)}, do certificado revisado`
+                      ? `${textoReimprimir(folha)}, do certificado corrigido`
                       : `${textoReimprimir(folha)} ou ${TEXTO_FOLHA_NOVA.toLowerCase()}`
                 }
               >

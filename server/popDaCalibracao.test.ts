@@ -123,7 +123,7 @@ describe('POP do certificado: o usado na calibração', () => {
     const rev = await revisar(original)
     expect((await detalhe(rev)).pop).toMatchObject({ id: v0.id, revisao: '00' })
     const r1 = await emitir(rev)
-    expect(r1.numero).toBe(`${original.numero}-R1`)
+    expect(r1.numero).toBe(original.numero)
     expect(r1.emissao?.textos.procedimento).toBe(texto('00'))
     expect(r1.emissao?.pop).toMatchObject({ id: v0.id, codigo: POP_TESTE.codigo, revisao: '00' })
     // A revisão da revisão também

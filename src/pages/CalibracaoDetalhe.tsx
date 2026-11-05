@@ -34,6 +34,7 @@ import type { Calibracao } from '#shared/tipos.ts'
 import { GraficoErro } from '../components/calibracao/GraficoErro'
 import { casasDe } from '../components/calibracao/util'
 import { EnviarCertificadoModal } from '../components/EnviarCertificadoModal'
+import { HistoricoVersoes } from '../components/HistoricoVersoes'
 import { StatusCalibracaoBadge } from '../components/Selos'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
@@ -79,6 +80,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
   const navegar = useNavigate()
   const podeCancelar = usePode('cancelarCertificado')
   const { calibracao: k, cliente, balanca, padroes, envios, revisoes, folhaCampo, certificadosPadroes, pop } = dados
+  const versoes = dados.versoes ?? []
   const emissao = k.emissao
   const [enviando, setEnviando] = useState(false)
   const [pedido, setPedido] = useState<'revisar' | 'cancelar' | null>(null)
@@ -91,6 +93,10 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
     cancelamentoBloqueado,
   } = revisaoEmAndamento(k.status, revisoes)
   const substituta = revisoes.find((r) => r.status === 'EMITIDO' || r.status === 'SUBSTITUIDO' || r.status === 'CANCELADO')
+  // Versão anterior de um certificado corrigido com o mesmo nº (fica só no histórico; a atual é a que vale)
+  const versaoAtual = versoes.at(-1)
+  const anterior = k.status === 'SUBSTITUIDO' && !!substituta && substituta.numero === k.numero
+  const versaoDaPagina = versoes.find((v) => v.id === k.id)
   const emitido = k.status === 'EMITIDO'
   const urlPdf = `${api.urlPdf(k.id)}${api.urlPdf(k.id).includes('?') ? '&' : '?'}v=${k.versao}-${versaoPdf}`
 
@@ -122,7 +128,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
   ]
   if (podeCorrigir)
     itensMenu.push({
-      label: 'Corrigir (emitir revisão)',
+      label: 'Corrigir certificado',
       icone: <FilePen className="h-4 w-4" />,
       aoClicar: () => setPedido('revisar'),
     })
@@ -193,7 +199,17 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
             {k.cancelamento.motivo}
           </Faixa>
         )}
-        {k.status === 'SUBSTITUIDO' && (
+        {anterior && (
+          <Faixa tom="info" icone={<RefreshCcw className="h-4 w-4" />}>
+            Esta é uma <strong>versão anterior</strong>
+            {versaoDaPagina && <> (versão {versaoDaPagina.versao})</>}, substituída pela{' '}
+            <Link to={`/calibracoes/${versaoAtual?.id ?? substituta.id}`} className="font-semibold underline underline-offset-2">
+              versão corrigida
+            </Link>
+            , com o mesmo número. Ela fica guardada só no sistema, com a marca “substituído”.
+          </Faixa>
+        )}
+        {k.status === 'SUBSTITUIDO' && !anterior && (
           <Faixa tom="info" icone={<RefreshCcw className="h-4 w-4" />}>
             Este certificado foi <strong>substituído</strong>
             {substituta ? (
@@ -210,21 +226,31 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
         )}
         {revisaoAberta && faixaRevisao === 'continuar' && (
           <Faixa tom="warning" icone={<FilePen className="h-4 w-4" />}>
-            Há uma revisão deste certificado em andamento.{' '}
+            Há uma correção deste certificado em andamento.{' '}
             <Link to={`/calibracoes/${revisaoAberta.id}/editar`} className="font-semibold underline underline-offset-2">
-              Continuar a revisão
+              Continuar a correção
             </Link>
           </Faixa>
         )}
         {revisaoAberta && faixaRevisao === 'excluir' && (
           <Faixa tom="warning" icone={<FilePen className="h-4 w-4" />}>
-            Ficou aberta uma revisão deste certificado, que não pode mais ser emitida.{' '}
+            Ficou aberta uma correção deste certificado, que não pode mais ser emitida.{' '}
             <Link to={`/calibracoes/${revisaoAberta.id}/editar`} className="font-semibold underline underline-offset-2">
               Abrir para excluir
             </Link>
           </Faixa>
         )}
-        {k.substituiId && emissao?.substituiNumero && (
+        {k.substituiId && emissao?.mesmoNumero && (
+          <Faixa tom="neutro" icone={<History className="h-4 w-4" />}>
+            Editado em {dataHora(emissao.emitidoEm)} por {emissao.emitidoPor}: corrige a{' '}
+            <Link to={`/calibracoes/${k.substituiId}`} className="font-semibold underline underline-offset-2">
+              versão anterior
+            </Link>
+            {emissao.substituiEmissao && <>, emitida em {dataCurta(emissao.substituiEmissao)}</>}. O certificado mantém o número;
+            o motivo fica só no sistema{k.motivoRevisao && <>: {k.motivoRevisao}</>}.
+          </Faixa>
+        )}
+        {k.substituiId && emissao?.substituiNumero && !emissao.mesmoNumero && (
           <Faixa tom="neutro" icone={<History className="h-4 w-4" />}>
             Revisão que substitui o certificado nº{' '}
             <Link to={`/calibracoes/${k.substituiId}`} className="font-semibold underline underline-offset-2">
@@ -276,6 +302,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
 
         <div className="flex flex-col gap-6">
           {emissao && <CartaoEmissao k={k} />}
+          {versoes.length > 1 && <HistoricoVersoes versoes={versoes} atualId={k.id} />}
 
           <Card>
             <CardHeader icone={<ClipboardList className="h-4 w-4" />} titulo="Calibração" />
@@ -285,7 +312,10 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
               <Dado rotulo="Ordem de serviço">{k.ordemServico}</Dado>
               <Dado rotulo="Local">{LOCAIS[k.local]?.replace(/^(Nas|No) /, '')}</Dado>
               <Dado rotulo="Executado por">{emissao?.tecnico.nome}</Dado>
-              <Dado rotulo="Autorizado por">{emissao?.signatario.nome}</Dado>
+              {/* Só quem executou assina (revisão por outra pessoa desligada na emissão): quem emitiu fica registrado */}
+              <Dado rotulo={emissao?.assinaturas === 'TECNICO' ? 'Emitido por' : 'Autorizado por'}>
+                {emissao?.signatario.nome}
+              </Dado>
               {emissao?.textos.procedimento && (
                 <Dado rotulo="Procedimento (POP)" largo>
                   <span className="tnum">{emissao.textos.procedimento}</span>
@@ -316,7 +346,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
                   </button>
                   <span className="text-muted"> · impressa em {dataHora(folhaCampo.impressaEm)}</span>
                   {folhaCampo.impressaPor && <span className="text-muted"> por {folhaCampo.impressaPor}</span>}
-                  {folhaCampo.herdada && <span className="text-muted"> · do certificado revisado</span>}
+                  {folhaCampo.herdada && <span className="text-muted"> · do certificado corrigido</span>}
                   {folhaCampo.passouPara && (
                     <span className="mt-0.5 block text-xs text-muted">
                       Passou para a calibração refeita a partir deste papel: {folhaCampo.passouPara}
@@ -520,7 +550,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
             if (pedido === 'revisar') {
               const r = await api.revisar(k.id, motivo)
               useTempoReal.getState().mudou('calibracao')
-              toast.sucesso('Revisão criada', 'Corrija o que for preciso e emita: o número ganha o sufixo de revisão.')
+              toast.sucesso('Correção aberta', 'Corrija o que for preciso e emita: o certificado mantém o mesmo número.')
               navegar(`/calibracoes/${r.calibracao.id}/editar`)
             } else {
               await api.cancelar(k.id, motivo, k.versao)
@@ -529,7 +559,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
             }
             setPedido(null)
           } catch (e) {
-            avisarErro(pedido === 'revisar' ? 'Não foi possível criar a revisão' : 'Não foi possível cancelar', e)
+            avisarErro(pedido === 'revisar' ? 'Não foi possível abrir a correção' : 'Não foi possível cancelar', e)
           }
         }}
       />
@@ -673,7 +703,7 @@ function MotivoModal({
 }: {
   pedido: 'revisar' | 'cancelar' | null
   numero: string
-  /** Revisão em andamento: o cancelamento espera ela ser emitida ou excluída (o servidor recusa). */
+  /** Correção em andamento: o cancelamento espera ela ser emitida ou excluída (o servidor recusa). */
   revisaoAberta: { id: string } | null
   aoFechar: () => void
   aoConfirmar: (motivo: string) => Promise<void>
@@ -694,10 +724,10 @@ function MotivoModal({
     <Modal
       aberto={!!pedido}
       aoFechar={() => !salvando && aoFechar()}
-      titulo={revisar ? 'Corrigir o certificado' : `Cancelar o certificado ${numero}?`}
+      titulo={revisar ? `Corrigir o certificado ${numero}` : `Cancelar o certificado ${numero}?`}
       descricao={
         revisar
-          ? `Abre uma revisão com os mesmos dados. Ao ser emitida, ela substitui o nº ${numero} e informa o motivo.`
+          ? `Abre uma cópia com os mesmos dados para corrigir. Ao ser emitida, sai com o mesmo nº ${numero} e a data de emissão nova; a versão de agora fica guardada no sistema.`
           : 'O certificado continua guardado no sistema, com a marca “cancelado”, e não pode mais ser enviado.'
       }
       icone={revisar ? <FilePen className="h-5 w-5" /> : <Ban className="h-5 w-5" />}
@@ -719,27 +749,29 @@ function MotivoModal({
               }
             }}
           >
-            {revisar ? 'Abrir revisão' : 'Cancelar certificado'}
+            {revisar ? 'Abrir correção' : 'Cancelar certificado'}
           </Button>
         </>
       }
     >
       {bloqueado && (
         <p className="mb-4 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
-          Há uma revisão deste certificado em andamento. Emita a revisão ou exclua-a antes de cancelar.{' '}
+          Há uma correção deste certificado em andamento. Emita a correção ou exclua-a antes de cancelar.{' '}
           <Link
             to={`/calibracoes/${revisaoAberta!.id}/editar`}
             onClick={aoFechar}
             className="font-semibold underline underline-offset-2"
           >
-            Abrir a revisão
+            Abrir a correção
           </Link>
         </p>
       )}
       <Field
         label={revisar ? 'O que será corrigido' : 'Motivo do cancelamento'}
         hint={
-          revisar ? 'Sai no certificado novo. Ex.: “Correção do número de série da balança”.' : 'Fica registrado no histórico.'
+          revisar
+            ? 'Fica só no sistema, não sai no certificado. Ex.: “Número de série da balança digitado errado”.'
+            : 'Fica registrado no histórico.'
         }
       >
         <Textarea

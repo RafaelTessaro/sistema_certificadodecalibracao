@@ -1464,7 +1464,9 @@ function transplantarCertificados(origem: Banco, destino: Banco): string[] {
   }
   const popsRegistradas = pops.registradas()
 
-  const numeros = passaram.map((l) => String(l.numero))
+  // Um nº por certificado: as versões de um corrigido com o mesmo nº (`EmissaoCertificado.mesmoNumero`) contam uma vez
+  const numeros = [...new Set(passaram.map((l) => String(l.numero)))]
+  const ficaramDeFora = [...new Set(deFora)]
   const partes = [
     numeros.length === 1
       ? `o certificado ${numeros[0]}, emitido ou alterado depois da cópia, continua como no banco atual (o mesmo nº, a mesma situação e o mesmo código de autenticidade): o PDF entregue continua valendo`
@@ -1475,11 +1477,11 @@ function transplantarCertificados(origem: Banco, destino: Banco): string[] {
             numeros,
           )
         : '',
-    deFora.length
+    ficaramDeFora.length
       ? caberNoRegistro(
           (lista) =>
-            `${deFora.length === 1 ? 'o certificado' : 'os certificados'} ${lista}, do banco atual, não ${deFora.length === 1 ? 'passou' : 'passaram'}: o nº ou o código já está noutro certificado da cópia`,
-          deFora,
+            `${ficaramDeFora.length === 1 ? 'o certificado' : 'os certificados'} ${lista}, do banco atual, não ${ficaramDeFora.length === 1 ? 'passou' : 'passaram'}: o nº ou o código já está noutro certificado da cópia`,
+          ficaramDeFora,
         )
       : '',
     popsRegistradas.length === 1
@@ -1488,7 +1490,7 @@ function transplantarCertificados(origem: Banco, destino: Banco): string[] {
         ? `as revisões do POP citadas pelos certificados que passaram (${popsRegistradas.join(', ')}) continuam registradas, como no banco atual`
         : '',
     ...[...new Set(popsSemId.map((x) => x.pop))].map((pop) => {
-      const certificados = popsSemId.filter((x) => x.pop === pop).map((x) => x.numero)
+      const certificados = [...new Set(popsSemId.filter((x) => x.pop === pop).map((x) => x.numero))]
       return caberNoRegistro(
         (lista) =>
           `a revisão do POP citada pelo${certificados.length > 1 ? 's certificados' : ' certificado'} ${lista} (${pop}) não passou para a cópia (o id dela já é de outra revisão lá): o PDF entregue continua citando-a`,

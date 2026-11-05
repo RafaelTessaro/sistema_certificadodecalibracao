@@ -265,11 +265,21 @@ function ListaCalibracoes({
                   <p className="truncate text-sm font-medium text-ink">
                     <span
                       className="tnum"
-                      title={!k.numero && k.numeroReservado ? textoNumeroReservado(k.numeroReservado) : undefined}
+                      title={
+                        !k.numero && k.numeroCorrigido
+                          ? `Correção do certificado nº ${k.numeroCorrigido} (sai com o mesmo nº)`
+                          : !k.numero && k.numeroReservado
+                            ? textoNumeroReservado(k.numeroReservado)
+                            : undefined
+                      }
                     >
-                      {k.numero || k.numeroReservado || 'Rascunho'}
+                      {k.numero || k.numeroCorrigido || k.numeroReservado || 'Rascunho'}
                     </span>
-                    {!k.numero && k.numeroReservado && <span className="text-xs font-normal text-muted"> (reservado)</span>}
+                    {!k.numero && k.numeroCorrigido ? (
+                      <span className="text-xs font-normal text-muted"> (correção)</span>
+                    ) : (
+                      !k.numero && k.numeroReservado && <span className="text-xs font-normal text-muted"> (reservado)</span>
+                    )}
                     <span className="font-normal text-muted"> · {k.clienteNome}</span>
                   </p>
                   <p className="truncate text-xs text-muted">

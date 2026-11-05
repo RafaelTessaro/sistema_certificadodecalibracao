@@ -226,7 +226,7 @@ export const GRUPOS_AUDITORIA: Record<GrupoAuditoria, readonly AcaoAuditoria[]> 
     'NUMERO_RESERVADO',
     'NUMERO_NAO_UTILIZADO',
   ],
-  dados: ['COPIA_RESTAURADA', 'BACKUP_BAIXADO', 'SISTEMA_ATUALIZADO'],
+  dados: ['COPIA_RESTAURADA', 'BACKUP_BAIXADO', 'SISTEMA_ATUALIZADO', 'TESTES_APAGADOS'],
   alteracoes: ['ALTERACAO'],
 }
 
@@ -255,6 +255,7 @@ export const ROTULO_ACAO_AUDITORIA: Record<AcaoAuditoria, string> = {
   COPIA_RESTAURADA: 'Restaurou uma cópia do banco de dados',
   BACKUP_BAIXADO: 'Baixou uma cópia de segurança',
   SISTEMA_ATUALIZADO: 'A atualização do sistema ajustou cadastros',
+  TESTES_APAGADOS: 'Apagou os certificados e as calibrações de teste',
   CERTIFICADO_EMITIDO: 'Emitiu um certificado',
   CERTIFICADO_CANCELADO: 'Cancelou um certificado',
   CERTIFICADO_ENVIADO: 'Enviou um certificado por e-mail',

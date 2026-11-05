@@ -52,8 +52,7 @@ describe('nº de certificado na tela', () => {
         id: 2,
         numero: 'CC-2026-00043',
         situacao: 'nao_utilizado',
-        motivo:
-          'A folha FC-2026-00012 foi ligada à revisão do certificado CC-2026-00001, que sai com o nº do certificado revisado.',
+        motivo: 'A folha FC-2026-00012 foi ligada à correção do certificado CC-2026-00001, que sai com o mesmo nº dele.',
         situacaoEm: '2026-10-21T08:30:00',
         situacaoPor: 'Bruno',
       }),
@@ -63,7 +62,7 @@ describe('nº de certificado na tela', () => {
     expect(h).toContain('Números não utilizados (1)')
     expect(h).toContain('1 reservado em folha não ligada')
     expect(h).toContain(
-      'CC-2026-00043A folha FC-2026-00012 foi ligada à revisão do certificado CC-2026-00001, que sai com o nº do certificado revisado.21/10/2026 às 08:30 · Bruno',
+      'CC-2026-00043A folha FC-2026-00012 foi ligada à correção do certificado CC-2026-00001, que sai com o mesmo nº dele.21/10/2026 às 08:30 · Bruno',
     )
     expect(h).toContain('Reservados em folhas ainda não ligadas')
     expect(h).toContain(

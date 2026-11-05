@@ -28,7 +28,7 @@ export function EtapaRevisao({
   tecnicoGravado: Pick<Calibracao, 'tecnicoId' | 'tecnicoDefinidoPorId'>
   /** O nº reservado na impressão da folha de campo (o da etiqueta): o certificado é emitido com ele. */
   numeroReservado?: Pick<NumeroReservado, 'numero' | 'folha'> | null
-  /** Revisão: o nº com que ela sai (o do certificado revisado, com o -R dela). */
+  /** Correção: o nº com que ela sai (o mesmo do certificado corrigido). */
   numeroRevisao?: string | null
   pendencias: string[]
   /** Do servidor, para conferir sem impedir a emissão (ex.: a folha de campo saiu com outra revisão do POP). */
@@ -54,7 +54,10 @@ export function EtapaRevisao({
   const tecnico = equipe.find((u) => u.id === f.tecnicoId)
   const [emitindo, setEmitindo] = useState(false)
   // A numeração segue o ano da emissão (hoje)
-  const exemplo = formatarNumeroCertificado(config.numeracao, 1, Number(hojeISO().slice(0, 4)), f.substituiId ? 1 : 0)
+  const exemplo = formatarNumeroCertificado(config.numeracao, 1, Number(hojeISO().slice(0, 4)))
+  // Quem assina o certificado segue a revisão por outra pessoa (fica gravado na emissão)
+  const duasAssinaturas = config.exigirRevisor
+  const quemEmite = signatario && !bloqueadoRevisor ? usuario?.nome : 'Um signatário'
   const avisos = [...(r?.avisos ?? []), ...(calc?.comoEncontrado?.avisos ?? [])].filter((a) => a.nivel !== 'info')
   const pronto = pendencias.length === 0
 
@@ -155,8 +158,8 @@ export function EtapaRevisao({
               <p className="mt-0.5 font-medium text-ink">{tecnico?.nome ?? '—'}</p>
             </div>
             <div className="rounded-xl bg-surface-2/60 px-4 py-3">
-              <p className="text-xs text-muted">Autorizado por</p>
-              <p className="mt-0.5 font-medium text-ink">{signatario && !bloqueadoRevisor ? usuario?.nome : 'Um signatário'}</p>
+              <p className="text-xs text-muted">{duasAssinaturas ? 'Autorizado por' : 'Emitido por'}</p>
+              <p className="mt-0.5 font-medium text-ink">{quemEmite}</p>
             </div>
             <div className="rounded-xl bg-surface-2/60 px-4 py-3">
               <p className="text-xs text-muted">Número</p>
@@ -170,16 +173,24 @@ export function EtapaRevisao({
               ) : numeroRevisao ? (
                 <p className="mt-0.5 font-medium text-ink">
                   <span className="tnum">{numeroRevisao}</span>{' '}
-                  <span className="font-normal text-muted">(o do certificado revisado)</span>
+                  <span className="font-normal text-muted">(o mesmo do certificado corrigido)</span>
                 </p>
               ) : f.substituiId ? (
-                // Revisão sem o nº previsto: o certificado revisado não está mais emitido (a pendência diz a saída)
-                <p className="mt-0.5 font-medium text-ink">Não sai: o certificado revisado não está mais emitido</p>
+                // Correção sem o nº previsto: o certificado corrigido não está mais emitido (a pendência diz a saída)
+                <p className="mt-0.5 font-medium text-ink">Não sai: o certificado corrigido não está mais emitido</p>
               ) : (
                 <p className="tnum mt-0.5 font-medium text-ink">Gerado na emissão (ex.: {exemplo})</p>
               )}
             </div>
           </div>
+
+          <p className="-mt-1 text-[13px] text-muted">
+            {duasAssinaturas
+              ? 'O certificado sai com duas assinaturas: a de quem executou e a de quem autorizou.'
+              : 'O certificado sai só com a assinatura de quem executou.'}
+            {f.substituiId &&
+              ' A correção sai com o mesmo número e a data de emissão nova; a versão anterior e o motivo ficam só no sistema.'}
+          </p>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <Button icone={<Eye className="h-4 w-4" />} onClick={aoVisualizar}>

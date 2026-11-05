@@ -335,9 +335,14 @@ describe('voltar uma cópia do banco: as folhas dos certificados emitidos depois
     expect(rv.statusCode, rv.body).toBe(201)
     const r1 = rv.json().calibracao as Calibracao
     expect((await ligar(r1.id, fc(2))).statusCode).toBe(200)
-    expect((await emitir(r1.id)).numero).toBe(`${cc(1)}-R1`)
+    expect((await emitir(r1.id)).numero).toBe(cc(1))
 
-    expect(await voltar(copia)).toMatchObject({ transplantado: true, certificados: 2 })
+    // Um certificado só (o mesmo nº): a versão anterior, substituída depois da cópia, e a correção
+    expect(await voltar(copia)).toMatchObject({ transplantado: true, certificados: 1 })
+    expect(app().ctx.db.prepare('SELECT status FROM calibracoes WHERE numero = ? ORDER BY revisao').all(cc(1))).toEqual([
+      { status: 'SUBSTITUIDO' },
+      { status: 'EMITIDO' },
+    ])
     expect(await folhaDa(r1.id)).toMatchObject({ numero: fc(2), herdada: false })
     expect(await folhaDa(k1.id)).toMatchObject({ numero: fc(1), herdada: false })
     expect((await imprimir(r1.id)).headers['x-folha-campo']).toBe(fc(2))

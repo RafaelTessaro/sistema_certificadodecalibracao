@@ -304,8 +304,9 @@ describe('registro de atividades', () => {
   })
 
   it('rótulos para as ações e para os grupos', () => {
-    // 19 + o nº de certificado reservado e o não utilizado (folha de campo)
-    expect(TODAS).toHaveLength(21)
+    // 19 + o nº de certificado reservado e o não utilizado (folha de campo) + os testes apagados (apagar-testes.mjs)
+    expect(TODAS).toHaveLength(22)
+    expect(GRUPOS_AUDITORIA.dados).toEqual(['COPIA_RESTAURADA', 'BACKUP_BAIXADO', 'SISTEMA_ATUALIZADO', 'TESTES_APAGADOS'])
     expect(GRUPOS_AUDITORIA.certificados).toEqual([
       'CERTIFICADO_EMITIDO',
       'CERTIFICADO_CANCELADO',

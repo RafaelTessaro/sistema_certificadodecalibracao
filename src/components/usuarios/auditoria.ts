@@ -37,7 +37,7 @@ const ROTAS: Record<string, readonly [Verbo, string, TipoLink?]> = {
   'POST /api/calibracoes/:id/situacao': [['Mudou', 'mudar'], 'a situação de uma calibração (rascunho ou revisão)', 'calibracao'],
   'POST /api/calibracoes/:id/emitir': [['Emitiu', 'emitir'], 'um certificado', 'calibracao'],
   'POST /api/calibracoes/:id/cancelar': [['Cancelou', 'cancelar'], 'um certificado', 'calibracao'],
-  'POST /api/calibracoes/:id/revisar': [['Abriu', 'abrir'], 'uma revisão de certificado', 'calibracao'],
+  'POST /api/calibracoes/:id/revisar': [['Abriu', 'abrir'], 'uma correção de certificado', 'calibracao'],
   'POST /api/calibracoes/:id/recalibrar': [INICIAR, 'uma nova calibração a partir de outra', 'calibracao'],
   'POST /api/calibracoes/:id/email': [ENVIAR, 'um certificado por e-mail', 'calibracao'],
   // Só a folha nova (nº novo no lugar de outro) vai para o registro; a reimpressão, não
@@ -70,6 +70,8 @@ const ROTAS: Record<string, readonly [Verbo, string, TipoLink?]> = {
  * certificado do padrão (anexado, trocado, removido), o tipo do arquivo enviado e se o POP veio com o arquivo.
  */
 const COM_DETALHE = new Set([
+  // A correção de um certificado emitido: o nº e o motivo (a anotação interna; não sai no certificado)
+  'POST /api/calibracoes/:id/revisar',
   'GET /api/calibracoes/:id/folha-campo',
   'PUT /api/calibracoes/:id/folha-campo',
   'POST /api/padroes',
@@ -170,7 +172,12 @@ export interface AutorRegistro {
  * estava nele (a conta ajustada vai no detalhe).
  */
 export function autorDoRegistro(r: RegistroAuditoria, nomes: ReadonlyMap<string, string>): AutorRegistro {
-  if (r.acao === 'FERRAMENTA_LOCAL' || r.acao === 'COPIA_RESTAURADA' || r.acao === 'SISTEMA_ATUALIZADO')
+  if (
+    r.acao === 'FERRAMENTA_LOCAL' ||
+    r.acao === 'COPIA_RESTAURADA' ||
+    r.acao === 'SISTEMA_ATUALIZADO' ||
+    r.acao === 'TESTES_APAGADOS'
+  )
     return { texto: 'No computador do servidor' }
   const nome = nomes.get(r.usuarioId)
   if (r.acao === 'LOGIN_FALHOU' || (r.acao === 'BLOQUEIO' && r.detalhe !== BLOQUEIO_TROCA_SENHA)) {

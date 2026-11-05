@@ -1153,10 +1153,8 @@ function SecaoCertificado({ config, salvarParte, aoSujo }: PropsSecao) {
     : [
         { numero: formatarNumeroCertificado(v.numeracao, 1, ano), legenda: `Primeiro certificado de ${ano}` },
         { numero: formatarNumeroCertificado(v.numeracao, 124, ano), legenda: '124º certificado do ano' },
-        {
-          numero: formatarNumeroCertificado(v.numeracao, 124, ano, 1),
-          legenda: 'Revisão do 124º (corrige e substitui o original)',
-        },
+        // A sequência recomeça no ano seguinte; a correção de um certificado mantém o número dele
+        { numero: formatarNumeroCertificado(v.numeracao, 1, ano + 1), legenda: `Primeiro certificado de ${ano + 1}` },
       ]
 
   const textosComValidade = (['procedimentoDescricao', ...TEXTOS_FIXOS.map((t) => t.chave)] as const).filter((k) =>
@@ -1304,9 +1302,10 @@ function SecaoCertificado({ config, salvarParte, aoSujo }: PropsSecao) {
           descricao={
             <>
               <b className="font-medium text-ink">Ligado:</b> quem fez a calibração (ou indicou quem fez) não pode emitir o
-              certificado; outro signatário confere e autoriza. É o que a norma recomenda quando há mais de uma pessoa habilitada.{' '}
-              <b className="font-medium text-ink">Desligado:</b> o técnico que também é signatário pode emitir as próprias
-              calibrações (bom para equipes pequenas).
+              certificado; outro signatário confere e autoriza. O certificado sai com duas assinaturas, a de quem executou e a de
+              quem autorizou. <b className="font-medium text-ink">Desligado:</b> o técnico que também é signatário pode emitir as
+              próprias calibrações (bom para equipes pequenas). O certificado sai só com a assinatura de quem executou, mesmo que
+              outra pessoa emita.
             </>
           }
         />
