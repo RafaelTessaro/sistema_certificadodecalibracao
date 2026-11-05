@@ -418,31 +418,34 @@ describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
     writeFileSync(caminho, pdf)
   })
 
-  it('"crescente e decrescente": pelas regras do POP, sem zerar entre os pontos (as peças se trocam); o registro de antes, como saía', async () => {
-    const d = exemploPlataforma300kg()
-    expect([d.calibracao.indicacao.metodo, d.emissao.regrasDoPop, d.emissao.carregamentoSemZerar]).toEqual([
-      'CRESCENTE_DECRESCENTE',
-      true,
-      true,
-    ])
-    const t = corrido(textoDoPdf(await gerarCertificadoPdf(d)))
-    expect(t).toContain('Carregamento: cargas crescentes até a maior carga e depois decrescentes, sem zerar entre os pontos.')
-    expect(t).not.toContain('sem descarregar')
-    // Emitido pela 1.0.3 (com as regras do POP, sem a marca do texto novo): o PDF refeito dos dados congelados sai como
-    // o emitido (`pdfEmitido` só devolve o refeito idêntico), com o texto da época
-    const { carregamentoSemZerar: _marca, ...emissao103 } = d.emissao
-    const de103 = corrido(textoDoPdf(await gerarCertificadoPdf({ ...d, emissao: emissao103 })))
-    expect(de103).toContain(
-      'Carregamento: cargas crescentes até a maior carga e depois decrescentes, sem descarregar entre os pontos.',
-    )
-    expect(de103).not.toContain('sem zerar')
-    // O registro de antes das regras do POP (sem a marca na emissão): o texto de antes (ver certificadoLegado.test.ts)
-    const antes = exemploPlataformaLegado()
-    expect([antes.calibracao.indicacao.metodo, antes.emissao.regrasDoPop]).toEqual(['CRESCENTE_DECRESCENTE', undefined])
-    expect(corrido(textoDoPdf(await gerarCertificadoPdf(antes)))).toContain(
-      'Carregamento: cargas crescentes até a maior carga e depois decrescentes, sem descarregar entre os pontos.',
-    )
-  })
+  it.runIf(temPdftotext)(
+    '"crescente e decrescente": pelas regras do POP, sem zerar entre os pontos (as peças se trocam); o registro de antes, como saía',
+    async () => {
+      const d = exemploPlataforma300kg()
+      expect([d.calibracao.indicacao.metodo, d.emissao.regrasDoPop, d.emissao.carregamentoSemZerar]).toEqual([
+        'CRESCENTE_DECRESCENTE',
+        true,
+        true,
+      ])
+      const t = corrido(textoDoPdf(await gerarCertificadoPdf(d)))
+      expect(t).toContain('Carregamento: cargas crescentes até a maior carga e depois decrescentes, sem zerar entre os pontos.')
+      expect(t).not.toContain('sem descarregar')
+      // Emitido pela 1.0.3 (com as regras do POP, sem a marca do texto novo): o PDF refeito dos dados congelados sai como
+      // o emitido (`pdfEmitido` só devolve o refeito idêntico), com o texto da época
+      const { carregamentoSemZerar: _marca, ...emissao103 } = d.emissao
+      const de103 = corrido(textoDoPdf(await gerarCertificadoPdf({ ...d, emissao: emissao103 })))
+      expect(de103).toContain(
+        'Carregamento: cargas crescentes até a maior carga e depois decrescentes, sem descarregar entre os pontos.',
+      )
+      expect(de103).not.toContain('sem zerar')
+      // O registro de antes das regras do POP (sem a marca na emissão): o texto de antes (ver certificadoLegado.test.ts)
+      const antes = exemploPlataformaLegado()
+      expect([antes.calibracao.indicacao.metodo, antes.emissao.regrasDoPop]).toEqual(['CRESCENTE_DECRESCENTE', undefined])
+      expect(corrido(textoDoPdf(await gerarCertificadoPdf(antes)))).toContain(
+        'Carregamento: cargas crescentes até a maior carga e depois decrescentes, sem descarregar entre os pontos.',
+      )
+    },
+  )
 
   it('é determinístico: gerar de novo dá o mesmo arquivo, byte a byte', async () => {
     const a = await gerarCertificadoPdf(exemploBancada())
