@@ -47,7 +47,8 @@ export const ROTULO_PERMISSAO: Record<Permissao, string> = {
 
 export const NOME_NIVEL: Record<NivelUsuario, string> = { ADMIN: 'Administrador', COMUM: 'Operador' }
 export const RESUMO_NIVEL: Record<NivelUsuario, string> = {
-  ADMIN: 'Tudo o que o operador faz e mais: configurações, usuários, cópias de segurança, cancelar certificados e excluir cadastros.',
+  ADMIN:
+    'Tudo o que o operador faz e mais: configurações, usuários, cópias de segurança, cancelar certificados e excluir cadastros.',
   COMUM: 'O dia a dia: clientes, balanças, padrões, calibrações e a emissão, a impressão e o envio dos certificados.',
 }
 
@@ -134,6 +135,7 @@ export function impedimentoDoSignatario(
   if (!u) return 'O signatário escolhido não foi encontrado. Escolha de novo.'
   if (!u.ativo) return `${u.nome} está com o usuário desativado. Escolha outro signatário.`
   if (!u.signatario) return `${u.nome} não tem a marca de signatário (em Usuários). Escolha outro signatário.`
-  if (u.id === tecnicoId) return `${u.nome} executou esta calibração e não autoriza o próprio certificado. Escolha outro signatário.`
+  if (u.id === tecnicoId)
+    return `${u.nome} executou esta calibração e não autoriza o próprio certificado. Escolha outro signatário.`
   return null
 }

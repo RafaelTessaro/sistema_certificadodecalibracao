@@ -1452,8 +1452,8 @@ describe('1.0.5: reimpressão pelo nº e folha do cliente com a OS', { timeout: 
         .all()
         .map((l) => Object.values(l as object)),
     ).toEqual([
-      ['ALTERACAO', `GET /api/folha-campo/:numero | reimprimiu ${a.numero}`],
-      ['ALTERACAO', `GET /api/folha-campo/:numero | reimprimiu ${a.numero}`],
+      ['ALTERACAO', `GET /api/folha-campo/:numero | ${a.numero}`],
+      ['ALTERACAO', `GET /api/folha-campo/:numero | ${a.numero}`],
     ])
     // Nº inválido: 400; não impresso por este sistema: 404; sem sessão: 401
     expect((await t.chamar('GET', '/api/folha-campo/abc', { cookie: t.cookieComum })).statusCode).toBe(400)

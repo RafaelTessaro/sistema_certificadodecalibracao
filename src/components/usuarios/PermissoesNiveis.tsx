@@ -38,8 +38,9 @@ function Marca({ valor, nivel }: { valor: Celula; nivel: NivelUsuario }) {
 }
 
 /**
- * "O que cada nível pode": a tabela de shared/permissoes.ts. O servidor barra as ações proibidas;
- * emitir (autorizar) certificados não depende do nível, e sim da marcação de signatário.
+ * "O que cada nível pode": a tabela de shared/permissoes.ts. O servidor barra as ações proibidas. Emitir, imprimir e
+ * enviar certificados, os dois níveis; autorizar (com a revisão por outra pessoa ligada) depende da marca de signatário,
+ * e executar calibrações, da marca de técnico, em qualquer nível.
  */
 export function PermissoesNiveis() {
   const linhas: Array<{ rotulo: string; detalhe?: string; valores: Record<NivelUsuario, Celula>; base?: boolean }> = [
@@ -50,8 +51,14 @@ export function PermissoesNiveis() {
       base: true,
     },
     {
-      rotulo: 'Emitir certificados',
-      detalhe: 'Revisar e autorizar a emissão: só quem está marcado como signatário',
+      rotulo: 'Emitir, imprimir e enviar certificados',
+      detalhe: 'Com a revisão por outra pessoa ligada, a emissão vai para a autorização de um signatário',
+      valores: { ADMIN: 'sim', COMUM: 'sim' },
+      base: true,
+    },
+    {
+      rotulo: 'Autorizar certificados',
+      detalhe: 'Com a revisão por outra pessoa ligada: só quem tem a marca de signatário, nunca na própria calibração',
       valores: { ADMIN: 'signatario', COMUM: 'signatario' },
       base: true,
     },
@@ -68,7 +75,7 @@ export function PermissoesNiveis() {
       <CardHeader
         icone={<ShieldCheck className="h-4 w-4" />}
         titulo="O que cada nível pode"
-        descricao="O servidor recusa as ações proibidas ao técnico, mesmo que ele tente por outro caminho. Emitir certificados depende de a pessoa ser signatária, em qualquer nível."
+        descricao="O servidor recusa as ações proibidas ao operador, mesmo por outro caminho. As marcas de técnico (executa as calibrações) e de signatário (autoriza os certificados) valem em qualquer nível."
       />
       <div className="grid gap-3 px-5 pb-4 sm:grid-cols-2">
         {NIVEIS.map((n) => {

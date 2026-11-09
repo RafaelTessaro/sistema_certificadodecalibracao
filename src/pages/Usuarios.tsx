@@ -294,8 +294,8 @@ export function Usuarios() {
           <p className="flex items-start gap-2.5 rounded-2xl border border-warning/25 bg-warning-soft px-4 py-3 text-[13px] text-warning">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
-              <b className="font-semibold">Ninguém está marcado como técnico.</b> A lista “Técnico que executou” das
-              calibrações fica vazia. Edite quem vai a campo e marque <b className="font-semibold">Técnico</b>.
+              <b className="font-semibold">Ninguém está marcado como técnico.</b> A lista “Técnico que executou” das calibrações
+              fica vazia. Edite quem vai a campo e marque <b className="font-semibold">Técnico</b>.
             </span>
           </p>
         )}

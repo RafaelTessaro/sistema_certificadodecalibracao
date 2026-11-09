@@ -91,12 +91,7 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
             />
           </Field>
           {/* Só o nome na lista (cabe na coluna); o cargo de quem foi escolhido aparece embaixo */}
-          <Field
-            label="Técnico que executou"
-            htmlFor="k-tec"
-            className="sm:col-span-2"
-            hint={dicaDoTecnico(equipe, f.tecnicoId)}
-          >
+          <Field label="Técnico que executou" htmlFor="k-tec" className="sm:col-span-2" hint={dicaDoTecnico(equipe, f.tecnicoId)}>
             <Select id="k-tec" value={f.tecnicoId} onChange={(e) => set('tecnicoId', e.target.value)}>
               <option value="">Escolha…</option>
               {tecnicos.map((u) => (

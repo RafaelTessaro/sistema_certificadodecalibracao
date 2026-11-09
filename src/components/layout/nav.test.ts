@@ -20,7 +20,7 @@ describe('menu por nível', () => {
     expect(admin?.itens.map((i) => i.to)).toEqual(['/usuarios', '/configuracoes'])
   })
 
-  it('o técnico não vê Configurações nem Usuários, e não sobra grupo vazio', () => {
+  it('o operador não vê Configurações nem Usuários, e não sobra grupo vazio', () => {
     const paginas = rotas('COMUM')
     for (const rota of ADMINISTRATIVAS) expect(paginas).not.toContain(rota)
     expect(paginas).toEqual(['/', '/certificados', '/vencimentos', '/clientes', '/balancas', '/padroes'])

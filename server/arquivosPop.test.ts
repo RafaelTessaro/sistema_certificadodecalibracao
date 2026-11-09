@@ -318,12 +318,16 @@ describe('POP: revisões, quem registra e o certificado', () => {
     const negada = await c.emitir(k)
     expect(negada.statusCode).toBe(409)
     expect(negada.json().erro).toBe(PENDENCIA_POP)
-    // Nem vai para revisão sem o POP
-    const revisao = await t.chamar('POST', `/api/calibracoes/${k.id}/situacao`, {
+    // Nem vai para a autorização de um signatário sem o POP (com a revisão por outra pessoa ligada)
+    const configAntes = t.ctx.repo.obterConfig()
+    t.ctx.repo.salvarConfig({ ...configAntes, exigirRevisor: true })
+    const pedido = await t.chamar('POST', `/api/calibracoes/${k.id}/autorizacao`, {
       cookie: t.cookieAdmin,
-      payload: { status: 'REVISAO', versao: k.versao },
+      payload: { signatarioId: t.comumId, versao: k.versao },
     })
-    expect(revisao.statusCode).toBe(409)
+    expect(pedido.statusCode).toBe(409)
+    expect(pedido.json().erro).toBe(`Antes de enviar para autorização: ${PENDENCIA_POP}`)
+    t.ctx.repo.salvarConfig(configAntes)
 
     // O administrador registra a revisão 00, ainda sem o arquivo
     const r = await t.chamar('POST', '/api/pop', {

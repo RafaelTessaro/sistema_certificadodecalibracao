@@ -8,6 +8,7 @@ import {
   FileCheck2,
   FileX2,
   History,
+  Hourglass,
   KeyRound,
   LogIn,
   LogOut,
@@ -20,6 +21,7 @@ import {
   ShieldX,
   Terminal,
   Trash2,
+  Undo2,
   UserPen,
   UserPlus,
   UserX,
@@ -62,6 +64,8 @@ const ICONE_ACAO: Partial<Record<AcaoAuditoria, LucideIcon>> = {
   CERTIFICADO_EMITIDO: FileCheck2,
   CERTIFICADO_CANCELADO: FileX2,
   CERTIFICADO_ENVIADO: Send,
+  AUTORIZACAO_PEDIDA: Hourglass,
+  AUTORIZACAO_DEVOLVIDA: Undo2,
 }
 
 /** Cor do ícone: alertas em vermelho/amarelo; o resto pelo grupo. */

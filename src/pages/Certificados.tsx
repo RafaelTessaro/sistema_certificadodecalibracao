@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, Download, FileBadge2, FilePlus2, Printer } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { STATUS_CALIBRACAO } from '#shared/dominio.ts'
 import { BotaoPop } from '../components/BotaoPop'
 import { CertificadosTabela } from '../components/CertificadosTabela'
@@ -14,14 +14,24 @@ import { useConsulta } from '../lib/consulta'
 import { exportarCSV } from '../lib/csv'
 import { abrirFolhaCampo } from '../lib/folhaCampo'
 import { dataCurta, numero } from '../lib/format'
+import { useSessao } from '../store/sessao'
 import { EsqueletoTabela } from './Clientes'
 
-type Filtro = '' | 'ABERTAS' | 'EMITIDO' | 'CANCELADO' | 'SUBSTITUIDO'
+type Filtro = '' | 'ABERTAS' | 'AUTORIZAR' | 'EMITIDO' | 'CANCELADO' | 'SUBSTITUIDO'
 const POR_PAGINA = 50
 
 export function Certificados() {
   const navegar = useNavigate()
-  const [filtro, setFiltro] = useState<Filtro>('')
+  // "?situacao=autorizar" (o aviso do painel) abre já em "Para você autorizar"
+  const [parametros] = useSearchParams()
+  const [filtro, setFiltro] = useState<Filtro>(parametros.get('situacao') === 'autorizar' ? 'AUTORIZAR' : '')
+  const signatario = useSessao((s) => !!s.usuario?.signatario)
+  // As que aguardam a autorização de quem está vendo (atualiza em tempo real, como a lista)
+  const { dados: paraAutorizar } = useConsulta(
+    signatario ? 'calibracoes:autorizar' : null,
+    () => api.calibracoes({ status: 'AUTORIZAR', limite: 1 }).then((r) => r.total),
+    ['calibracao'],
+  )
   const [busca, setBusca] = useState('')
   const [buscaAplicada, setBuscaAplicada] = useState('')
   const [de, setDe] = useState('')
@@ -124,6 +134,10 @@ export function Certificados() {
             opcoes={[
               { valor: '', label: 'Todos' },
               { valor: 'ABERTAS', label: 'Em andamento' },
+              // Só para quem pode receber o pedido, quando há algum (ou o filtro já está escolhido)
+              ...(signatario && (!!paraAutorizar || filtro === 'AUTORIZAR')
+                ? [{ valor: 'AUTORIZAR' as const, label: `Para você autorizar (${numero(paraAutorizar ?? 0)})` }]
+                : []),
               { valor: 'EMITIDO', label: 'Emitidos' },
               { valor: 'CANCELADO', label: 'Cancelados' },
               { valor: 'SUBSTITUIDO', label: 'Substituídos' },
@@ -159,11 +173,19 @@ export function Certificados() {
         ) : itens.length === 0 ? (
           <EmptyState
             icone={<FileBadge2 className="h-6 w-6" />}
-            titulo={buscaAplicada || filtro || de || ate ? 'Nada encontrado' : 'Nenhuma calibração ainda'}
+            titulo={
+              filtro === 'AUTORIZAR' && !buscaAplicada && !de && !ate
+                ? 'Nada aguarda a sua autorização'
+                : buscaAplicada || filtro || de || ate
+                  ? 'Nada encontrado'
+                  : 'Nenhuma calibração ainda'
+            }
             descricao={
-              buscaAplicada || filtro || de || ate
-                ? 'Tente outra busca ou mude os filtros.'
-                : 'Comece uma calibração: escolha o cliente e a balança, registre os ensaios e emita o certificado.'
+              filtro === 'AUTORIZAR' && !buscaAplicada && !de && !ate
+                ? 'Quando alguém enviar uma calibração para você autorizar, ela aparece aqui.'
+                : buscaAplicada || filtro || de || ate
+                  ? 'Tente outra busca ou mude os filtros.'
+                  : 'Comece uma calibração: escolha o cliente e a balança, registre os ensaios e emita o certificado.'
             }
             acao={
               !(buscaAplicada || filtro || de || ate) && (

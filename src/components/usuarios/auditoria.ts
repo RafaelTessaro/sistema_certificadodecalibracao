@@ -34,7 +34,9 @@ const ROTAS: Record<string, readonly [Verbo, string, TipoLink?]> = {
   'POST /api/calibracoes': [INICIAR, 'uma calibração'],
   'PUT /api/calibracoes/:id': [['Salvou', 'salvar'], 'uma calibração em andamento', 'calibracao'],
   'DELETE /api/calibracoes/:id': [EXCLUIR, 'uma calibração em andamento'],
-  'POST /api/calibracoes/:id/situacao': [['Mudou', 'mudar'], 'a situação de uma calibração (rascunho ou revisão)', 'calibracao'],
+  'POST /api/calibracoes/:id/situacao': [['Mudou', 'mudar'], 'a situação de uma calibração', 'calibracao'],
+  'POST /api/calibracoes/:id/autorizacao': [['Enviou', 'enviar'], 'uma calibração para autorização', 'calibracao'],
+  'POST /api/calibracoes/:id/devolver': [['Devolveu', 'devolver'], 'uma calibração sem autorizar', 'calibracao'],
   'POST /api/calibracoes/:id/emitir': [['Emitiu', 'emitir'], 'um certificado', 'calibracao'],
   'POST /api/calibracoes/:id/cancelar': [['Cancelou', 'cancelar'], 'um certificado', 'calibracao'],
   'POST /api/calibracoes/:id/revisar': [['Abriu', 'abrir'], 'uma correção de certificado', 'calibracao'],
@@ -72,6 +74,8 @@ const ROTAS: Record<string, readonly [Verbo, string, TipoLink?]> = {
 const COM_DETALHE = new Set([
   // A correção de um certificado emitido: o nº e o motivo (a anotação interna; não sai no certificado)
   'POST /api/calibracoes/:id/revisar',
+  // A volta para rascunho: o pedido de autorização retirado (e para quem era)
+  'POST /api/calibracoes/:id/situacao',
   'GET /api/calibracoes/:id/folha-campo',
   'PUT /api/calibracoes/:id/folha-campo',
   'POST /api/padroes',
@@ -81,7 +85,13 @@ const COM_DETALHE = new Set([
 ])
 
 /** Ações próprias dos certificados: o alvo é a calibração (a frase leva a ela). */
-const ACOES_DO_CERTIFICADO = new Set<AcaoAuditoria>(['CERTIFICADO_EMITIDO', 'CERTIFICADO_CANCELADO', 'CERTIFICADO_ENVIADO'])
+const ACOES_DO_CERTIFICADO = new Set<AcaoAuditoria>([
+  'CERTIFICADO_EMITIDO',
+  'CERTIFICADO_CANCELADO',
+  'CERTIFICADO_ENVIADO',
+  'AUTORIZACAO_PEDIDA',
+  'AUTORIZACAO_DEVOLVIDA',
+])
 
 /**
  * Nºs de certificado reservados na impressão da folha de campo, ou não utilizados: o detalhe é o nº e de onde

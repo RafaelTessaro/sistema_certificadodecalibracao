@@ -171,8 +171,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
   // autorização é `POST /autorizacao` (com o signatário escolhido)
   app.post('/api/calibracoes/:id/situacao', async (req: ComId) => {
     const c = corpo(req)
-    if (c.status === 'REVISAO')
-      throw new ErroApi(409, 'Escolha o signatário que vai autorizar e use "Enviar para autorização".')
+    if (c.status === 'REVISAO') throw new ErroApi(409, 'Escolha o signatário que vai autorizar e use "Enviar para autorização".')
     const antes = obter(req.params.id)
     const k = repo.mudarSituacao(req.params.id, 'RASCUNHO', versaoDe(c))
     if (antes.status === 'REVISAO')

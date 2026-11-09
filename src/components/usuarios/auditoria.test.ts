@@ -47,6 +47,40 @@ describe('descreverRegistro', () => {
     })
   })
 
+  it('pedido de autorização, devolução e pedido retirado: para quem, a nota, com o link da calibração', () => {
+    expect(
+      descreverRegistro(
+        registro({ acao: 'AUTORIZACAO_PEDIDA', alvo: 'k7', detalhe: 'POST /api/calibracoes/:id/autorizacao | para Fábio' }),
+      ),
+    ).toEqual({ titulo: 'Enviou uma calibração para autorização', detalhe: 'para Fábio', link: { tipo: 'calibracao', id: 'k7' } })
+    expect(
+      descreverRegistro(
+        registro({
+          acao: 'AUTORIZACAO_DEVOLVIDA',
+          alvo: 'k7',
+          detalhe: 'POST /api/calibracoes/:id/devolver | pedido de Lizi: Confira a temperatura',
+        }),
+      ),
+    ).toEqual({
+      titulo: 'Devolveu uma calibração sem autorizar',
+      detalhe: 'pedido de Lizi: Confira a temperatura',
+      link: { tipo: 'calibracao', id: 'k7' },
+    })
+    expect(
+      descreverRegistro(
+        registro({
+          acao: 'ALTERACAO',
+          alvo: 'k7',
+          detalhe: 'POST /api/calibracoes/:id/situacao | pedido de autorização retirado (era para Fábio)',
+        }),
+      ),
+    ).toEqual({
+      titulo: 'Mudou a situação de uma calibração',
+      detalhe: 'pedido de autorização retirado (era para Fábio)',
+      link: { tipo: 'calibracao', id: 'k7' },
+    })
+  })
+
   it('correção de um certificado emitido: "Abriu uma correção de certificado", com o nº e o motivo', () => {
     expect(
       descreverRegistro(

@@ -387,7 +387,8 @@ export async function emitirCertificado(
   // Quem emite é quem fica registrado (e, com a revisão ligada, quem assina como "Autorizado por")
   const signatarioId = autor.id
   const impedimento = impedimentoParaEmitir(config.exigirRevisor, atual, autor)
-  if (impedimento) throw new ErroApi(autor.signatario ? 409 : 403, impedimento, autor.signatario ? {} : { codigo: 'SEM_PERMISSAO' })
+  if (impedimento)
+    throw new ErroApi(autor.signatario ? 409 : 403, impedimento, autor.signatario ? {} : { codigo: 'SEM_PERMISSAO' })
   const pendencias = pendenciasDa(ctx, atual)
   if (pendencias.length) throw new ErroApi(409, pendencias[0], { pendencias })
 

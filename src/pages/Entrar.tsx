@@ -243,7 +243,12 @@ function CriarAdministrador() {
   return (
     <TelaSessao
       largura="max-w-[460px]"
-      rodape={<p>Os outros usuários (técnicos) você cadastra depois, em Usuários. Cada um com a sua senha.</p>}
+      rodape={
+        <p>
+          Os outros usuários você cadastra depois, em Usuários, cada um com a sua senha. Lá você marca quem é técnico e quem é
+          signatário.
+        </p>
+      }
     >
       <Titulo
         icone={<BadgeCheck className="h-5 w-5" />}

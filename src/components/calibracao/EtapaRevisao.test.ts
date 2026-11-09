@@ -140,7 +140,14 @@ describe('revisão por outra pessoa ligada: escolher quem autoriza', () => {
   it('a devolvida mostra quem devolveu e a nota', () => {
     usando(BIA)
     const t = etapa({
-      gravada: { devolucao: { nota: 'Confira a temperatura do 2º ensaio.', porId: 'ana', por: 'Ana Signatária', em: '2026-11-09T14:00:00.000Z' } },
+      gravada: {
+        devolucao: {
+          nota: 'Confira a temperatura do 2º ensaio.',
+          porId: 'ana',
+          por: 'Ana Signatária',
+          em: '2026-11-09T14:00:00.000Z',
+        },
+      },
     })
     expect(t).toMatch(/Devolvida por Ana Signatária em .+: Confira a temperatura do 2º ensaio\./)
   })

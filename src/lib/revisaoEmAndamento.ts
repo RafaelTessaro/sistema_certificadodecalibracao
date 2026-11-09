@@ -3,7 +3,7 @@ import type { StatusCalibracao } from '#shared/tipos.ts'
 type Revisao = { id: string; numero: string; status: StatusCalibracao }
 
 /**
- * A revisão em andamento do certificado (rascunho ou aguardando revisão) e o que a página dele faz com ela:
+ * A revisão em andamento do certificado (rascunho ou aguardando autorização) e o que a página dele faz com ela:
  * - emitido: a faixa "Continuar a revisão"; outra revisão não (uma por vez); o cancelamento espera a revisão ser
  *   emitida ou excluída (o servidor recusa, `Repositorio.cancelar`), e o pedido de cancelamento já avisa;
  * - cancelado com a revisão ainda aberta (de antes dessa trava): a revisão não pode mais ser emitida, e a faixa leva

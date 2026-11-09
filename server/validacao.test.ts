@@ -595,7 +595,7 @@ describe('técnico da calibração excluído', () => {
     expect(emitida.json().calibracao.emissao.tecnico.nome).toBe('Admin Teste')
   })
 
-  it('técnico desativado continua valendo; id que não existe é pendência', async () => {
+  it('técnico desativado continua valendo; um id que não existe não é aceito', async () => {
     const k = await c.calibracaoPronta([], t.cookieComum)
     const r = await t.chamar('PUT', `/api/usuarios/${t.comumId}`, { cookie: t.cookieAdmin, payload: { ativo: false } })
     expect(r.statusCode, r.body).toBe(200)
@@ -603,8 +603,14 @@ describe('técnico da calibração excluído', () => {
     const emitida = await emitir(k)
     expect(emitida.statusCode, emitida.body).toBe(200)
     expect(emitida.json().calibracao.emissao.tecnico.nome).toBe('Comum Teste')
+    // Indicar quem não existe (ou não tem a marca de técnico) é recusado na hora
     const outra = await c.calibracaoPronta()
-    expect((await salvar(outra, (x) => ({ ...x, tecnicoId: 'nao-existe' }))).pendencias).toEqual([PENDENCIA])
+    const recusada = await t.chamar('PUT', `/api/calibracoes/${outra.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...outra, tecnicoId: 'nao-existe', versao: outra.versao },
+    })
+    expect(recusada.statusCode).toBe(400)
+    expect(recusada.json().erro).toBe('O técnico escolhido não foi encontrado. Escolha de novo.')
   })
 })
 

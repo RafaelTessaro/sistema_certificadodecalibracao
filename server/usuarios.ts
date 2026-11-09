@@ -521,15 +521,7 @@ export class ServicoUsuarios {
       const mudouTecnico = tecnico !== (atual.tecnico !== 0)
       const mudouSignatario = signatario !== !!atual.signatario
       const mudouDadosAssinatura = cargo !== atual.cargo || registro !== atual.registro || assinatura !== atual.assinatura
-      if (
-        !mudouNivel &&
-        !mudouAtivo &&
-        !mudouNome &&
-        !mudouLogin &&
-        !mudouTecnico &&
-        !mudouSignatario &&
-        !mudouDadosAssinatura
-      )
+      if (!mudouNivel && !mudouAtivo && !mudouNome && !mudouLogin && !mudouTecnico && !mudouSignatario && !mudouDadosAssinatura)
         return []
       if (id === autor.id && (mudouNivel || mudouAtivo))
         throw new ErroApi(409, MENSAGENS.propriaConta, { codigo: 'PROPRIA_CONTA' })

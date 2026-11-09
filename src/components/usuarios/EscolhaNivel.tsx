@@ -3,7 +3,7 @@ import type { NivelUsuario } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { ICONE_NIVEL } from './niveis'
 
-/** O técnico primeiro: é o nível da maioria das pessoas. */
+/** O operador primeiro: é o nível da maioria das pessoas. */
 const NIVEIS: NivelUsuario[] = ['COMUM', 'ADMIN']
 
 /** Os dois níveis lado a lado, cada um com o resumo do que pode. */

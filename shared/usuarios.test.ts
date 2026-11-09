@@ -218,6 +218,7 @@ describe('normalização das entradas', () => {
       login: 'maria.souza',
       nivel: 'ADMIN',
       senha: '',
+      tecnico: true,
       signatario: false,
       cargo: '',
       registro: '',
@@ -231,7 +232,7 @@ describe('normalização das entradas', () => {
     expect(normalizarNovoUsuario({ nome: 'João', login: 'João Conceição' }).valor.login).toBe('joão conceição')
   })
 
-  it('novo usuário: nível inválido vira comum e senha vazia é aceita', () => {
+  it('novo usuário: nível inválido vira operador e senha vazia é aceita', () => {
     const r = normalizarNovoUsuario({ nome: 'João Lima', login: 'joao', nivel: 'DONO' })
     expect(r.erros).toEqual([])
     expect(r.valor).toEqual({
@@ -239,10 +240,21 @@ describe('normalização das entradas', () => {
       login: 'joao',
       nivel: 'COMUM',
       senha: '',
+      tecnico: true,
       signatario: false,
       cargo: '',
       registro: '',
     })
+  })
+
+  it('novo usuário: as marcas de técnico (sem a marca no pedido, técnico) e de signatário', () => {
+    expect(normalizarNovoUsuario({ nome: 'Lizi', login: 'lizi', tecnico: false, signatario: true }).valor).toMatchObject({
+      tecnico: false,
+      signatario: true,
+    })
+    expect(normalizarNovoUsuario({ nome: 'Lizi', login: 'lizi', tecnico: 'não' }).valor.tecnico).toBe(true)
+    expect(normalizarAlteracaoUsuario({ tecnico: false })).toEqual({ valor: { tecnico: false }, erros: [] })
+    expect(normalizarAlteracaoUsuario({ tecnico: 1 }).erros).toEqual(['Informe se o usuário é técnico.'])
   })
 
   it('novo usuário: valida nome, login e senha digitada', () => {
@@ -282,7 +294,7 @@ describe('normalização das entradas', () => {
   })
 
   it('alteração: nível, situação, versão e nome inválidos são erro', () => {
-    expect(normalizarAlteracaoUsuario({ nivel: 'DONO' }).erros).toEqual(['Nível inválido. Escolha Administrador ou Técnico.'])
+    expect(normalizarAlteracaoUsuario({ nivel: 'DONO' }).erros).toEqual(['Nível inválido. Escolha Administrador ou Operador.'])
     expect(normalizarAlteracaoUsuario({ nivel: 'DONO' }).valor).toEqual({})
     expect(normalizarAlteracaoUsuario({ ativo: 'sim' }).erros).toHaveLength(1)
     expect(normalizarAlteracaoUsuario({ versao: 1.5 }).erros).toHaveLength(1)
@@ -304,13 +316,16 @@ describe('registro de atividades', () => {
   })
 
   it('rótulos para as ações e para os grupos', () => {
-    // 19 + o nº de certificado reservado e o não utilizado (folha de campo) + os testes apagados (apagar-testes.mjs)
-    expect(TODAS).toHaveLength(22)
+    // 19 + o nº de certificado reservado e o não utilizado (folha de campo) + os testes apagados (apagar-testes.mjs) + o
+    // pedido de autorização e a devolução (1.0.5)
+    expect(TODAS).toHaveLength(24)
     expect(GRUPOS_AUDITORIA.dados).toEqual(['COPIA_RESTAURADA', 'BACKUP_BAIXADO', 'SISTEMA_ATUALIZADO', 'TESTES_APAGADOS'])
     expect(GRUPOS_AUDITORIA.certificados).toEqual([
       'CERTIFICADO_EMITIDO',
       'CERTIFICADO_CANCELADO',
       'CERTIFICADO_ENVIADO',
+      'AUTORIZACAO_PEDIDA',
+      'AUTORIZACAO_DEVOLVIDA',
       'NUMERO_RESERVADO',
       'NUMERO_NAO_UTILIZADO',
     ])

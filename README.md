@@ -46,10 +46,15 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
 - **POP** (Procedimento Operacional Padrão) em Configurações → Certificado: código, revisão, data e o arquivo (PDF ou Word), com o histórico das revisões. O código e a revisão saem em todas as páginas do certificado e da folha de campo. O certificado cita a revisão usada na calibração: a impressa na folha de campo; sem folha, a que valia na data da calibração; na revisão de um certificado, a do original. A data da revisão não pode ser no futuro; sem POP registrado, o certificado não é emitido. O botão **POP** (Certificados e calibração) abre o arquivo para qualquer pessoa da equipe.
 - **Padrões** com o arquivo do certificado de calibração (PDF, JPG ou PNG, até 10 MB), conferido pelo conteúdo. Trocar o arquivo com o mesmo nº de certificado corrige também os certificados já emitidos com ele; quando o padrão é calibrado de novo (outro nº), os já emitidos continuam com o arquivo do certificado deles, guardado no cadastro. Mudar o nº mantendo o arquivo antigo é recusado (o arquivo iria aos clientes com o nº novo), salvo confirmação de que só se corrigiu o nº.
 - **Envio por e-mail** do PDF ao cliente junto com os certificados dos padrões usados (o arquivo do certificado de cada padrão com o nº que saiu no certificado; até 20 anexos e 18 MB), com histórico de envios e dos anexos, e **lembretes** de calibração para as balanças que vão vencer.
-- **Usuários**:
-  - administrador;
-  - técnico;
-  - signatário, quem emite (e, com a revisão por outra pessoa ligada, autoriza) o certificado, com a assinatura digitalizada.
+- **Usuários**, em dois níveis:
+  - **operador**: o dia a dia (clientes, balanças, padrões, calibrações) e a emissão, a impressão e o envio dos certificados;
+  - **administrador**: além disso, configurações, usuários, cópias de segurança, cancelar certificados e excluir cadastros.
+
+  À parte do nível, o administrador marca em cada usuário:
+  - **técnico**: executa as calibrações (só quem tem a marca aparece em "Técnico que executou" e na folha de campo; na atualização para a 1.0.5, todos ganharam a marca);
+  - **signatário**: autoriza os certificados, com a assinatura digitalizada.
+
+  Com a revisão por outra pessoa desligada, qualquer pessoa emite. Ligada, quem digita escolhe um signatário (nunca o técnico daquela calibração) e envia para a autorização dele; a calibração fica "Aguardando autorização", o signatário a vê em Certificados ("Para você autorizar") e no painel, confere (pode corrigir a digitação) e clica em "Autorizar e emitir", ou devolve com uma nota. O signatário que não executou pode fazer tudo sozinho e autorizar direto. Ninguém autoriza no lugar de outra pessoa.
 
   Há também o registro de atividades.
 
@@ -80,7 +85,7 @@ Detalhes, atualização e desinstalação estão em [`instalador/LEIA-ME.md`](in
    - os dados da empresa;
    - os textos do certificado;
    - o e-mail de envio (SMTP).
-4. Em **Usuários**, cadastre os técnicos. Marque como **signatário** quem pode autorizar a emissão e envie a assinatura digitalizada de cada um.
+4. Em **Usuários**, cadastre as pessoas (operador ou administrador). Marque como **técnico** quem executa as calibrações e como **signatário** quem pode autorizar a emissão, e envie a assinatura digitalizada de cada um.
 5. Em **Padrões**, cadastre os pesos e os instrumentos com os dados dos certificados de calibração deles.
 6. Terminados os testes, antes de começar a usar de verdade, **apague os testes** uma vez (com o serviço parado, no prompt de comando como administrador: `node\node.exe server\ferramentas\apagar-testes.mjs "C:\ProgramData\BC Calibracao\dados"`, na pasta do programa). Saem as calibrações, os certificados, as folhas de campo e os nºs reservados, e a numeração recomeça do 1; ficam os usuários, a empresa, as configurações, o POP, os padrões, os clientes e as balanças. O passo a passo está no [LEIA-ME do instalador](instalador/LEIA-ME.md#depois-de-instalado).
 

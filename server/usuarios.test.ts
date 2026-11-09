@@ -133,7 +133,15 @@ describe('entrar', () => {
     const normal = await t.entrar('comum', SENHA_COMUM)
     expect(normal.resposta.headers['set-cookie']).toMatch(/^bcc_sessao=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Strict$/)
     expect(normal.resposta.json()).toEqual({
-      usuario: { id: t.comumId, login: 'comum', nome: 'Comum Teste', nivel: 'COMUM', trocarSenha: false, signatario: false },
+      usuario: {
+        id: t.comumId,
+        login: 'comum',
+        nome: 'Comum Teste',
+        nivel: 'COMUM',
+        trocarSenha: false,
+        tecnico: true,
+        signatario: false,
+      },
       build: '',
     })
     const comum = await t.entrar('comum', SENHA_COMUM, { manterConectado: true })
@@ -450,7 +458,15 @@ describe('revogação', () => {
     })
     expect(r.statusCode, r.body).toBe(200)
     expect(r.json()).toEqual({
-      usuario: { id: t.comumId, login: 'comum', nome: 'Comum Teste', nivel: 'COMUM', trocarSenha: false, signatario: false },
+      usuario: {
+        id: t.comumId,
+        login: 'comum',
+        nome: 'Comum Teste',
+        nivel: 'COMUM',
+        trocarSenha: false,
+        tecnico: true,
+        signatario: false,
+      },
     })
     expect(r.headers['set-cookie']).toBeUndefined()
     expect(await statusDados(atual)).toBe(200)
@@ -499,6 +515,40 @@ describe('regras dos usuários', () => {
     })
     expect((await comoAdmin('PUT', `/api/usuarios/${t.adminId}`, { nome: 'Dono' })).statusCode).toBe(200)
     expect((await comoAdmin('PUT', `/api/usuarios/${t.adminId}`, { ativo: true, nivel: 'ADMIN' })).statusCode).toBe(200)
+  })
+
+  it('as marcas de técnico e de signatário: à parte do nível, no cadastro e na edição (com o registro)', async () => {
+    // Sem a marca no pedido, técnico (como todos ficaram na atualização); signatário, não
+    const ana = (await comoAdmin('POST', '/api/usuarios', { nome: 'Ana', login: 'ana', nivel: 'COMUM', senha: '' })).json()
+    expect(ana.usuario).toMatchObject({ nivel: 'COMUM', tecnico: true, signatario: false })
+    // Lizi digita e emite: signatária, sem ir a campo
+    const lizi = (
+      await comoAdmin('POST', '/api/usuarios', {
+        nome: 'Lizi',
+        login: 'lizi',
+        nivel: 'COMUM',
+        senha: '',
+        tecnico: false,
+        signatario: true,
+      })
+    ).json()
+    expect(lizi.usuario).toMatchObject({ nivel: 'COMUM', tecnico: false, signatario: true })
+    const criado = (
+      t.ctx.db.prepare("SELECT detalhe FROM auditoria WHERE acao = 'USUARIO_CRIADO' AND alvo = ?").get(lizi.usuario.id) as {
+        detalhe: string
+      }
+    ).detalhe
+    expect(criado).toBe('lizi (Operador, signatário); senha gerada pelo sistema')
+    const r = await comoAdmin('PUT', `/api/usuarios/${ana.usuario.id}`, { tecnico: false })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().usuario).toMatchObject({ tecnico: false, nivel: 'COMUM' })
+    expect(auditoria('USUARIO_ALTERADO').at(-1)!.detalhe).toBe('ana: deixou de ser técnico')
+    expect((await comoAdmin('PUT', `/api/usuarios/${ana.usuario.id}`, { tecnico: 'sim' })).json().erro).toBe(
+      'Informe se o usuário é técnico.',
+    )
+    // O operador não mexe nas marcas
+    const negado = await t.chamar('PUT', `/api/usuarios/${ana.usuario.id}`, { cookie: t.cookieComum, payload: { tecnico: true } })
+    expect(negado.statusCode).toBe(403)
   })
 
   it('nunca deixa zero administradores ativos', async () => {
@@ -705,6 +755,7 @@ describe('primeiro acesso', () => {
         login: 'rafael tessaro',
         nome: 'Rafael Tessaro',
         nivel: 'ADMIN',
+        tecnico: true,
         signatario: true,
       })
       const cookie = r.cookies.find((c) => c.name === vazio.nomeCookie)!.value

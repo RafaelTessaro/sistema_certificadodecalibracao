@@ -4,8 +4,9 @@ import type { CalibracaoResumo } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
 import { dataCurta } from '../lib/format'
 import { numeroDaLinha, quandoDaLinha, textoNumeroReservado } from '../lib/numeros'
+import { detalheDaSituacao } from '../lib/situacao'
 import { useSessao } from '../store/sessao'
-import { detalheDaSituacao, StatusCalibracaoBadge } from './Selos'
+import { StatusCalibracaoBadge } from './Selos'
 import { Linha, Tabela, Td, Th } from './ui/Table'
 
 /** Endereço da tela de uma calibração: rascunho abre a edição; emitido, o certificado. */

@@ -1,6 +1,6 @@
 import { Ban, CircleCheck, Clock, FilePen, Hourglass, RefreshCcw, Undo2 } from 'lucide-react'
 import { diasEntre, ROTULO_VALIDADE, situacaoValidade, STATUS_CALIBRACAO } from '#shared/dominio.ts'
-import type { CalibracaoResumo, StatusCalibracao } from '#shared/tipos.ts'
+import type { StatusCalibracao } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
 import { hojeISO, relativoDias } from '../lib/format'
 import { Badge } from './ui/Badge'
@@ -39,17 +39,6 @@ export function StatusCalibracaoBadge({
       {voltou ? 'Devolvida' : status === 'REVISAO' && aguardando ? `${s.label} de ${aguardando}` : s.label}
     </Badge>
   )
-}
-
-/** A linha de baixo da situação nas listas: para quem foi o pedido de autorização ("você" em destaque) ou quem devolveu. */
-export function detalheDaSituacao(
-  k: Pick<CalibracaoResumo, 'status' | 'aguardando' | 'devolvidaPor'>,
-  eu: string | undefined,
-): { texto: string; destaque: boolean } | null {
-  if (k.status === 'REVISAO' && k.aguardando)
-    return k.aguardando.id === eu ? { texto: 'Aguarda você', destaque: true } : { texto: `de ${k.aguardando.nome}`, destaque: false }
-  if (k.status === 'RASCUNHO' && k.devolvidaPor) return { texto: `por ${k.devolvidaPor}`, destaque: false }
-  return null
 }
 
 /**

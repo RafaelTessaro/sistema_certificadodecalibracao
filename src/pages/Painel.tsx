@@ -1,4 +1,4 @@
-import { ArrowRight, BellRing, Building2, FileBadge2, FilePen, Scale, ShieldAlert, Weight } from 'lucide-react'
+import { ArrowRight, BellRing, Building2, FileBadge2, FilePen, Hourglass, Scale, ShieldAlert, Weight } from 'lucide-react'
 import { motion } from 'motion/react'
 import type { ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
@@ -34,6 +34,12 @@ export function Painel() {
     'calibracao',
     'balanca',
   ])
+  // As calibrações enviadas para a autorização de quem está vendo (tempo real)
+  const { dados: paraAutorizar } = useConsulta(
+    usuario?.signatario ? 'calibracoes:autorizar' : null,
+    () => api.calibracoes({ status: 'AUTORIZAR', limite: 1 }).then((r) => r.total),
+    ['calibracao'],
+  )
   const primeiroNome = usuario?.nome.trim().split(/\s+/)[0] ?? ''
   const variacao =
     p && p.emitidosMesAnterior ? Math.round(((p.emitidosMes - p.emitidosMesAnterior) / p.emitidosMesAnterior) * 100) : null
@@ -41,6 +47,24 @@ export function Painel() {
   return (
     <>
       <PageHeader titulo={`${saudacao()}${primeiroNome ? `, ${primeiroNome}` : ''}`} descricao={dataExtensa(hojeISO())} />
+
+      {!!paraAutorizar && (
+        <Link
+          to="/certificados?situacao=autorizar"
+          className="mb-6 flex items-center gap-3 rounded-2xl border border-info/20 bg-info-soft px-4 py-3 text-[13.5px] text-info transition-colors hover:border-info/40"
+        >
+          <Hourglass className="h-4 w-4 shrink-0" />
+          <span className="flex-1">
+            <b className="font-semibold">
+              {paraAutorizar === 1
+                ? '1 calibração aguarda a sua autorização.'
+                : `${numero(paraAutorizar)} calibrações aguardam a sua autorização.`}
+            </b>{' '}
+            Confira e autorize a emissão.
+          </span>
+          <ArrowRight className="h-4 w-4 shrink-0" />
+        </Link>
+      )}
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard

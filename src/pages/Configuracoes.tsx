@@ -1301,11 +1301,11 @@ function SecaoCertificado({ config, salvarParte, aoSujo }: PropsSecao) {
           titulo="Exigir revisão por outra pessoa antes de emitir"
           descricao={
             <>
-              <b className="font-medium text-ink">Ligado:</b> quem fez a calibração (ou indicou quem fez) não pode emitir o
-              certificado; outro signatário confere e autoriza. O certificado sai com duas assinaturas, a de quem executou e a de
-              quem autorizou. <b className="font-medium text-ink">Desligado:</b> o técnico que também é signatário pode emitir as
-              próprias calibrações (bom para equipes pequenas). O certificado sai só com a assinatura de quem executou, mesmo que
-              outra pessoa emita.
+              <b className="font-medium text-ink">Ligado:</b> quem digita escolhe um signatário (nunca o técnico que executou) e
+              envia para a autorização dele; o signatário confere, autoriza e o certificado é emitido com duas assinaturas, a de
+              quem executou e a de quem autorizou. O signatário que não executou também pode autorizar direto.{' '}
+              <b className="font-medium text-ink">Desligado:</b> qualquer pessoa que entrou no sistema emite, e o certificado sai
+              só com a assinatura de quem executou (quem emitiu fica registrado).
             </>
           }
         />

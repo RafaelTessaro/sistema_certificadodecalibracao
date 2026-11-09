@@ -313,7 +313,8 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     const numero = numeroDaFolha(req.params.numero)
     if (!numero) throw new ErroApi(400, 'Informe o nº da folha de campo como está no alto dela (ex.: FC-2026-00042).')
     const { pdf, ordemServico } = repo.reimprimirFolhaCampo(numero)
-    req.detalheAuditoria = `reimprimiu ${numero}`
+    // O registro guarda qual folha foi reimpressa (a rota diz que é reimpressão)
+    req.detalheAuditoria = numero
     return enviarPdf(reply, pdf, nomeArquivoDaFolha(ordemServico, numero), numero)
   })
 }

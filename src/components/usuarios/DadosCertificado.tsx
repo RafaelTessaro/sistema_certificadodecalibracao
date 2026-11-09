@@ -102,8 +102,8 @@ export function DadosCertificado({
           ligado={valor.tecnico}
           aoMudar={(tecnico) => aoMudar({ tecnico })}
         >
-          Aparece na lista “Técnico que executou” da calibração e na folha de campo. O nome sai no certificado em “Executado
-          por”. Desmarque para quem só digita ou emite, sem ir a campo.
+          Aparece na lista “Técnico que executou” da calibração e na folha de campo. O nome sai no certificado em “Executado por”.
+          Desmarque para quem só digita ou emite, sem ir a campo.
         </Marca>
         <Marca
           icone={<PenLine className="h-4 w-4" />}
@@ -111,9 +111,9 @@ export function DadosCertificado({
           ligado={valor.signatario}
           aoMudar={(signatario) => aoMudar({ signatario })}
         >
-          Com a revisão por outra pessoa ligada (Configurações), só um signatário autoriza, e o nome dele sai em “Autorizado
-          por”; desligada, qualquer pessoa emite e só quem executou assina. Marque só quem tem conhecimento técnico para
-          responder pelos resultados, como o responsável técnico.
+          Com a revisão por outra pessoa ligada (Configurações), só um signatário autoriza, e o nome dele sai em “Autorizado por”;
+          desligada, qualquer pessoa emite e só quem executou assina. Marque só quem tem conhecimento técnico para responder pelos
+          resultados, como o responsável técnico.
         </Marca>
       </div>
 
@@ -161,7 +161,9 @@ function Marca({
       className={cn(
         'flex cursor-pointer items-start gap-3 rounded-xl border px-3.5 py-3 transition-[border-color,background-color,box-shadow] duration-150',
         'has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-[var(--ring)]',
-        ligado ? 'border-brand bg-brand-soft/50 ring-4 ring-[var(--ring)]/40' : 'border-line-strong/80 bg-surface hover:border-line-strong',
+        ligado
+          ? 'border-brand bg-brand-soft/50 ring-4 ring-[var(--ring)]/40'
+          : 'border-line-strong/80 bg-surface hover:border-line-strong',
       )}
     >
       <span
@@ -179,7 +181,10 @@ function Marca({
       <input type="checkbox" role="switch" checked={ligado} onChange={(e) => aoMudar(e.target.checked)} className="sr-only" />
       <span
         aria-hidden="true"
-        className={cn('relative mt-1 h-5 w-9 shrink-0 rounded-full transition-colors duration-150', ligado ? 'bg-brand' : 'bg-line-strong')}
+        className={cn(
+          'relative mt-1 h-5 w-9 shrink-0 rounded-full transition-colors duration-150',
+          ligado ? 'bg-brand' : 'bg-line-strong',
+        )}
       >
         <span
           className={cn(
