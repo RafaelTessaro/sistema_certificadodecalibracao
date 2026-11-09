@@ -98,6 +98,17 @@ export function planoConformeAoPop<
 }
 
 /**
+ * Os padrões de uma calibração nova copiados de uma anterior (`ids`): os que continuam ativos (`ativos`, o cadastro de
+ * hoje) e, se ela não tinha barômetro (a pressão era opcional nas classes III e IIII e sem classe até a 1.0.5), os
+ * barômetros ativos: a pressão é obrigatória em toda calibração (POP 7.5).
+ */
+export function padroesDoHistorico(ids: string[], ativos: Pick<Padrao, 'id' | 'tipo'>[]): string[] {
+  const continuam = ids.filter((id) => ativos.some((p) => p.id === id))
+  const barometros = ativos.filter((p) => p.tipo === 'BAROMETRO').map((p) => p.id)
+  return barometros.some((id) => continuam.includes(id)) ? continuam : [...continuam, ...barometros]
+}
+
+/**
  * Os dados de entrada de uma calibração, com as cargas e leituras na unidade atual da balança, para
  * servirem de base a outra (nova calibração, calibrar de novo, revisão). O certificado emitido guarda os
  * números na unidade da balança no dia da emissão (a da cópia congelada); se o cadastro mudou de unidade
@@ -133,9 +144,10 @@ export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, 
   const ativos = repo.listarPadroes()
   const hoje = hojeLocalIso(repo.agora())
   const data = typeof pedido.dataCalibracao === 'string' && pedido.dataCalibracao ? pedido.dataCalibracao : hoje
-  // Sem histórico, os da classe da balança (fora da classe I, sem o jogo de classe pior que a mínima para ela)
+  // Sem histórico, os da classe da balança (fora da classe I, sem o jogo de classe pior que a mínima para ela); com ele,
+  // os da última que continuam ativos, com o barômetro (`padroesDoHistorico`)
   const padroesIds = ultima
-    ? ultima.padroesIds.filter((id) => ativos.some((p) => p.id === id))
+    ? padroesDoHistorico(ultima.padroesIds, ativos)
     : padroesSemHistorico(ativos, balanca ?? null).map((p) => p.id)
   // Da última calibração, o plano (sem as leituras), com o método da excentricidade da classe e sem o modo de serviço,
   // e só com as peças dos padrões que continuam

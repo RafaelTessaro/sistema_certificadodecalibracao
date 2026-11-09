@@ -37,6 +37,7 @@ import { ErroApi } from '../erros.ts'
 import {
   comPecasDosPadroes,
   naUnidadeAtual as naUnidadeAtualDe,
+  padroesDoHistorico,
   planoConformeAoPop,
   rascunhoInicial,
   semLeituras,
@@ -312,7 +313,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     const clienteId = balanca?.clienteId || anterior.clienteId
     const cliente = repo.obterCliente(clienteId)
     const ativos = repo.listarPadroes()
-    const padroesIds = anterior.padroesIds.filter((id) => ativos.some((p) => p.id === id))
+    // Os que continuam ativos, com o barômetro (a pressão é obrigatória em toda calibração, POP 7.5)
+    const padroesIds = padroesDoHistorico(anterior.padroesIds, ativos)
     const entrada = naUnidadeAtual(anterior)
     // Só com as peças dos padrões que continuam (o jogo desativado depois do certificado sai dos pontos)
     const plano = comPecasDosPadroes(

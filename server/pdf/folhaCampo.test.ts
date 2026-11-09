@@ -414,19 +414,22 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     expect(jsonDe(folhaClasseI())).toContain('"Zero antes"')
   })
 
-  it('classe II: pressão obrigatória e o barômetro na lista dos padrões; sem o ΔT pesos − ar (só na classe I)', () => {
+  it('pressão obrigatória em toda classe (POP 7.5) e o barômetro na lista dos padrões; sem o ΔT pesos − ar (só na classe I)', () => {
     const d = folhaRodoviaria()
-    const classeII = jsonDe({ ...d, balanca: { ...d.balanca!, classe: 'II' } })
-    expect(classeII).toContain('{"text":"Pressão ●"},{"text":" (hPa)"')
-    expect(classeII).not.toContain('Pressão, opcional')
-    expect(classeII).not.toContain('ΔT pesos')
-    // Na classe III: pressão opcional
-    const classeIII = jsonDe(d)
-    expect(classeIII).toContain('{"text":"Pressão, opcional"},{"text":" (hPa)"')
-    // O barômetro vai a campo na classe II (na lista "antes de sair"); na III, na linha dos que o plano não usa
-    const naoUsa = (t: string) => t.slice(t.indexOf('o plano não usa'), t.indexOf('o plano não usa') + 120)
-    expect(naoUsa(classeIII)).toContain('BR-01')
-    expect(classeII).not.toContain('o plano não usa')
+    for (const classe of ['II', 'III', 'IIII', ''] as const) {
+      const t = jsonDe({ ...d, balanca: { ...d.balanca!, classe } })
+      expect(t, classe).toContain('{"text":"Pressão ●"},{"text":" (hPa)"')
+      expect(t, classe).not.toMatch(/Pressão, opcional|obrigatória na classe/)
+      expect(t, classe).not.toContain('ΔT pesos')
+      // O barômetro vai a campo (na lista "antes de sair"), nunca na linha dos que o plano não usa
+      expect(t, classe).not.toContain('o plano não usa')
+      expect(t, classe).toContain('previsto: TH-01, BR-01')
+    }
+    // Também na folha em branco e na do cliente
+    for (const x of [folhaEmBranco(), folhaDoClienteComOs()]) {
+      expect(jsonDe(x)).toContain('{"text":"Pressão ●"},{"text":" (hPa)"')
+      expect(jsonDe(x)).not.toMatch(/Pressão, opcional|obrigatória na classe/)
+    }
   })
 
   it('classe I: a linha Início do ambiente é "logo antes do 1º ensaio"; nas outras classes e em branco, "15 min após chegar"', () => {
@@ -495,8 +498,9 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
       expect(t).not.toContain('não use a folha em branco')
       expect(t).not.toMatch(/classe[\s\u00a0]I(?![I\w])|uma peça só/)
       expect(t).not.toContain('{"text":"I","fontSize"')
-      // A pressão: obrigatória na classe II (na classe I também, mas ela não usa esta folha), embaixo do título da coluna
-      expect(t).toContain('{"text":"obrigatória na classe\u00a0II","fontSize":6.6')
+      // A pressão: obrigatória em toda classe (POP 7.5), com o ● no título da coluna (sem a dica da classe II)
+      expect(t).toContain('{"text":"Pressão ●"},{"text":" (hPa)"')
+      expect(t).not.toContain('obrigatória na classe')
       // Excentricidade pelo método 1, sem a linha do zero antes de cada posição
       expect(t).toContain(`"${METODO_EXCENTRICIDADE_FOLHA.demais}"`)
       // Repetibilidade: quantas vezes nos nº em cima das caixas (5; 3 com 100 kg ou mais); as outras, opcionais (com 10,
@@ -590,8 +594,9 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
       })[0],
     )
     expect(barraBranco).not.toContain('Cargas: ')
+    // As cargas em que o EMA muda, só quando o cliente pedir declaração de conformidade (POP 7.7)
     expect(JSON.stringify(branco.content)).toContain(
-      '" e em 5000e e 20\u00a0000e (classe II), 500e e 2000e (III) ou 50e e 200e (IIII). Zere vazia, aplique as cargas e anote a indicação estável."',
+      '"; quando o cliente pedir declaração de conformidade, também 5000e e 20\u00a0000e (classe II), 500e e 2000e (III) ou 50e e 200e (IIII). Zere vazia, aplique as cargas e anote a indicação estável."',
     )
   })
 
@@ -1204,9 +1209,10 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
       /Classe I: cadastre a balança Classe II III IIII não marcada Faixas única multi-intervalo múltiplas e imprima a folha dela/,
     )
     expect(t).toContain('prato redondo')
-    // As cargas em que o EMA muda nas classes da folha em branco (POP 7.7 e Tabela 2: II, III e IIII), sem dizer "EMA"
+    // As cargas em que o EMA muda nas classes da folha em branco (POP 7.7 e Tabela 2: II, III e IIII), só quando o
+    // cliente pedir declaração de conformidade, sem dizer "EMA"
     expect(t).toContain(
-      '0, Min (se marcada), 25, 50, 75 e 100 % de Max e em 5000e e 20 000e (classe II), 500e e 2000e (III) ou 50e e 200e (IIII). Zere vazia, aplique as cargas e anote a indicação estável.',
+      '0, Min (se marcada), 25, 50, 75 e 100 % de Max; quando o cliente pedir declaração de conformidade, também 5000e e 20 000e (classe II), 500e e 2000e (III) ou 50e e 200e (IIII). Zere vazia, aplique as cargas e anote a indicação estável.',
     )
     // Sem o EMA: a coluna e a caixa que o explicavam saíram da folha
     expect(t).not.toMatch(/\bEMA\b/)
@@ -1346,15 +1352,16 @@ describe.runIf(temPdftotext)(
       expect(m.paginas).toBe(2)
       const paginas = paginasDe(textoDoPdf(m.pdf))
       const p1 = corrido(paginas[0])
-      expect(p1).toContain('Também previstos no sistema, mas o plano não usa: BR-01 · JP-05 · PP500-01 a 20.')
+      expect(p1).toContain('Também previstos no sistema, mas o plano não usa: JP-05 · PP500-01 a 20.')
       // Levou algum? Em Anotações (a lista do passo 1 não tem linha em branco: é a dos cadastrados)
       expect(p1).toContain('Levou algum? Anote em Anotações (no fim da folha).')
       expect(p1).not.toContain('linha em branco')
-      // Nas linhas da tabela, só os que vão a campo: o jogo de pesos, os 20 kg e o termo-higrômetro
-      for (const x of ['JP-01', 'PP20-01 a 15', 'TH-01', 'levar']) expect(p1).toContain(x)
-      for (const x of ['Pesos padrão de 500 kg', 'Barômetro', 'Pesos padrão de 5 kg e 10 kg']) expect(p1).not.toContain(x)
-      // O instrumento do ambiente previsto é o termo-higrômetro (o barômetro é opcional)
-      expect(corrido(paginas.join(' '))).toMatch(/previsto: TH-01(?!, BR-01)/)
+      // Nas linhas da tabela, só os que vão a campo: o jogo de pesos, os 20 kg, o termo-higrômetro e o barômetro (a
+      // pressão é obrigatória em toda classe, POP 7.5)
+      for (const x of ['JP-01', 'PP20-01 a 15', 'TH-01', 'BR-01', 'Barômetro', 'levar']) expect(p1).toContain(x)
+      for (const x of ['Pesos padrão de 500 kg', 'Pesos padrão de 5 kg e 10 kg']) expect(p1).not.toContain(x)
+      // Os instrumentos do ambiente previstos: o barômetro e o termo-higrômetro (na ordem da lista do sistema)
+      expect(corrido(paginas.join(' '))).toContain('previsto: BR-01, TH-01')
       // A última página não fica só com as assinaturas
       expect(corrido(paginas[1])).toMatch(/7 EXCENTRICIDADE .*8 ASSINATURAS/)
     })
@@ -1958,8 +1965,9 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     const escrever = (l: unknown[]) => l.every((c) => (c as { fillColor?: string }).fillColor === '#FFFFFF')
     // Listados: cada linha é um padrão cadastrado (nenhuma toda em branco)
     for (const [d, titulo, n] of [
-      [folhaPlataforma(), 'Separar (peças previstas)', 3],
-      [folhaMultiIntervalo(), 'Separar (peças previstas)', 3],
+      // (com o barômetro: a pressão é obrigatória em toda classe)
+      [folhaPlataforma(), 'Separar (peças previstas)', 4],
+      [folhaMultiIntervalo(), 'Separar (peças previstas)', 4],
       [folhaClasseI(), 'Separar (peças previstas)', 4],
       [folhaEmBranco(), 'Peças usadas', 5],
       [folhaEmBrancoOitoPadroes(), 'Peças usadas', 8],
@@ -2753,12 +2761,14 @@ describe.runIf(temPdftotext)(
       })
       expect(faixas[1][4]).toMatchObject({ rowSpan: 3 })
       expect(vazia(faixas[1][4])).toBe(true)
-      // O ambiente: o instrumento previsto, quando a pressão é obrigatória e o ΔT no cabeçalho; as linhas livres
+      // O ambiente: o instrumento previsto e o ΔT no cabeçalho (a pressão, obrigatória em toda classe, com o ●); as
+      // linhas livres
       for (const d of [folhaPlataforma(), folhaClasseI(), folhaEmBranco()]) {
         const [ambiente] = tabelas(d, 'Instrumento usado')
         const cabecalho = JSON.stringify(ambiente[0])
-        if (d.balanca) expect(cabecalho).toContain('previsto: TH-01')
-        else expect(cabecalho).toContain('obrigatória na classe')
+        if (d.balanca) expect(cabecalho).toContain('previsto: TH-01, BR-01')
+        expect(cabecalho).toContain('Pressão\u2002●')
+        expect(cabecalho).not.toContain('obrigatória na classe')
         if (d.balanca?.classe === 'I') expect(cabecalho).toMatch(/antes[\s\u00a0]do[\s\u00a0]1º[\s\u00a0]ensaio/)
         for (const linha of ambiente.slice(1))
           for (const c of linha.slice(1)) expect(vazia(c) || c.fillColor !== '#FFFFFF', JSON.stringify(c)).toBe(true)

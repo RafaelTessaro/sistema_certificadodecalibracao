@@ -163,7 +163,10 @@ describe('requisitos por classe (POP Tabela 2 e 7.4)', () => {
     const nova = { opcoes: OPCOES_CALCULO_PADRAO }
     for (const classe of ['I', 'II', 'III', 'IIII', ''] as const) expect(pressaoComoAviso(nova, classe), classe).toBe(false)
     // Medida (ou com a folha impressa) antes da 1.0.5, ou antes das regras do POP: aviso, menos nas classes I e II
-    for (const k of [{ ...nova, pressaoComoAviso: true }, { ...nova, minimosComoAviso: true }]) {
+    for (const k of [
+      { ...nova, pressaoComoAviso: true },
+      { ...nova, minimosComoAviso: true },
+    ]) {
       expect(['III', 'IIII', ''].map((c) => pressaoComoAviso(k, c as 'III'))).toEqual([true, true, true])
       expect(pressaoComoAviso(k, null)).toBe(true)
       expect([pressaoComoAviso(k, 'I'), pressaoComoAviso(k, 'II')]).toEqual([false, false])

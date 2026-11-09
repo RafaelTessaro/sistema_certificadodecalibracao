@@ -2559,7 +2559,11 @@ describe('sem a finalidade de uso e as dimensões, com a inscrição estadual do
         () => semPressaoDa105(exemploPlataforma300kg()),
         '1a0fdbd09a324d6765873652d3b74708f39ba04c4fbde2cb9461a6c3130e0519',
       ],
-      ['bancada 30 kg', () => semPressaoDa105(exemploBancada()), '41544747568ffaacef729ae6b11e3e09023fdaf0c8eb05ad2553ec1066593dfe'],
+      [
+        'bancada 30 kg',
+        () => semPressaoDa105(exemploBancada()),
+        '41544747568ffaacef729ae6b11e3e09023fdaf0c8eb05ad2553ec1066593dfe',
+      ],
       ['classe I 220 g', exemploClasseI220g, 'a5f95e3bdc6d8da64f4ca17b6e464b6ee8372c9aa729ff5bc0d78ab8e79d7fe2'],
       [
         'balança 32 kg',

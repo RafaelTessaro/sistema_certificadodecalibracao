@@ -9,7 +9,7 @@ import { calcularCalibracao } from '#shared/calibracao.ts'
 import { AVISO_SEM_PRESSAO, BALANCA_VAZIA } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Padrao } from '#shared/tipos.ts'
 import { cenarioCalibracao, criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
-import { planoConformeAoPop } from './rascunhos.ts'
+import { padroesDoHistorico, planoConformeAoPop } from './rascunhos.ts'
 
 let t: AppComLogin
 let c: Awaited<ReturnType<typeof cenarioCalibracao>>
@@ -217,6 +217,47 @@ describe('mínimos do POP bloqueiam a emissão', () => {
     // Apagada a pressão na revisão dela: pendência
     const semPressao = await salvar(comPressao, (k) => ({ ...k, ambiente: { ...k.ambiente, pressao: null } }))
     expect(semPressao.pendencias.map(sem)).toEqual(['Registre a pressão atmosférica medida com o BR-90 (POP 7.5).'])
+  })
+
+  it('declaração de conformidade pedida sem as cargas em que o EMA muda: o aviso diz quais faltam, sem impedir a emissão', async () => {
+    const pronta = await c.calibracaoPronta()
+    // 30 kg × 10 g, classe III: o EMA muda em 5 kg (500e) e em 20 kg (2000e); os pontos têm as duas
+    const pedida = await salvar(pronta, (k) => ({ ...k, conformidade: { ...k.conformidade, solicitada: true } }))
+    expect((await detalhe(pedida.calibracao)).avisos).toEqual([])
+    // Os pontos de uma folha impressa sem a conformidade (sem 5 kg e sem 20 kg, com 15 kg e 25 kg no lugar)
+    const semEla = await salvar(pedida.calibracao, (k) => ({
+      ...k,
+      indicacao: {
+        ...k.indicacao,
+        pontos: k.indicacao.pontos.map((p) =>
+          p.carga === 5 || p.carga === 20 ? { ...p, carga: p.carga + 5, crescente: p.carga + 5, decrescente: p.carga + 5 } : p,
+        ),
+      },
+    }))
+    const aviso =
+      'Declaração de conformidade pedida: o POP (7.7) pede também as cargas em que o EMA muda, e faltam 5 kg e 20 kg no erro de indicação.'
+    expect((await detalhe(semEla.calibracao)).avisos.map(sem)).toEqual([aviso])
+    expect(semEla.pendencias.map(sem)).not.toContain(aviso)
+    // Sem o pedido, nada
+    const semPedido = await salvar(semEla.calibracao, (k) => ({ ...k, conformidade: { ...k.conformidade, solicitada: false } }))
+    expect((await detalhe(semPedido.calibracao)).avisos).toEqual([])
+  })
+
+  it('calibração nova e "calibrar de novo" de um certificado sem o barômetro: o barômetro ativo entra (a pressão é obrigatória)', async () => {
+    const r = await c.emitir(await c.calibracaoPronta())
+    expect(r.statusCode, r.body).toBe(200)
+    const emitida = r.json().calibracao as Calibracao
+    const br = await c.barometro()
+    // Gravado como a 1.0.4 emitia na classe III: sem a pressão e sem o barômetro
+    const daEpoca: Calibracao = { ...emitida, padroesIds: [c.pesos.id], ambiente: { ...emitida.ambiente, pressao: null } }
+    t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(daEpoca), emitida.id)
+    const nova = await c.criar('/api/calibracoes', { clienteId: c.cliente.id, balancaId: c.balanca.id })
+    expect(nova.calibracao.padroesIds).toEqual([c.pesos.id, br.id])
+    const denovo = await c.criar(`/api/calibracoes/${emitida.id}/recalibrar`, {})
+    expect(denovo.calibracao.padroesIds).toEqual([c.pesos.id, br.id])
+    // Com o barômetro no certificado, só os dele (nada repetido); desativado, nenhum
+    expect(padroesDoHistorico([c.pesos.id, br.id], [c.pesos, br])).toEqual([c.pesos.id, br.id])
+    expect(padroesDoHistorico([c.pesos.id], [c.pesos])).toEqual([c.pesos.id])
   })
 
   it('passada para "crescente e decrescente" depois das leituras ("Usar o método do POP"): a descida que falta impede a emissão, mesmo medida antes das regras', async () => {
