@@ -12,8 +12,8 @@ import { EscolhaNivel } from './EscolhaNivel'
 import { SenhaInicial, type ModoSenha } from './SenhaInicial'
 
 /**
- * Cadastro de um usuário: nome, login (escolhido, nada é sugerido pelo nome), nível, os dados que saem
- * no certificado (cargo, registro, signatário e assinatura) e a senha inicial (temporária).
+ * Cadastro de um usuário: nome, login (escolhido, nada é sugerido pelo nome), nível, as marcas de técnico e de
+ * signatário, os dados que saem no certificado (cargo, registro e assinatura) e a senha inicial (temporária).
  */
 export function NovoUsuarioModal({
   aberto,
@@ -62,7 +62,9 @@ function FormNovoUsuario({
   const [nome, setNome] = useState('')
   const [login, setLogin] = useState('')
   const [nivel, setNivel] = useState<NivelUsuario>('COMUM')
+  // Técnico já marcado (como todos ficaram na atualização); o administrador desmarca quem não vai a campo
   const [certificado, setCertificado] = useState<DadosNoCertificado>({
+    tecnico: true,
     signatario: false,
     cargo: '',
     registro: '',

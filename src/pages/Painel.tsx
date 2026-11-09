@@ -5,8 +5,8 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { diasEntre } from '#shared/dominio.ts'
 import type { CalibracaoResumo } from '#shared/tipos.ts'
-import { rotaCalibracao } from '../components/CertificadosTabela'
-import { StatusCalibracaoBadge, ValidadePadraoBadge } from '../components/Selos'
+import { rotaCalibracao, SituacaoDaCalibracao } from '../components/CertificadosTabela'
+import { ValidadePadraoBadge } from '../components/Selos'
 import { Card, CardHeader } from '../components/ui/Card'
 import { PageHeader, StatCard } from '../components/ui/Misc'
 import { api } from '../lib/api'
@@ -70,7 +70,7 @@ export function Painel() {
           valor={p?.rascunhos ?? 0}
           formatar={(v) => numero(Math.round(v))}
           icone={<FilePen className="h-4 w-4" />}
-          detalhe="Rascunhos e aguardando revisão"
+          detalhe="Rascunhos e aguardando autorização"
           delay={0.08}
         />
         <StatCard
@@ -287,7 +287,7 @@ function ListaCalibracoes({
                   </p>
                 </div>
                 <span className="max-sm:hidden">
-                  <StatusCalibracaoBadge status={k.status} />
+                  <SituacaoDaCalibracao k={k} className="items-end" />
                 </span>
               </Link>
             </motion.li>

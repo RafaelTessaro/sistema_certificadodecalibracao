@@ -1,13 +1,15 @@
-import { FileBadge2, ImageUp, Loader2, PenLine, Signature, Trash2, TriangleAlert } from 'lucide-react'
+import { FileBadge2, ImageUp, Loader2, PenLine, Signature, Trash2, TriangleAlert, Wrench } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useRef, useState, type DragEvent } from 'react'
+import { useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
 import { Field, Input } from '../ui/Form'
 import { prepararAssinatura } from './assinatura'
 
-/** O que sai no certificado sobre a pessoa (cadastro e edição do usuário). */
+/** Quem executa e quem autoriza, e o que sai no certificado sobre a pessoa (cadastro e edição do usuário). */
 export interface DadosNoCertificado {
+  /** Executa calibrações: aparece em "Técnico que executou". */
+  tecnico: boolean
   signatario: boolean
   cargo: string
   registro: string
@@ -25,8 +27,8 @@ const SUGESTOES_CARGO = [
 ]
 
 /**
- * Bloco "No certificado" dos formulários de usuário: cargo, registro profissional, a marcação de
- * signatário (quem pode autorizar a emissão) e a assinatura digitalizada.
+ * Bloco "No certificado" dos formulários de usuário: cargo, registro profissional, as marcas de técnico (quem executa
+ * as calibrações) e de signatário (quem autoriza a emissão), à parte do nível, e a assinatura digitalizada.
  */
 export function DadosCertificado({
   valor,
@@ -41,7 +43,7 @@ export function DadosCertificado({
   /** Prefixo dos ids dos campos (dois formulários podem existir na página). */
   prefixo: string
 }) {
-  const semCargo = valor.signatario && !valor.cargo.trim()
+  const semCargo = (valor.signatario || valor.tecnico) && !valor.cargo.trim()
   return (
     <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface-2/40 p-4">
       <header className="flex items-start gap-3">
@@ -50,7 +52,9 @@ export function DadosCertificado({
         </span>
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-ink">No certificado</h3>
-          <p className="text-[13px] text-muted">Como a pessoa aparece nos certificados que fizer ou autorizar.</p>
+          <p className="text-[13px] text-muted">
+            Se executa calibrações, se autoriza certificados e como aparece neles. Vale em qualquer nível.
+          </p>
         </div>
       </header>
 
@@ -91,53 +95,27 @@ export function DadosCertificado({
         </Field>
       </div>
 
-      <label
-        className={cn(
-          'flex cursor-pointer items-start gap-3 rounded-xl border px-3.5 py-3 transition-[border-color,background-color,box-shadow] duration-150',
-          'has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-[var(--ring)]',
-          valor.signatario
-            ? 'border-brand bg-brand-soft/50 ring-4 ring-[var(--ring)]/40'
-            : 'border-line-strong/80 bg-surface hover:border-line-strong',
-        )}
-      >
-        <span
-          className={cn(
-            'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors',
-            valor.signatario ? 'bg-brand text-on-brand' : 'bg-surface-2 text-ink-2',
-          )}
+      <div className="grid gap-2">
+        <Marca
+          icone={<Wrench className="h-4 w-4" />}
+          titulo="Técnico: executa calibrações"
+          ligado={valor.tecnico}
+          aoMudar={(tecnico) => aoMudar({ tecnico })}
         >
-          <PenLine className="h-4 w-4" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm font-semibold text-ink">Signatário: pode autorizar a emissão de certificados</span>
-          <span className="mt-0.5 block text-[12.5px] leading-snug text-ink-2">
-            O signatário revisa a calibração e emite o certificado. Com a revisão por outra pessoa ligada (Configurações), o nome
-            dele sai em “Autorizado por”; desligada, só quem executou assina. Marque só quem tem conhecimento técnico para
-            responder pelos resultados, como o responsável técnico.
-          </span>
-        </span>
-        <input
-          type="checkbox"
-          role="switch"
-          checked={valor.signatario}
-          onChange={(e) => aoMudar({ signatario: e.target.checked })}
-          className="sr-only"
-        />
-        <span
-          aria-hidden="true"
-          className={cn(
-            'relative mt-1 h-5 w-9 shrink-0 rounded-full transition-colors duration-150',
-            valor.signatario ? 'bg-brand' : 'bg-line-strong',
-          )}
+          Aparece na lista “Técnico que executou” da calibração e na folha de campo. O nome sai no certificado em “Executado
+          por”. Desmarque para quem só digita ou emite, sem ir a campo.
+        </Marca>
+        <Marca
+          icone={<PenLine className="h-4 w-4" />}
+          titulo="Signatário: autoriza a emissão de certificados"
+          ligado={valor.signatario}
+          aoMudar={(signatario) => aoMudar({ signatario })}
         >
-          <span
-            className={cn(
-              'absolute top-0.5 left-0.5 h-4 w-4 rounded-full shadow-xs transition-[transform,background-color] duration-150',
-              valor.signatario ? 'translate-x-4 bg-on-brand' : 'bg-surface dark:bg-muted',
-            )}
-          />
-        </span>
-      </label>
+          Com a revisão por outra pessoa ligada (Configurações), só um signatário autoriza, e o nome dele sai em “Autorizado
+          por”; desligada, qualquer pessoa emite e só quem executou assina. Marque só quem tem conhecimento técnico para
+          responder pelos resultados, como o responsável técnico.
+        </Marca>
+      </div>
 
       <AnimatePresence initial={false}>
         {semCargo && (
@@ -161,6 +139,56 @@ export function DadosCertificado({
         registro={valor.registro}
       />
     </section>
+  )
+}
+
+/** Uma marca da pessoa (técnico, signatário): o cartão inteiro liga e desliga o interruptor. */
+function Marca({
+  icone,
+  titulo,
+  ligado,
+  aoMudar,
+  children,
+}: {
+  icone: ReactNode
+  titulo: string
+  ligado: boolean
+  aoMudar: (v: boolean) => void
+  children: ReactNode
+}) {
+  return (
+    <label
+      className={cn(
+        'flex cursor-pointer items-start gap-3 rounded-xl border px-3.5 py-3 transition-[border-color,background-color,box-shadow] duration-150',
+        'has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-[var(--ring)]',
+        ligado ? 'border-brand bg-brand-soft/50 ring-4 ring-[var(--ring)]/40' : 'border-line-strong/80 bg-surface hover:border-line-strong',
+      )}
+    >
+      <span
+        className={cn(
+          'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors',
+          ligado ? 'bg-brand text-on-brand' : 'bg-surface-2 text-ink-2',
+        )}
+      >
+        {icone}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold text-ink">{titulo}</span>
+        <span className="mt-0.5 block text-[12.5px] leading-snug text-ink-2">{children}</span>
+      </span>
+      <input type="checkbox" role="switch" checked={ligado} onChange={(e) => aoMudar(e.target.checked)} className="sr-only" />
+      <span
+        aria-hidden="true"
+        className={cn('relative mt-1 h-5 w-9 shrink-0 rounded-full transition-colors duration-150', ligado ? 'bg-brand' : 'bg-line-strong')}
+      >
+        <span
+          className={cn(
+            'absolute top-0.5 left-0.5 h-4 w-4 rounded-full shadow-xs transition-[transform,background-color] duration-150',
+            ligado ? 'translate-x-4 bg-on-brand' : 'bg-surface dark:bg-muted',
+          )}
+        />
+      </span>
+    </label>
   )
 }
 

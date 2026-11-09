@@ -1,118 +1,206 @@
-// Etapa "Revisão e emissão" com a revisão por outra pessoa ligada: o signatário que executou, ou que indicou o técnico
-// (também a troca ainda não gravada), vê "Enviar para revisão" no lugar de "Emitir", como o servidor decide.
-// Desenhado no servidor (sem DOM), como as outras telas testadas.
+// Etapa "Revisão e emissão": com a revisão por outra pessoa desligada, qualquer pessoa emite; ligada, quem não pode
+// autorizar escolhe o signatário e envia, o signatário escolhido autoriza ou devolve, e os outros aguardam, como o
+// servidor decide (shared/permissoes.ts). Desenhado no servidor (sem DOM), como as outras telas testadas.
 
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { calibracaoVazia, CONFIG_PADRAO } from '#shared/dominio.ts'
-import type { Balanca, CalibracaoInput } from '#shared/tipos.ts'
+import type { Balanca, Calibracao, CalibracaoInput, PedidoAutorizacao } from '#shared/tipos.ts'
+import type { MembroEquipe } from '../../lib/api'
 import type { ContextoEtapa } from './contexto'
 
-// Quem está usando: a signatária Ana
-vi.mock('../../store/sessao', () => {
-  const estado = { usuario: { id: 'ana', nome: 'Ana Signatária', signatario: true } }
-  return { useSessao: (seletor: (s: typeof estado) => unknown) => seletor(estado) }
-})
+// Quem está usando (cada teste escolhe)
+const sessao = vi.hoisted(() => ({ usuario: { id: 'ana', nome: 'Ana Signatária', signatario: true } }))
+vi.mock('../../store/sessao', () => ({
+  useSessao: (seletor: (s: typeof sessao) => unknown) => seletor(sessao),
+}))
 
 const { EtapaRevisao } = await import('./EtapaRevisao')
 
-const equipe = [
-  { id: 'ana', nome: 'Ana Signatária', cargo: '', signatario: true },
-  { id: 'bia', nome: 'Bia Técnica', cargo: '', signatario: false },
-]
+const membro = (id: string, nome: string, tecnico: boolean, signatario: boolean): MembroEquipe => ({
+  id,
+  nome,
+  cargo: '',
+  tecnico,
+  signatario,
+  temAssinatura: false,
+})
+const ANA = membro('ana', 'Ana Signatária', true, true)
+const BIA = membro('bia', 'Bia Técnica', true, false)
+const CAIO = membro('caio', 'Caio Signatário', false, true)
+const EQUIPE = [ANA, BIA, CAIO]
+
+const usando = (u: MembroEquipe) => {
+  sessao.usuario = { id: u.id, nome: u.nome, signatario: u.signatario }
+}
+
+const pedidoPara = (u: MembroEquipe): PedidoAutorizacao => ({
+  signatarioId: u.id,
+  signatarioNome: u.nome,
+  porId: 'bia',
+  por: 'Bia Técnica',
+  em: '2026-11-09T13:30:00.000Z',
+})
 
 function etapa(
-  tecnicoId: string,
-  tecnicoGravado: { tecnicoId: string; tecnicoDefinidoPorId?: string },
-  exigirRevisor = true,
-  correcao: { substituiId: string; numeroRevisao: string | null } | null = null,
+  o: {
+    tecnicoId?: string
+    exigirRevisor?: boolean
+    gravada?: Partial<Pick<Calibracao, 'status' | 'autorizacao' | 'devolucao'>>
+    equipe?: MembroEquipe[]
+    correcao?: { substituiId: string; numeroRevisao: string | null }
+  } = {},
 ) {
-  const f: CalibracaoInput = { ...calibracaoVazia(), tecnicoId, substituiId: correcao?.substituiId ?? '' }
+  const f: CalibracaoInput = { ...calibracaoVazia(), tecnicoId: o.tecnicoId ?? 'bia', substituiId: o.correcao?.substituiId ?? '' }
   const ctx = {
     f,
     calc: null,
-    config: { ...CONFIG_PADRAO, exigirRevisor },
-    equipe,
-    status: 'RASCUNHO',
+    config: { ...CONFIG_PADRAO, exigirRevisor: o.exigirRevisor ?? true },
+    equipe: o.equipe ?? EQUIPE,
+    status: o.gravada?.status ?? 'RASCUNHO',
     balanca: { unidade: 'kg' } as Balanca,
   } as unknown as ContextoEtapa
   const t = renderToStaticMarkup(
     createElement(EtapaRevisao, {
       ctx,
-      tecnicoGravado,
-      numeroRevisao: correcao?.numeroRevisao ?? null,
+      gravada: { status: 'RASCUNHO', autorizacao: null, devolucao: null, ...o.gravada },
+      numeroRevisao: o.correcao?.numeroRevisao ?? null,
       pendencias: [],
       salvando: false,
       aoVisualizar: () => {},
-      aoEnviarRevisao: () => {},
+      aoPedirAutorizacao: () => {},
       aoVoltarRascunho: () => {},
+      aoDevolver: () => {},
       aoEmitir: () => {},
     }),
   )
   return t.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 }
 
-describe('emitir com a revisão por outra pessoa ligada', () => {
-  it('quem indicou outra pessoa como técnico envia para revisão, não emite', () => {
-    const t = etapa('bia', { tecnicoId: 'bia', tecnicoDefinidoPorId: 'ana' })
-    expect(t).toContain('Enviar para revisão')
-    expect(t).not.toContain('Emitir certificado')
-    expect(t).toContain('Você indicou o técnico desta calibração')
-  })
-
-  it('a troca do técnico ainda não gravada já conta como indicada por quem está usando', () => {
-    const t = etapa('bia', { tecnicoId: 'ana', tecnicoDefinidoPorId: 'ana' })
-    expect(t).toContain('Enviar para revisão')
-    expect(t).not.toContain('Emitir certificado')
-  })
-
-  it('o técnico que executou continua sem emitir', () => {
-    const t = etapa('ana', { tecnicoId: 'ana', tecnicoDefinidoPorId: 'ana' })
-    expect(t).toContain('Enviar para revisão')
-    expect(t).toContain('envie para revisão para outro signatário emitir')
-  })
-
-  it('o técnico indicado por outra pessoa: o signatário revisor emite', () => {
-    const t = etapa('bia', { tecnicoId: 'bia', tecnicoDefinidoPorId: 'bia' })
+describe('revisão por outra pessoa desligada: qualquer pessoa emite', () => {
+  it('quem não é signatário emite direto; só quem executou assina, e quem emite fica registrado', () => {
+    usando(BIA)
+    const t = etapa({ exigirRevisor: false, tecnicoId: 'ana' })
     expect(t).toContain('Emitir certificado')
-    expect(t).not.toContain('Enviar para revisão')
-    // Calibração de antes (sem quem indicou)
-    expect(etapa('bia', { tecnicoId: 'bia' })).toContain('Emitir certificado')
-  })
-
-  it('desligada, quem indicou o técnico emite', () => {
-    expect(etapa('bia', { tecnicoId: 'bia', tecnicoDefinidoPorId: 'ana' }, false)).toContain('Emitir certificado')
-  })
-})
-
-describe('quem assina, na prévia da emissão', () => {
-  it('desligada: só quem executou assina; quem emite aparece como "Emitido por"', () => {
-    const t = etapa('bia', { tecnicoId: 'bia', tecnicoDefinidoPorId: 'bia' }, false)
-    expect(t).toContain('Executado por Bia Técnica')
-    expect(t).toContain('Emitido por Ana Signatária')
+    expect(t).not.toContain('Enviar para autorização')
+    expect(t).not.toContain('Autorizar e emitir')
+    expect(t).toContain('Executado por Ana Signatária')
+    expect(t).toContain('Emitido por Bia Técnica')
     expect(t).not.toContain('Autorizado por')
     expect(t).toContain('O certificado sai só com a assinatura de quem executou.')
   })
 
-  it('ligada: as duas assinaturas, de quem executou e de quem autorizou', () => {
-    const t = etapa('bia', { tecnicoId: 'bia', tecnicoDefinidoPorId: 'bia' }, true)
-    expect(t).toContain('Executado por Bia Técnica')
-    expect(t).toContain('Autorizado por Ana Signatária')
+  it('o técnico emite a própria calibração', () => {
+    usando(BIA)
+    expect(etapa({ exigirRevisor: false, tecnicoId: 'bia' })).toContain('Emitir certificado')
+  })
+})
+
+describe('revisão por outra pessoa ligada: escolher quem autoriza', () => {
+  it('quem não é signatário escolhe entre os signatários (nunca o técnico) e envia', () => {
+    usando(BIA)
+    const t = etapa({ tecnicoId: 'bia' })
+    expect(t).toContain('Quem autoriza')
+    expect(t).toContain('Enviar para autorização')
+    expect(t).not.toContain('Autorizar e emitir')
+    expect(t).not.toContain('Emitir certificado')
+    // As opções: os dois signatários; a técnica não
+    expect(t).toContain('Ana Signatária')
+    expect(t).toContain('Caio Signatário')
     expect(t).toContain('O certificado sai com duas assinaturas: a de quem executou e a de quem autorizou.')
   })
 
-  it('correção: o mesmo nº do certificado corrigido, sem "-R"', () => {
-    const t = etapa('bia', { tecnicoId: 'bia', tecnicoDefinidoPorId: 'bia' }, false, {
-      substituiId: 'k1',
-      numeroRevisao: 'CC-2026-00002',
+  it('o signatário que não executou já vem escolhido e autoriza direto (faz tudo sozinho)', () => {
+    usando(ANA)
+    const t = etapa({ tecnicoId: 'bia' })
+    expect(t).toContain('Ana Signatária (você)')
+    expect(t).toContain('Autorizar e emitir')
+    expect(t).not.toContain('Enviar para autorização')
+    expect(t).toContain('Você autoriza como signatário')
+  })
+
+  it('o signatário que executou não se escolhe: envia para outro', () => {
+    usando(ANA)
+    const t = etapa({ tecnicoId: 'ana' })
+    expect(t).not.toContain('Ana Signatária (você)')
+    expect(t).toContain('Enviar para autorização')
+    expect(t).not.toContain('Autorizar e emitir')
+    // O único possível já vem escolhido
+    expect(t).toContain('Caio Signatário recebe o pedido, revisa e autoriza a emissão.')
+  })
+
+  it('sem outro signatário além do técnico, avisa que ninguém pode autorizar', () => {
+    usando(ANA)
+    const t = etapa({ tecnicoId: 'ana', equipe: [ANA, BIA] })
+    expect(t).toContain('Ninguém pode autorizar esta calibração')
+    expect(t).toContain('Nenhum signatário')
+  })
+
+  it('a devolvida mostra quem devolveu e a nota', () => {
+    usando(BIA)
+    const t = etapa({
+      gravada: { devolucao: { nota: 'Confira a temperatura do 2º ensaio.', porId: 'ana', por: 'Ana Signatária', em: '2026-11-09T14:00:00.000Z' } },
     })
+    expect(t).toMatch(/Devolvida por Ana Signatária em .+: Confira a temperatura do 2º ensaio\./)
+  })
+})
+
+describe('revisão por outra pessoa ligada: a enviada para autorização', () => {
+  it('o signatário escolhido autoriza ou devolve', () => {
+    usando(ANA)
+    const t = etapa({ gravada: { status: 'REVISAO', autorizacao: pedidoPara(ANA) } })
+    expect(t).toContain('Autorizar e emitir')
+    expect(t).toContain('Devolver')
+    expect(t).toContain('Bia Técnica pediu a sua autorização')
+    expect(t).toContain('Autorizado por Ana Signatária')
+    expect(t).not.toContain('Voltar para rascunho')
+  })
+
+  it('os outros aguardam o escolhido (ninguém autoriza no lugar dele) e podem voltar para rascunho', () => {
+    for (const u of [CAIO, BIA]) {
+      usando(u)
+      const t = etapa({ gravada: { status: 'REVISAO', autorizacao: pedidoPara(ANA) } })
+      expect(t).toContain('Aguardando a autorização de Ana Signatária (pedida por Bia Técnica em')
+      expect(t).toContain('Voltar para rascunho')
+      expect(t).not.toContain('Autorizar e emitir')
+      expect(t).not.toContain('Devolver')
+      expect(t).toContain('Autorizado por Ana Signatária')
+    }
+  })
+
+  it('o escolhido que passou a ser o técnico (troca na tela) não autoriza', () => {
+    usando(ANA)
+    const t = etapa({ tecnicoId: 'ana', gravada: { status: 'REVISAO', autorizacao: pedidoPara(ANA) } })
+    expect(t).not.toContain('Autorizar e emitir')
+    expect(t).toContain('O técnico que executou não autoriza o próprio certificado.')
+  })
+
+  it('a enviada para revisão antes da 1.0.5 (sem o pedido): qualquer signatário que não executou autoriza', () => {
+    usando(CAIO)
+    const t = etapa({ gravada: { status: 'REVISAO' } })
+    expect(t).toContain('Autorizar e emitir')
+    expect(t).toContain('Devolver')
+    expect(t).toContain('Enviada para revisão antes da atualização do sistema')
+    // Quem não pode autorizar escolhe um signatário (ou volta para rascunho)
+    usando(BIA)
+    const outra = etapa({ gravada: { status: 'REVISAO' } })
+    expect(outra).toContain('Enviar para autorização')
+    expect(outra).toContain('Voltar para rascunho')
+    expect(outra).not.toContain('Autorizar e emitir')
+  })
+})
+
+describe('o número na prévia da emissão', () => {
+  it('correção: o mesmo nº do certificado corrigido, sem "-R"', () => {
+    usando(ANA)
+    const t = etapa({ exigirRevisor: false, correcao: { substituiId: 'k1', numeroRevisao: 'CC-2026-00002' } })
     expect(t).toContain('CC-2026-00002 (o mesmo do certificado corrigido)')
     expect(t).not.toMatch(/-R\d/)
     expect(t).toContain(
       'A correção sai com o mesmo número e a data de emissão nova; a versão anterior e o motivo ficam só no sistema.',
     )
     // Sem correção: o exemplo do nº que a emissão dá, sem sufixo
-    expect(etapa('bia', { tecnicoId: 'bia' }, false)).toMatch(/Gerado na emissão \(ex\.: CC-\d{4}-00001\)/)
+    expect(etapa({ exigirRevisor: false })).toMatch(/Gerado na emissão \(ex\.: CC-\d{4}-00001\)/)
   })
 })

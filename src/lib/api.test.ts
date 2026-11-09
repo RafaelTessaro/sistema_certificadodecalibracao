@@ -129,6 +129,15 @@ describe('calibrações', () => {
     expect(api.urlFolhaCampoAvulsa()).not.toBe(branco)
     expect(api.urlFolhaCampoAvulsa({ balancaId: 'b 1' })).toMatch(/^\/api\/folha-campo\?balancaId=b\+1&chave=[0-9a-f-]{36}$/)
     expect(api.urlFolhaCampoAvulsa({ clienteId: 'c1' })).toMatch(/^\/api\/folha-campo\?clienteId=c1&chave=/)
+    // Do cliente com a OS e a data prevista; sem OS (ou só espaços), sem o parâmetro
+    expect(api.urlFolhaCampoAvulsa({ clienteId: 'c1', ordemServico: ' OS 2026/0777 ', data: '2026-11-12' })).toMatch(
+      /^\/api\/folha-campo\?clienteId=c1&os=OS\+2026%2F0777&data=2026-11-12&chave=[0-9a-f-]{36}$/,
+    )
+    expect(api.urlFolhaCampoAvulsa({ clienteId: 'c1', ordemServico: '  ', data: '' })).toMatch(
+      /^\/api\/folha-campo\?clienteId=c1&chave=/,
+    )
+    // Reimpressão pelo nº: o mesmo endereço sempre (nunca reserva nº)
+    expect(api.urlReimprimirFolha('FC-2026-00042')).toBe('/api/folha-campo/FC-2026-00042')
   })
 
   it('arquivo guardado: o link leva o nome da referência (o mesmo conteúdo pode ter outro nome em outro padrão)', () => {
@@ -140,18 +149,31 @@ describe('calibrações', () => {
     expect(api.urlAnexo({ ...ref, nome: '' })).toBe(`/api/arquivos/${sha}`)
   })
 
-  it('PDF para ver ou baixar; emitir com o signatário e a versão', async () => {
+  it('PDF para ver ou baixar; emitir com a versão (quem autoriza é quem emite)', async () => {
     expect(api.urlPdf('k/1')).toBe('/api/calibracoes/k%2F1/pdf')
     expect(api.urlPdf('k1', true)).toBe('/api/calibracoes/k1/pdf?baixar=1')
     const fetch = simularFetch(200, { calibracao: {} })
-    await api.emitir('k1', { signatarioId: 'u1', versao: 3 })
+    await api.emitir('k1', { versao: 3 })
     const [url, init] = fetch.mock.calls[0]
     expect(url).toBe('/api/calibracoes/k1/emitir')
     expect(init?.method).toBe('POST')
-    expect(JSON.parse(String(init?.body))).toEqual({ signatarioId: 'u1', versao: 3 })
+    expect(JSON.parse(String(init?.body))).toEqual({ versao: 3 })
     // Emitido, mas sem o PDF gravado na hora: o aviso chega para a tela mostrar
     simularFetch(200, { calibracao: { numero: 'CC-2026-00001' }, aviso: 'O PDF é gerado de novo ao abrir.' })
     expect(await api.emitir('k1', { versao: 4 })).toMatchObject({ aviso: 'O PDF é gerado de novo ao abrir.' })
+  })
+
+  it('pedido de autorização, devolução e volta para rascunho', async () => {
+    const fetch = simularFetch(200, { calibracao: {} })
+    await api.pedirAutorizacao('k1', 'fabio', 4)
+    await api.devolver('k1', 'Confira a temperatura', 5)
+    await api.voltarParaRascunho('k1', 6)
+    const chamadas = fetch.mock.calls.map(([url, init]) => [url, init?.method, JSON.parse(String(init?.body))])
+    expect(chamadas).toEqual([
+      ['/api/calibracoes/k1/autorizacao', 'POST', { signatarioId: 'fabio', versao: 4 }],
+      ['/api/calibracoes/k1/devolver', 'POST', { nota: 'Confira a temperatura', versao: 5 }],
+      ['/api/calibracoes/k1/situacao', 'POST', { status: 'RASCUNHO', versao: 6 }],
+    ])
   })
 
   it('a lista leva só os filtros informados', async () => {

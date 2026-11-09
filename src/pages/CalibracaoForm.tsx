@@ -37,6 +37,7 @@ import type {
 import { BalancaFormModal } from '../components/BalancaFormModal'
 import { recomporCargas } from '../components/calibracao/cargas'
 import type { ContextoEtapa, IdEtapa } from '../components/calibracao/contexto'
+import { DevolverModal } from '../components/calibracao/DevolverModal'
 import {
   balancaMudaRascunho,
   estadoDoServidor,
@@ -109,6 +110,16 @@ function NovaCalibracao() {
   useEffect(() => {
     if (balancaInicial && !clienteId) setClienteId(balancaInicial.balanca.clienteId)
   }, [balancaInicial, clienteId])
+
+  // Balança ainda não cadastrada: a folha do cliente, com a OS e a data informadas (a balança em branco). O nº dela é
+  // ligado à calibração depois da visita, e a OS vai junto
+  const imprimirFolhaDoCliente = () => {
+    void abrirFolhaCampo(api.urlFolhaCampoAvulsa({ clienteId, ordemServico: os, data }))
+    toast.sucesso(
+      'Folha de campo aberta em outra aba',
+      'Depois da visita, cadastre a balança, comece a calibração e informe o nº da folha (no alto dela).',
+    )
+  }
 
   /** Cria o rascunho; com `folha`, já abre a folha de campo dele numa aba nova (para levar à visita). */
   const comecar = async (folha: boolean) => {
@@ -231,7 +242,7 @@ function NovaCalibracao() {
               <span>A balança ainda não está cadastrada?</span>
               <button
                 type="button"
-                onClick={() => void abrirFolhaCampo(api.urlFolhaCampoAvulsa({ clienteId }))}
+                onClick={imprimirFolhaDoCliente}
                 className="inline-flex cursor-pointer items-center gap-1.5 self-start font-medium text-brand-ink hover:underline sm:self-auto"
               >
                 <Printer className="h-3.5 w-3.5" />
@@ -241,7 +252,8 @@ function NovaCalibracao() {
           )}
         </Card>
 
-        <Card className={cn(!balancaId && 'pointer-events-none opacity-50')}>
+        {/* A OS e a data já com o cliente: a folha do cliente com a balança em branco sai com elas */}
+        <Card className={cn(!clienteId && 'pointer-events-none opacity-50')}>
           <CardHeader icone={<ClipboardList className="h-4 w-4" />} titulo="3. Ordem de serviço e data" />
           <div className="grid grid-cols-1 gap-4 px-5 pb-5 sm:grid-cols-2">
             <Field
@@ -257,20 +269,29 @@ function NovaCalibracao() {
           </div>
           <div className="flex flex-col gap-3 border-t border-line px-5 py-4 sm:flex-row sm:items-center">
             <p className="text-[13px] text-muted sm:mr-auto">
-              Vai ao cliente antes de digitar? Leve a folha de campo: o checklist com tudo o que o certificado pede.
+              {clienteId && !balancaId
+                ? 'Balança ainda não cadastrada? A folha de campo sai com o cliente, a OS e a data, e a balança em branco.'
+                : 'Vai ao cliente antes de digitar? Leve a folha de campo: o checklist com tudo o que o certificado pede.'}
             </p>
             <div className="flex flex-col gap-2 sm:flex-row sm:shrink-0">
-              <Button
-                icone={criando === 'folha' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
-                disabled={!clienteId || !balancaId || !!criando}
-                onClick={() => void comecar(true)}
-              >
-                Criar e imprimir folha de campo
-              </Button>
+              {clienteId && !balancaId ? (
+                <Button icone={<Printer className="h-4 w-4" />} onClick={imprimirFolhaDoCliente}>
+                  Imprimir folha com a balança em branco
+                </Button>
+              ) : (
+                <Button
+                  icone={criando === 'folha' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                  disabled={!clienteId || !balancaId || !!criando}
+                  onClick={() => void comecar(true)}
+                >
+                  Criar e imprimir folha de campo
+                </Button>
+              )}
               <Button
                 variante="primary"
                 icone={criando === 'comecar' ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
                 disabled={!clienteId || !balancaId || !!criando}
+                title={clienteId && !balancaId ? 'Escolha a balança no passo 2' : undefined}
                 onClick={() => void comecar(false)}
               >
                 Começar calibração
@@ -358,6 +379,8 @@ function EditorCalibracao({ id }: { id: string }) {
   const [numeroReservado, setNumeroReservado] = useState<NumeroReservado | null>(null)
   /** Janela "reimprimir ou folha nova" aberta (com a opção que vem selecionada), ou null. */
   const [escolhaFolha, setEscolhaFolha] = useState<EscolhaFolha | null>(null)
+  /** Janela "Devolver sem autorizar" aberta. */
+  const [devolvendo, setDevolvendo] = useState(false)
   const versao = useRef<number | undefined>(undefined)
   const sujo = useRef(false)
   const fRef = useRef<CalibracaoInput | null>(null)
@@ -475,7 +498,7 @@ function EditorCalibracao({ id }: { id: string }) {
         try {
           const r = await api.salvarCalibracao(id, atual, versao.current)
           versao.current = r.calibracao.versao
-          // O gravado (o técnico e quem o indicou: com a revisão por outra pessoa, quem indicou não emite)
+          // O gravado (o técnico, a situação e o pedido de autorização)
           setDados((d) => (d ? { ...d, calibracao: r.calibracao } : d))
           setPendenciasServidor(r.pendencias)
           setAvisosServidor(r.avisos ?? [])
@@ -558,20 +581,37 @@ function EditorCalibracao({ id }: { id: string }) {
   if (!dados || !f || !balanca) return <CarregandoEditor />
 
   // Folha avulsa (em branco, do cliente ou da balança) preenchida no cliente: o nº do papel passa a ser o da
-  // calibração. Impressa para outra balança (cadastro duplicado e excluído, rascunho refeito…): pergunta antes
+  // calibração. Impressa para outra balança (cadastro duplicado e excluído, rascunho refeito…): pergunta antes. A OS
+  // impressa na folha do cliente passa para a calibração sem OS (o servidor grava; a tela fica com ela e a versão nova)
   const vincularFolha = async (numero: string, confirmado = false): Promise<boolean> => {
+    // O que está pendente vai antes: o servidor confere a OS gravada
+    if (!confirmado && !(await salvar())) return false
     try {
       const r = await api.vincularFolhaCampo(id, numero, confirmado)
       setFolha(r.folhaCampo)
       setNumeroReservado(r.numeroReservado)
+      const os = r.ordemServico
+      if (os?.aplicada && r.versao !== undefined) {
+        versao.current = r.versao
+        setF((atual) => (atual ? { ...atual, ordemServico: os.daFolha } : atual))
+      }
       const daFolha = r.numeroDaFolha
+      const textoOs = os?.aplicada ? `A OS ${os.daFolha}, impressa na folha, passou para esta calibração.` : ''
       if (daFolha && !daFolha.usado)
         // O nº impresso na folha pode já estar na etiqueta da balança: avisa até a pessoa fechar
         void avisar(avisoNumeroDaFolha(daFolha, r.folhaCampo.numero))
       else
         toast.sucesso(
           `Folha de campo ${r.folhaCampo.numero} ligada a esta calibração`,
-          daFolha ? `O certificado vai ser emitido com o nº ${daFolha.numero}, o impresso na folha.` : undefined,
+          [daFolha ? `O certificado vai ser emitido com o nº ${daFolha.numero}, o impresso na folha.` : '', textoOs]
+            .filter(Boolean)
+            .join(' ') || undefined,
+        )
+      // A folha saiu com outra OS: fica a da calibração, e a pessoa confere
+      if (os && !os.aplicada)
+        toast.aviso(
+          'A OS da folha é outra',
+          `A folha saiu com a OS ${os.daFolha}; esta calibração ficou com a OS ${os.daCalibracao}.`,
         )
       return true
     } catch (e) {
@@ -675,28 +715,65 @@ function EditorCalibracao({ id }: { id: string }) {
     }
   }
 
-  const mudarSituacao = async (status: 'RASCUNHO' | 'REVISAO') => {
+  // A situação mudou no servidor: a tela fica com a gravada (a versão nova) e as listas abertas atualizam
+  const aposSituacao = (k: Calibracao) => {
+    versao.current = k.versao
+    setDados((d) => (d ? { ...d, calibracao: k } : d))
+    useTempoReal.getState().mudou('calibracao')
+  }
+
+  // Retira o pedido de autorização (para corrigir ou escolher outro signatário)
+  const voltarParaRascunho = async () => {
     if (!(await salvar())) return
     try {
-      const r = await api.mudarSituacao(id, status, versao.current)
-      versao.current = r.calibracao.versao
-      setDados((d) => (d ? { ...d, calibracao: r.calibracao } : d))
-      useTempoReal.getState().mudou('calibracao')
-      toast.sucesso(status === 'REVISAO' ? 'Enviada para revisão' : 'Voltou para rascunho')
+      aposSituacao((await api.voltarParaRascunho(id, versao.current)).calibracao)
+      toast.sucesso('Voltou para rascunho')
     } catch (e) {
-      avisarErro('Não foi possível mudar a situação', e)
+      avisarErro('Não foi possível voltar para rascunho', e)
+    }
+  }
+
+  // Com a revisão por outra pessoa ligada: vai para o signatário escolhido, que a vê na lista dele
+  const pedirAutorizacao = async (signatarioId: string) => {
+    if (!(await salvar())) return
+    try {
+      const k = (await api.pedirAutorizacao(id, signatarioId, versao.current)).calibracao
+      aposSituacao(k)
+      toast.sucesso(
+        `Enviada para a autorização de ${k.autorizacao?.signatarioNome ?? 'um signatário'}`,
+        'Aparece para essa pessoa em Certificados, em “Para você autorizar”.',
+      )
+    } catch (e) {
+      avisarErro('Não foi possível enviar para autorização', e)
+    }
+  }
+
+  // O signatário devolve sem autorizar, com a nota (a calibração volta para rascunho)
+  const devolver = async (nota: string) => {
+    if (!(await salvar())) return
+    try {
+      aposSituacao((await api.devolver(id, nota, versao.current)).calibracao)
+      setDevolvendo(false)
+      toast.sucesso('Calibração devolvida', 'Voltou para rascunho, com a sua nota.')
+    } catch (e) {
+      avisarErro('Não foi possível devolver', e)
     }
   }
 
   const emitir = async () => {
+    // Com a revisão por outra pessoa ligada, emitir é autorizar: sai com a assinatura de quem autoriza
+    const autorizar = dados.config.exigirRevisor
+    const numeracao = dados.numeroRevisao
+      ? `A correção sai com o mesmo nº ${dados.numeroRevisao} e a data de emissão nova, e não pode mais ser alterada. A versão anterior fica guardada só no sistema.`
+      : numeroReservado
+        ? `O certificado sai com o nº ${numeroReservado.numero}, o da folha de campo, e não pode mais ser alterado. Se precisar corrigir depois, a correção sai com o mesmo número.`
+        : 'O certificado recebe o número definitivo e não pode mais ser alterado. Se precisar corrigir depois, a correção sai com o mesmo número.'
     const ok = await confirmar({
-      titulo: 'Emitir o certificado?',
-      descricao: dados.numeroRevisao
-        ? `A correção sai com o mesmo nº ${dados.numeroRevisao} e a data de emissão nova, e não pode mais ser alterada. A versão anterior fica guardada só no sistema.`
-        : numeroReservado
-          ? `O certificado sai com o nº ${numeroReservado.numero}, o da folha de campo, e não pode mais ser alterado. Se precisar corrigir depois, a correção sai com o mesmo número.`
-          : 'O certificado recebe o número definitivo e não pode mais ser alterado. Se precisar corrigir depois, a correção sai com o mesmo número.',
-      confirmar: 'Emitir certificado',
+      titulo: autorizar ? 'Autorizar e emitir o certificado?' : 'Emitir o certificado?',
+      descricao: autorizar
+        ? `Você autoriza como signatário: o certificado sai com a sua assinatura em “Autorizado por”. ${numeracao}`
+        : numeracao,
+      confirmar: autorizar ? 'Autorizar e emitir' : 'Emitir certificado',
     })
     if (!ok) return
     if (!(await salvar())) return
@@ -744,7 +821,10 @@ function EditorCalibracao({ id }: { id: string }) {
         titulo={
           <span className="flex flex-wrap items-center gap-3">
             {dados.calibracao.substituiId ? 'Correção de certificado' : 'Calibração'}
-            <StatusCalibracaoBadge status={dados.calibracao.status} />
+            <StatusCalibracaoBadge
+              status={dados.calibracao.status}
+              aguardando={dados.calibracao.status === 'REVISAO' ? dados.calibracao.autorizacao?.signatarioNome : undefined}
+            />
             {numeroReservado && <SeloNumeroReservado n={numeroReservado} />}
           </span>
         }
@@ -869,15 +949,16 @@ function EditorCalibracao({ id }: { id: string }) {
               {etapa === 'revisao' && (
                 <EtapaRevisao
                   ctx={ctx}
-                  tecnicoGravado={dados.calibracao}
+                  gravada={dados.calibracao}
                   numeroReservado={numeroReservado}
                   numeroRevisao={dados.numeroRevisao}
                   pendencias={pendencias}
                   avisos={avisosServidor}
                   salvando={salvo === 'salvando'}
                   aoVisualizar={() => void verPrevia()}
-                  aoEnviarRevisao={() => void mudarSituacao('REVISAO')}
-                  aoVoltarRascunho={() => void mudarSituacao('RASCUNHO')}
+                  aoPedirAutorizacao={(s) => void pedirAutorizacao(s)}
+                  aoVoltarRascunho={() => void voltarParaRascunho()}
+                  aoDevolver={() => setDevolvendo(true)}
                   aoEmitir={emitir}
                 />
               )}
@@ -922,6 +1003,12 @@ function EditorCalibracao({ id }: { id: string }) {
           setEscolhaFolha(null)
           void imprimirFolha(e === 'nova')
         }}
+      />
+      <DevolverModal
+        aberto={devolvendo}
+        para={dados.calibracao.autorizacao?.por}
+        aoFechar={() => setDevolvendo(false)}
+        aoDevolver={devolver}
       />
       <BalancaFormModal
         aberto={editandoBalanca}

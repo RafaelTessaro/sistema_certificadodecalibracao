@@ -85,4 +85,34 @@ describe('nº de certificado na tela', () => {
     expect(admin).not.toContain('flex-1')
     expect(admin).toContain('<span class="tnum whitespace-nowrap">FC-2026-00011</span>')
   })
+
+  it('folha ainda não ligada: reimprimir (para todos), com o cliente e a OS para achar o papel', () => {
+    const lista = [
+      numero({
+        id: 3,
+        numero: 'CC-2026-00044',
+        folha: 'FC-2026-00011',
+        folhaCliente: 'Mercado Bom Preço',
+        folhaOs: 'OS 2026/0777',
+      }),
+      numero({ id: 4, numero: 'CC-2026-00045', folha: 'FC-2026-00012' }),
+      // O não utilizado não se reimprime (a folha foi perdida ou inutilizada)
+      numero({ id: 5, numero: 'CC-2026-00046', situacao: 'nao_utilizado', motivo: 'Folha molhada na chuva.' }),
+    ]
+    const h = html(createElement(ListaNumeros, { numeros: lista, aoReimprimir: () => {} }))
+    expect(texto(h)).toContain(
+      'Folha FC-2026-00011: o nº passa para a calibração a que ela for ligada.Mercado Bom Preço · OS 2026/0777Reservado em',
+    )
+    // Uma vez em cada folha não ligada, com o nº da folha na dica
+    expect(texto(h).match(/Reimprimir/g)).toHaveLength(2)
+    expect(h).toContain('title="Reimprimir a folha FC-2026-00012, igual à primeira impressão (os mesmos nºs)"')
+    // Sem quem reimprime (ou sem nada a fazer), nem o grupo dos botões
+    const sem = html(createElement(ListaNumeros, { numeros: lista }))
+    expect(texto(sem)).not.toContain('Reimprimir')
+    // O administrador vê os dois botões, lado a lado
+    const admin = texto(
+      html(createElement(ListaNumeros, { numeros: lista, aoReimprimir: () => {}, podeDescartar: true, aoDescartar: () => {} })),
+    )
+    expect(admin).toContain('ReimprimirNão vai ser usada')
+  })
 })

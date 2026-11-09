@@ -4,7 +4,8 @@ import type { CalibracaoResumo } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
 import { dataCurta } from '../lib/format'
 import { numeroDaLinha, quandoDaLinha, textoNumeroReservado } from '../lib/numeros'
-import { StatusCalibracaoBadge } from './Selos'
+import { useSessao } from '../store/sessao'
+import { detalheDaSituacao, StatusCalibracaoBadge } from './Selos'
 import { Linha, Tabela, Td, Th } from './ui/Table'
 
 /** Endereço da tela de uma calibração: rascunho abre a edição; emitido, o certificado. */
@@ -32,6 +33,26 @@ export function NumeroDaLinha({ k }: { k: Pick<CalibracaoResumo, 'numero' | 'num
       {reservado && <span className="ml-1 text-xs font-normal text-muted">(reservado)</span>}
       {correcao && <span className="ml-1 text-xs font-normal text-muted">(correção)</span>}
     </p>
+  )
+}
+
+/** Situação nas listas de calibrações: a pílula e, embaixo, para quem foi o pedido ou quem devolveu. */
+export function SituacaoDaCalibracao({
+  k,
+  className,
+}: {
+  k: Pick<CalibracaoResumo, 'status' | 'aguardando' | 'devolvidaPor'>
+  className?: string
+}) {
+  const eu = useSessao((s) => s.usuario?.id)
+  const detalhe = detalheDaSituacao(k, eu)
+  return (
+    <span className={cn('inline-flex flex-col items-start gap-1', className)}>
+      <StatusCalibracaoBadge status={k.status} devolvida={!!k.devolvidaPor} />
+      {detalhe && (
+        <span className={cn('text-xs', detalhe.destaque ? 'font-semibold text-info' : 'text-muted')}>{detalhe.texto}</span>
+      )}
+    </span>
   )
 }
 
@@ -111,7 +132,7 @@ export function CertificadosTabela({
             </Td>
             <Td className="tnum whitespace-nowrap max-2xl:hidden">{k.ordemServico || <span className="text-muted">—</span>}</Td>
             <Td className="whitespace-nowrap">
-              <StatusCalibracaoBadge status={k.status} />
+              <SituacaoDaCalibracao k={k} />
             </Td>
             <Td>
               <ChevronRight className="h-4 w-4 text-muted" />

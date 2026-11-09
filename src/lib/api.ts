@@ -142,6 +142,14 @@ export interface FolhaLigada {
    * folha não tinha nº (ou nada mudou).
    */
   numeroDaFolha: { numero: string; usado: boolean; motivo?: string } | null
+  /**
+   * A OS impressa na folha avulsa (a do cliente com a balança em branco): passou para a calibração, que não tinha OS
+   * (`aplicada`; a `versao` dela subiu), ou a calibração ficou com a dela (`daCalibracao`). null = a folha não tinha OS,
+   * ou é a mesma.
+   */
+  ordemServico?: { daFolha: string; aplicada: boolean; daCalibracao?: string } | null
+  /** A versão da calibração depois da ligação (a tela grava com ela). */
+  versao?: number
 }
 
 /** GET /api/pop */
@@ -365,9 +373,19 @@ export const api = {
   /**
    * Folha de campo sem calibração: da balança (com o plano da última calibração dela), só do cliente ou,
    * sem nada, em branco. A chave nova a cada chamada reserva um nº; se o navegador pedir o PDF de novo, o nº é o mesmo.
+   * `ordemServico` e `data` (AAAA-MM-DD): a OS e a data prevista da visita, impressas na folha (a OS passa para a
+   * calibração sem OS a que a folha for ligada).
    */
-  urlFolhaCampoAvulsa: (f: { balancaId?: string; clienteId?: string } = {}) =>
-    `/api/folha-campo${consulta({ balancaId: f.balancaId, clienteId: f.clienteId, chave: novoId() })}`,
+  urlFolhaCampoAvulsa: (f: { balancaId?: string; clienteId?: string; ordemServico?: string; data?: string } = {}) =>
+    `/api/folha-campo${consulta({
+      balancaId: f.balancaId,
+      clienteId: f.clienteId,
+      os: f.ordemServico?.trim(),
+      data: f.data,
+      chave: novoId(),
+    })}`,
+  /** Reimpressão de uma folha já impressa, pelo nº: o PDF da primeira impressão (o mesmo nº de folha e de certificado). */
+  urlReimprimirFolha: (numero: string) => `/api/folha-campo/${enc(numero)}`,
   /** Nºs de certificado ainda sem certificado (reservados) e os não utilizados, do mais novo para o mais antigo. */
   numerosReservados: () => requisitar<{ numeros: NumeroReservado[] }>('GET', '/api/numeros-reservados'),
   /** O nº de uma folha avulsa que não vai ser usada passa a não utilizado (só o administrador). */

@@ -1226,7 +1226,9 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
   it('do cliente com a balança em branco: a OS e a data prevista informadas na tela saem impressas', async () => {
     const d = folhaDoClienteComOs()
     const texto = textoDoPdf(await gerarFolhaCampoPdf(d))
-    expect(conferirPaginas(texto, 'FC-2026-00051', 'CC-2026-00137')).toHaveLength(2)
+    // Duas páginas, com a OS uma vez só (no passo 2) e o nº do certificado reservado no alto
+    expect(conferirPaginas(texto, 'FC-2026-00051', 'OS-2026-0618')).toHaveLength(2)
+    expect(texto).toContain('CC-2026-00137')
     const t = corrido(texto)
     // O cliente do cadastro e a OS, impressos (para conferir); a balança para preencher
     expect(t).toContain('FRIGORÍFICO VALE DO CORUMBATAÍ LTDA')
@@ -2547,7 +2549,7 @@ describe.runIf(temPdftotext)(
         const t = paginas.join(' ')
         expect(t).not.toMatch(/no verso|na frente|\(frente\)|espaço livre/)
         expect(t).toContain(AVISO_ANOTACOES)
-        if (![folhaEmBranco, folhaEmBrancoOitoPadroes, folhaEmBrancoSemPadroes].includes(e.dados)) {
+        if (![folhaEmBranco, folhaEmBrancoOitoPadroes, folhaEmBrancoSemPadroes, folhaDoClienteComOs].includes(e.dados)) {
           expect(t).toContain('Anote o certo em Anotações (passo 2 ou 3) e avise o cliente.')
           expect(t).toContain('Pesos diferentes dos impressos: em Anotações (no fim da folha), com o nº da linha.')
         }
@@ -2897,7 +2899,7 @@ describe.runIf(temPdftotext)(
     )
 
     it('os ensaios no verso (e a linha de continuação) nas folhas em branco; na plataforma, no balcão e na classe I, não', async () => {
-      for (const dados of [folhaEmBranco, folhaEmBrancoOitoPadroes, folhaEmBrancoSemPadroes])
+      for (const dados of [folhaEmBranco, folhaEmBrancoOitoPadroes, folhaEmBrancoSemPadroes, folhaDoClienteComOs])
         expect((await montar(dados())).extras.ensaiosNoVerso, dados.name).toBe(true)
       for (const dados of [folhaPlataforma, folhaMultiIntervalo, folhaClasseI])
         expect((await montar(dados())).extras.ensaiosNoVerso, dados.name).toBeFalsy()

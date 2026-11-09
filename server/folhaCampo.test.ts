@@ -1413,3 +1413,142 @@ describe('nome do arquivo', { timeout: 30_000 }, () => {
     expect(nomeArquivoDaFolha('  ', 'FC-2026-00001')).toBe('Folha-de-campo-FC-2026-00001.pdf')
   })
 })
+
+describe('1.0.5: reimpressão pelo nº e folha do cliente com a OS', { timeout: 60_000 }, () => {
+  const ligar = (id: string, numero: string) =>
+    t.chamar('PUT', `/api/calibracoes/${id}/folha-campo`, { cookie: t.cookieComum, payload: { numero } })
+  const avulsa = async (consulta = '') => {
+    const r = await t.chamar('GET', `/api/folha-campo${consulta}`, { cookie: t.cookieComum })
+    expect(r.statusCode, r.body).toBe(200)
+    return { numero: r.headers['x-folha-campo'] as string, pdf: r.rawPayload, nome: r.headers['content-disposition'] as string }
+  }
+  const contar = (tabela: string) => (t.ctx.db.prepare(`SELECT COUNT(*) AS n FROM ${tabela}`).get() as { n: number }).n
+  /** Um dia depois de hoje (AAAA-MM-DD): a visita marcada para a frente. */
+  const amanha = () => {
+    const d = new Date(Date.now() + 36 * 3600_000)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  it('reimprime pelo nº a folha já impressa: o PDF da primeira impressão, sem reservar nº; vai para o registro', async () => {
+    const a = await avulsa(`?clienteId=${cliente.id}`)
+    const [folhas, numeros] = [contar('folhas_campo'), contar('numeros_reservados')]
+    const r = await t.chamar('GET', `/api/folha-campo/${a.numero}`, { cookie: t.cookieComum })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.headers['content-type']).toBe('application/pdf')
+    expect(r.headers['x-folha-campo']).toBe(a.numero)
+    expect(r.rawPayload.equals(a.pdf)).toBe(true)
+    // Como o técnico digita o nº (sem os zeros, minúsculas)
+    const digitado = await t.chamar('GET', `/api/folha-campo/${encodeURIComponent(`fc ${ano} 1`)}`, { cookie: t.cookieAdmin })
+    expect(digitado.rawPayload.equals(a.pdf)).toBe(true)
+    // Nenhum nº novo (nem de folha nem de certificado); a impressão é contada
+    expect([contar('folhas_campo'), contar('numeros_reservados')]).toEqual([folhas, numeros])
+    expect(
+      (t.ctx.db.prepare('SELECT impressoes FROM folhas_campo WHERE numero = ?').get(a.numero) as { impressoes: number })
+        .impressoes,
+    ).toBe(3)
+    expect(
+      t.ctx.db
+        .prepare("SELECT acao, detalhe FROM auditoria WHERE detalhe LIKE 'GET /api/folha-campo/:numero%' ORDER BY id")
+        .all()
+        .map((l) => Object.values(l as object)),
+    ).toEqual([
+      ['ALTERACAO', `GET /api/folha-campo/:numero | reimprimiu ${a.numero}`],
+      ['ALTERACAO', `GET /api/folha-campo/:numero | reimprimiu ${a.numero}`],
+    ])
+    // Nº inválido: 400; não impresso por este sistema: 404; sem sessão: 401
+    expect((await t.chamar('GET', '/api/folha-campo/abc', { cookie: t.cookieComum })).statusCode).toBe(400)
+    const outro = await t.chamar('GET', `/api/folha-campo/FC-${ano}-00999`, { cookie: t.cookieComum })
+    expect(outro.statusCode).toBe(404)
+    expect(outro.json().erro).toMatch(/não foi impressa por este sistema/)
+    expect((await t.chamar('GET', `/api/folha-campo/${a.numero}`)).statusCode).toBe(401)
+  })
+
+  it('também a folha de uma calibração, a mesma da reimpressão pela calibração, com o nome pela OS dela', async () => {
+    const k = await rascunho('OS 2026/0456')
+    const pelaCalibracao = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
+    const numero = pelaCalibracao.headers['x-folha-campo'] as string
+    const r = await t.chamar('GET', `/api/folha-campo/${numero}`, { cookie: t.cookieComum })
+    expect(r.rawPayload.equals(pelaCalibracao.rawPayload)).toBe(true)
+    expect(r.headers['content-disposition']).toContain('filename="Folha-de-campo-OS-2026-0456.pdf"')
+  })
+
+  it('do cliente com a OS e a data prevista: saem na folha, a OS fica guardada com ela; data inválida, 400', async () => {
+    const data = amanha()
+    const a = await avulsa(`?clienteId=${cliente.id}&os=${encodeURIComponent(' OS 2026/0777 ')}&data=${data}`)
+    expect(a.nome).toContain('filename="Folha-de-campo-OS-2026-0777.pdf"')
+    expect(
+      (t.ctx.db.prepare('SELECT ordem_servico FROM folhas_campo WHERE numero = ?').get(a.numero) as { ordem_servico: string })
+        .ordem_servico,
+    ).toBe('OS 2026/0777')
+    if (temPdftotext) {
+      const texto = textoDoPdf(a.pdf)
+      expect(texto).toContain('MERCADO BOM PRECO LTDA')
+      expect(texto).toContain('Nº da OS OS 2026/0777')
+      expect(texto).toContain(`prevista: ${data.split('-').reverse().join('/')}`)
+    }
+    // A reimpressão pelo nº também tem o nome pela OS
+    const r = await t.chamar('GET', `/api/folha-campo/${a.numero}`, { cookie: t.cookieComum })
+    expect(r.headers['content-disposition']).toContain('filename="Folha-de-campo-OS-2026-0777.pdf"')
+    // A lista dos nºs reservados em folhas não ligadas diz de quem é a folha e a OS
+    const lista = (await t.chamar('GET', '/api/numeros-reservados', { cookie: t.cookieComum })).json().numeros
+    expect(lista.find((n: { folha: string }) => n.folha === a.numero)).toMatchObject({
+      folhaCliente: 'Mercado Bom Preço',
+      folhaOs: 'OS 2026/0777',
+    })
+    const branca = await avulsa()
+    const daBranca = (await t.chamar('GET', '/api/numeros-reservados', { cookie: t.cookieComum }))
+      .json()
+      .numeros.find((n: { folha: string }) => n.folha === branca.numero)
+    expect(daBranca).not.toHaveProperty('folhaCliente')
+    expect(daBranca).not.toHaveProperty('folhaOs')
+    // Da balança, com a OS: o rascunho que a folha planeja leva a OS
+    const daBalanca = await avulsa(`?balancaId=${balanca.id}&os=OS-55`)
+    expect(daBalanca.nome).toContain('filename="Folha-de-campo-OS-55.pdf"')
+    // Data que não existe ou fora do formato: 400, sem reservar nº
+    const antes = contar('folhas_campo')
+    for (const ruim of ['2026-02-30', '12/11/2026', 'amanha'])
+      expect(
+        (await t.chamar('GET', `/api/folha-campo?clienteId=${cliente.id}&data=${ruim}`, { cookie: t.cookieComum })).statusCode,
+      ).toBe(400)
+    expect(contar('folhas_campo')).toBe(antes)
+  })
+
+  it('ligada à calibração sem OS, a OS da folha passa para ela; com outra OS, a da calibração fica e a resposta avisa', async () => {
+    const a = await avulsa(`?clienteId=${cliente.id}&os=OS%20777`)
+    const k = await rascunho('')
+    const r = await ligar(k.id, a.numero)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json()).toMatchObject({ ordemServico: { daFolha: 'OS 777', aplicada: true }, versao: k.versao + 1 })
+    const gravada = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().calibracao
+    expect(gravada).toMatchObject({ ordemServico: 'OS 777', versao: k.versao + 1 })
+    // A tela continua gravando com a versão que a resposta devolveu
+    const salvar = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieComum,
+      payload: { ...gravada, observacoes: 'ok', versao: r.json().versao },
+    })
+    expect(salvar.statusCode, salvar.body).toBe(200)
+    expect(salvar.json().calibracao.ordemServico).toBe('OS 777')
+    // O registro diz que a OS veio da folha (sem o valor digitado)
+    const registro = registrosDaFolha().find(([, alvo, d]) => alvo === k.id && d.startsWith('PUT'))
+    expect(registro?.[2]).toContain('a OS impressa na folha passou para a calibração')
+
+    // Calibração com outra OS: fica a dela
+    const b = await avulsa(`?clienteId=${cliente.id}&os=OS%20888`)
+    const k2 = await rascunho('OS 999')
+    const r2 = await ligar(k2.id, b.numero)
+    expect(r2.json()).toMatchObject({
+      ordemServico: { daFolha: 'OS 888', aplicada: false, daCalibracao: 'OS 999' },
+      versao: k2.versao,
+    })
+    expect((await t.chamar('GET', `/api/calibracoes/${k2.id}`, { cookie: t.cookieAdmin })).json().calibracao.ordemServico).toBe(
+      'OS 999',
+    )
+    // A mesma OS escrita de outro jeito, ou folha sem OS: nada a dizer
+    const c = await avulsa(`?clienteId=${cliente.id}&os=OS%20555`)
+    expect((await ligar((await rascunho('555')).id, c.numero)).json().ordemServico).toBeNull()
+    const semOs = await avulsa(`?clienteId=${cliente.id}`)
+    const k3 = await rascunho('')
+    const r3 = await ligar(k3.id, semOs.numero)
+    expect(r3.json()).toMatchObject({ ordemServico: null, versao: k3.versao })
+  })
+})

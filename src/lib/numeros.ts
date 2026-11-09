@@ -50,6 +50,15 @@ export function separarNumeros(numeros: NumeroReservado[]): { naoUtilizados: Num
   }
 }
 
+/**
+ * Para quem a folha ainda não ligada foi impressa: "Mercado Bom Preço · OS 2026/0777" ('' na folha em branco). A OS
+ * ganha o "OS" na frente quando não o tem.
+ */
+export function deQuemEaFolha(n: Pick<NumeroReservado, 'folhaCliente' | 'folhaOs'>): string {
+  const os = n.folhaOs?.trim() ?? ''
+  return [n.folhaCliente?.trim(), os && (/^OS\b/i.test(os) ? os : `OS ${os}`)].filter(Boolean).join(' · ')
+}
+
 /** "28/10/2026 às 14:35 · Ana Souza": quando o nº ficou não utilizado (ou foi reservado) e por quem. */
 export function quandoDoNumero(n: NumeroReservado): string {
   const em = n.situacao === 'nao_utilizado' && n.situacaoEm ? n.situacaoEm : n.reservadoEm

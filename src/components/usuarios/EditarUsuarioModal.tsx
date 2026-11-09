@@ -12,8 +12,8 @@ import { DadosCertificado, type DadosNoCertificado } from './DadosCertificado'
 import { EscolhaNivel } from './EscolhaNivel'
 
 /**
- * Editar o nome, o login, o nível e os dados que saem no certificado (cargo, registro, signatário e
- * assinatura). Mudar o nível encerra as sessões da pessoa (ela entra de novo com o nível novo); trocar o
+ * Editar o nome, o login, o nível, as marcas de técnico e de signatário e os dados que saem no certificado (cargo,
+ * registro e assinatura). Mudar o nível encerra as sessões da pessoa (ela entra de novo com o nível novo); trocar o
  * login, não.
  */
 export function EditarUsuarioModal({
@@ -98,6 +98,7 @@ function FormEditar({
   const [loginRecusado, setLoginRecusado] = useState('')
   const [nivel, setNivel] = useState<NivelUsuario>(usuario.nivel)
   const [certificado, setCertificado] = useState<DadosNoCertificado>({
+    tecnico: usuario.tecnico,
     signatario: usuario.signatario,
     cargo: usuario.cargo,
     registro: usuario.registro,
@@ -122,6 +123,7 @@ function FormEditar({
     if (nome.trim() !== usuario.nome) alteracao.nome = nome
     if (mudouLogin) alteracao.login = loginFinal
     if (mudouNivel) alteracao.nivel = nivel
+    if (certificado.tecnico !== usuario.tecnico) alteracao.tecnico = certificado.tecnico
     if (certificado.signatario !== usuario.signatario) alteracao.signatario = certificado.signatario
     if (certificado.cargo.trim() !== usuario.cargo) alteracao.cargo = certificado.cargo
     if (certificado.registro.trim() !== usuario.registro) alteracao.registro = certificado.registro

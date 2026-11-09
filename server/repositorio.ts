@@ -113,7 +113,7 @@ export const mesmaOs = (a: string, b: string) => {
   const chave = (s: string) =>
     s
       .trim()
-      .replace(/^OS\b[\s:.\-]*/i, '')
+      .replace(/^OS\b[\s:.-]*/i, '')
       .replace(/\s+/g, ' ')
       .toLocaleLowerCase('pt-BR')
   return chave(a) === chave(b)

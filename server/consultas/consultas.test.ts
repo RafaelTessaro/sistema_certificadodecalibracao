@@ -401,7 +401,12 @@ describe('inscrição estadual pelo CNPJ.ws', () => {
     })
     const s = criarServicoConsultas({ fetch })
     const r = await s.cnpj(CNPJ)
-    expect(r).toEqual({ ...ESPERADO_EMPRESA, email: 'balancas.com@gmail.com', fonte: 'OpenCNPJ', inscricaoEstadual: '587229409110' })
+    expect(r).toEqual({
+      ...ESPERADO_EMPRESA,
+      email: 'balancas.com@gmail.com',
+      fonte: 'OpenCNPJ',
+      inscricaoEstadual: '587229409110',
+    })
     // Os dois ao mesmo tempo: a IE é pedida logo antes, sem esperar a consulta principal terminar
     expect(chamadas).toEqual([`${CNPJWS}${CNPJ}`, `${OPENCNPJ}${CNPJ}`])
     // A mesma empresa de novo: tudo do cache
@@ -451,7 +456,10 @@ describe('inscrição estadual pelo CNPJ.ws', () => {
       [CNPJWS]: 'rede',
       [BRASILAPI_CNPJ]: { status: 200, corpo: fixture('cnpj-brasilapi.json') },
     })
-    expect(await criarServicoConsultas({ fetch: fora.fetch }).cnpj(CNPJ)).toMatchObject({ fonte: 'BrasilAPI', inscricaoEstadual: '' })
+    expect(await criarServicoConsultas({ fetch: fora.fetch }).cnpj(CNPJ)).toMatchObject({
+      fonte: 'BrasilAPI',
+      inscricaoEstadual: '',
+    })
     expect(fora.chamadas.filter((u) => u.startsWith(CNPJWS))).toHaveLength(1)
   })
 

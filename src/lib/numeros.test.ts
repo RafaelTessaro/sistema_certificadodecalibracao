@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { NumeroReservado } from '#shared/tipos.ts'
 import {
   avisoNumeroDaFolha,
+  deQuemEaFolha,
   numeroDaLinha,
   quandoDoNumero,
   ROTULO_SITUACAO_NUMERO,
@@ -25,6 +26,16 @@ const numero = (x: Partial<NumeroReservado>): NumeroReservado => ({
   situacaoEm: '',
   situacaoPor: '',
   ...x,
+})
+
+describe('folha ainda não ligada: para quem foi impressa', () => {
+  it('o cliente e a OS (com "OS" na frente, sem repetir); a folha em branco, nada', () => {
+    expect(deQuemEaFolha({ folhaCliente: 'Mercado Bom Preço', folhaOs: 'OS 2026/0777' })).toBe('Mercado Bom Preço · OS 2026/0777')
+    expect(deQuemEaFolha({ folhaCliente: 'Mercado Bom Preço', folhaOs: '4471' })).toBe('Mercado Bom Preço · OS 4471')
+    expect(deQuemEaFolha({ folhaCliente: 'Mercado Bom Preço' })).toBe('Mercado Bom Preço')
+    expect(deQuemEaFolha({ folhaOs: 'os-12' })).toBe('os-12')
+    expect(deQuemEaFolha({})).toBe('')
+  })
 })
 
 describe('nº de certificado reservado', () => {

@@ -1,15 +1,17 @@
 // Página Certificados: os buracos da numeração explicados. Os nºs de certificado reservados na impressão da
 // folha de campo que nunca vão ser emitidos (a folha não foi a campo, foi ligada a uma revisão…), com quando e
 // o motivo, e os reservados em folhas ainda não ligadas a nenhuma calibração (a avulsa, a de uma calibração
-// excluída: o nº segue o papel). O administrador registra como não utilizado o nº de uma folha perdida.
+// excluída: o nº segue o papel). Qualquer pessoa reimprime a folha ainda não ligada (o PDF da primeira impressão, com
+// os mesmos nºs); o administrador registra como não utilizado o nº de uma folha perdida.
 
-import { Ban, FileX2, Loader2 } from 'lucide-react'
+import { Ban, FileX2, Loader2, Printer } from 'lucide-react'
 import { useState } from 'react'
 import { LIMITES } from '#shared/dominio.ts'
 import type { NumeroReservado } from '#shared/tipos.ts'
 import { api } from '../lib/api'
 import { useConsulta } from '../lib/consulta'
-import { quandoDoNumero, separarNumeros } from '../lib/numeros'
+import { abrirFolhaCampo } from '../lib/folhaCampo'
+import { deQuemEaFolha, quandoDoNumero, separarNumeros } from '../lib/numeros'
 import { usePode } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
@@ -24,21 +26,31 @@ export function NumerosNaoUtilizados() {
   const [descartando, setDescartando] = useState<NumeroReservado | null>(null)
   return (
     <>
-      <ListaNumeros numeros={dados ?? []} podeDescartar={podeDescartar} aoDescartar={setDescartando} />
+      <ListaNumeros
+        numeros={dados ?? []}
+        podeDescartar={podeDescartar}
+        aoDescartar={setDescartando}
+        aoReimprimir={(n) => void abrirFolhaCampo(api.urlReimprimirFolha(n.folha))}
+      />
       <DescartarModal numero={descartando} aoFechar={() => setDescartando(null)} />
     </>
   )
 }
 
-/** A lista (recolhida), sem nada quando não há nº não utilizado nem reservado em folha não ligada. */
+/**
+ * A lista (recolhida), sem nada quando não há nº não utilizado nem reservado em folha não ligada. `aoReimprimir`: o
+ * botão de reimprimir a folha ainda não ligada (igual à primeira impressão), para todos.
+ */
 export function ListaNumeros({
   numeros,
   podeDescartar = false,
   aoDescartar,
+  aoReimprimir,
 }: {
   numeros: NumeroReservado[]
   podeDescartar?: boolean
   aoDescartar?: (n: NumeroReservado) => void
+  aoReimprimir?: (n: NumeroReservado) => void
 }) {
   const { naoUtilizados, avulsos } = separarNumeros(numeros)
   if (!naoUtilizados.length && !avulsos.length) return null
@@ -83,33 +95,51 @@ export function ListaNumeros({
               Reservados em folhas ainda não ligadas
             </p>
             <ul className="divide-y divide-line">
-              {avulsos.map((n) => (
-                // A mesma grade dos não utilizados: no celular, o nº, o texto e o botão um embaixo do outro
-                <li
-                  key={n.id}
-                  className="grid items-center gap-x-4 gap-y-1 px-4 py-2.5 text-[13px] sm:grid-cols-[minmax(132px,auto)_minmax(0,1fr)_auto]"
-                >
-                  <span className="tnum font-semibold text-ink">{n.numero}</span>
-                  <span className="min-w-0">
-                    <span className="text-ink-2">
-                      Folha <span className="tnum whitespace-nowrap">{n.folha}</span>: o nº passa para a calibração a que ela for
-                      ligada.
+              {avulsos.map((n) => {
+                const deQuem = deQuemEaFolha(n)
+                return (
+                  // A mesma grade dos não utilizados: no celular, o nº, o texto e os botões um embaixo do outro
+                  <li
+                    key={n.id}
+                    className="grid items-center gap-x-4 gap-y-1 px-4 py-2.5 text-[13px] sm:grid-cols-[minmax(132px,auto)_minmax(0,1fr)_auto]"
+                  >
+                    <span className="tnum font-semibold text-ink">{n.numero}</span>
+                    <span className="min-w-0">
+                      <span className="text-ink-2">
+                        Folha <span className="tnum whitespace-nowrap">{n.folha}</span>: o nº passa para a calibração a que ela
+                        for ligada.
+                      </span>
+                      {deQuem && <span className="block truncate text-xs text-ink-2">{deQuem}</span>}
+                      <span className="tnum block text-xs text-muted">Reservado em {quandoDoNumero(n)}</span>
                     </span>
-                    <span className="tnum block text-xs text-muted">Reservado em {quandoDoNumero(n)}</span>
-                  </span>
-                  {podeDescartar && aoDescartar && (
-                    <Button
-                      tamanho="sm"
-                      variante="ghost"
-                      className="-ml-3 justify-self-start sm:ml-0"
-                      icone={<Ban className="h-3.5 w-3.5" />}
-                      onClick={() => aoDescartar(n)}
-                    >
-                      Não vai ser usada
-                    </Button>
-                  )}
-                </li>
-              ))}
+                    {(aoReimprimir || (podeDescartar && aoDescartar)) && (
+                      <span className="-ml-3 flex flex-wrap items-center gap-1 justify-self-start sm:ml-0 sm:justify-self-end">
+                        {aoReimprimir && (
+                          <Button
+                            tamanho="sm"
+                            variante="ghost"
+                            icone={<Printer className="h-3.5 w-3.5" />}
+                            title={`Reimprimir a folha ${n.folha}, igual à primeira impressão (os mesmos nºs)`}
+                            onClick={() => aoReimprimir(n)}
+                          >
+                            Reimprimir
+                          </Button>
+                        )}
+                        {podeDescartar && aoDescartar && (
+                          <Button
+                            tamanho="sm"
+                            variante="ghost"
+                            icone={<Ban className="h-3.5 w-3.5" />}
+                            onClick={() => aoDescartar(n)}
+                          >
+                            Não vai ser usada
+                          </Button>
+                        )}
+                      </span>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           </>
         )}
