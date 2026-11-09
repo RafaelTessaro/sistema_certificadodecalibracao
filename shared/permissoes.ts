@@ -122,7 +122,7 @@ export function signatariosParaAutorizar<T extends Membro>(equipe: readonly T[],
 export function impedimentoDoTecnico(u: Pick<Usuario, 'nome' | 'ativo' | 'tecnico'> | undefined): string | null {
   if (!u) return 'O técnico escolhido não foi encontrado. Escolha de novo.'
   if (!u.ativo) return `${u.nome} está com o usuário desativado. Escolha outro técnico.`
-  if (!u.tecnico) return `${u.nome} não está marcado como técnico em Usuários. Escolha outro técnico.`
+  if (!u.tecnico) return `${u.nome} não tem a marca de técnico (em Usuários). Escolha outro técnico.`
   return null
 }
 
@@ -133,7 +133,7 @@ export function impedimentoDoSignatario(
 ): string | null {
   if (!u) return 'O signatário escolhido não foi encontrado. Escolha de novo.'
   if (!u.ativo) return `${u.nome} está com o usuário desativado. Escolha outro signatário.`
-  if (!u.signatario) return `${u.nome} não é signatário. Escolha outro (os signatários são marcados em Usuários).`
-  if (u.id === tecnicoId) return `${u.nome} é o técnico desta calibração e não autoriza o próprio certificado. Escolha outro.`
+  if (!u.signatario) return `${u.nome} não tem a marca de signatário (em Usuários). Escolha outro signatário.`
+  if (u.id === tecnicoId) return `${u.nome} executou esta calibração e não autoriza o próprio certificado. Escolha outro signatário.`
   return null
 }

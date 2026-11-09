@@ -17,7 +17,9 @@
 //   7. analítica classe I 220 g × 0,1 mg (a do certificado de exemplo da classe I), primeira calibração: o plano sai
 //      das sugestões (10 leituras na repetibilidade) e a folha leva os campos da classe I (ΔT pesos − ar, umidade
 //      e pressão obrigatórias, o zero antes de cada posição na excentricidade), com o jogo E2, o barômetro e o
-//      termômetro de duas entradas.
+//      termômetro de duas entradas;
+//   8. folha do cliente com a balança em branco (a balança ainda não cadastrada), com a OS e a data prevista da visita
+//      informadas na tela da nova calibração (1.0.5), impressas como as do rascunho.
 // Os cadastros (empresa, clientes, padrões) e o POP do rodapé são os dos certificados de exemplo. Todas levam o
 // nº do certificado reservado na impressão, como no sistema: as com balança, o da calibração; as em branco
 // (folha avulsa), um nº da folha, que passa para a calibração a que ela for ligada.
@@ -234,6 +236,22 @@ export function folhaEmBranco(): DadosFolhaCampo {
     impressoEm: '2026-10-21T12:00:00.000Z',
     impressoPor: IMPRESSO_POR,
     procedimento: POP_EXEMPLO,
+  }
+}
+
+/**
+ * Folha do cliente com a balança em branco (a balança ainda não cadastrada), com a OS e a data prevista da visita que a
+ * tela da nova calibração deixa informar antes de escolher a balança: saem impressas, como as do rascunho.
+ */
+export function folhaDoClienteComOs(): DadosFolhaCampo {
+  return {
+    ...folhaEmBranco(),
+    numero: 'FC-2026-00051',
+    numeroCertificado: 'CC-2026-00137',
+    cliente: exemploPlataforma().emissao.cliente,
+    ordemServico: 'OS-2026-0618',
+    dataPrevista: '2026-11-12',
+    impressoEm: '2026-11-09T13:10:00.000Z',
   }
 }
 

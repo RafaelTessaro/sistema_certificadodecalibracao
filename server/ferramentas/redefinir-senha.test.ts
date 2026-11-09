@@ -13,7 +13,15 @@ import { ServicoUsuarios } from '../usuarios.ts'
 
 const FERRAMENTA = fileURLToPath(new URL('./redefinir-senha.mjs', import.meta.url))
 const SENHA_FORTE = 'cavalo-azul-pulando'
-const ADMIN_TESTE = { id: 'teste', login: 'teste', nome: 'Teste', nivel: 'ADMIN' as const, trocarSenha: false, signatario: true }
+const ADMIN_TESTE = {
+  id: 'teste',
+  login: 'teste',
+  nome: 'Teste',
+  nivel: 'ADMIN' as const,
+  trocarSenha: false,
+  tecnico: true,
+  signatario: true,
+}
 
 interface Execucao {
   status: number | null

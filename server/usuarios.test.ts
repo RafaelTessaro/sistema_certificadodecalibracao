@@ -35,6 +35,7 @@ const adminFicticio: UsuarioSessao = {
   nome: 'Outro',
   nivel: 'ADMIN',
   trocarSenha: false,
+  tecnico: true,
   signatario: false,
 }
 

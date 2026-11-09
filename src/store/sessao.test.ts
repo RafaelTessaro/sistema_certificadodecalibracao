@@ -23,9 +23,18 @@ const maria: UsuarioSessao = {
   nome: 'Maria Souza',
   nivel: 'COMUM',
   trocarSenha: false,
+  tecnico: true,
   signatario: false,
 }
-const joao: UsuarioSessao = { id: 'u2', login: 'joao', nome: 'João Lima', nivel: 'ADMIN', trocarSenha: false, signatario: true }
+const joao: UsuarioSessao = {
+  id: 'u2',
+  login: 'joao',
+  nome: 'João Lima',
+  nivel: 'ADMIN',
+  trocarSenha: false,
+  tecnico: true,
+  signatario: true,
+}
 
 function Sonda() {
   const usuario = useUsuarioAtual()

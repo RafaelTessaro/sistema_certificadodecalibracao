@@ -142,6 +142,12 @@ export interface DadosFolhaCampo {
    * ausente (folha de antes desta versão, ou de uma revisão) = nada.
    */
   numeroCertificado?: string
+  /**
+   * Sem rascunho (`calibracao` null: a folha do cliente com a balança em branco): a OS e a data prevista da visita
+   * (AAAA-MM-DD) informadas na tela, impressas como as do rascunho. Com rascunho, valem as dele.
+   */
+  ordemServico?: string
+  dataPrevista?: string
 }
 
 // ---- Página, cores e tipografia ------------------------------------------------------------------------
@@ -1219,7 +1225,7 @@ function contexto(d: DadosFolhaCampo, extras: Extras = SEM_EXTRAS): Contexto {
   // A validade dos padrões vale na visita: na data do rascunho ou, se ela já passou (o rascunho nasce com a
   // data do dia em que foi criado), na da impressão
   const impressao = dataIsoBrasilia(d.impressoEm)
-  const prevista = d.calibracao?.dataCalibracao ?? ''
+  const prevista = (d.calibracao ? d.calibracao.dataCalibracao : d.dataPrevista) ?? ''
   const data = prevista > impressao ? prevista : impressao
   const plano = d.balanca ? planoDaFolha(d.calibracao, d.balanca, d.padroes, data) : null
   return {
@@ -1599,7 +1605,7 @@ function gradesCliente(ctx: Contexto): NoObjeto[] {
  */
 function linhaChegada(ctx: Contexto): NoObjeto {
   const { d, k } = ctx
-  const os = k?.ordemServico?.trim() ?? ''
+  const os = (k ? k.ordemServico : d.ordemServico)?.trim() ?? ''
   const tecnico = d.tecnico.trim()
   const celulas: Celula[] = [
     os ? previstoEmLinha('Nº da OS', { text: os, bold: true }) : campo('Nº da OS'),
@@ -1616,7 +1622,8 @@ function linhaChegada(ctx: Contexto): NoObjeto {
 function dataPrevista(ctx: Contexto): string {
   const { d, k } = ctx
   const impressoIso = d.impressoEm.slice(0, 10)
-  return k?.dataCalibracao && k.dataCalibracao > impressoIso ? formatarDataBr(k.dataCalibracao) : ''
+  const prevista = (k ? k.dataCalibracao : d.dataPrevista) ?? ''
+  return prevista > impressoIso ? formatarDataBr(prevista) : ''
 }
 
 /** Colunas da grade da balança: cada rótulo numa linha só (medidos na letra dos rótulos). */

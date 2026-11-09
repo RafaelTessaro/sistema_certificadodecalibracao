@@ -54,11 +54,14 @@ export interface ConfigEmail {
 /** Para gravar: a senha em branco mantém a que já está no servidor. */
 export type ConfigEmailEntrada = Omit<ConfigEmail, 'senhaDefinida' | 'configurado'> & { senha: string }
 
-/** Pessoa da equipe (técnico ou signatário) para os campos da calibração. */
+/** Pessoa da equipe (usuário ativo) para os campos da calibração: o técnico que executou e quem autoriza. */
 export interface MembroEquipe {
   id: string
   nome: string
   cargo: string
+  /** Marca de técnico: aparece em "Técnico que executou". */
+  tecnico: boolean
+  /** Marca de signatário: recebe o pedido de autorização (com a revisão por outra pessoa ligada). */
   signatario: boolean
   temAssinatura: boolean
 }
@@ -322,10 +325,17 @@ export const api = {
       versao,
     }),
   excluirCalibracao: (id: string) => requisitar<void>('DELETE', `/api/calibracoes/${enc(id)}`),
-  mudarSituacao: (id: string, status: 'RASCUNHO' | 'REVISAO', versao?: number) =>
-    requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/situacao`, { status, versao }),
+  /** Volta para rascunho (retira o pedido de autorização). */
+  voltarParaRascunho: (id: string, versao?: number) =>
+    requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/situacao`, { status: 'RASCUNHO', versao }),
+  /** Envia para a autorização do signatário escolhido (com a revisão por outra pessoa ligada). */
+  pedirAutorizacao: (id: string, signatarioId: string, versao?: number) =>
+    requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/autorizacao`, { signatarioId, versao }),
+  /** O signatário devolve sem autorizar, com a nota do que precisa ser visto. */
+  devolver: (id: string, nota: string, versao?: number) =>
+    requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/devolver`, { nota, versao }),
   /** `aviso`: emitido, mas o PDF não pôde ser gravado na hora (é gerado ao abrir). */
-  emitir: (id: string, dados: { signatarioId?: string; versao?: number }) =>
+  emitir: (id: string, dados: { versao?: number }) =>
     requisitar<{ calibracao: Calibracao; aviso?: string }>('POST', `/api/calibracoes/${enc(id)}/emitir`, dados, 60_000),
   cancelar: (id: string, motivo: string, versao?: number) =>
     requisitar<{ calibracao: Calibracao }>('POST', `/api/calibracoes/${enc(id)}/cancelar`, { motivo, versao }),

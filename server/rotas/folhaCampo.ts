@@ -13,7 +13,10 @@
 // A reimpressão de um nº é sempre o PDF da primeira impressão, guardado na pasta de dados (folhas-campo, com
 // o sha256 no banco), byte a byte: dois papéis com o mesmo nº controlado nunca têm conteúdo diferente (a
 // folha avulsa ligada a uma calibração sai como foi a campo, em branco; a de um certificado emitido, com o
-// plano de antes da visita).
+// plano de antes da visita). Qualquer folha impressa também se reimprime pelo nº (GET /api/folha-campo/:numero:
+// a lista dos nºs reservados em folhas ainda não ligadas), sem abrir a pasta de dados do Windows.
+// A folha só do cliente (a balança ainda não cadastrada) pode sair com a OS e a data prevista da visita; a OS
+// fica guardada com a folha e passa para a calibração sem OS a que ela for ligada.
 // A primeira impressão também reserva o nº do certificado, que sai na folha para o técnico copiar na etiqueta
 // da balança (ver `Repositorio.numeroParaFolha`): o da calibração em andamento (a folha nova e a reimpressão
 // continuam com ele; a revisão sai com o do certificado revisado, sem reserva) ou, na folha avulsa — também
@@ -43,6 +46,19 @@ export function nomeArquivoDaFolha(os: string, numero: string): string {
 export function numeroDaFolha(v: unknown): string {
   const m = typeof v === 'string' ? /^\s*(?:FC[\s-]*)?(\d{4})[\s-]+(\d{1,5})\s*$/i.exec(v) : null
   return m ? `FC-${m[1]}-${m[2].padStart(5, '0')}` : ''
+}
+
+/**
+ * A OS e a data prevista da folha avulsa (`?os=…&data=AAAA-MM-DD`): a OS como o rascunho a grava (até 40 letras) e a
+ * data, se for uma data válida ('' = nenhuma; inválida: 400).
+ */
+export function osEDataDaFolha(q: Record<string, unknown>): { ordemServico: string; data: string } {
+  const os = typeof q.os === 'string' ? q.os.replace(/\s+/g, ' ').trim().slice(0, 40) : ''
+  const data = typeof q.data === 'string' ? q.data.trim() : ''
+  const dia = /^\d{4}-\d{2}-\d{2}$/.test(data) ? new Date(`${data}T12:00:00Z`) : null
+  if (data && !(dia && !Number.isNaN(dia.getTime()) && dia.toISOString().slice(0, 10) === data))
+    throw new ErroApi(400, 'Data prevista inválida.')
+  return { ordemServico: os, data }
 }
 
 /** Content-Disposition com o nome em ASCII (cabeçalho HTTP) e o original em UTF-8 (RFC 6266). */
@@ -104,6 +120,9 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
        */
       procedimento: string
       popId: number | null
+      /** Folha avulsa: a OS impressa (fica com a folha) e a data prevista da visita, sem rascunho. */
+      ordemServico?: string
+      dataPrevista?: string
     },
   ) {
     const u = quem(req)
@@ -113,6 +132,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       nova: e.nova,
       balancaId: e.balanca?.id,
       clienteId: e.cliente?.id,
+      ordemServico: e.ordemServico,
       por: u.nome,
     })
     if (folha.substituiu.length) req.detalheAuditoria = detalheDaTroca(folha.numero, [], folha.substituiu, folha.liberadas)
@@ -135,6 +155,9 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       impressoPor: folha.impressaPor || u.nome,
       // O nº do certificado reservado (o técnico o copia na etiqueta da balança); sem ele, nada
       ...(folha.numeroCertificado ? { numeroCertificado: folha.numeroCertificado } : {}),
+      // Sem rascunho (a folha do cliente com a balança em branco): a OS e a data prevista impressas
+      ...(e.ordemServico ? { ordemServico: e.ordemServico } : {}),
+      ...(e.dataPrevista ? { dataPrevista: e.dataPrevista } : {}),
     }
     const pdf = await gerarFolhaCampoPdf(dados)
     return { pdf: repo.guardarPdfFolhaCampo(folha.numero, pdf, e.popId), numero: folha.numero }
@@ -163,7 +186,9 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     const cliente = k.emissao?.cliente ?? repo.obterCliente(k.clienteId) ?? null
     const balanca = k.emissao?.balanca ?? repo.obterBalanca(k.balancaId) ?? null
     const padroes = k.emissao?.padroes ?? padroesDa(ctx, k)
-    const tecnico = k.emissao?.tecnico.nome ?? ctx.usuarios.obter(k.tecnicoId)?.nome ?? ''
+    // O técnico previsto, só se tiver a marca de técnico (quem criou sem a marca não é sugerido)
+    const previsto = ctx.usuarios.obter(k.tecnicoId)
+    const tecnico = k.emissao?.tecnico.nome ?? (previsto?.tecnico ? previsto.nome : '')
     // Emitida: o POP do certificado. Em andamento: o que o certificado vai citar (`popDaCalibracao`; numa revisão, o
     // do certificado revisado). A primeira impressão e a folha nova (que fica no lugar da de antes) vão a campo agora:
     // o que vale na data da calibração ou, se ela já passou (o rascunho nasce com a data do dia em que foi criado),
@@ -206,6 +231,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       notas,
       eventos,
       numeroDaFolha: daFolha,
+      ordemServico,
       ...folhaCampo
     } = repo.vincularFolhaCampo(numero, k, {
       confirmar: corpo.confirmar === true,
@@ -216,13 +242,23 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     req.detalheAuditoria = detalheDaTroca(numero, notas, substituiu, liberadas)
     registrarNumeros(ctx, req, eventos)
     // `numeroDaFolha`: o nº de certificado impresso na avulsa, que passou para a calibração (`usado`) ou ficou
-    // não utilizado (ela já tinha nº, ou é revisão): a tela avisa para corrigir a etiqueta
-    return { folhaCampo, numeroReservado: repo.numeroReservadoDa(k.id), numeroDaFolha: daFolha }
+    // não utilizado (ela já tinha nº, ou é revisão): a tela avisa para corrigir a etiqueta. `ordemServico`: a OS
+    // impressa na avulsa, que passou para a calibração sem OS (`aplicada`; a `versao` dela subiu) ou não (a calibração
+    // tem outra: a tela avisa)
+    return {
+      folhaCampo,
+      numeroReservado: repo.numeroReservadoDa(k.id),
+      numeroDaFolha: daFolha,
+      ordemServico,
+      versao: repo.obterCalibracao(k.id)?.versao ?? k.versao,
+    }
   })
 
   /**
    * Folha sem calibração: `balancaId` (o cliente é o dono da balança), só `clienteId` (balança em
    * branco) ou nada (em branco). `chave` (opcional, até 64 letras, números e hífens): o mesmo nº a cada pedido.
+   * `os` e `data` (AAAA-MM-DD; opcionais): a OS e a data prevista da visita, impressas na folha (a OS fica guardada
+   * com ela e passa para a calibração sem OS a que ela for ligada).
    */
   app.get('/api/folha-campo', async (req, reply) => {
     const q = req.query as Record<string, unknown>
@@ -237,9 +273,16 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     const idCliente = balanca?.clienteId || clienteId
     const cliente = idCliente ? repo.obterCliente(idCliente) : undefined
     if (idCliente && !cliente) throw new ErroApi(404, 'Cliente não encontrado.')
+    const { ordemServico, data } = osEDataDaFolha(q)
     const u = quem(req)
-    // Com a balança, o plano é o que o rascunho teria (pontos e padrões da última calibração dela)
-    const calibracao = balanca ? rascunhoInicial(ctx, { balancaId: balanca.id }, u.id) : null
+    // Com a balança, o plano é o que o rascunho teria (pontos e padrões da última calibração dela), com a OS e a data
+    const calibracao = balanca
+      ? rascunhoInicial(
+          ctx,
+          { balancaId: balanca.id, ...(ordemServico ? { ordemServico } : {}), ...(data ? { dataCalibracao: data } : {}) },
+          u.id,
+        )
+      : null
     const padroes = calibracao ? padroesDa(ctx, calibracao) : repo.listarPadroes()
     // O POP vigente (a folha vai a campo agora)
     const pop = repo.popVigente()
@@ -253,7 +296,24 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       tecnico: '',
       procedimento: pop ? textoPop(pop) : '',
       popId: pop?.id ?? null,
+      ordemServico,
+      dataPrevista: data,
     })
-    return enviarPdf(reply, pdf, nomeArquivoFolhaCampo(numero), numero)
+    return enviarPdf(reply, pdf, nomeArquivoDaFolha(ordemServico, numero), numero)
+  })
+
+  /**
+   * Reimpressão de uma folha já impressa, pelo nº ("FC-2026-00042"; aceita como o técnico digita): o PDF da primeira
+   * impressão, byte a byte, com os mesmos nºs da folha e do certificado (nunca reserva nº nem refaz o PDF). Para quem
+   * não abre a pasta de dados do Windows: a folha ainda não ligada se reimprime pela lista dos nºs reservados. Vai para
+   * o registro de atividades.
+   */
+  app.get('/api/folha-campo/:numero', async (req: FastifyRequest<{ Params: { numero: string } }>, reply) => {
+    quem(req)
+    const numero = numeroDaFolha(req.params.numero)
+    if (!numero) throw new ErroApi(400, 'Informe o nº da folha de campo como está no alto dela (ex.: FC-2026-00042).')
+    const { pdf, ordemServico } = repo.reimprimirFolhaCampo(numero)
+    req.detalheAuditoria = `reimprimiu ${numero}`
+    return enviarPdf(reply, pdf, nomeArquivoDaFolha(ordemServico, numero), numero)
   })
 }

@@ -1,4 +1,4 @@
-// Calibrações (rascunho → revisão → emitido), PDF do certificado, envio por e-mail, lembretes de
+// Calibrações (rascunho → [aguardando autorização] → emitido), PDF do certificado, envio por e-mail, lembretes de
 // vencimento e a conferência pública de autenticidade (QR code).
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
@@ -14,7 +14,9 @@ import {
   normalizarCalibracao,
   opcoesDaClasse,
   somarMeses,
+  texto,
 } from '#shared/dominio.ts'
+import { impedimentoDoSignatario, impedimentoDoTecnico, impedimentoParaEmitir, podeDevolver } from '#shared/permissoes.ts'
 import type { Calibracao, Cliente, StatusCalibracao } from '#shared/tipos.ts'
 import {
   anexosDoCertificado,
@@ -63,11 +65,23 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     return k
   }
   const naUnidadeAtual = (k: Calibracao) => naUnidadeAtualDe(ctx, k)
+  const nomeDe = (id: string) => ctx.usuarios.obter(id)?.nome ?? 'usuário excluído'
+  /**
+   * O técnico indicado agora (na criação ou na troca): só quem tem a marca de técnico e está ativo. O que a calibração já
+   * tem continua valendo, mesmo sem a marca hoje (não é conferido de novo).
+   */
+  const conferirTecnico = (tecnicoId: string, atual = '') => {
+    if (!tecnicoId || tecnicoId === atual) return
+    const erro = impedimentoDoTecnico(ctx.usuarios.obter(tecnicoId))
+    if (erro) throw new ErroApi(400, erro)
+  }
 
   app.get('/api/calibracoes', async (req) => {
     const q = req.query as Record<string, string | undefined>
     return repo.listarCalibracoes({
-      status: (q.status ?? '') as StatusCalibracao | 'ABERTAS' | '',
+      status: (q.status ?? '') as StatusCalibracao | 'ABERTAS' | 'AUTORIZAR' | '',
+      // "Para você autorizar": as enviadas para quem está vendo
+      usuario: req.usuario,
       clienteId: q.clienteId,
       balancaId: q.balancaId,
       busca: q.busca,
@@ -130,19 +144,19 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
    */
   app.post('/api/calibracoes', async (req, reply) => {
     const u = autor(req)
-    const k = repo.criarCalibracao(rascunhoInicial(ctx, corpo(req), u.id), u)
+    // O técnico é quem cria, se tiver a marca de técnico; senão, fica para escolher
+    const k = repo.criarCalibracao(rascunhoInicial(ctx, corpo(req), u.tecnico ? u.id : ''), u)
     return reply.code(201).send({ calibracao: k })
   })
 
   app.put('/api/calibracoes/:id', async (req: ComId) => {
     const u = autor(req)
     const antes = repo.obterCalibracao(req.params.id)?.tecnicoId
+    if (antes !== undefined) conferirTecnico(texto(corpo(req).tecnicoId, 100), antes)
     const k = repo.atualizarCalibracao(req.params.id, req.body, u)
-    // A troca do técnico fica no registro de atividades (com a revisão por outra pessoa, quem trocou não emite)
-    if (antes && antes !== k.tecnicoId) {
-      const nome = (id: string) => ctx.usuarios.obter(id)?.nome ?? 'usuário excluído'
-      req.detalheAuditoria = `técnico: ${nome(antes)} → ${nome(k.tecnicoId)}`
-    }
+    // A troca do técnico fica no registro de atividades
+    if (antes !== undefined && antes !== k.tecnicoId)
+      req.detalheAuditoria = `técnico: ${antes ? nomeDe(antes) : 'nenhum'} → ${nomeDe(k.tecnicoId)}`
     return { calibracao: k, pendencias: pendenciasDa(ctx, k), avisos: avisosDa(ctx, k) }
   })
 
@@ -153,24 +167,105 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     return reply.code(204).send()
   })
 
-  // Rascunho ↔ aguardando revisão
+  // Volta para rascunho: retira o pedido de autorização (para corrigir ou escolher outro signatário). O envio para
+  // autorização é `POST /autorizacao` (com o signatário escolhido)
   app.post('/api/calibracoes/:id/situacao', async (req: ComId) => {
     const c = corpo(req)
-    const status = c.status === 'REVISAO' ? 'REVISAO' : 'RASCUNHO'
-    if (status === 'REVISAO') {
-      const pendencias = pendenciasDa(ctx, obter(req.params.id))
-      if (pendencias.length) throw new ErroApi(409, `Antes de enviar para revisão: ${pendencias[0]}`, { pendencias })
+    if (c.status === 'REVISAO')
+      throw new ErroApi(409, 'Escolha o signatário que vai autorizar e use "Enviar para autorização".')
+    const antes = obter(req.params.id)
+    const k = repo.mudarSituacao(req.params.id, 'RASCUNHO', versaoDe(c))
+    if (antes.status === 'REVISAO')
+      req.detalheAuditoria = antes.autorizacao
+        ? `pedido de autorização retirado (era para ${antes.autorizacao.signatarioNome})`
+        : 'voltou para rascunho'
+    return { calibracao: k }
+  })
+
+  /**
+   * Envia para a autorização de um signatário (com a revisão por outra pessoa ligada): a calibração fica aguardando ele
+   * (só ele autoriza ou devolve; ver `impedimentoParaEmitir`). Nunca o técnico que executou. Já enviada, vai para outro.
+   */
+  app.post('/api/calibracoes/:id/autorizacao', async (req: ComId) => {
+    const u = autor(req)
+    const c = corpo(req)
+    if (!repo.obterConfig().exigirRevisor)
+      throw new ErroApi(409, 'A revisão por outra pessoa está desligada (Configurações): emita o certificado direto.')
+    const k = obter(req.params.id)
+    const pendencias = pendenciasDa(ctx, k)
+    if (pendencias.length) throw new ErroApi(409, `Antes de enviar para autorização: ${pendencias[0]}`, { pendencias })
+    const signatarioId = texto(c.signatarioId, 100)
+    if (!signatarioId) throw new ErroApi(400, 'Escolha o signatário que vai autorizar.')
+    const signatario = ctx.usuarios.obter(signatarioId)
+    const conferir = (atual: Calibracao) => {
+      const erro = impedimentoDoSignatario(signatario, atual.tecnicoId)
+      if (erro) throw new ErroApi(409, erro)
     }
-    return { calibracao: repo.mudarSituacao(req.params.id, status, versaoDe(c)) }
+    const enviada = repo.mudarSituacao(
+      k.id,
+      'REVISAO',
+      versaoDe(c),
+      {
+        autorizacao: {
+          signatarioId,
+          signatarioNome: signatario?.nome ?? '',
+          porId: u.id,
+          por: u.nome,
+          em: repo.agora().toISOString(),
+        },
+      },
+      conferir,
+    )
+    req.detalheAuditoria = `para ${signatario?.nome ?? ''}`
+    return { calibracao: enviada }
+  })
+
+  /** O signatário devolve sem autorizar, com a nota do que precisa ser visto: volta para rascunho. */
+  app.post('/api/calibracoes/:id/devolver', async (req: ComId) => {
+    const u = autor(req)
+    const c = corpo(req)
+    const nota = String(c.nota ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (nota.length < 3) throw new ErroApi(400, 'Escreva o que precisa ser visto (vai para quem enviou).')
+    if (nota.length > LIMITES.motivo) throw new ErroApi(400, `A nota pode ter até ${LIMITES.motivo} caracteres.`)
+    const k = obter(req.params.id)
+    const devolvida = repo.mudarSituacao(
+      k.id,
+      'RASCUNHO',
+      versaoDe(c),
+      { devolucao: { nota, porId: u.id, por: u.nome, em: repo.agora().toISOString() } },
+      (atual) => {
+        if (atual.status !== 'REVISAO') throw new ErroApi(409, 'Esta calibração não está aguardando autorização.')
+        if (podeDevolver(atual, u)) return
+        const pedido = atual.autorizacao
+        throw new ErroApi(
+          403,
+          pedido?.signatarioId === u.id
+            ? (impedimentoParaEmitir(true, atual, u) ?? '')
+            : pedido
+              ? `Só ${pedido.signatarioNome}, que recebeu o pedido, pode devolver esta calibração.`
+              : 'Só um signatário que não seja o técnico desta calibração pode devolvê-la.',
+          { codigo: 'SEM_PERMISSAO' },
+        )
+      },
+    )
+    req.detalheAuditoria = `${k.autorizacao ? `pedido de ${k.autorizacao.por}` : 'enviada para revisão'}: ${nota}`
+    return { calibracao: devolvida }
   })
 
   app.post('/api/calibracoes/:id/emitir', async (req: ComId) => {
     const u = autor(req)
     const c = corpo(req)
     const reservado = repo.numeroReservadoDa(req.params.id)
+    const antes = repo.obterCalibracao(req.params.id)
     const { calibracao: k, aviso } = await emitirCertificado(ctx, req.params.id, u, { versao: versaoDe(c) })
     // Com o nº reservado na impressão da folha de campo, o registro diz de qual folha; e se o PDF ficou para depois
     req.detalheAuditoria = [
+      // Com a revisão por outra pessoa: quem autorizou (quem emitiu) e quem pediu
+      k.emissao?.assinaturas === 'TECNICO_E_SIGNATARIO'
+        ? `autorizado por ${u.nome}${antes?.status === 'REVISAO' && antes.autorizacao ? ` (pedido de ${antes.autorizacao.por})` : ''}`
+        : '',
       reservado && k.numero === reservado.numero ? `${k.numero}, reservado na folha de campo ${reservado.folha}` : '',
       // A correção com o mesmo nº: a anotação interna (o motivo não sai no certificado)
       k.emissao?.mesmoNumero
@@ -240,7 +335,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
         dataCalibracao: hoje,
         proximaCalibracao: config.mesesProximaPadrao ? somarMeses(hoje, config.mesesProximaPadrao) : '',
         proximaNoCertificado: anterior.proximaNoCertificado,
-        tecnicoId: u.id,
+        // Quem pediu, se tiver a marca de técnico; senão, fica para escolher
+        tecnicoId: u.tecnico ? u.id : '',
       },
       u,
     )

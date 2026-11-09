@@ -777,6 +777,12 @@ export interface NumeroReservado {
   /** Quando foi emitido ou ficou não utilizado (ISO), e por quem. */
   situacaoEm: string
   situacaoPor: string
+  /**
+   * Na lista, o reservado numa folha ainda não ligada: o cliente para quem ela foi impressa e a OS impressa nela (para
+   * achar o papel, ou reimprimi-lo). Ausentes = folha em branco, ou sem OS.
+   */
+  folhaCliente?: string
+  folhaOs?: string
 }
 
 /** Dados congelados no momento da emissão. */

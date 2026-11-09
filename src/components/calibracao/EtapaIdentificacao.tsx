@@ -2,6 +2,7 @@ import { Building2, ExternalLink, FilePlus2, Link2, Loader2, MapPin } from 'luci
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { enderecoCliente, enderecoEmpresa, LOCAIS } from '#shared/dominio.ts'
+import { tecnicosParaEscolher } from '#shared/permissoes.ts'
 import type { FolhaCampoImpressa, LocalCalibracao } from '#shared/tipos.ts'
 import { TEXTO_FOLHA_NOVA } from '../../lib/folhaCampo'
 import { dataHora } from '../../lib/format'
@@ -10,10 +11,13 @@ import { Card, CardHeader } from '../ui/Card'
 import { Field, Input, Select, Textarea } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
 import type { ContextoEtapa } from './contexto'
+import { dicaDoTecnico } from './equipe'
 import { proximaAcompanhando } from './util'
 
 export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaCampo, vincularFolha, novaFolha }: ContextoEtapa) {
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => alterar((s) => ({ ...s, [k]: v }))
+  // Só quem tem a marca de técnico; o desta calibração continua na lista mesmo sem a marca hoje
+  const tecnicos = tecnicosParaEscolher(equipe, f.tecnicoId)
   const mudarLocal = (local: LocalCalibracao) =>
     alterar((s) => ({
       ...s,
@@ -91,15 +95,11 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
             label="Técnico que executou"
             htmlFor="k-tec"
             className="sm:col-span-2"
-            hint={
-              f.tecnicoId && !equipe.some((u) => u.id === f.tecnicoId)
-                ? 'Quem executou não está na equipe ativa (conta desativada ou excluída). Se foi excluída, escolha de novo.'
-                : equipe.find((u) => u.id === f.tecnicoId)?.cargo || undefined
-            }
+            hint={dicaDoTecnico(equipe, f.tecnicoId)}
           >
             <Select id="k-tec" value={f.tecnicoId} onChange={(e) => set('tecnicoId', e.target.value)}>
               <option value="">Escolha…</option>
-              {equipe.map((u) => (
+              {tecnicos.map((u) => (
                 <option key={u.id} value={u.id} title={u.cargo || undefined}>
                   {u.nome}
                 </option>

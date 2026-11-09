@@ -98,6 +98,27 @@ export interface NumeroDaFolha {
   motivo?: string
 }
 
+/**
+ * A OS impressa na folha avulsa ligada a uma calibração: `aplicada` = passou para a calibração (ela não tinha OS); senão,
+ * a calibração ficou com a dela (`daCalibracao`, diferente), e a tela avisa.
+ */
+export interface OsDaFolha {
+  daFolha: string
+  aplicada: boolean
+  daCalibracao?: string
+}
+
+/** "OS 2026/0456", "os: 2026/0456" e "2026/0456" são a mesma OS. */
+export const mesmaOs = (a: string, b: string) => {
+  const chave = (s: string) =>
+    s
+      .trim()
+      .replace(/^OS\b[\s:.\-]*/i, '')
+      .replace(/\s+/g, ' ')
+      .toLocaleLowerCase('pt-BR')
+  return chave(a) === chave(b)
+}
+
 /** Troca de folhas de uma calibração: as substituídas, as avulsas que ficaram livres e os nºs que voltaram a elas. */
 interface TrocaFolhas {
   substituidas: string[]
@@ -120,6 +141,9 @@ type LinhaNumero = {
   motivo: string
   situacao_em: string
   situacao_por: string
+  /** Só na lista (`listarNumerosReservados`): o cliente e a OS da folha ainda não ligada. */
+  folha_cliente?: string | null
+  folha_os?: string | null
 }
 
 const numeroDaLinha = (l: LinhaNumero): NumeroReservado => ({
@@ -135,6 +159,8 @@ const numeroDaLinha = (l: LinhaNumero): NumeroReservado => ({
   motivo: l.motivo,
   situacaoEm: l.situacao_em,
   situacaoPor: l.situacao_por,
+  ...(l.folha_cliente ? { folhaCliente: l.folha_cliente } : {}),
+  ...(l.folha_os ? { folhaOs: l.folha_os } : {}),
 })
 
 /**
@@ -1733,13 +1759,18 @@ export class Repositorio {
 
   /**
    * Os nºs ainda sem certificado (reservados para uma calibração em andamento ou numa folha avulsa ainda não
-   * ligada) e os não utilizados, do mais novo para o mais antigo (até `limite`).
+   * ligada) e os não utilizados, do mais novo para o mais antigo (até `limite`). O da folha ainda não ligada vem com
+   * o cliente para quem ela foi impressa e a OS impressa nela (para achar o papel, ou reimprimi-lo).
    */
   listarNumerosReservados(limite = 500): NumeroReservado[] {
     const linhas = this.db
       .prepare(
-        `SELECT * FROM numeros_reservados WHERE situacao IN ('reservado', 'nao_utilizado')
-          ORDER BY ano DESC, sequencia DESC LIMIT ?`,
+        `SELECT n.*, f.ordem_servico AS folha_os, c.nome AS folha_cliente
+           FROM numeros_reservados n
+           LEFT JOIN folhas_campo f ON f.numero = n.folha AND n.calibracao_id = '' AND n.situacao = 'reservado'
+           LEFT JOIN clientes c ON c.id = f.cliente_id
+          WHERE n.situacao IN ('reservado', 'nao_utilizado')
+          ORDER BY n.ano DESC, n.sequencia DESC LIMIT ?`,
       )
       .all(Math.min(Math.max(Math.trunc(limite) || 1, 1), 2000)) as LinhaNumero[]
     return linhas.map(numeroDaLinha)
@@ -2621,6 +2652,7 @@ export class Repositorio {
     notas: string[]
     eventos: EventoNumero[]
     numeroDaFolha: NumeroDaFolha | null
+    ordemServico: OsDaFolha | null
   } {
     // Sem registro, mas com o PDF na pasta: o banco voltou de uma cópia anterior à impressão dela, que volta
     // ao registro (fica lá mesmo que a ligação abaixo seja recusada ou peça confirmação)
@@ -2630,7 +2662,7 @@ export class Repositorio {
         throw new ErroApi(409, 'A folha de campo só pode ser ligada a uma calibração em andamento (rascunho ou em revisão).')
       const linha = this.db
         .prepare(
-          `SELECT calibracao_id, balanca_id, cliente_id, chave, substituida_por, substituida_em FROM folhas_campo
+          `SELECT calibracao_id, balanca_id, cliente_id, chave, substituida_por, substituida_em, ordem_servico FROM folhas_campo
             WHERE numero = ?`,
         )
         .get(numero) as
@@ -2641,6 +2673,7 @@ export class Repositorio {
             chave: string
             substituida_por: string
             substituida_em: string
+            ordem_servico: string
           }
         | undefined
       if (!linha) throw new ErroApi(404, `A folha ${numero} não foi impressa por este sistema. Confira o nº no alto da folha.`)
@@ -2662,6 +2695,7 @@ export class Repositorio {
           notas,
           eventos: [...troca.eventos, ...cert.eventos],
           numeroDaFolha: cert.numeroDaFolha,
+          ordemServico: null,
         }
       }
       // Já é a folha da calibração. Se ela tem outra vigente (uma cópia antiga do banco voltou com a folha
@@ -2747,6 +2781,9 @@ export class Repositorio {
         .run(k.id, numero)
       // Depois da troca (o nº de uma avulsa que saiu já voltou para ela): o nº impresso nesta avulsa
       const cert = this.numeroAoLigar(numero, k.id, o.por ?? '')
+      // A OS impressa na avulsa (a do cliente com a balança em branco) passa para a calibração sem OS
+      const ordemServico = this.osDaFolhaLigada(linha.ordem_servico, k.id)
+      if (ordemServico?.aplicada) notas.push('a OS impressa na folha passou para a calibração')
       if (outra) this.mudou('calibracao', outra.id)
       this.mudou('calibracao', k.id)
       return {
@@ -2756,7 +2793,45 @@ export class Repositorio {
         notas,
         eventos: [...troca.eventos, ...cert.eventos],
         numeroDaFolha: cert.numeroDaFolha,
+        ordemServico,
       }
+    })
+  }
+
+  /**
+   * A OS impressa na folha ligada agora à calibração em andamento: passa para ela se ela não tem OS (a versão sobe: a
+   * tela fica com a nova); com outra OS, a da calibração fica. null: a folha não tem OS, ou é a mesma.
+   */
+  private osDaFolhaLigada(daFolha: string, calibracaoId: string): OsDaFolha | null {
+    const os = daFolha.trim()
+    const k = os ? this.obterCalibracao(calibracaoId) : undefined
+    if (!k) return null
+    const atual = k.ordemServico.trim()
+    if (atual) return mesmaOs(atual, os) ? null : { daFolha: os, aplicada: false, daCalibracao: atual }
+    this.gravarCalibracao({ ...k, ordemServico: os, versao: k.versao + 1, atualizadoEm: this.agora().toISOString() }, false)
+    return { daFolha: os, aplicada: true }
+  }
+
+  /**
+   * Reimpressão de uma folha de campo pelo nº (FC-2026-00042), de qualquer tela: o PDF da primeira impressão, byte a
+   * byte, com os mesmos nºs da folha e do certificado (nunca um nº novo nem um PDF refeito). Conta a impressão. Sem
+   * registro, mas com o PDF na pasta (o banco voltou de uma cópia anterior à impressão), ela volta ao registro. 404: não
+   * foi impressa por este sistema; 409: a primeira impressão ainda não terminou de ser gerada (ou o PDF sumiu da pasta).
+   * `ordemServico`: a da calibração dona da folha ou, sem dona, a impressa nela (o nome do arquivo).
+   */
+  reimprimirFolhaCampo(numero: string): { pdf: Buffer; ordemServico: string; calibracaoId: string } {
+    if (!this.db.prepare('SELECT 1 FROM folhas_campo WHERE numero = ?').get(numero)) this.recuperarFolhasDaPasta(numero)
+    return transacao(this.db, () => {
+      const l = this.db.prepare('SELECT calibracao_id, ordem_servico FROM folhas_campo WHERE numero = ?').get(numero) as
+        { calibracao_id: string; ordem_servico: string } | undefined
+      if (!l) throw new ErroApi(404, `A folha ${numero} não foi impressa por este sistema. Confira o nº no alto da folha.`)
+      const pdf = this.pdfFolhaCampo(numero)
+      if (!pdf) throw new ErroApi(409, `A folha ${numero} ainda está sendo gerada. Espere um instante e tente de novo.`)
+      this.db
+        .prepare('UPDATE folhas_campo SET impressoes = impressoes + 1, ultima_em = ? WHERE numero = ?')
+        .run(this.agora().toISOString(), numero)
+      const dona = l.calibracao_id ? this.obterCalibracao(l.calibracao_id) : undefined
+      return { pdf, ordemServico: (dona?.ordemServico || l.ordem_servico).trim(), calibracaoId: l.calibracao_id }
     })
   }
 
