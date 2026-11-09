@@ -1,6 +1,6 @@
-// Página Usuários (o "painel de administração"): quem acessa o sistema, o nível de cada um, quem é
-// signatário (autoriza a emissão dos certificados), as ações sobre as contas, o que cada nível pode e
-// o registro de atividades. Só o administrador chega aqui (a rota e o menu conferem a permissão
+// Página Usuários (o "painel de administração"): quem acessa o sistema, o nível de cada um (Operador ou
+// Administrador), as marcas de técnico (executa as calibrações) e de signatário (autoriza os certificados com a
+// revisão por outra pessoa ligada), as ações sobre as contas, o que cada nível pode e o registro de atividades. Só o administrador chega aqui (a rota e o menu conferem a permissão
 // `usuarios`; o servidor também recusa).
 
 import {
@@ -16,6 +16,7 @@ import {
   UserPlus,
   Users as IconeUsuarios,
   UserX,
+  Wrench,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { NOME_NIVEL } from '#shared/permissoes.ts'
@@ -37,6 +38,7 @@ import { RedefinirSenhaModal } from '../components/usuarios/RedefinirSenhaModal'
 import { SenhaTemporariaModal } from '../components/usuarios/SenhaTemporariaModal'
 import { api, ErroApi } from '../lib/api'
 import { cn } from '../lib/cn'
+import { useConsulta } from '../lib/consulta'
 import { dataHora } from '../lib/format'
 import { useSessao, useUsuarioAtual } from '../store/sessao'
 import { avisarErro, toast } from '../store/ui'
@@ -110,6 +112,11 @@ export function Usuarios() {
   const ehUltimoAdmin = (u: Usuario) => u.nivel === 'ADMIN' && u.ativo && adminsAtivos <= 1
   const conectados = lista.filter((u) => u.sessoesAtivas > 0).length
   const signatariosAtivos = lista.filter((u) => u.signatario && u.ativo).length
+  const tecnicosAtivos = lista.filter((u) => u.tecnico && u.ativo).length
+  // Sem signatário, só faz falta com a revisão por outra pessoa ligada (desligada, qualquer pessoa emite)
+  const { dados: exigirRevisor } = useConsulta('config:exigirRevisor', () => api.config().then((r) => r.config.exigirRevisor), [
+    'config',
+  ])
 
   const registrarAcao = () => setVersaoAtividade((v) => v + 1)
 
@@ -258,7 +265,7 @@ export function Usuarios() {
     <>
       <PageHeader
         titulo="Usuários"
-        descricao="Quem acessa o sistema, quem autoriza os certificados e o que cada um pode fazer"
+        descricao="Quem acessa o sistema, quem executa as calibrações, quem autoriza os certificados e o que cada um pode fazer"
         acoes={
           <Button
             variante="primary"
@@ -273,12 +280,22 @@ export function Usuarios() {
       />
 
       <div className="flex flex-col gap-6">
-        {usuarios && signatariosAtivos === 0 && (
+        {usuarios && exigirRevisor && signatariosAtivos === 0 && (
           <p className="flex items-start gap-2.5 rounded-2xl border border-warning/25 bg-warning-soft px-4 py-3 text-[13px] text-warning">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
-              <b className="font-semibold">Ninguém pode emitir certificados ainda.</b> Edite o usuário do responsável técnico e
-              marque <b className="font-semibold">Signatário</b>: só os signatários autorizam a emissão.
+              <b className="font-semibold">Ninguém pode autorizar certificados.</b> Com a revisão por outra pessoa ligada
+              (Configurações), só um signatário autoriza a emissão. Edite o usuário do responsável técnico e marque{' '}
+              <b className="font-semibold">Signatário</b>.
+            </span>
+          </p>
+        )}
+        {usuarios && tecnicosAtivos === 0 && (
+          <p className="flex items-start gap-2.5 rounded-2xl border border-warning/25 bg-warning-soft px-4 py-3 text-[13px] text-warning">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              <b className="font-semibold">Ninguém está marcado como técnico.</b> A lista “Técnico que executou” das
+              calibrações fica vazia. Edite quem vai a campo e marque <b className="font-semibold">Técnico</b>.
             </span>
           </p>
         )}
@@ -301,6 +318,7 @@ export function Usuarios() {
                 ? [
                     plural(lista.length, 'usuário', 'usuários'),
                     plural(adminsAtivos, 'administrador ativo', 'administradores ativos'),
+                    plural(tecnicosAtivos, 'técnico', 'técnicos'),
                     plural(signatariosAtivos, 'signatário', 'signatários'),
                     plural(conectados, 'com sessão aberta agora', 'com sessão aberta agora'),
                   ].join(' · ')
@@ -336,7 +354,7 @@ export function Usuarios() {
                 <tr>
                   <Th>Nome</Th>
                   <Th className="max-md:hidden">Usuário</Th>
-                  <Th className="max-sm:hidden">Nível</Th>
+                  <Th className="max-sm:hidden">Nível e marcas</Th>
                   <Th className="max-sm:hidden">Situação</Th>
                   <Th className="max-lg:hidden">Último acesso</Th>
                   <Th alinhar="center" className="max-xl:hidden">
@@ -371,6 +389,7 @@ export function Usuarios() {
                               <span className="sm:hidden">
                                 {' '}
                                 · {NOME_NIVEL[u.nivel]}
+                                {u.tecnico && <> · Técnico</>}
                                 {u.signatario && <> · Signatário</>}
                                 {sit.tom !== 'success' && <> · {sit.rotulo}</>}
                               </span>
@@ -385,6 +404,12 @@ export function Usuarios() {
                       <Td className="max-sm:hidden">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Badge tom={u.nivel === 'ADMIN' ? 'brand' : 'neutral'}>{NOME_NIVEL[u.nivel]}</Badge>
+                          {u.tecnico && (
+                            <Badge tom="neutral" ponto={false} className="gap-1">
+                              <Wrench className="h-3 w-3" />
+                              Técnico
+                            </Badge>
+                          )}
                           {u.signatario && (
                             <Badge tom="info" ponto={false} className="gap-1">
                               <PenLine className="h-3 w-3" />
