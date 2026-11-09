@@ -15,6 +15,7 @@ import type { Padrao } from '#shared/tipos.ts'
 import { A4, BASE_RODAPE, MODULO, pdfmake, TOPO_CABECALHO } from './base.ts'
 import {
   folhaClasseI,
+  folhaDoClienteComOs,
   folhaEmBranco,
   folhaEmBrancoOitoPadroes,
   folhaEmBrancoSemPadroes,
@@ -169,6 +170,7 @@ const EXEMPLOS: Array<{ nome: string; dados: () => DadosFolhaCampo; maxPaginas: 
   { nome: 'rodoviária multi-intervalo 80 t, 11 pontos e 7 etapas', dados: () => folhaRodoviariaMultiIntervalo(), maxPaginas: 3 },
   { nome: 'analítica classe I 220 g × 0,1 mg (sem histórico)', dados: folhaClasseI, maxPaginas: 2 },
   { nome: 'em branco sem nenhum padrão cadastrado', dados: folhaEmBrancoSemPadroes, maxPaginas: 2 },
+  { nome: 'do cliente com a balança em branco, com a OS e a data prevista', dados: folhaDoClienteComOs, maxPaginas: 2 },
 ]
 
 const gerados = new Map<string, Promise<Buffer>>()
@@ -1219,6 +1221,32 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toMatch(/retangular .*redondo/)
     // Sem plano não há pesos impressos para trocar
     expect(t).not.toContain('Pesos diferentes dos impressos')
+  })
+
+  it('do cliente com a balança em branco: a OS e a data prevista informadas na tela saem impressas', async () => {
+    const d = folhaDoClienteComOs()
+    const texto = textoDoPdf(await gerarFolhaCampoPdf(d))
+    expect(conferirPaginas(texto, 'FC-2026-00051', 'CC-2026-00137')).toHaveLength(2)
+    const t = corrido(texto)
+    // O cliente do cadastro e a OS, impressos (para conferir); a balança para preencher
+    expect(t).toContain('FRIGORÍFICO VALE DO CORUMBATAÍ LTDA')
+    expect(t).toMatch(/Nº da OS OS-2026-0618 Técnico que executou/)
+    expect(t).toContain('cadastre a balança antes')
+    // A data prevista é a dica da data da calibração, no passo das assinaturas
+    expect(t).toMatch(/Data da calibração . .{0,80}prevista: 12\/11\/2026/)
+    // Na definição, a OS vai na célula do impresso (cinza), como a do rascunho
+    expect(jsonDe(d)).toMatch(/"Nº da OS".{0,400}"OS-2026-0618"/)
+    // Sem OS: o campo para escrever; visita no dia da impressão: sem dica
+    const sem = corrido(textoDoPdf(await gerarFolhaCampoPdf({ ...d, ordemServico: '', dataPrevista: '2026-11-09' })))
+    expect(sem).not.toContain('OS-2026-0618')
+    expect(sem).not.toContain('prevista:')
+    // Com rascunho, valem a OS e a data dele
+    const comRascunho = corrido(
+      textoDoPdf(await gerarFolhaCampoPdf({ ...folhaPlataforma(), ordemServico: 'OS-9999', dataPrevista: '2027-01-15' })),
+    )
+    expect(comRascunho).toContain('OS-2026-0512')
+    expect(comRascunho).not.toContain('OS-9999')
+    expect(comRascunho).not.toContain('15/01/2027')
   })
 })
 
