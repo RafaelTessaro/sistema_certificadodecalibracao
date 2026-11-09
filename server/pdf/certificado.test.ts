@@ -152,6 +152,23 @@ function recalculado(d: DadosCertificadoPdf): DadosCertificadoPdf {
 }
 
 /**
+ * A amostra como saiu antes da 1.0.5, quando a pressão era opcional na classe III: sem a pressão e sem o barômetro
+ * (a plataforma de 300 kg, a bancada e a balança de 32 kg ganharam os dois na 1.0.5). Para conferir que os PDFs
+ * emitidos antes continuam iguais.
+ */
+function semPressaoDa105(d: DadosCertificadoPdf): DadosCertificadoPdf {
+  const padroes = d.emissao.padroes.filter((p) => p.tipo !== 'BAROMETRO')
+  const emissao = { ...d.emissao, padroes }
+  const calibracao = {
+    ...d.calibracao,
+    padroesIds: d.calibracao.padroesIds.filter((id) => padroes.some((p) => p.id === id)),
+    ambiente: { ...d.calibracao.ambiente, pressao: null },
+    emissao,
+  }
+  return recalculado({ ...d, calibracao, emissao })
+}
+
+/**
  * Variantes comuns que ficavam no limite da página (e davam uma página só com as assinaturas) e o pior caso
  * possível; `paginas` = o esperado, quando é o caso de fixar (as comuns, com o desenho e o gráfico, em 3).
  */
@@ -598,7 +615,9 @@ describe('gerarCertificadoPdf', { timeout: 60_000 }, () => {
       const json = JSON.stringify(definicaoCertificado(d))
       return json.slice(json.indexOf('PRESSÃO ATMOSFÉRICA'), json.indexOf('MONITORAMENTO AMBIENTAL'))
     }
-    const semBarometro = exemploBancada()
+    // A bancada (1.0.5: a pressão é obrigatória em toda classe) sai com a pressão medida com o barômetro
+    expect(celula(exemploBancada())).toContain('943 hPa')
+    const semBarometro = semPressaoDa105(exemploBancada())
     expect(semBarometro.emissao.padroes.some((p) => p.tipo === 'BAROMETRO')).toBe(false)
     expect(semBarometro.calibracao.ambiente.pressao).toBeNull()
     // Digitada sem barômetro (a emissão não deixa; um certificado antigo): não sai
@@ -1767,7 +1786,8 @@ describe('páginas equilibradas e fim compacto', { timeout: 120_000 }, () => {
   it.runIf(temPdftotext)(
     'bancada (opiniões): a 3ª página leva seções inteiras, não só o fim; o gráfico fica com a tabela dele',
     async () => {
-      const d = exemploBancada()
+      // Como saía antes da 1.0.5 (sem a pressão e o barômetro, uma linha a menos): o caso do limite da página
+      const d = semPressaoDa105(exemploBancada())
       // Sem o equilíbrio, a 3ª página ficaria só com as declarações e as assinaturas
       const antes = await natural(d)
       expect(antes).toHaveLength(3)
@@ -2346,7 +2366,13 @@ describe('quem assina e a correção com o mesmo nº (1.0.4)', () => {
   const texto = (d: DadosCertificadoPdf) => JSON.stringify(definicaoCertificado(d))
   /** O mesmo certificado emitido antes da 1.0.4 (sem os campos novos congelados na emissão). */
   const de103 = (d: DadosCertificadoPdf): DadosCertificadoPdf => {
-    const { assinaturas: _a, mesmoNumero: _m, ...emissao } = d.emissao
+    const {
+      assinaturas: _a,
+      mesmoNumero: _m,
+      semFinalidadeEDimensoes: _f,
+      inscricaoEstadualDoCliente: _ie,
+      ...emissao
+    } = d.emissao
     return { ...d, emissao }
   }
   const sha = (d: DadosCertificadoPdf) => createHash('sha256').update(texto(d)).digest('hex')
@@ -2414,12 +2440,12 @@ describe('quem assina e a correção com o mesmo nº (1.0.4)', () => {
       ['classe I (legado)', exemploClasseILegado, '7fff8618caf7be282fc6563e3216de096d80a33afbd183e745244b7c0b68481b'],
       [
         'executado e autorizado pela mesma pessoa',
-        () => de103(exemploBancada()),
+        () => de103(semPressaoDa105(exemploBancada())),
         'ac1fbd815d476adf8a0a62b96002bb054b5e81cb1464506acc59dcad05aed689',
       ],
       [
         'executado e autorizado por pessoas diferentes',
-        () => de103(exemploPlataforma300kg()),
+        () => de103(semPressaoDa105(exemploPlataforma300kg())),
         '1a0fdbd09a324d6765873652d3b74708f39ba04c4fbde2cb9461a6c3130e0519',
       ],
       [
@@ -2453,5 +2479,95 @@ describe('quem assina e a correção com o mesmo nº (1.0.4)', () => {
     const antiga = texto({ ...d, emissao: { ...d.emissao, mesmoNumero: undefined } })
     expect(antiga).toContain('substitui integralmente o Certificado nº ')
     expect(antiga).toContain(`Motivo: ${d.calibracao.motivoRevisao}`)
+  })
+})
+
+describe('sem a finalidade de uso e as dimensões, com a inscrição estadual do cliente (1.0.5)', () => {
+  /** A definição do documento, em texto (os rótulos saem em maiúsculas). */
+  const texto = (d: DadosCertificadoPdf) => JSON.stringify(definicaoCertificado(d))
+  /** O mesmo certificado emitido pela 1.0.4 (sem as marcas da 1.0.5, congeladas na emissão). */
+  const de104 = (d: DadosCertificadoPdf): DadosCertificadoPdf => {
+    const { semFinalidadeEDimensoes: _f, inscricaoEstadualDoCliente: _ie, ...emissao } = d.emissao
+    return { ...d, emissao }
+  }
+  const sha = (d: DadosCertificadoPdf) => createHash('sha256').update(texto(d)).digest('hex')
+
+  it('emitido agora: sem a "Finalidade de uso" e sem as dimensões no receptor (o cadastro guardado continua)', () => {
+    const d = exemploPlataforma300kg()
+    expect([d.emissao.semFinalidadeEDimensoes, d.emissao.balanca.finalidade, d.emissao.balanca.dimensoes]).toEqual([
+      true,
+      'PROCESSO',
+      '100 × 100 cm',
+    ])
+    const t = texto(d)
+    expect(t).not.toMatch(/FINALIDADE DE USO|Processo \/ produção/)
+    expect(t).not.toContain('100 × 100 cm')
+    // O receptor só com o formato; o local de instalação, sozinho na linha
+    expect(t).toContain('"text":"RECEPTOR DE CARGA"')
+    expect(t).toContain('"text":"LOCAL DE INSTALAÇÃO (*)"')
+    expect(t).toContain(d.emissao.balanca.localInstalacao)
+    // Os emitidos antes, com as duas
+    const antes = texto(de104(d))
+    expect(antes).toContain('FINALIDADE DE USO (*)')
+    expect(antes).toContain('Processo / produção')
+    expect(antes).toContain('100 × 100 cm')
+  })
+
+  it('a nota do (*) não conta mais a finalidade: só a identificação e o local, que continuam saindo', () => {
+    const d = exemploBancada()
+    d.emissao = {
+      ...d.emissao,
+      balanca: { ...d.emissao.balanca, identificacao: '', localInstalacao: '', finalidade: 'COMERCIAL' },
+    }
+    const nota = 'Informações com (*) fornecidas pelo cliente'
+    expect(texto(d)).not.toContain(nota)
+    expect(texto(de104(d))).toContain(nota)
+    d.emissao.balanca.localInstalacao = 'Açougue'
+    expect(texto(d)).toContain(nota)
+  })
+
+  it('a inscrição estadual do cliente sai embaixo do CNPJ, quando ele tem; sem ela, nada (nem o rótulo, nem traço)', () => {
+    const d = exemploPlataforma300kg()
+    expect([d.emissao.inscricaoEstadualDoCliente, d.emissao.cliente.inscricaoEstadual]).toEqual([true, '587.114.226.118'])
+    const celula = JSON.stringify({ text: [d.emissao.cliente.documento, '\nIE 587.114.226.118'] })
+    expect(texto(d)).toContain(celula)
+    // Sem a IE no cadastro: só o CNPJ, como antes
+    const sem: DadosCertificadoPdf = {
+      ...d,
+      emissao: { ...d.emissao, cliente: { ...d.emissao.cliente, inscricaoEstadual: ' ' } },
+    }
+    expect(texto(sem)).not.toMatch(/\\nIE |INSCRIÇÃO ESTADUAL/)
+    expect(texto(sem)).toContain(JSON.stringify({ text: d.emissao.cliente.documento }))
+    // Emitido antes da 1.0.5: sem a IE, mesmo que o cliente tenha
+    expect(texto(de104(d))).not.toMatch(/\\nIE |587\.114\.226\.118/)
+  })
+
+  it.runIf(temPdftotext)('no PDF: a IE embaixo do CNPJ, o local de instalação sem a finalidade', async () => {
+    const t = textoDoPdf(await gerarCertificadoPdf(exemploPlataforma300kg()))
+    expect(t).toMatch(/CNPJ\n(.*\n)?.*11\.444\.777\/0001-61\n.*IE 587\.114\.226\.118/)
+    expect(corrido(t)).not.toMatch(/FINALIDADE DE USO|100 × 100 cm/)
+    expect(corrido(t)).toContain('LOCAL DE INSTALAÇÃO (*) Expedição — doca 2')
+  })
+
+  it('emitido pela 1.0.4 (sem as marcas): o PDF refeito dos dados congelados é o mesmo documento, byte a byte', () => {
+    // A definição do documento como a 1.0.4 a montava (com a finalidade, as dimensões e sem a IE do cliente, que a
+    // plataforma tem no cadastro): os PDFs emitidos antes continuam iguais
+    const casos: Array<[string, () => DadosCertificadoPdf, string]> = [
+      // (sem a pressão e o barômetro, que as amostras ganharam na 1.0.5: `semPressaoDa105`)
+      [
+        'plataforma 300 kg',
+        () => semPressaoDa105(exemploPlataforma300kg()),
+        '1a0fdbd09a324d6765873652d3b74708f39ba04c4fbde2cb9461a6c3130e0519',
+      ],
+      ['bancada 30 kg', () => semPressaoDa105(exemploBancada()), '41544747568ffaacef729ae6b11e3e09023fdaf0c8eb05ad2553ec1066593dfe'],
+      ['classe I 220 g', exemploClasseI220g, 'a5f95e3bdc6d8da64f4ca17b6e464b6ee8372c9aa729ff5bc0d78ab8e79d7fe2'],
+      [
+        'balança 32 kg',
+        () => semPressaoDa105(exemploBalanca32kg()),
+        'ad4e6f3c2b43ccff5d11841650f2aa5ca3ce780b0f24c357169b75c8297d452d',
+      ],
+      ['pior caso', exemploPiorCasoAtual, '2adc12d7db3d5f177c54ef9d167a964eeb63a14a558cb6e31c126c493e70ec1d'],
+    ]
+    for (const [nome, dados, esperado] of casos) expect(sha(de104(dados())), nome).toBe(esperado)
   })
 })

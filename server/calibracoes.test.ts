@@ -11,7 +11,7 @@ import { BALANCA_VAZIA, CLIENTE_VAZIO, PADRAO_VAZIO, PENDENCIA_REVISADO_CANCELAD
 import { SEM_PERMISSAO_EMITIR, TECNICO_NAO_AUTORIZA } from '#shared/permissoes.ts'
 import type { Balanca, Calibracao, CalibracaoInput, CalibracaoResumo, Cliente, Padrao } from '#shared/tipos.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
-import { anexosDoCertificado, gerarPdf } from './certificados.ts'
+import { anexosDoCertificado, gerarPdf, montarEmissao } from './certificados.ts'
 import { ASSINATURA_EXEMPLO_1, ASSINATURA_EXEMPLO_2 } from './pdf/assinaturasExemplo.ts'
 import { comImagensNaOrdemInversa } from './pdf/base.ts'
 import { textoPdf } from './pdf/carimbo.ts'
@@ -27,6 +27,8 @@ let t: AppComLogin
 let cliente: Cliente
 let balanca: Balanca
 let pesos: Padrao
+/** O barômetro do cenário (a pressão é obrigatória em toda calibração, POP 7.5), cadastrado na 1ª calibração pronta. */
+let barometro: Padrao | undefined
 
 beforeEach(async () => {
   t = await criarAppComLogin()
@@ -82,6 +84,7 @@ beforeEach(async () => {
   ).padrao
 })
 afterEach(async () => {
+  barometro = undefined
   await t.fechar()
 })
 
@@ -102,11 +105,27 @@ async function calibracaoPronta(cookie = t.cookieAdmin): Promise<Calibracao> {
   )) as {
     calibracao: Calibracao
   }
-  expect(k).toMatchObject({ status: 'RASCUNHO', numero: '', padroesIds: [pesos.id], ordemServico: 'OS 4471' })
+  expect(k).toMatchObject({ status: 'RASCUNHO', numero: '', ordemServico: 'OS 4471' })
+  // A pressão, obrigatória em toda calibração, medida com o barômetro (o rascunho novo já o traz, depois de cadastrado)
+  barometro ??= (
+    await criar('/api/padroes', {
+      ...PADRAO_VAZIO,
+      tipo: 'BAROMETRO',
+      identificacao: 'BR-90',
+      descricao: 'Barômetro digital',
+      certificado: 'LAB-0789/2026',
+      laboratorio: 'Laboratório de Pressão Exemplo',
+      acreditacao: 'CAL 0456',
+      dataCalibracao: '2026-01-10',
+      validade: '2099-01-10',
+    })
+  ).padrao as Padrao
+  expect(k.padroesIds.filter((id) => id !== barometro!.id)).toEqual([pesos.id])
   expect(k.localEndereco).toContain('Rio Claro')
   const dados: CalibracaoInput = {
     ...k,
-    ambiente: { temperaturaInicial: 22.1, temperaturaFinal: 22.6, umidadeInicial: 55, umidadeFinal: 57, pressao: null },
+    padroesIds: [pesos.id, barometro.id],
+    ambiente: { temperaturaInicial: 22.1, temperaturaFinal: 22.6, umidadeInicial: 55, umidadeFinal: 57, pressao: 927 },
     repetibilidade: [{ id: 'r1', carga: 15, leituras: [15, 15, 15.01, 15, 15, 15] }],
     excentricidade: {
       aplicavel: true,
@@ -650,7 +669,10 @@ describe('emissão do certificado', () => {
       expect(await folha(comMarca)).toContain('previsto: Comum Teste')
       const semMarca = await calibracaoPronta(t.cookieComum)
       await marcarTecnico(t.comumId, false)
-      expect(await folha(semMarca)).not.toContain('previsto:')
+      // Só o instrumento do ambiente previsto (o barômetro); o técnico, não
+      const texto = await folha(semMarca)
+      expect(texto).not.toContain('previsto: Comum Teste')
+      expect(texto.match(/previsto: .*/g)).toEqual(['previsto: BR-90'])
     })
   })
 
@@ -682,6 +704,39 @@ describe('emissão do certificado', () => {
     expect(r.rawPayload.subarray(0, 5).toString()).toBe('%PDF-')
     const depois = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().calibracao
     expect(depois).toMatchObject({ status: 'RASCUNHO', numero: '', versao: k.versao })
+  })
+
+  it('1.0.5: sem a finalidade de uso e as dimensões, com a IE do cliente; marcado na emissão (o cadastro guardado continua)', async () => {
+    // Cadastros com os dados de antes: a balança com a finalidade e as dimensões, o cliente com a inscrição estadual
+    const c = await t.chamar('PUT', `/api/clientes/${cliente.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...cliente, inscricaoEstadual: '587.229.409.110', versao: cliente.versao },
+    })
+    expect(c.statusCode, c.body).toBe(200)
+    const b = await t.chamar('PUT', `/api/balancas/${balanca.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...balanca, finalidade: 'COMERCIAL', dimensoes: '40 × 50 cm', versao: balanca.versao },
+    })
+    expect(b.statusCode, b.body).toBe(200)
+    expect(b.json().balanca).toMatchObject({ finalidade: 'COMERCIAL', dimensoes: '40 × 50 cm' })
+    const { calibracao: k } = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: balanca.id })) as {
+      calibracao: Calibracao
+    }
+    // A emissão (e a prévia) marca o certificado como da 1.0.5; a cópia congelada guarda o cadastro como está
+    const extra = { numero: 'PRÉVIA', codigo: 'XXXX-XXXX', emitidoPor: '', signatarioId: '' }
+    expect(montarEmissao(t.ctx, k, t.ctx.repo.obterConfig(), extra)).toMatchObject({
+      semFinalidadeEDimensoes: true,
+      inscricaoEstadualDoCliente: true,
+      balanca: { finalidade: 'COMERCIAL', dimensoes: '40 × 50 cm' },
+      cliente: { inscricaoEstadual: '587.229.409.110' },
+    })
+    const previa = await t.chamar('POST', `/api/calibracoes/${k.id}/previa`, { cookie: t.cookieAdmin, payload: k })
+    expect(previa.statusCode, previa.body).toBe(200)
+    if (temPdftotext) {
+      const texto = textoDoPdf(previa.rawPayload)
+      expect(texto).toContain('IE 587.229.409.110')
+      expect(texto).not.toMatch(/FINALIDADE DE USO|Comercial \(venda por peso\)|40 × 50 cm/)
+    }
   })
 
   it('prévia sem as imagens das assinaturas (ninguém autorizou ainda); o emitido, com elas', async () => {
@@ -1434,7 +1489,7 @@ describe('revisão e cancelamento', () => {
       status: 'RASCUNHO',
       clienteId: cliente.id,
       balancaId: balanca.id,
-      padroesIds: [pesos.id],
+      padroesIds: [pesos.id, barometro!.id],
       substituiId: '',
     })
     expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
@@ -2172,7 +2227,8 @@ describe('peças dos pontos e a carga digitada (bloqueiam a emissão)', () => {
     })
     expect(r.statusCode, r.body).toBe(200)
     const semPecas = (k: Calibracao) => {
-      expect(k.padroesIds).toEqual([])
+      // Fica o barômetro (ativo)
+      expect(k.padroesIds).toEqual([barometro!.id])
       expect(k.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
       expect(k.indicacao.pontos.every((p) => p.pecas.length === 0 && !p.pecasManuais)).toBe(true)
     }

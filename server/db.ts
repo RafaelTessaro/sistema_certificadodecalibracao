@@ -268,6 +268,13 @@ const MIGRACOES: Migracao[] = [
   // 18: a OS (ordem de serviço) impressa na folha de campo avulsa (a do cliente com a balança ainda não cadastrada): ao
   // ligar a folha a uma calibração sem OS, ela passa para a calibração ('' nas outras folhas e nas de antes). 1.0.5.
   (db) => acrescentarColuna(db, 'folhas_campo', 'ordem_servico', "TEXT NOT NULL DEFAULT ''"),
+
+  // 19: a calibração em andamento (também a revisão de um certificado) nas classes III e IIII ou sem classe que já tinha
+  // leituras ou a folha de campo impressa, sem a pressão atmosférica, na atualização para a 1.0.5, quando a pressão
+  // passou a ser obrigatória em toda classe (POP 7.5; antes, só nas classes I e II), fica com a falta dela como aviso
+  // (`pressaoComoAviso`): a visita já aconteceu, ou vai acontecer com a folha que dizia "opcional". As novas seguem a
+  // regra. A que já tem os mínimos como avisos não precisa.
+  pressoesAntesDaRegra,
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
@@ -459,6 +466,71 @@ function descidasAntesDaRegra(db: Banco) {
         marcadas.length === 1
           ? 'A calibração em andamento medida ou com a folha impressa antes desta versão mantém o método gravado e sai com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: '
           : `${marcadas.length} calibrações em andamento medidas ou com a folha impressa antes desta versão mantêm o método gravado e saem com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: `,
+        marcadas,
+      ),
+    )
+}
+
+/**
+ * Migração 19 (ver acima). Repetível: só marca a calibração em andamento (rascunho ou em revisão, também a revisão de um
+ * certificado) de uma balança das classes III e IIII ou sem classe, sem a pressão, com alguma leitura medida
+ * (`temLeituraMedida`) ou com uma folha de campo impressa, ainda sem a marca e sem os mínimos como avisos
+ * (`minimosDoPopComoAviso`, onde a falta da pressão já é aviso). Não sobe a versão: a marca não muda nada do que a tela
+ * grava. O registro de atividades diz quais.
+ */
+function pressoesAntesDaRegra(db: Banco) {
+  const linhas = db
+    .prepare(
+      `SELECT k.id, k.dados, b.dados AS balanca, c.nome AS cliente, o.numero AS revisado,
+              (SELECT n.numero FROM numeros_reservados n
+                WHERE n.calibracao_id = k.id AND n.situacao = 'reservado' ORDER BY n.id DESC LIMIT 1) AS reservado,
+              EXISTS (SELECT 1 FROM folhas_campo f WHERE f.calibracao_id = k.id) AS com_folha
+         FROM calibracoes k LEFT JOIN clientes c ON c.id = k.cliente_id
+              LEFT JOIN balancas b ON b.id = k.balanca_id
+              LEFT JOIN calibracoes o ON o.id = k.substitui_id AND k.substitui_id <> ''
+        WHERE k.status IN ('RASCUNHO','REVISAO')
+        ORDER BY k.criado_em, k.id`,
+    )
+    .all() as Array<{
+    id: string
+    dados: string
+    balanca: string | null
+    cliente: string | null
+    revisado: string | null
+    reservado: string | null
+    com_folha: number
+  }>
+  const gravar = db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
+  const marcadas: string[] = []
+  for (const l of linhas) {
+    const k = JSON.parse(l.dados) as Calibracao
+    const classe = l.balanca ? (JSON.parse(l.balanca) as Partial<Balanca>).classe : undefined
+    const pressao = k.ambiente?.pressao
+    if (
+      k.pressaoComoAviso === true ||
+      classe === 'I' ||
+      classe === 'II' ||
+      (typeof pressao === 'number' && Number.isFinite(pressao)) ||
+      !(temLeituraMedida(k) || Number(l.com_folha) === 1) ||
+      minimosDoPopComoAviso({ ...k, opcoes: k.opcoes ?? {} })
+    )
+      continue
+    gravar.run(JSON.stringify({ ...k, pressaoComoAviso: true }), l.id)
+    const os = String(k.ordemServico ?? '').trim()
+    marcadas.push(
+      l.revisado
+        ? `revisão do ${l.revisado}`
+        : l.reservado ||
+            (os ? `OS ${os}` : `${l.cliente || 'Cliente'}${k.dataCalibracao ? ` (${formatarDataBr(k.dataCalibracao)})` : ''}`),
+    )
+  }
+  if (marcadas.length)
+    db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)").run(
+      new Date().toISOString(),
+      detalheLista(
+        marcadas.length === 1
+          ? 'A calibração em andamento medida ou com a folha impressa antes desta versão, sem a pressão atmosférica, sai sem ela, com um aviso (a visita já aconteceu); nas novas, a pressão é obrigatória em toda classe. Confira: '
+          : `${marcadas.length} calibrações em andamento medidas ou com a folha impressa antes desta versão, sem a pressão atmosférica, saem sem ela, com um aviso (a visita já aconteceu); nas novas, a pressão é obrigatória em toda classe. Confira: `,
         marcadas,
       ),
     )

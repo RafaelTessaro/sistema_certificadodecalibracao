@@ -2,6 +2,7 @@ import { CircleCheck, CircleX, Hand, History, Layers, Plus, Trash2, TriangleAler
 import { Fragment, useMemo, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
+  avisoCargasDaConformidade,
   cargaDasPecas,
   cargaDaEtapa,
   descreverPecas,
@@ -225,6 +226,7 @@ function TabelaPontos({
   const decrescente = ensaio.metodo === 'CRESCENTE_DECRESCENTE'
   const soDecrescente = ensaio.metodo === 'DECRESCENTE'
   const comConformidade = f.conformidade.solicitada
+  const avisoConformidade = avisoCargasDaConformidade({ conformidade: f.conformidade, indicacao: ensaio }, balanca)
   const substituicao = ensaio.substituicao.ativa
   // Múltiplas faixas com a descida sem descarregar: a faixa das leituras decrescentes (a mesma conta do cálculo)
   const cargaDescida = cargaDaDescida(
@@ -258,8 +260,9 @@ function TabelaPontos({
       confirmar({ titulo: 'Refazer os pontos?', descricao: textoRefazerPontos(n), confirmar: 'Refazer os pontos', perigo: true }),
     )
     if (!pode) return
-    // As mesmas cargas da folha de campo sem rascunho (na classe I, as que os pesos escolhidos montam dentro de 6.1)
-    const cargas = pontosSugeridos(balanca, pesos)
+    // As mesmas cargas da folha de campo sem rascunho (na classe I, as que os pesos escolhidos montam dentro de 6.1); as
+    // cargas em que o EMA muda, só com a declaração de conformidade pedida (POP 7.7)
+    const cargas = pontosSugeridos(balanca, pesos, f.conformidade.solicitada)
     // Sem as leituras, não há método medido a guardar (`metodoMedido`)
     setEnsaio((e) => ({
       ...semMetodoMedido(e),
@@ -321,12 +324,19 @@ function TabelaPontos({
           Escolha os pesos padrão na etapa “Padrões e ambiente” para as cargas serem montadas e rastreadas.
         </p>
       )}
+      {/* Conformidade pedida depois de a folha sair sem as cargas em que o EMA muda: só o aviso (não impede emitir) */}
+      {!antes && avisoConformidade && (
+        <p className="mx-5 mb-4 flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          {avisoConformidade}
+        </p>
+      )}
 
       {ensaio.pontos.length === 0 ? (
         <div className="flex flex-col items-center gap-3 border-t border-line px-6 py-10 text-center">
           <p className="max-w-md text-sm text-muted">
-            Sugerimos 0, a carga mínima (Min, quando marcada), 25 %, 50 %, 75 % e 100 % da capacidade, mais as cargas onde muda o
-            erro máximo admissível da classe.
+            Sugerimos 0, a carga mínima (Min, quando marcada), 25 %, 50 %, 75 % e 100 % da capacidade. Com a declaração de
+            conformidade pedida, também as cargas em que muda o erro máximo admissível da classe.
           </p>
           <Button variante="primary" icone={<Wand2 className="h-4 w-4" />} onClick={() => void sugerir()}>
             Sugerir os pontos

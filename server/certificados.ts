@@ -10,9 +10,10 @@ import { createHash, randomInt } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { nomeArquivoSimples, PENDENCIA_POP, popNaData, textoPop, tipoDoMime } from '#shared/arquivos.ts'
-import { calcularCalibracao, regrasDoPopComoAviso } from '#shared/calibracao.ts'
+import { avisoCargasDaConformidade, calcularCalibracao, regrasDoPopComoAviso } from '#shared/calibracao.ts'
 import {
   arquivoDoCertificado,
+  avisosEmissao,
   dataIsoValida,
   formatarDataBr,
   formatarNumeroCertificado,
@@ -149,13 +150,30 @@ export function popDaCalibracao(
 }
 
 /**
- * O que a tela mostra para conferir, sem impedir a emissão: a folha de campo da calibração em andamento saiu com uma
- * revisão do POP que não é a que valia na data da calibração (a data ficou a do dia em que o rascunho foi criado, ou a
- * folha foi impressa antes de uma revisão nova). O certificado cita a da folha (o papel que foi a campo); se a data
- * estiver errada, basta corrigi-la. A folha herdada do certificado revisado não conta (é a mesma visita).
+ * O que a tela mostra para conferir, sem impedir a emissão, da calibração em andamento: a folha de campo saiu com uma
+ * revisão do POP que não é a que valia na data da calibração (`avisoDoPop`); a calibração sai sem a pressão atmosférica
+ * onde a falta dela é só aviso (`avisosEmissao`); e a declaração de conformidade pedida sem as cargas em que o EMA muda
+ * (`avisoCargasDaConformidade`).
  */
-export function avisosDa(ctx: Contexto, k: Pick<Calibracao, 'id' | 'status' | 'dataCalibracao'>): string[] {
-  if ((k.status !== 'RASCUNHO' && k.status !== 'REVISAO') || !dataIsoValida(k.dataCalibracao)) return []
+export function avisosDa(ctx: Contexto, k: Calibracao): string[] {
+  if (k.status !== 'RASCUNHO' && k.status !== 'REVISAO') return []
+  const balanca = ctx.repo.obterBalanca(k.balancaId)
+  const cargas = balanca ? avisoCargasDaConformidade(k, balanca) : null
+  return [
+    ...avisoDoPop(ctx, k),
+    ...(balanca ? avisosEmissao(k, { padroes: padroesDa(ctx, k), classe: balanca.classe }) : []),
+    ...(cargas ? [cargas] : []),
+  ]
+}
+
+/**
+ * A folha de campo da calibração em andamento saiu com uma revisão do POP que não é a que valia na data da calibração
+ * (a data ficou a do dia em que o rascunho foi criado, ou a folha foi impressa antes de uma revisão nova). O
+ * certificado cita a da folha (o papel que foi a campo); se a data estiver errada, basta corrigi-la. A folha herdada do
+ * certificado revisado não conta (é a mesma visita).
+ */
+function avisoDoPop(ctx: Contexto, k: Pick<Calibracao, 'id' | 'dataCalibracao'>): string[] {
+  if (!dataIsoValida(k.dataCalibracao)) return []
   const daFolha = ctx.repo.popDaFolhaDaCalibracao(k.id)
   if (!daFolha || daFolha.herdada) return []
   const versoes = ctx.repo.versoesPop()
@@ -256,6 +274,10 @@ export function montarEmissao(
     // Calculado com as regras do POP: a revisão dele também as segue (`Repositorio.criarCalibracao`); o "crescente e
     // decrescente" sai "sem zerar" só no emitido a partir desta versão (`carregamentoSemZerar`)
     ...(regrasDoPopComoAviso(k) ? {} : { regrasDoPop: true, carregamentoSemZerar: true }),
+    // A partir da 1.0.5: sem a finalidade de uso e as dimensões do prato, e com a inscrição estadual do cliente (quando
+    // ele tem). Congelado: os emitidos antes continuam saindo como saíam
+    semFinalidadeEDimensoes: true,
+    inscricaoEstadualDoCliente: true,
   }
 }
 

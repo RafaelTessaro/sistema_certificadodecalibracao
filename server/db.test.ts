@@ -14,11 +14,15 @@
 // Migração 16: a calibração em andamento já medida (ou com a folha de campo impressa) antes de a descida ser obrigatória
 // (1.0.4) fica com ela como aviso e com o método de carregamento gravado.
 // Migração 17: a marca de técnico de cada usuário (todos os de antes ganham a marca).
+// Migração 19: a calibração em andamento das classes III e IIII ou sem classe, já medida (ou com a folha de campo impressa)
+// sem a pressão antes de ela ser obrigatória em toda classe (1.0.5), fica com a falta dela como aviso.
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
 import {
+  AVISO_SEM_PRESSAO,
+  avisosEmissao,
   calculoLegado,
   calibracaoVazia,
   comMetodoIndicacaoDaClasse,
@@ -33,7 +37,7 @@ import { detalheTrocaIndicador, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 18
+const ULTIMA = 19
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -1190,8 +1194,8 @@ describe('migração 16: a calibração em andamento já medida antes de a desci
   it('marca a calibração em andamento com leituras (também a revisão aberta); o resto fica como estava', () => {
     const db = bancoV15()
     const antes = dados(db)
-    migrar(db)
-    expect(versao(db)).toBe(ULTIMA)
+    migrar(db, 16)
+    expect(versao(db)).toBe(16)
     const depois = dados(db)
     for (const id of ['k1', 'k2', 'r6']) expect(depois[id], id).toEqual({ ...antes[id], descidaComoAviso: true })
     // Os mínimos já como avisos, sem leitura, emitidos e a revisão de um certificado de antes das regras: como estavam
@@ -1216,7 +1220,7 @@ describe('migração 16: a calibração em andamento já medida antes de a desci
 
   it('o registro de atividades diz quais: a OS, o nº reservado ou o certificado revisado', () => {
     const db = bancoV15()
-    migrar(db)
+    migrar(db, 16)
     expect(
       registros(db)
         .filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
@@ -1226,7 +1230,7 @@ describe('migração 16: a calibração em andamento já medida antes de a desci
     ])
     const uma = bancoV15()
     uma.exec("DELETE FROM calibracoes WHERE id IN ('k2', 'r6')")
-    migrar(uma)
+    migrar(uma, 16)
     expect(registros(uma).find((r) => r.acao === 'SISTEMA_ATUALIZADO')?.detalhe).toBe(
       'A calibração em andamento medida ou com a folha impressa antes desta versão mantém o método gravado e sai com a descida que falta no “crescente e decrescente” como aviso (a visita já aconteceu); as novas seguem a regra. Confira: OS 55.',
     )
@@ -1264,7 +1268,7 @@ describe('migração 16: a calibração em andamento já medida antes de a desci
     ]
     for (const [id, os, extra] of linhas) inserir.run(id, os, JSON.stringify({ id, ...base(os, extra) }), EM, EM)
     const antes = dados(db)
-    migrar(db)
+    migrar(db, 16)
     const depois = dados(db)
     for (const id of ['z1', 'z2']) expect(depois[id], id).toEqual(antes[id])
     for (const id of ['z3', 'z4']) expect(depois[id], id).toEqual({ ...antes[id], descidaComoAviso: true })
@@ -1308,7 +1312,7 @@ describe('migração 16: a calibração em andamento já medida antes de a desci
     // Uma folha avulsa (sem rascunho) não marca nada
     folha.run('FC-2026-00073', 73, 'avulsa:1', '', EM, EM, '', '')
     const antes = dados(db)
-    migrar(db)
+    migrar(db, 16)
     const depois = dados(db)
     for (const id of ['f1', 'f2']) expect(depois[id], id).toEqual({ ...antes[id], descidaComoAviso: true })
     expect(depois.f3).toEqual(antes.f3)
@@ -1329,15 +1333,15 @@ describe('migração 16: a calibração em andamento já medida antes de a desci
 
   it('pode ser repetida sem mudar nada nem registrar de novo; sem o que marcar, não registra', () => {
     const db = bancoV15()
-    migrar(db)
+    migrar(db, 16)
     const depois = dados(db)
     db.exec('PRAGMA user_version = 15')
-    migrar(db)
+    migrar(db, 16)
     expect(dados(db)).toEqual(depois)
     expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(1)
     const nada = bancoV15()
     nada.exec("DELETE FROM calibracoes WHERE id IN ('k1', 'k2', 'r6')")
-    migrar(nada)
+    migrar(nada, 16)
     expect(registros(nada).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toEqual([])
   })
 })
@@ -1402,5 +1406,138 @@ describe('migração 18: a OS impressa na folha de campo avulsa', () => {
     db.exec('PRAGMA user_version = 17')
     migrar(db)
     expect(db.prepare('SELECT ordem_servico FROM folhas_campo').get()).toEqual({ ordem_servico: 'OS 77' })
+  })
+})
+
+describe('migração 19: a calibração em andamento sem a pressão, de antes de ela ser obrigatória em toda classe', () => {
+  const OPCOES = { ...OPCOES_CALCULO_PADRAO }
+  const lida = {
+    metodo: 'CRESCENTE_DECRESCENTE',
+    retornoZero: null,
+    substituicao: { ativa: false, pecas: [], etapas: [] },
+    pontos: [0, 10, 30].map((carga, i) => ({ id: `p${i}`, carga, pecas: [], crescente: carga, decrescente: carga })),
+  }
+  const semLeitura = { ...lida, pontos: lida.pontos.map((p) => ({ ...p, crescente: null, decrescente: null })) }
+  const ambiente = (pressao: number | null) => ({
+    temperaturaInicial: 22,
+    temperaturaFinal: 22.5,
+    umidadeInicial: 55,
+    umidadeFinal: 56,
+    pressao,
+  })
+  /**
+   * Banco na versão 18 com as balanças b3 (classe III), b2 (classe II) e b0 (sem classe) e: p1 (classe III, medida sem
+   * a pressão, OS 80), p2 (sem classe, enviada ao signatário só com a folha impressa e o nº reservado), p3 (classe II,
+   * medida sem a pressão: já era obrigatória), p4 (medida com a pressão), p5 (sem leitura e sem folha), p6 (os mínimos já
+   * como avisos), o7 (emitido na 1.0.4 sem a pressão) e r8 (revisão de o7 aberta na 1.0.4).
+   */
+  function bancoV18() {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 1)
+    db.prepare(
+      `INSERT INTO clientes (id, tipo, documento, nome, busca, ativo, dados, versao, criado_em, atualizado_em)
+       VALUES ('c1', 'PJ', '', 'Frigorífico', 'frigorifico', 1, '{}', 1, ?, ?)`,
+    ).run(EM, EM)
+    inserirBalanca(db, 'b3', { numeroSerie: 'TL-1', classe: 'III', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
+    inserirBalanca(db, 'b2', { numeroSerie: 'TL-2', classe: 'II', faixas: [{ max: 30, e: 0.001, d: 0.001 }] })
+    inserirBalanca(db, 'b0', { numeroSerie: 'TL-0', classe: '', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
+    migrar(db, 18)
+    const inserir = db.prepare(
+      `INSERT INTO calibracoes (id, status, numero, cliente_id, balanca_id, ordem_servico, substitui_id, dados, versao,
+                                criado_em, atualizado_em)
+       VALUES (?, ?, ?, 'c1', ?, ?, ?, ?, 2, ?, ?)`,
+    )
+    let minutos = 0
+    const calibracao = (
+      id: string,
+      status: string,
+      o: { balanca?: string; os?: string; numero?: string; substitui?: string },
+      dados: object,
+    ) => {
+      const em = new Date(Date.parse(EM) + ++minutos * 60_000).toISOString()
+      const k = {
+        id,
+        status,
+        numero: o.numero ?? '',
+        clienteId: 'c1',
+        balancaId: o.balanca ?? 'b3',
+        ordemServico: o.os ?? '',
+        dataCalibracao: '2026-11-04',
+        substituiId: o.substitui ?? '',
+        opcoes: OPCOES,
+        emissao: null,
+        ambiente: ambiente(null),
+        repetibilidade: [],
+        excentricidade: { aplicavel: true, carga: 10, posicoes: [] },
+        comoEncontrado: null,
+        indicacao: lida,
+        ...dados,
+      }
+      inserir.run(id, status, o.numero ?? '', o.balanca ?? 'b3', o.os ?? '', o.substitui ?? '', JSON.stringify(k), em, em)
+    }
+    calibracao('p1', 'RASCUNHO', { os: '80' }, {})
+    calibracao('p2', 'REVISAO', { balanca: 'b0' }, { indicacao: semLeitura })
+    calibracao('p3', 'RASCUNHO', { balanca: 'b2', os: '81' }, {})
+    calibracao('p4', 'RASCUNHO', { os: '82' }, { ambiente: ambiente(927) })
+    calibracao('p5', 'RASCUNHO', { os: '83' }, { indicacao: semLeitura })
+    calibracao('p6', 'RASCUNHO', { os: '84' }, { minimosComoAviso: true })
+    calibracao('o7', 'EMITIDO', { numero: 'CC-2026-00007' }, { emissao: { padroes: [], regrasDoPop: true } })
+    calibracao('r8', 'RASCUNHO', { substitui: 'o7' }, { regrasDoPop: true })
+    db.prepare(
+      `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, impressa_por,
+         impressa_em, ultima_em, substituida_por, substituida_em)
+       VALUES ('FC-2026-00042', 2026, 42, 'calibracao:p2', 'p2', 'b0', 'c1', 'Ana', ?, ?, '', '')`,
+    ).run(EM, EM)
+    db.prepare(
+      `INSERT INTO numeros_reservados (numero, ano, sequencia, calibracao_id, folha, reservado_em, situacao)
+       VALUES ('CC-2026-00042', 2026, 42, 'p2', 'FC-2026-00042', ?, 'reservado')`,
+    ).run(EM)
+    return db
+  }
+  const dados = (db: DatabaseSync) =>
+    Object.fromEntries(
+      (db.prepare('SELECT id, dados FROM calibracoes ORDER BY id').all() as Array<{ id: string; dados: string }>).map((l) => [
+        l.id,
+        JSON.parse(l.dados) as Record<string, unknown>,
+      ]),
+    )
+
+  it('marca a medida ou com a folha impressa sem a pressão (também a revisão aberta); o resto fica como estava', () => {
+    const db = bancoV18()
+    const antes = dados(db)
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    const depois = dados(db)
+    for (const id of ['p1', 'p2', 'r8']) expect(depois[id], id).toEqual({ ...antes[id], pressaoComoAviso: true })
+    // Classe II (já era obrigatória), com a pressão, sem nada medido nem folha, os mínimos já como avisos e o emitido
+    for (const id of ['p3', 'p4', 'p5', 'p6', 'o7']) expect(depois[id], id).toEqual(antes[id])
+    // A marcada sai sem a pressão, com o aviso; sem a marca, a pressão é pendência
+    const contexto = { padroes: [], hoje: '2026-11-09', temPesos: true, classe: 'III' as const }
+    const p1 = { ...calibracaoVazia(), ...(depois.p1 as unknown as Calibracao) }
+    expect(pendenciasEmissao(p1, contexto).join('\n')).not.toMatch(/pressão/)
+    expect(avisosEmissao(p1, contexto)).toEqual([AVISO_SEM_PRESSAO])
+    const nova = { ...p1, pressaoComoAviso: undefined }
+    expect(pendenciasEmissao(nova, contexto)).toContain(
+      'Registre a pressão atmosférica, medida com o barômetro (escolha-o nos padrões; POP 7.5).',
+    )
+    expect(avisosEmissao(nova, contexto)).toEqual([])
+  })
+
+  it('o registro de atividades diz quais; pode ser repetida sem mudar nada nem registrar de novo', () => {
+    const db = bancoV18()
+    migrar(db)
+    const doSistema = () => registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
+    expect(doSistema().map((r) => r.detalhe)).toEqual([
+      '3 calibrações em andamento medidas ou com a folha impressa antes desta versão, sem a pressão atmosférica, saem sem ela, com um aviso (a visita já aconteceu); nas novas, a pressão é obrigatória em toda classe. Confira: OS 80, CC-2026-00042, revisão do CC-2026-00007.',
+    ])
+    const depois = dados(db)
+    db.exec('PRAGMA user_version = 18')
+    migrar(db)
+    expect(dados(db)).toEqual(depois)
+    expect(doSistema()).toHaveLength(1)
+    const nada = bancoV18()
+    nada.exec("DELETE FROM calibracoes WHERE id IN ('p1', 'p2', 'r8')")
+    migrar(nada)
+    expect(registros(nada).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toEqual([])
   })
 })

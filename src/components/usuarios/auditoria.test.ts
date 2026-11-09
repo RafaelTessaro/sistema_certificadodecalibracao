@@ -146,6 +146,17 @@ describe('descreverRegistro', () => {
     expect(descreverRegistro(registro({ detalhe: 'GET /api/folha-campo' })).titulo).toBe('Imprimiu uma folha de campo avulsa')
   })
 
+  it('folha reimpressa pelo nº: a frase e o nº da folha (sem link: a folha pode não estar ligada)', () => {
+    expect(descreverRegistro(registro({ detalhe: 'GET /api/folha-campo/:numero | FC-2026-00007' }))).toEqual({
+      titulo: 'Reimprimiu uma folha de campo',
+      detalhe: 'FC-2026-00007',
+    })
+    // Sem permissão (não acontece com quem entrou, mas a frase existe)
+    expect(descreverRegistro(registro({ acao: 'ACESSO_NEGADO', detalhe: 'GET /api/folha-campo/:numero' })).detalhe).toBe(
+      'Tentou reimprimir uma folha de campo.',
+    )
+  })
+
   it('folha de campo nova e folha ligada: a frase e os nºs das folhas', () => {
     expect(
       descreverRegistro(

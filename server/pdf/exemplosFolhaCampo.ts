@@ -108,7 +108,9 @@ export function folhaPlataforma(): DadosFolhaCampo {
       proximaCalibracao: proxima,
       anotacoesInternas: 'Procurar a Juliana na portaria 2; acesso à doca só com botina.',
     }),
-    padroes: d.emissao.padroes,
+    // Os do certificado anterior e o barômetro da empresa: a pressão é obrigatória em toda classe (1.0.5; o certificado
+    // anterior saiu sem ela), e a folha o lista para levar
+    padroes: [...d.emissao.padroes, ...exemploRodoviaria().emissao.padroes.filter((p) => p.tipo === 'BAROMETRO')],
     tecnico: 'Carlos Eduardo Lima',
     impressoEm: '2026-10-20T17:35:00.000Z',
     impressoPor: IMPRESSO_POR,

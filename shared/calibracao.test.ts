@@ -711,27 +711,22 @@ describe('montagem das cargas pela classe dos pesos', () => {
     expect(ids({ ...marte, faixas: [{ max: 6000, e: 0.1, d: 0.01 }] })).toEqual(['JP-M1', 'JP-F1', 'JP-E2', 'TH-01'])
   })
 
-  it('rascunho sem histórico: o barômetro só onde a pressão é obrigatória (classes I e II)', () => {
+  it('rascunho sem histórico: o barômetro em toda classe (a pressão é obrigatória em toda calibração, POP 7.5)', () => {
     const th: Padrao = { ...jogoDe('th', 'TH-01', []), tipo: 'TERMOHIGROMETRO', classe: '' }
     const bar: Padrao = { ...jogoDe('bar', 'BAR-01', []), tipo: 'BAROMETRO', classe: '' }
     const td: Padrao = { ...jogoDe('td', 'TD-01', []), tipo: 'OUTRO', classe: '' }
     const todos = [m1, f1, e2, th, bar, td]
     const temBarometro = (b: Parameters<typeof padroesSemHistorico>[1]) =>
       padroesSemHistorico(todos, b).some((p) => p.tipo === 'BAROMETRO')
-    // Classes III e IIII e sem classe: a pressão é opcional (a folha imprime "Pressão, opcional"); sem o barômetro
-    // marcado, a etapa 8 não pede a pressão que ninguém mediu. Ele continua disponível para marcar à mão
-    expect(temBarometro(balanca30)).toBe(false)
-    expect(temBarometro('III')).toBe(false)
-    expect(temBarometro({ ...balanca30, classe: 'IIII', faixas: [{ max: 30, e: 0.02, d: 0.02 }] })).toBe(false)
-    expect(temBarometro('IIII')).toBe(false)
-    expect(temBarometro('')).toBe(false)
-    // Classes I e II: a pressão é obrigatória, o barômetro vem marcado
+    expect(temBarometro(balanca30)).toBe(true)
+    expect(temBarometro({ ...balanca30, classe: 'IIII', faixas: [{ max: 30, e: 0.02, d: 0.02 }] })).toBe(true)
+    for (const classe of ['I', 'II', 'III', 'IIII', ''] as const) expect(temBarometro(classe), classe).toBe(true)
     expect(temBarometro(marte)).toBe(true)
-    expect(temBarometro('II')).toBe(true)
-    expect(temBarometro('I')).toBe(true)
-    // A balança ainda não conhecida (folha em branco): todos, como antes
+    // A balança ainda não conhecida (folha em branco): também
     expect(temBarometro(null)).toBe(true)
     expect(temBarometro(undefined)).toBe(true)
+    // O desativado, não
+    expect(padroesSemHistorico([m1, { ...bar, ativo: false }], balanca30).some((p) => p.tipo === 'BAROMETRO')).toBe(false)
   })
 })
 

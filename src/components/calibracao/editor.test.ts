@@ -80,6 +80,8 @@ const rascunho = (padroes: Padrao[], mudar: (k: CalibracaoInput) => CalibracaoIn
   })
 
 const balanca = { ...BALANCA_VAZIA, id: 'b1', classe: 'III', faixas: [{ max: 30, e: 0.01, d: 0.01 }] } as Balanca
+/** A pressão medida com o barômetro BR-01 (obrigatória em toda classe, POP 7.5). */
+const comPressao = (k: CalibracaoInput): CalibracaoInput => ({ ...k, ambiente: { ...k.ambiente, pressao: 925 } })
 
 describe('padrões do editor: o escolhido e desativado depois continua na calibração', () => {
   it('os desativados escolhidos entram (selecionados e cartões); os desativados não escolhidos, não', () => {
@@ -97,8 +99,8 @@ describe('padrões do editor: o escolhido e desativado depois continua na calibr
   })
 
   it('pendências da tela como as do servidor: "desativado", e nada de "Tudo pronto"', () => {
-    const f = rascunho([jogo, th])
-    const { selecionados } = padroesDoEditor([jogo, desativado(th)], f)
+    const f = rascunho([jogo, th, br], comPressao)
+    const { selecionados } = padroesDoEditor([jogo, desativado(th), br], f)
     const p = pendenciasEmissao(f, { padroes: selecionados, hoje: '2026-10-28', temPesos: true, classe: 'III' })
     expect(p).toEqual([
       'O padrão TH-01 está desativado: tire-o desta calibração (etapa Padrões e ambiente) ou reative-o em Padrões.',
@@ -118,10 +120,10 @@ describe('padrões do editor: o escolhido e desativado depois continua na calibr
   })
 
   it('revisão: o padrão congelado na emissão vale, mesmo desativado depois (sem selo nem pendência)', () => {
-    const f = rascunho([jogo, th], (k) => ({ ...k, padroesCongelados: [jogo, th] }) as CalibracaoInput)
-    const { selecionados, paraEscolher } = padroesDoEditor([desativado(jogo), th], f)
+    const f = rascunho([jogo, th, br], (k) => ({ ...comPressao(k), padroesCongelados: [jogo, th, br] }) as CalibracaoInput)
+    const { selecionados, paraEscolher } = padroesDoEditor([desativado(jogo), th, br], f)
     expect(selecionados.every((p) => p.ativo)).toBe(true)
-    expect(paraEscolher.map((p) => p.identificacao)).toEqual(['JP-M1', 'TH-01'])
+    expect(paraEscolher.map((p) => p.identificacao)).toEqual(['JP-M1', 'TH-01', 'BR-01'])
     expect(pendenciasEmissao(f, { padroes: selecionados, hoje: '2026-10-28', temPesos: true, classe: 'III' })).toEqual([])
   })
 
@@ -159,11 +161,34 @@ describe('padrões do editor: o escolhido e desativado depois continua na calibr
 
 describe('etapa Padrões e ambiente na lista de etapas', () => {
   it('com um padrão escolhido desativado, não ganha o ✓ (a emissão é recusada)', () => {
-    const f = rascunho([jogo, th])
-    const ok = padroesDoEditor([jogo, th], f).selecionados
+    const f = rascunho([jogo, th, br], comPressao)
+    const ok = padroesDoEditor([jogo, th, br], f).selecionados
     expect(etapaCompleta('padroes', { f, calc: null, selecionados: ok })).toBe(true)
-    const comDesativado = padroesDoEditor([jogo, desativado(th)], f).selecionados
+    const comDesativado = padroesDoEditor([jogo, desativado(th), br], f).selecionados
     expect(etapaCompleta('padroes', { f, calc: null, selecionados: comDesativado })).toBe(false)
+  })
+
+  it('sem a pressão, ou sem o barômetro, não ganha o ✓ (obrigatória em toda classe, POP 7.5); a visita de antes, sim', () => {
+    const ok = (f: CalibracaoInput, padroes: Padrao[]) =>
+      etapaCompleta('padroes', { f, calc: null, selecionados: padroesDoEditor(padroes, f).selecionados, balanca })
+    expect(ok(rascunho([jogo, th, br], comPressao), [jogo, th, br])).toBe(true)
+    // Sem a pressão; a pressão sem o barômetro; o barômetro sem a pressão
+    expect(ok(rascunho([jogo, th]), [jogo, th])).toBe(false)
+    expect(ok(rascunho([jogo, th], comPressao), [jogo, th])).toBe(false)
+    expect(ok(rascunho([jogo, th, br]), [jogo, th, br])).toBe(false)
+    // Medida quando ela era opcional (classe III): sem os dois, ganha; com só um deles, não (como até a 1.0.4)
+    const antes = (k: CalibracaoInput) => ({ ...k, pressaoComoAviso: true })
+    expect(ok(rascunho([jogo, th], antes), [jogo, th])).toBe(true)
+    expect(ok(rascunho([jogo, th, br], antes), [jogo, th, br])).toBe(false)
+    // Na classe II ela já era obrigatória
+    expect(
+      etapaCompleta('padroes', {
+        f: rascunho([jogo, th], antes),
+        calc: null,
+        selecionados: [jogo, th],
+        balanca: { ...balanca, classe: 'II' },
+      }),
+    ).toBe(false)
   })
 })
 

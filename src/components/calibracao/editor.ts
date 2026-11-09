@@ -2,7 +2,13 @@
 // que vem do servidor. Separado para ser testado.
 
 import { PENDENCIA_POP } from '#shared/arquivos.ts'
-import { minimosDoPopComoAviso, padroesDaCalibracao, PENDENCIAS_SO_DO_SERVIDOR, pendenciasAmbiente } from '#shared/dominio.ts'
+import {
+  minimosDoPopComoAviso,
+  padroesDaCalibracao,
+  PENDENCIAS_SO_DO_SERVIDOR,
+  pendenciasAmbiente,
+  pressaoComoAviso,
+} from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Padrao } from '#shared/tipos.ts'
 import type { DetalheCalibracao } from '../../lib/api'
 import type { ContextoEtapa, IdEtapa } from './contexto'
@@ -104,7 +110,8 @@ export function pendenciasDaTela(a: {
 
 /**
  * A etapa ganha o ✓ na lista de etapas. Padrões e ambiente: um jogo de pesos e nenhum padrão escolhido desativado
- * (impede a emissão: tire-o ou reative-o), as temperaturas e o que o cálculo pede do ar e da convecção. Na calibração
+ * (impede a emissão: tire-o ou reative-o), as temperaturas, a pressão com o barômetro e o que o cálculo pede do ar e da
+ * convecção. Na calibração
  * nova (as regras do POP): a excentricidade só fica "não realizada" na balança suspensa (gancho), e o erro de indicação
  * pede o retorno ao zero e as leituras que faltam (a subida; no "crescente e decrescente", a descida; POP 7.7 e 7.10).
  */
@@ -129,11 +136,15 @@ export function etapaCompleta(
       // Empuxo pela densidade do ar medida (classe I): a umidade e a pressão também; convecção: o ΔT pesos − ar
       const ar = f.opcoes.empuxo !== 'MEDIDO' || ((a.umidadeInicial ?? a.umidadeFinal) !== null && a.pressao !== null)
       const conveccao = f.opcoes.conveccao !== 'CALCULAR' || (a.deltaTPesos ?? null) !== null || !!a.aclimatacao
+      // A pressão com o barômetro (obrigatória em toda classe, POP 7.5); sem os dois, só onde a falta dela é aviso
+      const comBarometro = selecionados.some((p) => p.tipo === 'BAROMETRO')
+      const pressao = a.pressao !== null ? comBarometro : !comBarometro && pressaoComoAviso(f, balanca?.classe)
       return (
         selecionados.some((p) => p.tipo === 'PESOS') &&
         selecionados.every((p) => p.ativo) &&
         a.temperaturaInicial !== null &&
         a.temperaturaFinal !== null &&
+        pressao &&
         ar &&
         conveccao &&
         !pendenciasAmbiente(a).length

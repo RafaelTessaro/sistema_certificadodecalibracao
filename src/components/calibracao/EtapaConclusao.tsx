@@ -1,5 +1,6 @@
 import { BellRing, ChevronDown, FileText, Info, Scale3d, Settings2, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
+import { avisoCargasDaConformidade } from '#shared/calibracao.ts'
 import {
   calculoLegado,
   CRITERIOS_EMA,
@@ -25,6 +26,8 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
     alterar((s) => ({ ...s, conformidade: { ...s.conformidade, [k]: v } }))
   const avisosObs = termosSensiveis(`${f.observacoes}\n${f.opinioes}`)
   const semClasse = !balanca.classe && conf.criterio !== 'CLIENTE'
+  // Pedida depois de a folha sair sem as cargas em que o EMA muda (POP 7.7): o aviso, que não impede emitir
+  const semCargasDoEma = avisoCargasDaConformidade(f, balanca)
   return (
     <div className="flex flex-col gap-6">
       <Card>
@@ -85,6 +88,12 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
                 ))}
               </Select>
             </Field>
+            {semCargasDoEma && (
+              <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning sm:col-span-2">
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                {semCargasDoEma}
+              </p>
+            )}
             {semClasse && (
               <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning sm:col-span-2">
                 <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />A balança está sem classe de exatidão no cadastro. Corrija o

@@ -238,7 +238,7 @@ export function Combobox({
                   }
                 }}
                 placeholder="Digite para buscar…"
-                className="h-9 w-full rounded-lg bg-surface-2 px-3 text-sm text-ink outline-none placeholder:text-muted"
+                className="max-h-9 min-h-9 w-full rounded-lg bg-surface-2 px-3 text-sm text-ink outline-none placeholder:text-muted"
               />
             </div>
             {filtradas.length === 0 && (

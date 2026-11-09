@@ -1015,7 +1015,7 @@ function TabelaPecas({
                           value={p.marca}
                           onChange={(e) => mudar(i, 'marca', e.target.value)}
                           placeholder={c.gramas > 0 ? massaLegivel(c.gramas) : 'Ex.: 20 kg nº1'}
-                          className="h-9 w-full min-w-0 rounded-lg border border-line-strong/80 bg-surface px-2.5 text-[13px] text-ink shadow-xs transition-[border-color,box-shadow] placeholder:text-muted/70 hover:border-line-strong focus:border-brand focus:ring-4 focus:ring-[var(--ring)] focus:outline-none"
+                          className="max-h-9 min-h-9 w-full min-w-0 rounded-lg border border-line-strong/80 bg-surface px-2.5 text-[13px] text-ink shadow-xs transition-[border-color,box-shadow] placeholder:text-muted/70 hover:border-line-strong focus:border-brand focus:ring-4 focus:ring-[var(--ring)] focus:outline-none"
                         />
                       </Celula>
                       <Celula rotulo="Nominal" className="col-span-6 sm:col-span-1">

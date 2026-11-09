@@ -20,7 +20,6 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   capacidadeTexto,
   divisaoLegivel,
-  FINALIDADES,
   numeroBr,
   parteSeparada,
   RECEPTORES,
@@ -352,7 +351,6 @@ export function BalancaDetalhe() {
                 <Dado rotulo="Ano de fabricação">
                   {balanca.anoFabricacao && <span className="tnum">{balanca.anoFabricacao}</span>}
                 </Dado>
-                <Dado rotulo="Para que é usada">{balanca.finalidade ? FINALIDADES[balanca.finalidade] : ''}</Dado>
                 <Dado rotulo="Local de instalação" icone={<MapPin className="h-3.5 w-3.5" />}>
                   {balanca.localInstalacao}
                 </Dado>
@@ -375,7 +373,6 @@ export function BalancaDetalhe() {
                     {balanca.apoios > 0 && <span className="tnum">{balanca.apoios}</span>}
                   </Dado>
                 )}
-                <Dado rotulo="Dimensões">{balanca.dimensoes}</Dado>
                 <Dado rotulo="Excentricidade">
                   {posicoes.length ? (
                     <span className="flex flex-wrap gap-1">

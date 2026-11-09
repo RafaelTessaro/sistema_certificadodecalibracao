@@ -10,7 +10,6 @@ import {
   formatarDataBr,
   massaLegivel,
   pendenciasAmbiente,
-  pressaoObrigatoria,
   resumoPesos,
   semTermometroDuasEntradas,
   situacaoValidade,
@@ -45,9 +44,8 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
     amb.temperaturaInicial !== null && amb.temperaturaFinal !== null
       ? Math.abs(amb.temperaturaFinal - amb.temperaturaInicial)
       : null
-  // Limites da classe da balança: ΔT de 1 °C na classe I e 3 °C na II, e pressão obrigatória (com barômetro) nas duas
+  // Limite da classe da balança: ΔT de 1 °C na classe I e 3 °C na II. A pressão é obrigatória em toda classe (POP 7.5)
   const limiteDeltaT = deltaTMaximo(balanca.classe)
-  const comPressao = pressaoObrigatoria(balanca.classe)
   // Convecção (diferença de temperatura pesos − ar): sempre na classe I, e quando a opção do cálculo pede
   const comConveccao = balanca.classe === 'I' || f.opcoes.conveccao === 'CALCULAR'
   const densidadeAr = calc?.resultado.ar ?? null
@@ -61,6 +59,8 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
   // POP 6.2: o termo-higrômetro em todas as calibrações (a temperatura e a umidade saem no certificado com ele)
   const semTermoHigrometro =
     (amb.temperaturaInicial !== null || amb.temperaturaFinal !== null) && !selecionados.some((p) => p.tipo === 'TERMOHIGROMETRO')
+  // POP 6.2 e 7.5: a pressão sai no certificado com o barômetro que a mediu
+  const semBarometro = amb.pressao !== null && !selecionados.some((p) => p.tipo === 'BAROMETRO')
 
   return (
     <div className="flex flex-col gap-6">
@@ -102,7 +102,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
         <CardHeader
           icone={<Thermometer className="h-4 w-4" />}
           titulo="Condições ambientais"
-          descricao={`${quandoAmbiente(balanca.classe === 'I')} Escolha também o termo-higrômetro usado.`}
+          descricao={`${quandoAmbiente(balanca.classe === 'I')} Escolha também o termo-higrômetro e o barômetro usados.`}
         />
         <div className="flex flex-col gap-5 px-5 pb-5">
           {instrumentos.length > 0 && (
@@ -187,15 +187,11 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
                 </Field>
               </GrupoAmbiente>
               <GrupoAmbiente icone={<Gauge className="h-3.5 w-3.5" />} titulo="Pressão" colunas={1}>
-                {/* "Opcional" no rótulo (e não numa dica embaixo): os três grupos ficam da mesma altura */}
-                <Field label={comPressao ? `Obrigatória na classe ${balanca.classe}` : 'Opcional'} htmlFor="amb-p">
+                {/* "Obrigatória" no rótulo (e não numa dica embaixo): os três grupos ficam da mesma altura */}
+                <Field label="Obrigatória" htmlFor="amb-p">
                   <CampoNumero
                     id="amb-p"
-                    aria-label={
-                      comPressao
-                        ? `Pressão atmosférica (obrigatória na classe ${balanca.classe})`
-                        : 'Pressão atmosférica (opcional)'
-                    }
+                    aria-label="Pressão atmosférica (obrigatória)"
                     valor={amb.pressao}
                     aoMudar={(v) => setAmb('pressao', v)}
                     tom={tomFaixa(amb.pressao, 'pressao')}
@@ -229,6 +225,14 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
               {instrumentos.some((p) => p.tipo === 'TERMOHIGROMETRO')
                 ? 'Escolha acima o termo-higrômetro usado (POP 6.2): ele sai no certificado com a temperatura e a umidade.'
                 : 'Cadastre em Padrões o termo-higrômetro usado e escolha-o aqui (POP 6.2).'}
+            </p>
+          )}
+          {semBarometro && (
+            <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              {instrumentos.some((p) => p.tipo === 'BAROMETRO')
+                ? 'Escolha acima o barômetro usado (POP 6.2): ele sai no certificado com a pressão.'
+                : 'Cadastre em Padrões o barômetro usado e escolha-o aqui (POP 6.2).'}
             </p>
           )}
           {deltaT !== null && deltaT > limiteDeltaT && (

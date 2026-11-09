@@ -686,13 +686,16 @@ function secaoCliente(ctx: Contexto, n: number): No[] {
         { text: `\u2003${fantasia}`, color: COR.textoSecundario, fontSize: 7.8 },
       ]
     : { text: ou(nome), bold: true }
+  // A inscrição estadual embaixo do CNPJ, quando o cliente tem (sem ela, nada); só no emitido a partir da 1.0.5
+  const ie = ctx.e.inscricaoEstadualDoCliente === true && !vazio(c.inscricaoEstadual) ? c.inscricaoEstadual.trim() : ''
+  const documento: No = ie ? { text: [ou(c.documento), `\nIE ${ie}`] } : { text: ou(c.documento) }
   return [
     inteiro([
       ...secao(ctx.r, n, 'Cliente'),
       grade(ctx.r, [
         [
           { rotulo: pj ? 'Razão social' : 'Nome', valor: nomeValor, span: 3 },
-          { rotulo: pj ? 'CNPJ' : 'CPF', valor: { text: ou(c.documento) } },
+          { rotulo: pj ? 'CNPJ' : 'CPF', valor: documento },
         ],
         [
           { rotulo: 'Endereço', valor: enderecoCliente(c), span: contato ? 2 : 4 },
@@ -797,9 +800,11 @@ function secaoInstrumento(ctx: Contexto, n: number): No[] {
   const multi = faixas.length > 1
   // Plataforma com plaqueta própria; nos certificados emitidos com o cadastro antigo, o indicador separado
   const separada = parteSeparada(b)
+  // A partir da 1.0.5, sem a finalidade de uso e as dimensões do prato; os emitidos antes, como saíam
+  const semFinalidade = ctx.e.semFinalidadeEDimensoes === true
   const receptor = [
     RECEPTORES[b.receptor] ?? b.receptor,
-    vazio(b.dimensoes) ? '' : b.dimensoes.trim(),
+    semFinalidade || vazio(b.dimensoes) ? '' : b.dimensoes.trim(),
     (b.receptor === 'APOIOS' || b.receptor === 'RODOVIARIA' || b.receptor === 'TANQUE') && b.apoios > 0
       ? `${b.apoios} apoios`
       : '',
@@ -872,10 +877,12 @@ function secaoInstrumento(ctx: Contexto, n: number): No[] {
       { rotulo: 'Portaria de aprovação de modelo', valor: b.portariaAprovacao, span: 2 },
       { rotulo: 'Receptor de carga', valor: receptor, span: 2 },
     ],
-    [
-      { rotulo: 'Local de instalação (*)', valor: b.localInstalacao, span: 2 },
-      { rotulo: 'Finalidade de uso (*)', valor: b.finalidade ? FINALIDADES[b.finalidade] : '', span: 2 },
-    ],
+    semFinalidade
+      ? [{ rotulo: 'Local de instalação (*)', valor: b.localInstalacao, span: 4 }]
+      : [
+          { rotulo: 'Local de instalação (*)', valor: b.localInstalacao, span: 2 },
+          { rotulo: 'Finalidade de uso (*)', valor: b.finalidade ? FINALIDADES[b.finalidade] : '', span: 2 },
+        ],
   ]
   return [
     inteiro([
@@ -1642,7 +1649,8 @@ function secaoObservacoes(ctx: Contexto, n: number): No[] {
     itens.push(
       `Leituras com resolução aumentada (divisão de teste de ${divisoesTexto([k.opcoes.divisaoTeste], u)}): a incerteza declarada é menor que a obtida com a divisão normal do instrumento (EURAMET cg-18, 8.3).`,
     )
-  const temCliente = !vazio(b.identificacao) || !vazio(b.localInstalacao) || !!b.finalidade
+  const temCliente =
+    !vazio(b.identificacao) || !vazio(b.localInstalacao) || (!!b.finalidade && ctx.e.semFinalidadeEDimensoes !== true)
   if (temCliente)
     itens.push(
       'Informações com (*) fornecidas pelo cliente, sob sua responsabilidade; podem influenciar a interpretação dos resultados.',

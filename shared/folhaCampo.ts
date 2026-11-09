@@ -26,7 +26,6 @@ import {
   numeroBr,
   padroesSemHistorico,
   type BalancaDosPadroes,
-  pressaoObrigatoria,
   situacaoValidade,
   type SituacaoValidade,
 } from './dominio.ts'
@@ -344,7 +343,12 @@ export function planoDaFolha(
   const substituicaoAtiva = !!sub?.ativa
   const pontosBase = doRascunho
     ? ensaio!.pontos.map((p) => ({ carga: p.carga, pecas: p.pecasManuais ? p.pecas : undefined, nivel: p.nivelSubstituicao }))
-    : pontosSugeridos(balanca, pesos).map((carga) => ({ carga, pecas: undefined as PecaCarga[] | undefined, nivel: 0 }))
+    : // Sem os pontos no rascunho, os sugeridos: as cargas em que o EMA muda só com a conformidade pedida (POP 7.7)
+      pontosSugeridos(balanca, pesos, !!conformidade).map((carga) => ({
+        carga,
+        pecas: undefined as PecaCarga[] | undefined,
+        nivel: 0,
+      }))
   // Rodoviária sem a substituição no plano e com pesos que não chegam às cargas: a folha sugere as etapas
   const subSugerida =
     !substituicaoAtiva && ehRodoviaria(balanca)
@@ -544,25 +548,22 @@ export function planoDaFolha(
   const usadas = new Map<string, PecaCarga>()
   for (const c of [...pontos, ...repetibilidade, excentricidade, substituicao])
     for (const x of c.pecas) usadas.set(`${x.padraoId}:${x.pesoId}`, x)
-  // O barômetro ativo fora do plano onde a pressão é opcional (classes III e IIII e sem classe: o rascunho novo não o
-  // marca, `padroesSemHistorico`) segue na linha dos outros: levá-lo e registrar a pressão continua possível
-  const barometrosFora = pressaoObrigatoria(balanca.classe)
+  // A pressão é obrigatória em toda calibração (POP 7.5): o rascunho novo já marca o barômetro (`padroesSemHistorico`);
+  // o de antes da 1.0.5 nas classes III e IIII e sem classe, não. Sem barômetro previsto, os ativos entram (para levar)
+  const barometrosFora = previstos.some((p) => p.tipo === 'BAROMETRO')
     ? []
     : padroes.filter((p) => p.ativo && p.tipo === 'BAROMETRO' && !previstos.some((x) => x.id === p.id))
   const validades = validadeDosPadroes([...previstos, ...barometrosFora], dataPrevista)
   // Um termo-higrômetro basta para o ambiente: o primeiro em dia (sem nenhum em dia, o primeiro)
   const termos = validades.itens.filter((x) => x.padrao.tipo === 'TERMOHIGROMETRO')
   const ambiente = (termos.find((x) => x.situacao !== 'VENCIDO') ?? termos[0])?.padrao
-  // Nas classes I e II a pressão é obrigatória: um barômetro vai inteiro na lista (o primeiro em dia)
+  // Um barômetro vai inteiro na lista (o primeiro em dia; sem nenhum em dia, o primeiro)
   const barometros = validades.itens.filter((x) => x.padrao.tipo === 'BAROMETRO')
-  const barometro = pressaoObrigatoria(balanca.classe)
-    ? (barometros.find((x) => x.situacao !== 'VENCIDO') ?? barometros[0])?.padrao
-    : undefined
+  const barometro = (barometros.find((x) => x.situacao !== 'VENCIDO') ?? barometros[0])?.padrao
   const padroesPlano = validades.itens.map(({ padrao: p, situacao }): PadraoPlanejado => {
     const pecas = [...usadas.values()].filter((x) => x.padraoId === p.id)
     const separar = p.tipo === 'PESOS' ? descreverPecas(pecas, [p]) : ''
-    // O barômetro fica na linha dos outros (a pressão é opcional e não entra no cálculo), menos nas classes I e
-    // II, em que a pressão é obrigatória
+    // O termo-higrômetro e o barômetro do ambiente vão inteiros; os outros, na linha dos outros
     const naFolha = p.tipo === 'PESOS' ? !!separar : p.tipo === 'OUTRO' || p === ambiente || p === barometro
     return { padrao: p, situacao, separar, naFolha }
   })
@@ -574,6 +575,9 @@ export function planoDaFolha(
     ).avisos,
   )
   if (!pesos.length) avisos.push('Nenhum jogo de pesos padrão previsto: escolha os pesos antes de sair.')
+  // A pressão é obrigatória em toda calibração (POP 7.5), com o barômetro listado nos padrões
+  if (!barometro)
+    avisos.push('Nenhum barômetro ativo cadastrado: a pressão atmosférica é obrigatória (POP 7.5). Cadastre-o em Padrões.')
   // Classe I: o ΔT pesos − ar do passo 4 é medido com o termômetro de duas entradas (padrão "Outro", POP 6.2)
   if (balanca.classe === 'I' && !previstos.some((p) => p.tipo === 'OUTRO' && p.ativo))
     avisos.push(

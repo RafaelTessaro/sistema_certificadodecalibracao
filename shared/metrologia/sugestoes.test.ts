@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   cargaExcentricidade,
+  cargasDeMudancaDoEma,
+  cargasDeMudancaDoEmaQueFaltam,
   excentricidadeAbaixoDoMinimo,
   faixasSemRepetibilidade,
   minimoExcentricidade,
@@ -13,28 +15,35 @@ import {
 import { serieDaClasseAtende } from './pesos.ts'
 
 describe('sugerirPontos', () => {
-  it('30 kg / 5 g, classe III: 0/25/50/75/100 % mais 500e e 2000e', () => {
-    expect(sugerirPontos({ classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30000, e: 5, d: 5 }] })).toEqual([
-      0, 2500, 7500, 10000, 15000, 22500, 30000,
-    ])
-    expect(sugerirPontos({ classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30, e: 0.005, d: 0.005 }] })).toEqual([
-      0, 2.5, 7.5, 10, 15, 22.5, 30,
-    ])
+  it('30 kg / 5 g, classe III: 0/25/50/75/100 % (cg-18); com a conformidade pedida, mais 500e e 2000e (POP 7.7)', () => {
+    const b = { classe: 'III' as const, tipoFaixas: 'UNICA' as const, faixas: [{ max: 30000, e: 5, d: 5 }] }
+    expect(sugerirPontos(b)).toEqual([0, 7500, 15000, 22500, 30000])
+    expect(sugerirPontos(b, undefined, { conformidade: false })).toEqual([0, 7500, 15000, 22500, 30000])
+    expect(sugerirPontos(b, undefined, { conformidade: true })).toEqual([0, 2500, 7500, 10000, 15000, 22500, 30000])
+    expect(
+      sugerirPontos({ classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30, e: 0.005, d: 0.005 }] }, undefined, {
+        conformidade: true,
+      }),
+    ).toEqual([0, 2.5, 7.5, 10, 15, 22.5, 30])
+    expect(cargasDeMudancaDoEma(b)).toEqual([2500, 10000])
   })
 
   it('60 t / 20 kg, classe III (em kg e em t)', () => {
-    expect(sugerirPontos({ classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 60000, e: 20, d: 20 }] })).toEqual([
-      0, 10000, 15000, 30000, 40000, 45000, 60000,
-    ])
-    expect(sugerirPontos({ classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 60, e: 0.02, d: 0.02 }] })).toEqual([
-      0, 10, 15, 30, 40, 45, 60,
-    ])
+    const kg = { classe: 'III' as const, tipoFaixas: 'UNICA' as const, faixas: [{ max: 60000, e: 20, d: 20 }] }
+    expect(sugerirPontos(kg)).toEqual([0, 15000, 30000, 45000, 60000])
+    expect(sugerirPontos(kg, undefined, { conformidade: true })).toEqual([0, 10000, 15000, 30000, 40000, 45000, 60000])
+    expect(
+      sugerirPontos({ classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 60, e: 0.02, d: 0.02 }] }, undefined, {
+        conformidade: true,
+      }),
+    ).toEqual([0, 10, 15, 30, 40, 45, 60])
   })
 
-  it('sem classe só os percentuais; valores redondos múltiplos de e', () => {
-    expect(sugerirPontos({ classe: '', tipoFaixas: 'UNICA', faixas: [{ max: 30000, e: 5, d: 5 }] })).toEqual([
-      0, 7500, 15000, 22500, 30000,
-    ])
+  it('sem classe só os percentuais, mesmo com a conformidade pedida (sem EMA); valores redondos múltiplos de e', () => {
+    const b = { classe: '' as const, tipoFaixas: 'UNICA' as const, faixas: [{ max: 30000, e: 5, d: 5 }] }
+    expect(sugerirPontos(b)).toEqual([0, 7500, 15000, 22500, 30000])
+    expect(sugerirPontos(b, undefined, { conformidade: true })).toEqual([0, 7500, 15000, 22500, 30000])
+    expect(cargasDeMudancaDoEma(b)).toEqual([])
     expect(sugerirPontos({ classe: '', tipoFaixas: 'UNICA', faixas: [{ max: 1500, e: 0.5, d: 0.5 }] })).toEqual([
       0, 375, 750, 1100, 1500,
     ])
@@ -42,11 +51,15 @@ describe('sugerirPontos', () => {
 
   it('Min, quando marcada, entra entre as cargas (POP 7.7); sem duplicar, e só abaixo de Max', () => {
     const plataforma = { classe: 'III' as const, tipoFaixas: 'UNICA' as const, faixas: [{ max: 300, e: 0.05, d: 0.05 }] }
-    expect(sugerirPontos(plataforma)).toEqual([0, 25, 75, 100, 150, 225, 300])
-    expect(sugerirPontos({ ...plataforma, min: 1 })).toEqual([0, 1, 25, 75, 100, 150, 225, 300])
+    const conformidade = { conformidade: true }
+    expect(sugerirPontos(plataforma)).toEqual([0, 75, 150, 225, 300])
+    expect(sugerirPontos({ ...plataforma, min: 1 })).toEqual([0, 1, 75, 150, 225, 300])
+    expect(sugerirPontos(plataforma, undefined, conformidade)).toEqual([0, 25, 75, 100, 150, 225, 300])
+    expect(sugerirPontos({ ...plataforma, min: 1 }, undefined, conformidade)).toEqual([0, 1, 25, 75, 100, 150, 225, 300])
     // Igual a uma carga já sugerida: uma vez só
-    expect(sugerirPontos({ ...plataforma, min: 25 })).toEqual([0, 25, 75, 100, 150, 225, 300])
-    expect(sugerirPontos({ ...plataforma, min: 0 })).toEqual([0, 25, 75, 100, 150, 225, 300])
+    expect(sugerirPontos({ ...plataforma, min: 75 })).toEqual([0, 75, 150, 225, 300])
+    expect(sugerirPontos({ ...plataforma, min: 25 }, undefined, conformidade)).toEqual([0, 25, 75, 100, 150, 225, 300])
+    expect(sugerirPontos({ ...plataforma, min: 0 })).toEqual([0, 75, 150, 225, 300])
     expect(
       sugerirPontos({
         classe: 'III',
@@ -61,25 +74,68 @@ describe('sugerirPontos', () => {
     ).toContain(0.04)
   })
 
-  it('multi-intervalo: mudanças de EMA de cada faixa parcial, sem duplicados', () => {
-    const pontos = sugerirPontos({
-      classe: 'III',
-      tipoFaixas: 'MULTI_INTERVALO',
+  it('multi-intervalo: com a conformidade pedida, as mudanças de EMA de cada faixa parcial, sem duplicados', () => {
+    const b = {
+      classe: 'III' as const,
+      tipoFaixas: 'MULTI_INTERVALO' as const,
       faixas: [
         { max: 2000, e: 1, d: 1 },
         { max: 5000, e: 2, d: 2 },
         { max: 15000, e: 10, d: 10 },
       ],
-    })
-    expect(pontos).toEqual([0, 500, 2000, 3750, 4000, 7500, 11000, 15000])
+    }
+    expect(sugerirPontos(b, undefined, { conformidade: true })).toEqual([0, 500, 2000, 3750, 4000, 7500, 11000, 15000])
+    expect(sugerirPontos(b)).toEqual([0, 3750, 7500, 11000, 15000])
+    expect(cargasDeMudancaDoEma(b)).toEqual([500, 2000, 4000])
+  })
+
+  it('Toledo Prix 4 Uno 6/15/32 kg × 2/5/10 g, Min 0,040 kg: 6 linhas sem a conformidade, 10 com ela', () => {
+    const prix = {
+      classe: 'III' as const,
+      tipoFaixas: 'MULTI_INTERVALO' as const,
+      faixas: [
+        { max: 6, e: 0.002, d: 0.002 },
+        { max: 15, e: 0.005, d: 0.005 },
+        { max: 32, e: 0.01, d: 0.01 },
+      ],
+      min: 0.04,
+    }
+    expect(sugerirPontos(prix)).toEqual([0, 0.04, 8, 16, 24, 32])
+    expect(sugerirPontos(prix, undefined, { conformidade: true })).toEqual([0, 0.04, 1, 4, 8, 10, 16, 20, 24, 32])
+    // 500e e 2000e do 1º intervalo (1 e 4 kg); do 2º e do 3º, só as acima do Max do anterior (10 e 20 kg)
+    expect(cargasDeMudancaDoEma(prix)).toEqual([1, 4, 10, 20])
+  })
+
+  it('as cargas em que o EMA muda que faltam entre as do ensaio (o aviso da conformidade pedida depois da folha)', () => {
+    const prix = {
+      classe: 'III' as const,
+      tipoFaixas: 'MULTI_INTERVALO' as const,
+      faixas: [
+        { max: 6, e: 0.002, d: 0.002 },
+        { max: 15, e: 0.005, d: 0.005 },
+        { max: 32, e: 0.01, d: 0.01 },
+      ],
+    }
+    expect(cargasDeMudancaDoEmaQueFaltam(prix, [0, 0.04, 8, 16, 24, 32])).toEqual([1, 4, 10, 20])
+    expect(cargasDeMudancaDoEmaQueFaltam(prix, [0, 0.04, 1, 4, 8, 10, 16, 20, 24, 32])).toEqual([])
+    // A menos de meio e conta como ela (4,001 kg com e = 2 g); 9,99 kg, não (e = 5 g)
+    expect(cargasDeMudancaDoEmaQueFaltam(prix, [0, 1, 4.001, 9.99, 20, 32])).toEqual([10])
+    expect(cargasDeMudancaDoEmaQueFaltam({ ...prix, classe: '' }, [0, 32])).toEqual([])
   })
 
   it('classe I: 25, 50 e 75 % de Max em múltiplos de 10 g, montáveis só com peças de 10 g ou mais (POP 6.1)', () => {
+    // Com a conformidade pedida (as mudanças de EMA entram)
     const classeI = (max: number, e: number, unidade?: 'g' | 'mg' | 'kg', min?: number) =>
-      sugerirPontos({ classe: 'I', tipoFaixas: 'UNICA', faixas: [{ max, e, d: e / 10 }], unidade, min })
+      sugerirPontos({ classe: 'I', tipoFaixas: 'UNICA', faixas: [{ max, e, d: e / 10 }], unidade, min }, undefined, {
+        conformidade: true,
+      })
     // 220 g × 0,1 mg (e = 1 mg): 55 g e 165 g pediriam uma peça de 5 g → 60 g (50 + 10) e 160 g (100 + 50 + 10;
     // 170 g = 100 + 50 + 20 passaria de 1/3 do EMA com os pesos E2, ver o teste seguinte)
     expect(classeI(220, 0.001, 'g', 0.01)).toEqual([0, 0.01, 50, 60, 110, 160, 200, 220])
+    // Sem a conformidade pedida, as mesmas regras e sem as mudanças de EMA (50 000e e 200 000e: 50 g e 200 g)
+    expect(
+      sugerirPontos({ classe: 'I', tipoFaixas: 'UNICA', faixas: [{ max: 220, e: 0.001, d: 0.0001 }], unidade: 'g', min: 0.01 }),
+    ).toEqual([0, 0.01, 60, 110, 160, 220])
     // 620 g: 310 g = 200 + 100 + 10 (0,52 mg > 0,5 mg) → 300 g; 470 g nem os vizinhos atendem com E2: fica o mais
     // próximo (a folha avisa, com o jogo previsto)
     expect(classeI(620, 0.001, 'g')).toEqual([0, 50, 160, 200, 300, 470, 620])
@@ -93,9 +149,11 @@ describe('sugerirPontos', () => {
     expect(classeI(6.1, 0.00001, 'g')).toEqual([0, 0.5, 1.5, 2, 3.05, 4.6, 6.1])
     expect(classeI(220, 0.001)).toEqual([0, 50, 55, 110, 165, 200, 220])
     // Nas outras classes, nada muda
-    expect(sugerirPontos({ classe: 'II', tipoFaixas: 'UNICA', faixas: [{ max: 220, e: 0.01, d: 0.001 }], unidade: 'g' })).toEqual(
-      [0, 50, 55, 110, 165, 200, 220],
-    )
+    expect(
+      sugerirPontos({ classe: 'II', tipoFaixas: 'UNICA', faixas: [{ max: 220, e: 0.01, d: 0.001 }], unidade: 'g' }, undefined, {
+        conformidade: true,
+      }),
+    ).toEqual([0, 50, 55, 110, 165, 200, 220])
   })
 
   it('classe I: entre os múltiplos de 10 g mais próximos, o que atende a 6.1 do POP (Σ EMA ≤ 1/3 do EMA; R76 3.7.1)', () => {
@@ -113,16 +171,17 @@ describe('sugerirPontos', () => {
     // No empate (165 g fica a 5 g de 160 g e de 170 g), o mais próximo de sempre (170 g) só fica se atender
     const conferidas: number[] = []
     const comE1 = sugerirPontos(b220, (c) => (conferidas.push(c), serieDaClasseAtende(c, b220, 'E1')))
-    expect(comE1).toEqual([0, 50, 60, 110, 170, 200, 220])
+    expect(comE1).toEqual([0, 60, 110, 170, 220])
     expect(conferidas).toEqual([60, 110, 170])
+    // (sem a conformidade pedida: sem as mudanças de EMA, 50 g e 200 g)
     // Quem confere diz que não: o seguinte mais próximo que atende (no empate, o menor), até 10 % de Max
-    expect(sugerirPontos(b220, (c) => c !== 170)).toEqual([0, 50, 60, 110, 160, 200, 220])
-    expect(sugerirPontos(b220, (c) => c !== 170 && c !== 160)).toEqual([0, 50, 60, 110, 150, 200, 220])
-    expect(sugerirPontos(b220, (c) => c === 180 || c < 150)).toEqual([0, 50, 60, 110, 180, 200, 220])
+    expect(sugerirPontos(b220, (c) => c !== 170)).toEqual([0, 60, 110, 160, 220])
+    expect(sugerirPontos(b220, (c) => c !== 170 && c !== 160)).toEqual([0, 60, 110, 150, 220])
+    expect(sugerirPontos(b220, (c) => c === 180 || c < 150)).toEqual([0, 60, 110, 180, 220])
     // Nenhum atende (até 10 % de Max): o mais próximo, como antes
-    expect(sugerirPontos(b220, (c) => c < 140)).toEqual([0, 50, 60, 110, 170, 200, 220])
+    expect(sugerirPontos(b220, (c) => c < 140)).toEqual([0, 60, 110, 170, 220])
     // Quem confere não sabe (null: os pesos não fecham a carga, peça sem classe): a série E2
-    expect(sugerirPontos(b220, () => null)).toEqual([0, 50, 60, 110, 160, 200, 220])
+    expect(sugerirPontos(b220, () => null)).toEqual([0, 60, 110, 160, 220])
     // Nas outras classes, quem confere nem é chamado
     const outras: number[] = []
     sugerirPontos({ ...b220, classe: 'II', faixas: [{ max: 220, e: 0.01, d: 0.001 }] }, (c) => (outras.push(c), false))

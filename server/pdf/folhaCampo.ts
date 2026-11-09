@@ -49,8 +49,8 @@
 // leitura, mais altas (até ≈ 8,8 mm) quando a página tem espaço (`comLinhasFolgadas`), menos na última: o espaço que
 // sobra nela fica todo para as Anotações.
 //
-// Classe I (só na folha de uma balança classe I): o ΔT pesos − ar na linha do ambiente no início, a umidade e a pressão
-// obrigatórias, 10 leituras na repetibilidade (duas faixas de 6) e, na excentricidade, o zero antes de cada posição
+// A pressão é obrigatória em toda folha (POP 7.5). Classe I (só na folha de uma balança classe I): o ΔT pesos − ar na
+// linha do ambiente no início, a umidade obrigatória, 10 leituras na repetibilidade (duas faixas de 6) e, na excentricidade, o zero antes de cada posição
 // (método 3), nas linhas que já existem; e uma linha a mais no alto do passo 5, o ajuste interno (CAL) de rotina feito
 // antes dos ensaios (uma caixa de marcar e a hora: não é reparo nem ajuste durante a calibração).
 
@@ -63,7 +63,6 @@ import {
   METODOS_CARREGAMENTO,
   metodoIndicacaoPadrao,
   numeroBr,
-  pressaoObrigatoria,
   RECEPTORES,
   ROTULO_CLASSE,
   ROTULO_METODO_INDICACAO,
@@ -1563,6 +1562,8 @@ function gradesCliente(ctx: Contexto): NoObjeto[] {
   const telefone = c.telefone || c.celular
   const contato = [c.contato, vazio(telefone) ? '' : telefoneSemQuebra(telefone)].filter((x) => !vazio(x)).join(SEPARADOR) || '—'
   const documento = c.documento || '—'
+  // A inscrição estadual embaixo do CNPJ, quando o cliente tem (sem ela, nada)
+  const ie = vazio(c.inscricaoEstadual) ? '' : `IE${NBSP}${c.inscricaoEstadual.trim()}`
   // Impresso compacto, sem caixas de correção: diferente do real, anota-se em Anotações, no fim da folha. O contato e o
   // documento com a largura do texto (o contato até 230 pt): não quebram de linha à toa
   const largura = (t: string, min: number, max: number) =>
@@ -1574,10 +1575,10 @@ function gradesCliente(ctx: Contexto): NoObjeto[] {
         [
           previsto(pj ? 'Razão social' : 'Nome', { text: nome || '—', bold: true }),
           previsto('Contato no cliente', contato),
-          previsto(pj ? 'CNPJ' : 'CPF', documento),
+          previsto(pj ? 'CNPJ' : 'CPF', ie ? [documento, `\n${ie}`] : documento),
         ],
       ],
-      ['*', largura(contato, 110, 200), largura(documento, 70, 110)],
+      ['*', largura(contato, 110, 200), Math.max(largura(documento, 70, 110), ie ? largura(ie, 70, 110) : 0)],
       [0, 0, 0, 0],
       { semFioDeCima: recado.length > 0 },
     ),
@@ -1647,7 +1648,6 @@ function gradeBalanca(b: Balanca): NoObjeto {
     (b.receptor === 'APOIOS' || b.receptor === 'RODOVIARIA' || b.receptor === 'TANQUE') && b.apoios > 0
       ? `${b.apoios}${NBSP}apoios`
       : '',
-    medidasSemQuebra(b.dimensoes.trim()),
   ]
     .filter(Boolean)
     .join(SEPARADOR)
@@ -1706,7 +1706,7 @@ function gradeBalanca(b: Balanca): NoObjeto {
 
 /**
  * Identificação da balança na folha em branco: tudo para escrever ou marcar, com as faixas embaixo. O curto em campos
- * em linha (≈ 6,5 mm: o rótulo à esquerda e a escrita ao lado); o longo (plataforma, portaria, dimensões) com o rótulo
+ * em linha (≈ 6,5 mm: o rótulo à esquerda e a escrita ao lado); o longo (plataforma, portaria) com o rótulo
  * em cima. A unidade vai escrita com cada valor das faixas (Max, e, d) e com Min, ao lado delas, como na plaqueta.
  */
 function gradeBalancaEmBranco(): NoObjeto[] {
@@ -1722,14 +1722,8 @@ function gradeBalancaEmBranco(): NoObjeto[] {
         [150, '*', 104, 92],
       ),
       grade(
-        [
-          [
-            escrever('Plataforma (fabricante, modelo, nº de série)'),
-            escrever('Portaria de aprovação de modelo'),
-            escrever('Dimensões do prato (sai no certificado)'),
-          ],
-        ],
-        ['*', 150, 150],
+        [[escrever('Plataforma (fabricante, modelo, nº de série)'), escrever('Portaria de aprovação de modelo')]],
+        ['*', 220],
         [0, 0, 0, 0],
         { semFioDeCima: true },
       ),
@@ -1853,7 +1847,7 @@ function instrumentosAmbiente(ctx: Contexto): Padrao[] {
  * O fim é medido depois da excentricidade, no mesmo lugar e com o mesmo instrumento: a linha dele fica aqui,
  * embaixo da do início, para comparar. Balança classe I: a linha do início é medida logo antes do 1º ensaio (não 15 min
  * após a chegada), com a diferença de temperatura pesos − ar (a última medição, a que libera os ensaios). As dicas (o
- * instrumento previsto, quando a pressão é obrigatória, quando medir o ΔT e o limite dele) vão no cabeçalho, embaixo do
+ * instrumento previsto, quando medir o ΔT e o limite dele) vão no cabeçalho, embaixo do
  * título da coluna: as caixas de escrever ficam livres.
  */
 function tabelaAmbiente(ctx: Contexto): NoObjeto {
@@ -1872,13 +1866,8 @@ function tabelaAmbiente(ctx: Contexto): NoObjeto {
     { titulo: `Temperatura${OBRIG}`, unidade: '°C', largura: classeI ? 70 : '*' },
     // Na classe I, a umidade entra na densidade do ar (empuxo, cg-18 A1.1-1): obrigatória
     { titulo: classeI ? `Umidade${OBRIG}` : 'Umidade', unidade: '%', largura: '*' },
-    // Obrigatória nas classes I e II, com o barômetro (POP 6.2); em branco (classes II a IIII), a classe ainda não é
-    // conhecida: a dica diz que é obrigatória na II
-    !ctx.b
-      ? { titulo: 'Pressão', unidade: 'hPa', largura: '*', nota: `obrigatória na classe${NBSP}II` }
-      : pressaoObrigatoria(ctx.b.classe)
-        ? { titulo: `Pressão${OBRIG}`, unidade: 'hPa', largura: '*' }
-        : { titulo: 'Pressão, opcional', unidade: 'hPa', largura: 90 },
+    // Obrigatória em toda calibração, com o barômetro listado nos padrões (POP 6.2 e 7.5), também na folha em branco
+    { titulo: `Pressão${OBRIG}`, unidade: 'hPa', largura: '*' },
     // Classe I: a diferença pesos − ar antes do 1º ensaio, com o termômetro de duas entradas (convecção, cg-18
     // 7.1.2.4), com o limite do POP 7.4 para os pesos previstos
     ...(classeI ? [{ titulo: `ΔT pesos − ar${OBRIG}`, unidade: '°C', largura: 74, nota: quandoDeltaT }] : []),
@@ -2073,9 +2062,10 @@ function pesosDaCarga(
 const TAMANHOS_PESOS = [9, 8.6, 8.2, 7.8, 7.4]
 
 /**
- * Linhas da tabela de pontos na folha em branco: o zero e mais 8 (0, Min, 25, 50, 75 e 100 % de Max e as duas cargas
- * da classe em que o EMA muda, Tabela 2 do POP: 5000e e 20 000e na II, 500e e 2000e na III, 50e e 200e na IIII;
- * multi-intervalo com mais cargas: em Anotações, no fim da folha).
+ * Linhas da tabela de pontos na folha em branco: o zero e mais 8 (0, Min, 25, 50, 75 e 100 % de Max e, quando o
+ * cliente pedir declaração de conformidade, as duas cargas da classe em que o EMA muda, Tabela 2 do POP: 5000e e
+ * 20 000e na II, 500e e 2000e na III, 50e e 200e na IIII; multi-intervalo com mais cargas: em Anotações, no fim da
+ * folha).
  */
 const LINHAS_PONTOS_EM_BRANCO = 9
 
@@ -2155,7 +2145,8 @@ function tabelaPontos(ctx: Contexto, reserva: number): TabelaPontos {
     linhas.push(cel)
   }
   const inicio = linhas.length
-  // Em branco: o zero e mais 8 linhas (0, Min, 25, 50, 75 e 100 % de Max e as duas cargas da classe em que o EMA muda)
+  // Em branco: o zero e mais 8 linhas (0, Min, 25, 50, 75 e 100 % de Max e, com a declaração de conformidade, as duas
+  // cargas da classe em que o EMA muda)
   const total = plano ? reserva : LINHAS_PONTOS_EM_BRANCO
   for (let i = 0; i < total; i++) {
     const zeroEmBranco = !plano && i === 0
@@ -2303,8 +2294,9 @@ function passoIndicacao(ctx: Contexto, n: number): No[] {
     : [
         'Cargas: ',
         { text: '0, Min (se marcada), 25, 50, 75 e 100 % de Max', bold: true },
-        // As cargas em que o EMA muda (POP 7.7 e Tabela 2) nas classes da folha em branco (a classe I tem a folha dela)
-        ' e em 5000e e 20\u00a0000e (classe II), 500e e 2000e (III) ou 50e e 200e (IIII). Zere vazia, aplique as cargas e anote a indicação estável.',
+        // As cargas em que o EMA muda (POP 7.7 e Tabela 2), só com a declaração de conformidade pedida, nas classes da
+        // folha em branco (a classe I tem a folha dela)
+        '; quando o cliente pedir declaração de conformidade, também 5000e e 20\u00a0000e (classe II), 500e e 2000e (III) ou 50e e 200e (IIII). Zere vazia, aplique as cargas e anote a indicação estável.',
       ]
   const t = tabelaPontos(ctx, reservaDosPontos(ctx))
   const total = t.linhas.length

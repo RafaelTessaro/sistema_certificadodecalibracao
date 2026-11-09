@@ -126,7 +126,10 @@ export interface Balanca {
   receptor: Receptor
   /** Número de apoios (células de carga) quando o receptor é APOIOS ou RODOVIARIA. */
   apoios: number
-  /** Dimensões do prato / plataforma, ex.: "40 × 50 cm". */
+  /**
+   * Dimensões do prato / plataforma, ex.: "40 × 50 cm", e para que a balança é usada: o cadastro não pede mais (1.0.5),
+   * nem saem nos documentos novos; o que já foi guardado continua (cópias, importação, certificados de antes).
+   */
   dimensoes: string
   finalidade: Finalidade
   /** Onde a balança fica no cliente (setor, linha, filial). */
@@ -511,7 +514,10 @@ export interface CondicoesAmbientais {
   temperaturaFinal: number | null
   umidadeInicial: number | null
   umidadeFinal: number | null
-  /** hPa; opcional (obrigatória nas classes I e II). A pressão absoluta do local, nunca a reduzida ao nível do mar. */
+  /**
+   * hPa; obrigatória em toda calibração desde a 1.0.5 (antes, só nas classes I e II; ver `pressaoComoAviso` em
+   * dominio.ts). A pressão absoluta do local, nunca a reduzida ao nível do mar.
+   */
   pressao: number | null
   /** |T dos pesos − T do ar junto ao prato| medido antes do 1º ensaio, °C (= K); null ou ausente = não medido. */
   deltaTPesos?: number | null
@@ -646,6 +652,14 @@ export interface Calibracao {
    * (`EnsaioIndicacao.metodoMedido`). Quem define é o servidor; ausente = não.
    */
   descidaComoAviso?: boolean
+  /**
+   * Calibração em andamento que já tinha leituras ou a folha de campo impressa, sem a pressão atmosférica, quando a
+   * pressão passou a ser obrigatória em toda classe (atualização para a 1.0.5, migração 19; antes, só nas classes I e
+   * II), e a revisão de um certificado emitido sem ela: a visita já aconteceu (ou vai acontecer com a folha que dizia
+   * "opcional"), e nas classes III e IIII e sem classe a falta dela fica só como aviso (`pressaoComoAviso` em
+   * dominio.ts). Quem define é o servidor; ausente = não.
+   */
+  pressaoComoAviso?: boolean
   /**
    * Revisão: os padrões como foram congelados na emissão do certificado que ela substitui (o certificado e as
    * correções da época, mesmo que o padrão tenha sido calibrado de novo ou desativado depois; ver
@@ -841,6 +855,17 @@ export interface EmissaoCertificado {
    * regras, dizia "sem descarregar"), ou sem as regras: o PDF refeito dos dados congelados sai igual ao emitido.
    */
   carregamentoSemZerar?: boolean
+  /**
+   * Emitido a partir da 1.0.5, sem a finalidade de uso e as dimensões do prato (o cadastro da balança não as pede
+   * mais; o que foi guardado continua na cópia congelada, `balanca`). Ausente = emitido antes, com a "Finalidade de uso
+   * (*)" e as dimensões no receptor: o PDF refeito dos dados congelados sai igual ao emitido.
+   */
+  semFinalidadeEDimensoes?: boolean
+  /**
+   * Emitido a partir da 1.0.5: a inscrição estadual do cliente sai junto do CNPJ, quando ele tem (sem ela, nada).
+   * Ausente = emitido antes, só com o CNPJ: o PDF refeito dos dados congelados sai igual ao emitido.
+   */
+  inscricaoEstadualDoCliente?: boolean
 }
 
 export interface Signatario {

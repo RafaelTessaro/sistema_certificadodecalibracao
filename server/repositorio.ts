@@ -1226,6 +1226,9 @@ export class Repositorio {
           // Emitido sem a descida de alguma carga (medido antes de ela ser obrigatória, 1.0.3): a revisão não pode pedir
           // uma leitura que a visita não fez; a descida que falta fica como aviso (`descidaComoAviso`)
           if (original.descidaComoAviso === true || temCargaSemDescida(original.indicacao)) k.descidaComoAviso = true
+          // Emitido sem a pressão atmosférica (opcional nas classes III e IIII e sem classe até a 1.0.4): a revisão não
+          // pode pedir uma medição que a visita não fez; a falta dela fica como aviso (`pressaoComoAviso`)
+          if (original.pressaoComoAviso === true || original.ambiente.pressao === null) k.pressaoComoAviso = true
         }
         // Os padrões como foram congelados na emissão (o certificado e as correções da época), mesmo que tenham sido
         // calibrados de novo ou desativados depois (`padroesDaCalibracao`)

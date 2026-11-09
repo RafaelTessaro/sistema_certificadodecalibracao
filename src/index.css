@@ -198,6 +198,13 @@
   input[type='number'] {
     -moz-appearance: textfield;
   }
+  /* Texto de exemplo (placeholder) do campo: o Chrome força nele a linha "normal" (só a altura da fonte, arredondada)
+     e corta o que passa dela, rente à perna do "g" ("Digite para buscar…" com o g cortado em telas a 125–175 %).
+     A folga embaixo não move o texto, que segue a linha de base do campo. O texto digitado: ALTURA_CAMPO em
+     components/ui/Form.tsx. */
+  input::placeholder {
+    padding-bottom: 0.25em;
+  }
 }
 
 @layer components {

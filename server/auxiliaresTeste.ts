@@ -198,6 +198,25 @@ export async function cenarioCalibracao(t: AppComLogin) {
   const peca = (pesoId: string) => ({ padraoId: pesos.id, pesoId, quantidade: 1 })
 
   /**
+   * O barômetro do cenário (a pressão é obrigatória em toda calibração, POP 7.5), cadastrado na primeira calibração
+   * pronta que não traz outro: os testes que não chegam a ela continuam só com o jogo JP-01.
+   */
+  let barometroDoCenario: Promise<Padrao> | undefined
+  // A promessa (e não o padrão): as calibrações prontas pedidas ao mesmo tempo cadastram um só
+  const barometro = (): Promise<Padrao> =>
+    (barometroDoCenario ??= criar('/api/padroes', {
+      ...PADRAO_VAZIO,
+      tipo: 'BAROMETRO',
+      identificacao: 'BR-90',
+      descricao: 'Barômetro digital',
+      certificado: 'LAB-0789/2026',
+      laboratorio: 'Laboratório de Pressão Exemplo',
+      acreditacao: 'CAL 0456',
+      dataCalibracao: '2026-01-10',
+      validade: '2099-01-10',
+    }).then((r) => r.padrao as Padrao))
+
+  /**
    * Rascunho preenchido (com os padrões indicados além do jogo JP-01), pronto para emitir. `daBalanca`: outra balança
    * de 30 kg × 10 g (com o cliente dela); sem ela, a TL-2231 do Mercado Bom Preço.
    */
@@ -213,19 +232,20 @@ export async function cenarioCalibracao(t: AppComLogin) {
     )) as {
       calibracao: Calibracao
     }
-    // Com o barômetro entre os padrões, a pressão medida com ele (a emissão confere os dois)
+    // A pressão medida com o barômetro (obrigatória em toda calibração, POP 7.5; a emissão confere os dois): o indicado
+    // ou, sem ele, o do cenário
     const comBarometro = outrosPadroes.some((id) => t.ctx.repo.obterPadrao(id)?.tipo === 'BAROMETRO')
     const dados: CalibracaoInput = {
       ...k,
       // A calibração é de hoje, dentro dos 24 meses do jogo JP-01 (calibrado em 10/01/2026; POP, Tabela 3)
       dataCalibracao: k.dataCalibracao > ULTIMO_DIA_DO_JOGO ? ULTIMO_DIA_DO_JOGO : k.dataCalibracao,
-      padroesIds: [pesos.id, ...outrosPadroes],
+      padroesIds: [pesos.id, ...outrosPadroes, ...(comBarometro ? [] : [(await barometro()).id])],
       ambiente: {
         temperaturaInicial: 22.1,
         temperaturaFinal: 22.6,
         umidadeInicial: 55,
         umidadeFinal: 57,
-        pressao: comBarometro ? 927 : null,
+        pressao: 927,
       },
       repetibilidade: [{ id: 'r1', carga: 15, leituras: [15, 15, 15.01, 15, 15, 15] }],
       excentricidade: {
@@ -287,5 +307,5 @@ export async function cenarioCalibracao(t: AppComLogin) {
     return r.json().calibracao
   }
 
-  return { cliente, balanca, pesos, padraoPesos, criar, enviarArquivo, calibracaoPronta, emitir, emitido }
+  return { cliente, balanca, pesos, padraoPesos, barometro, criar, enviarArquivo, calibracaoPronta, emitir, emitido }
 }

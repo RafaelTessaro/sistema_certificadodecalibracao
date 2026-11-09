@@ -16,6 +16,15 @@ const baseCampo =
   'hover:border-line-strong focus:border-brand focus:ring-4 focus:ring-[var(--ring)] focus:outline-none ' +
   'disabled:cursor-not-allowed disabled:bg-surface-2 disabled:opacity-70'
 
+/**
+ * Altura do campo de texto (`<input>`): mínima e máxima iguais, nunca `h-*`. Com uma altura fixa maior que a linha,
+ * o Chrome troca a linha do texto digitado por "normal", só a altura da fonte arredondada (14 + 3 px na Inter de
+ * 14 px), e a caixa interna do campo corta o que passa dela: a perna do "g" encosta no corte e, com o Windows em
+ * 125 a 175 %, perde a última linha de pixels ("Açougue" com o g cortado). Com mínimo e máximo a altura é a mesma e o
+ * Chrome mantém a linha do campo (20 px), com folga embaixo. Vale para todo `<input>` de texto do sistema.
+ */
+const ALTURA_CAMPO = 'min-h-10 max-h-10'
+
 /** Rótulo cortado com "…": ao passar o mouse, mostra o texto inteiro (sem cortar, não há dica). */
 function dicaSeCortado(e: MouseEvent<HTMLElement>) {
   const el = e.currentTarget
@@ -92,11 +101,11 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
   { className, icone, ...props },
   ref,
 ) {
-  if (!icone) return <input ref={ref} className={cn(baseCampo, 'h-10 px-3.5', className)} {...props} />
+  if (!icone) return <input ref={ref} className={cn(baseCampo, ALTURA_CAMPO, 'px-3.5', className)} {...props} />
   return (
     <div className="relative">
       <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted">{icone}</span>
-      <input ref={ref} className={cn(baseCampo, 'h-10 pr-3.5 pl-9', className)} {...props} />
+      <input ref={ref} className={cn(baseCampo, ALTURA_CAMPO, 'pr-3.5 pl-9', className)} {...props} />
     </div>
   )
 })

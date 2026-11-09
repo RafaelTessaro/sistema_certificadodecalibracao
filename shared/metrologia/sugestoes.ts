@@ -59,10 +59,11 @@ function meioRedondoAcima(valor: number): number {
 }
 
 /**
- * Pontos sugeridos para o erro de indicação (cg-18 §5.2; R76 A.4.4.1; POP 7.7): 0, Min (quando marcada),
- * ~25, 50, 75 e 100 % de Max em valores redondos múltiplos de e, mais as mudanças de EMA da classe (500e e
- * 2000e na classe III; 5 000e e 20 000e na II…) que caírem dentro da faixa. Em multi-intervalo, o e é o do
- * intervalo parcial do ponto. Sem duplicados, em ordem crescente, na unidade da balança.
+ * Pontos sugeridos para o erro de indicação (cg-18 §5.2; R76 A.4.4.1; POP 7.7): 0, Min (quando marcada) e
+ * ~25, 50, 75 e 100 % de Max em valores redondos múltiplos de e, o mínimo do cg-18. Com a declaração de conformidade
+ * pedida pelo cliente (`opcoes.conformidade`), também as cargas em que o EMA muda (POP, Tabela 2: 500e e 2000e na
+ * classe III; 5 000e e 20 000e na II…) que caírem dentro da faixa (`cargasDeMudancaDoEma`). Em multi-intervalo, o e é
+ * o do intervalo parcial do ponto. Sem duplicados, em ordem crescente, na unidade da balança.
  * Classe I (com a `unidade`): os ~25, 50 e 75 % de Max em múltiplos de 10 g, que se montam só com peças de 10 g
  * ou mais (POP 6.1: cada peça soma a sua incerteza e a sua convecção), e em que os pesos atendem a 6.1 do POP
  * (Σ EMA das peças ≤ 1/3 do EMA OIML inicial; R76 3.7.1): o mais próximo que atende (`multiploQueAtende`). Quem
@@ -75,6 +76,7 @@ function meioRedondoAcima(valor: number): number {
 export function sugerirPontos(
   instrumento: Pick<InstrumentoCalculo, 'classe' | 'tipoFaixas' | 'faixas'> & { min?: number; unidade?: Unidade },
   atende?: (carga: number) => boolean | null,
+  opcoes: { conformidade?: boolean } = {},
 ): number[] {
   const faixas = faixasOrdenadas(instrumento.faixas)
   if (!faixas.length) return []
@@ -92,19 +94,48 @@ export function sugerirPontos(
     const e = faixaDoValor(v, instrumento).e
     pontos.push(passoClasseI > 0 && passoClasseI >= e ? multiploQueAtende(v, passoClasseI, max, atendeClasseI) : multiplo(v, e))
   }
-  if (instrumento.classe) {
-    const [l1, l2] = LIMIARES_EMA[instrumento.classe]
-    let inferior = 0
-    for (const f of faixas) {
-      for (const n of [l1, l2]) {
-        const c = arredondarMeioPar(n * f.e, casasDecimais(f.e))
-        if (f.e > 0 && c > inferior * (1 + TOL) && c < max * (1 - TOL) && c <= f.max * (1 + TOL)) pontos.push(c)
-      }
-      if (instrumento.tipoFaixas !== 'UNICA') inferior = f.max
-    }
-  }
+  if (opcoes.conformidade) pontos.push(...cargasDeMudancaDoEma(instrumento))
   const ordenados = pontos.filter((p) => p >= 0 && p <= max * (1 + TOL)).sort((a, b) => a - b)
   return ordenados.filter((p, i) => i === 0 || Math.abs(p - ordenados[i - 1]) > TOL * max)
+}
+
+/**
+ * As cargas em que o EMA muda (POP 7.7 e Tabela 2: 5 000e e 20 000e na classe II, 500e e 2000e na III, 50e e 200e na
+ * IIII, 50 000e e 200 000e na I), abaixo de Max: em multi-intervalo, as de cada intervalo parcial, com o e dele e
+ * acima do Max do anterior. Entram no erro de indicação só quando o cliente pede declaração de conformidade
+ * (`sugerirPontos`). Sem classe, nenhuma. Em ordem crescente, na unidade da balança.
+ */
+export function cargasDeMudancaDoEma(instrumento: Pick<InstrumentoCalculo, 'classe' | 'tipoFaixas' | 'faixas'>): number[] {
+  const faixas = faixasOrdenadas(instrumento.faixas)
+  if (!instrumento.classe || !faixas.length) return []
+  const max = faixas[faixas.length - 1].max
+  const [l1, l2] = LIMIARES_EMA[instrumento.classe]
+  const cargas: number[] = []
+  let inferior = 0
+  for (const f of faixas) {
+    for (const n of [l1, l2]) {
+      const c = arredondarMeioPar(n * f.e, casasDecimais(f.e))
+      if (f.e > 0 && c > inferior * (1 + TOL) && c < max * (1 - TOL) && c <= f.max * (1 + TOL)) cargas.push(c)
+    }
+    if (instrumento.tipoFaixas !== 'UNICA') inferior = f.max
+  }
+  const ordenadas = cargas.sort((a, b) => a - b)
+  return ordenadas.filter((c, i) => i === 0 || Math.abs(c - ordenadas[i - 1]) > TOL * max)
+}
+
+/**
+ * As cargas em que o EMA muda (`cargasDeMudancaDoEma`) que faltam entre as `cargas` do erro de indicação: com a
+ * declaração de conformidade pedida depois de a folha sair sem elas, o aviso (que não impede a emissão) diz quais. Uma
+ * carga a menos de meio e dela conta como ela. Em ordem crescente.
+ */
+export function cargasDeMudancaDoEmaQueFaltam(
+  instrumento: Pick<InstrumentoCalculo, 'classe' | 'tipoFaixas' | 'faixas'>,
+  cargas: number[],
+): number[] {
+  return cargasDeMudancaDoEma(instrumento).filter((c) => {
+    const e = faixaDoValor(c, instrumento).e
+    return !cargas.some((x) => Math.abs(x - c) <= Math.max((e / 2) * (1 + 1e-6), TOL * c))
+  })
 }
 
 /**

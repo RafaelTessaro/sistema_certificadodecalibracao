@@ -291,8 +291,9 @@ describe('apagar-testes.mjs', { timeout: 120_000 }, () => {
       '  - 3 cópias do banco da pasta backups, com os testes: vão para a pasta testes-apagados (não são apagadas)\n',
     )
     expect(r.stdout).toContain(`Depois, o próximo certificado será ${cc1} e a próxima folha de campo, ${fc1}.`)
+    // Os padrões: o jogo e o barômetro do cenário (a pressão é obrigatória em toda calibração)
     expect(r.stdout).toContain(
-      'Ficam como estão: 2 usuários (com as assinaturas), 1 cliente, 1 balança, 1 padrão, 2 revisões do POP',
+      'Ficam como estão: 2 usuários (com as assinaturas), 1 cliente, 1 balança, 2 padrões, 2 revisões do POP',
     )
     expect(r.stdout).toContain('Pronto: os testes foram apagados.')
     expect(r.stdout).toContain('net start BCCalibracao')

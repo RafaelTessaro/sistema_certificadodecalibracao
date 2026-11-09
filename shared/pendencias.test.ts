@@ -1,5 +1,6 @@
 // O que bloqueia a emissão do certificado (`pendenciasEmissao`): a rastreabilidade dos padrões (acreditação
-// Cgcre do laboratório) e a pressão atmosférica com o barômetro que a mediu (na classe II, obrigatória).
+// Cgcre do laboratório) e a pressão atmosférica com o barômetro que a mediu (obrigatória em toda classe, POP 7.5; só
+// aviso na calibração medida quando ela era opcional, `avisosEmissao`).
 // E, como o servidor junta (`pendenciasDa`), as do cálculo: a densidade dos jogos no empuxo pela densidade do ar
 // medida, também no "como encontrado" da classe I ajustada logo antes.
 
@@ -7,7 +8,9 @@ import { describe, expect, it } from 'vitest'
 import { arDoAmbiente, calcularCalibracao, termicaDoAmbiente } from './calibracao.ts'
 import {
   AMBIENTE_VAZIO,
+  AVISO_SEM_PRESSAO,
   AVISO_SEM_TERMOMETRO_DUAS_ENTRADAS,
+  avisosEmissao,
   BALANCA_VAZIA,
   balancaIdentificada,
   calibracaoVazia,
@@ -55,35 +58,72 @@ function pendencias(padroes: Padrao[], pressao: number | null, classe?: ClasseEx
   return pendenciasEmissao(k, { padroes, hoje: '2026-10-28', temPesos: true, ...(classe !== undefined ? { classe } : {}) })
 }
 
+const SEM_PRESSAO = 'Registre a pressão atmosférica, medida com o barômetro (escolha-o nos padrões; POP 7.5).'
+
 describe('pendências da emissão', () => {
-  it('sem pendência com padrões acreditados e sem pressão (classe III)', () => {
-    expect(pendencias([pesos, th], null, 'III')).toEqual([])
+  it('sem pendência com padrões acreditados e a pressão medida com o barômetro (classe III)', () => {
+    expect(pendencias([pesos, th, br], 925, 'III')).toEqual([])
   })
 
   it('padrão sem a acreditação Cgcre do laboratório: a declaração de rastreabilidade seria falsa', () => {
-    expect(pendencias([pesos, { ...th, acreditacao: '  ' }], null)).toEqual([
+    expect(pendencias([pesos, { ...th, acreditacao: '  ' }, br], 925)).toEqual([
       'O padrão TH-01 está sem a acreditação Cgcre do laboratório que o calibrou.',
     ])
   })
 
   it('pressão sem barômetro nos padrões, e barômetro sem a pressão registrada', () => {
     expect(pendencias([pesos, th], 925)).toEqual([
-      'Pressão informada sem barômetro nos padrões: escolha o barômetro usado ou apague a pressão.',
+      'Pressão informada sem barômetro nos padrões: escolha o barômetro usado (POP 6.2).',
     ])
-    expect(pendencias([pesos, th, br], null)).toEqual([
-      'Barômetro escolhido sem a pressão registrada (tire BR-01 dos padrões ou registre a pressão).',
+    expect(pendencias([pesos, th, br], null)).toEqual(['Registre a pressão atmosférica medida com o BR-01 (POP 7.5).'])
+    expect(pendencias([pesos, th, br, { ...br, id: 'BR-02', identificacao: 'BR-02' }], null)).toEqual([
+      'Registre a pressão atmosférica medida com o BR-01 ou BR-02 (POP 7.5).',
     ])
     expect(pendencias([pesos, th, br], 925)).toEqual([])
   })
 
-  it('classe II: a pressão é obrigatória, medida com o barômetro', () => {
-    expect(pendencias([pesos, th], null, 'II')).toEqual([
-      'Balança classe II: registre a pressão atmosférica, medida com o barômetro (escolha-o nos padrões).',
+  it('a pressão é obrigatória em toda classe e sem classe, medida com o barômetro (POP 7.5)', () => {
+    for (const classe of ['II', 'III', 'IIII', ''] as const) {
+      expect(pendencias([pesos, th], null, classe), classe).toEqual([SEM_PRESSAO])
+      expect(pendencias([pesos, th, br], 1013, classe), classe).toEqual([])
+    }
+    // Sem a classe informada (quem chama não sabe a balança): também
+    expect(pendencias([pesos, th], null)).toEqual([SEM_PRESSAO])
+  })
+
+  it('medida quando a pressão era opcional: nas classes III e IIII e sem classe, só o aviso; nas I e II, pendência', () => {
+    const k = (extra: Partial<CalibracaoInput>, pressao: number | null = null): CalibracaoInput => ({
+      ...calibracaoVazia(),
+      dataCalibracao: '2026-10-20',
+      tecnicoId: 't1',
+      localEndereco: 'Rua A, 1 – Rio Claro/SP',
+      padroesIds: ['JP-01'],
+      ambiente: { temperaturaInicial: 22, temperaturaFinal: 23, umidadeInicial: 50, umidadeFinal: 51, pressao },
+      ...extra,
+    })
+    const contexto = (classe: ClasseExatidao, padroes = [pesos, th]) => ({ padroes, hoje: '2026-10-28', temPesos: true, classe })
+    // Medida (ou com a folha impressa) antes da 1.0.5, a revisão de um certificado emitido sem ela, ou já com os mínimos
+    // do POP como avisos (medida antes das regras)
+    for (const marca of [{ pressaoComoAviso: true }, { minimosComoAviso: true }, { substituiId: 'k-original' }])
+      for (const classe of ['III', 'IIII', ''] as const) {
+        expect(pendenciasEmissao(k(marca), contexto(classe)), classe).toEqual([])
+        expect(avisosEmissao(k(marca), contexto(classe)), classe).toEqual([AVISO_SEM_PRESSAO])
+      }
+    // Como até a 1.0.4: o barômetro sem a pressão, ou a pressão sem ele, continuam pendências (sem o aviso)
+    const antes = k({ pressaoComoAviso: true })
+    expect(pendenciasEmissao(antes, contexto('III', [pesos, th, br]))).toEqual([
+      'Barômetro escolhido sem a pressão registrada (tire BR-01 dos padrões ou registre a pressão).',
     ])
-    expect(pendencias([pesos, th, br], 1013, 'II')).toEqual([])
-    // Sem a classe informada (quem chama não sabe a balança) ou noutra classe: opcional
-    expect(pendencias([pesos, th], null, '')).toEqual([])
-    expect(pendencias([pesos, th], null)).toEqual([])
+    expect(avisosEmissao(antes, contexto('III', [pesos, th, br]))).toEqual([])
+    expect(pendenciasEmissao(k({ pressaoComoAviso: true }, 925), contexto('III'))).toEqual([
+      'Pressão informada sem barômetro nos padrões: escolha o barômetro usado ou apague a pressão.',
+    ])
+    expect(pendenciasEmissao(k({ pressaoComoAviso: true }, 925), contexto('III', [pesos, th, br]))).toEqual([])
+    // Na classe II (e na I) ela já era obrigatória: pendência, sem o aviso
+    expect(pendenciasEmissao(antes, contexto('II'))).toEqual([SEM_PRESSAO])
+    expect(avisosEmissao(antes, contexto('II'))).toEqual([])
+    // A calibração nova: pendência, sem o aviso
+    expect(avisosEmissao(k({}), contexto('III'))).toEqual([])
   })
 })
 
@@ -106,12 +146,11 @@ describe('pendências da classe I', () => {
     expect(classeI([e2, th, br])).toEqual([])
   })
 
-  it('a pressão obrigatória fala da classe da balança', () => {
+  it('a pressão obrigatória, como em toda classe, mesmo na calibração medida quando nas outras ela era opcional', () => {
     const k = { ...calibracaoVazia(), dataCalibracao: '2026-10-20', tecnicoId: 't', localEndereco: 'x', padroesIds: ['a'] }
     k.ambiente = { ...k.ambiente, temperaturaInicial: 22, temperaturaFinal: 22 }
-    expect(pendenciasEmissao(k, { padroes: [e2], hoje: '2026-10-28', temPesos: true, classe: 'I' })).toContain(
-      'Balança classe I: registre a pressão atmosférica, medida com o barômetro (escolha-o nos padrões).',
-    )
+    for (const x of [k, { ...k, pressaoComoAviso: true }])
+      expect(pendenciasEmissao(x, { padroes: [e2], hoje: '2026-10-28', temPesos: true, classe: 'I' })).toContain(SEM_PRESSAO)
   })
 
   it('jogo de classe pior que F1, ou sem classe, e jogo pelo nominal', () => {
@@ -418,10 +457,10 @@ describe('padrão calibrado depois da data da calibração', () => {
       dataCalibracao: '2026-03-02',
       tecnicoId: 't1',
       localEndereco: 'Rua A, 1 – Rio Claro/SP',
-      padroesIds: ['JP-01'],
-      ambiente: { ...AMBIENTE_VAZIO, temperaturaInicial: 22, temperaturaFinal: 23 },
+      padroesIds: ['JP-01', 'BR-01'],
+      ambiente: { ...AMBIENTE_VAZIO, temperaturaInicial: 22, temperaturaFinal: 23, pressao: 925 },
     }
-    return pendenciasEmissao(k, { padroes: [pesos, padrao(x)].slice(1), hoje: '2026-10-28', temPesos: true })
+    return pendenciasEmissao(k, { padroes: [padrao(x), br], hoje: '2026-10-28', temPesos: true })
   }
 
   it('depois: pendência (o certificado citaria o certificado novo); no mesmo dia ou sem a data, nada', () => {
@@ -559,11 +598,12 @@ describe('datas incoerentes', () => {
     dataCalibracao: '2026-10-20',
     tecnicoId: 't1',
     localEndereco: 'Rua A, 1 – Rio Claro/SP',
-    padroesIds: ['JP-01'],
-    ambiente: { ...AMBIENTE_VAZIO, temperaturaInicial: 22, temperaturaFinal: 23 },
+    padroesIds: ['JP-01', 'BR-01'],
+    ambiente: { ...AMBIENTE_VAZIO, temperaturaInicial: 22, temperaturaFinal: 23, pressao: 925 },
     ...x,
   })
-  const pend = (x: Partial<CalibracaoInput>) => pendenciasEmissao(k(x), { padroes: [pesos], hoje: '2026-10-28', temPesos: true })
+  const pend = (x: Partial<CalibracaoInput>) =>
+    pendenciasEmissao(k(x), { padroes: [pesos, br], hoje: '2026-10-28', temPesos: true })
 
   it('próxima calibração antes ou no dia da calibração: pendência (esteja ou não no certificado)', () => {
     const PROXIMA = 'A próxima calibração precisa ser depois da data da calibração.'
@@ -602,16 +642,17 @@ describe('pendências da emissão: excentricidade dispensada, balança sem ident
     dataCalibracao: '2026-11-04',
     tecnicoId: 't1',
     localEndereco: 'Rua A, 1 – Rio Claro/SP',
-    padroesIds: ['JP-01'],
-    ambiente: { temperaturaInicial: 22, temperaturaFinal: 23, umidadeInicial: 50, umidadeFinal: 51, pressao: null },
+    padroesIds: ['JP-01', 'BR-01'],
+    ambiente: { temperaturaInicial: 22, temperaturaFinal: 23, umidadeInicial: 50, umidadeFinal: 51, pressao: 925 },
     ...x,
   })
   const ident = { numeroSerie: 'TL-2231', identificacao: '', plataformaSerie: '' }
+  // Com o barômetro (a pressão medida com ele)
   const de = (
     k: CalibracaoInput,
     balanca: { receptor: Balanca['receptor']; numeroSerie: string; identificacao: string; plataformaSerie?: string },
     padroes: Padrao[] = [pesos],
-  ) => pendenciasEmissao(k, { padroes, hoje: '2026-11-04', temPesos: true, classe: 'III', balanca })
+  ) => pendenciasEmissao(k, { padroes: [...padroes, br], hoje: '2026-11-04', temPesos: true, classe: 'III', balanca })
   const naoFeito = (motivo: string) => ({ aplicavel: false, motivo, carga: 0, metodo: 1 as const, posicoes: [] })
   const SO_GANCHO =
     'Excentricidade: o POP (7.10, Tabela 6) só dispensa o ensaio na balança suspensa (gancho); registre as leituras das posições.'

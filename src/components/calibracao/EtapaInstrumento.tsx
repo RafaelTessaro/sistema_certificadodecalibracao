@@ -5,7 +5,6 @@ import {
   AJUSTES_DA_CALIBRACAO,
   capacidadeTexto,
   divisaoLegivel,
-  FINALIDADES,
   LIMITES,
   numeroBr,
   parteSeparada,
@@ -83,18 +82,11 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
                 {[separada.nome, separada.serie && `nº de série ${separada.serie}`].filter(Boolean).join(' · ')}
               </Info>
             )}
-            <Info rotulo="Finalidade">{balanca.finalidade ? FINALIDADES[balanca.finalidade] : ''}</Info>
             <Info rotulo="Local de instalação" className="col-span-2">
               {balanca.localInstalacao}
             </Info>
           </div>
         </div>
-        {balanca.finalidade === 'COMERCIAL' || balanca.finalidade === 'SAUDE' ? (
-          <p className="mx-5 mb-5 rounded-xl bg-info-soft px-3.5 py-2.5 text-[13px] text-info">
-            Balança de uso {balanca.finalidade === 'COMERCIAL' ? 'comercial' : 'na saúde'}: a calibração não substitui a
-            verificação do Inmetro/IPEM. O certificado já traz essa ressalva.
-          </p>
-        ) : null}
       </Card>
 
       <Card>

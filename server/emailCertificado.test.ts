@@ -223,7 +223,8 @@ describe('anexos do e-mail do certificado', () => {
       [`Certificado-${k.numero}.pdf`, []],
       ['Certificado-padrao-JP-01-JP-02_LAB-0456-2026.pdf', ['JP-01', 'JP-02']],
     ])
-    expect(semArquivo).toEqual([])
+    // Só o barômetro do cenário (sem o arquivo do certificado)
+    expect(semArquivo.map((x) => x.identificacao)).toEqual(['BR-90'])
   })
 
   it('o arquivo fica congelado na emissão: o padrão calibrado de novo (outro nº e outro arquivo) não muda o que vai', async () => {
@@ -356,14 +357,15 @@ describe('anexos do e-mail do certificado', () => {
   it('emitido sem o arquivo: vai o anexado depois ao cadastro, só se for do mesmo certificado (nº congelado)', async () => {
     const k = await c.emitido()
     expect(k.emissao?.padroes[0].certificadoArquivo).toBeNull()
-    expect((await anexosDe(k)).semArquivo.map((x) => x.identificacao)).toEqual(['JP-01'])
+    // (e o barômetro do cenário, também sem o arquivo)
+    expect((await anexosDe(k)).semArquivo.map((x) => x.identificacao)).toEqual(['JP-01', 'BR-90'])
 
     // Anexado depois, com o mesmo nº de certificado (escrito com outro espaçamento/caixa): vai
     const pdf = ARQUIVOS_TESTE.pdf('o mesmo certificado')
     const p = await atualizar(c.pesos, { certificado: 'lab-0456/2026 ', certificadoArquivo: await c.enviarArquivo(pdf, 'a.pdf') })
     const depois = await anexosDe(k)
     expect(depois.anexos.map((a) => a.id)).toEqual(['certificado', `arquivo:${sha(pdf)}`])
-    expect(depois.semArquivo).toEqual([])
+    expect(depois.semArquivo.map((x) => x.identificacao)).toEqual(['BR-90'])
     const ficha = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json()
     expect(ficha.certificadosPadroes[0]).toMatchObject({
       identificacao: 'JP-01',
@@ -388,7 +390,7 @@ describe('anexos do e-mail do certificado', () => {
     })
     const novo = await anexosDe(k)
     expect(novo.anexos.map((a) => a.id)).toEqual(['certificado'])
-    expect(novo.semArquivo.map((x) => x.identificacao)).toEqual(['JP-01'])
+    expect(novo.semArquivo.map((x) => x.identificacao)).toEqual(['JP-01', 'BR-90'])
   })
 
   it('certificado emitido antes desta versão (sem o campo na cópia congelada): a mesma regra do nº', async () => {

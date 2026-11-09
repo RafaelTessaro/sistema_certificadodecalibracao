@@ -46,6 +46,8 @@ const ROTAS: Record<string, readonly [Verbo, string, TipoLink?]> = {
   'GET /api/calibracoes/:id/folha-campo': [['Imprimiu', 'imprimir'], 'uma folha de campo nova para uma calibração', 'calibracao'],
   'PUT /api/calibracoes/:id/folha-campo': [['Ligou', 'ligar'], 'uma folha de campo a uma calibração', 'calibracao'],
   'GET /api/folha-campo': [['Imprimiu', 'imprimir'], 'uma folha de campo avulsa'],
+  // A reimpressão pelo nº (a mesma folha da primeira impressão, sem nº novo): o nº da folha na segunda linha
+  'GET /api/folha-campo/:numero': [['Reimprimiu', 'reimprimir'], 'uma folha de campo'],
   'POST /api/numeros-reservados/:reserva/nao-utilizado': [
     ['Registrou', 'registrar'],
     'o nº de uma folha avulsa como não utilizado',
@@ -78,6 +80,7 @@ const COM_DETALHE = new Set([
   'POST /api/calibracoes/:id/situacao',
   'GET /api/calibracoes/:id/folha-campo',
   'PUT /api/calibracoes/:id/folha-campo',
+  'GET /api/folha-campo/:numero',
   'POST /api/padroes',
   'PUT /api/padroes/:id',
   'POST /api/arquivos',

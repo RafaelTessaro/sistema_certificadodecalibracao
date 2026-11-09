@@ -15,7 +15,7 @@ import {
   OPCOES_CALCULO_PADRAO,
   opcoesDaClasse,
   PADRAO_VAZIO,
-  pressaoObrigatoria,
+  pressaoComoAviso,
   verificacoesAntesDeCalibrar,
 } from './dominio.ts'
 import { repetibilidadesSugeridas } from './metrologia/sugestoes.ts'
@@ -152,12 +152,22 @@ describe('opções do cálculo da classe I', () => {
 })
 
 describe('requisitos por classe (POP Tabela 2 e 7.4)', () => {
-  it('variação de temperatura: 1 °C na classe I, 3 °C na II, 5 °C nas demais; pressão nas classes I e II', () => {
+  it('variação de temperatura: 1 °C na classe I, 3 °C na II, 5 °C nas demais', () => {
     expect([deltaTMaximo('I'), deltaTMaximo('II'), deltaTMaximo('III'), deltaTMaximo('IIII'), deltaTMaximo('')]).toEqual([
       1, 3, 5, 5, 5,
     ])
     expect(deltaTMaximo(null)).toBe(5)
-    expect([pressaoObrigatoria('I'), pressaoObrigatoria('II'), pressaoObrigatoria('III')]).toEqual([true, true, false])
+  })
+
+  it('pressão obrigatória em toda classe (POP 7.5); só aviso nas classes III e IIII e sem classe da visita de antes', () => {
+    const nova = { opcoes: OPCOES_CALCULO_PADRAO }
+    for (const classe of ['I', 'II', 'III', 'IIII', ''] as const) expect(pressaoComoAviso(nova, classe), classe).toBe(false)
+    // Medida (ou com a folha impressa) antes da 1.0.5, ou antes das regras do POP: aviso, menos nas classes I e II
+    for (const k of [{ ...nova, pressaoComoAviso: true }, { ...nova, minimosComoAviso: true }]) {
+      expect(['III', 'IIII', ''].map((c) => pressaoComoAviso(k, c as 'III'))).toEqual([true, true, true])
+      expect(pressaoComoAviso(k, null)).toBe(true)
+      expect([pressaoComoAviso(k, 'I'), pressaoComoAviso(k, 'II')]).toEqual([false, false])
+    }
   })
 
   it('aquecimento: 2 h na classe I (D1), 1 h na II, 20 min nas demais; a folha em branco cita os três', () => {

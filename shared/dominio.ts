@@ -294,6 +294,10 @@ export const TIPOS_FAIXAS: Record<TipoFaixas, string> = {
   MULTIPLAS_FAIXAS: 'Múltiplas faixas',
 }
 
+/**
+ * Para que a balança é usada: o cadastro não pede mais (1.0.5); só os certificados emitidos antes trazem a
+ * "Finalidade de uso (*)" (`EmissaoCertificado.semFinalidadeEDimensoes`).
+ */
 export const FINALIDADES: Record<Exclude<Finalidade, ''>, string> = {
   COMERCIAL: 'Comercial (venda por peso)',
   PROCESSO: 'Processo / produção',
@@ -1984,8 +1988,27 @@ const classeFina = (classe: ClasseExatidao | null | undefined) => classe === 'I'
 export const deltaTMaximo = (classe: ClasseExatidao | null | undefined): number =>
   classe === 'I' ? 1 : classeFina(classe) ? 3 : 5
 
-/** A pressão atmosférica é obrigatória (com barômetro calibrado) nas classes I e II; nas demais, opcional. */
-export const pressaoObrigatoria = (classe: ClasseExatidao | null | undefined): boolean => classeFina(classe)
+/**
+ * A falta da pressão atmosférica fica só como aviso (não impede a emissão)? A pressão é obrigatória em toda calibração,
+ * em toda classe e sem classe, medida com o barômetro listado entre os padrões (POP 6.2 e 7.5; desde a 1.0.5). Até a
+ * 1.0.4 ela era obrigatória só nas classes I e II: nas classes III e IIII e sem classe, a calibração medida antes das
+ * regras do POP (`minimosDoPopComoAviso`) e a medida ou com a folha de campo impressa antes da 1.0.5, ou a revisão de
+ * um certificado emitido sem ela (`Calibracao.pressaoComoAviso`), saem sem ela, com o aviso: a visita já aconteceu (ou
+ * vai acontecer com a folha que dizia "opcional"). Nas classes I e II, nunca.
+ */
+export function pressaoComoAviso(
+  k: Pick<CalibracaoInput, 'opcoes'> &
+    Partial<Pick<CalibracaoInput, 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso' | 'pressaoComoAviso'>> & {
+      emissao?: unknown
+    },
+  classe: ClasseExatidao | null | undefined,
+): boolean {
+  return !classeFina(classe) && (k.pressaoComoAviso === true || minimosDoPopComoAviso(k))
+}
+
+/** O aviso da calibração que sai sem a pressão atmosférica onde a falta dela é só aviso (`pressaoComoAviso`). */
+export const AVISO_SEM_PRESSAO =
+  'Sem a pressão atmosférica: esta calibração foi medida quando ela ainda era opcional e sai sem ela. Nas novas, ela é obrigatória (POP 7.5).'
 
 /**
  * Classe I com o ΔT pesos − ar medido: ele sai no certificado com o termômetro de duas entradas, cadastrado como padrão
@@ -2014,12 +2037,10 @@ export type BalancaDosPadroes = Pick<Balanca, 'classe' | 'unidade' | 'tipoFaixas
 /**
  * Padrões de um rascunho sem calibração anterior da balança (e da folha de campo sem rascunho): os ativos, menos os
  * do tipo "Outro". Na classe I, só os jogos E1, E2 e F1, e os "Outro" entram: o termômetro de duas entradas do
- * ΔT pesos − ar é cadastrado assim (POP 6.2). O barômetro, só onde a pressão é obrigatória (classes I e II,
- * `pressaoObrigatoria`): nas classes III e IIII e sem classe ela é opcional, e o barômetro marcado sem a pressão
- * registrada bloquearia a emissão (ele continua para marcar à mão, e a folha o lista com os outros previstos). Com a
- * balança ainda não conhecida (null), ele fica. Com a balança (não só a classe), nas outras classes ficam de fora os
- * jogos de classe pior que a mínima para ela (`classeMinimaPesos`, POP 6.1), quando os outros jogos ainda montam Max;
- * se não montam, todos ficam (a montagem e o cálculo avisam).
+ * ΔT pesos − ar é cadastrado assim (POP 6.2). O barômetro entra em toda classe: a pressão é obrigatória em toda
+ * calibração (POP 7.5). Com a balança (não só a classe), nas outras classes ficam de fora os jogos de classe pior que a
+ * mínima para ela (`classeMinimaPesos`, POP 6.1), quando os outros jogos ainda montam Max; se não montam, todos ficam
+ * (a montagem e o cálculo avisam).
  */
 export function padroesSemHistorico<P extends Pick<Padrao, 'ativo' | 'tipo' | 'classe'>>(
   padroes: P[],
@@ -2027,11 +2048,9 @@ export function padroesSemHistorico<P extends Pick<Padrao, 'ativo' | 'tipo' | 'c
 ): P[] {
   const b = balanca && typeof balanca === 'object' ? balanca : null
   const classe = b ? b.classe : (balanca as ClasseExatidao | null | undefined)
-  const semBarometro = classe !== null && classe !== undefined && !pressaoObrigatoria(classe)
   const escolhidos = padroes.filter(
     (p) =>
       p.ativo &&
-      !(semBarometro && p.tipo === 'BAROMETRO') &&
       (classe === 'I' ? p.tipo !== 'PESOS' || CLASSES_PESO_CLASSE_I.includes(p.classe as ClassePeso) : p.tipo !== 'OUTRO'),
   )
   const minima = b && classe !== 'I' ? classeMinimaPesos(b) : null
@@ -2164,6 +2183,49 @@ export function textoPecas(x: { nominais: number[]; pecas: number }): string {
   return `${x.pecas > 1 ? 'peças' : 'peça'} de ${lista}`
 }
 
+/**
+ * A pressão atmosférica, que sai no certificado com o barômetro que a mediu (rastreável; o barômetro listado foi usado).
+ * Obrigatória em toda calibração (POP 6.2 e 7.5): sem ela, ou sem o barômetro nos padrões, a emissão fica pendente. Onde
+ * a falta dela é só aviso (`pressaoComoAviso`), como até a 1.0.4: a pressão sem o barômetro, ou o barômetro sem a
+ * pressão, continuam pendências, e a falta de ambos é o aviso de `avisosEmissao`.
+ */
+export function pendenciasPressao(
+  c: Parameters<typeof pressaoComoAviso>[0] & Pick<CalibracaoInput, 'ambiente'>,
+  contexto: { padroes: Pick<Padrao, 'tipo' | 'identificacao'>[]; classe?: ClasseExatidao },
+): string[] {
+  const pressao = c.ambiente.pressao
+  const barometros = contexto.padroes.filter((x) => x.tipo === 'BAROMETRO').map((x) => x.identificacao)
+  const lista = barometros.length > 1 ? `${barometros.slice(0, -1).join(', ')} ou ${barometros.at(-1)}` : barometros[0]
+  if (pressaoComoAviso(c, contexto.classe)) {
+    if (pressao !== null && !barometros.length)
+      return ['Pressão informada sem barômetro nos padrões: escolha o barômetro usado ou apague a pressão.']
+    if (barometros.length && pressao === null)
+      return [
+        `${barometros.length > 1 ? 'Barômetros escolhidos' : 'Barômetro escolhido'} sem a pressão registrada (tire ${barometros.join(', ')} dos padrões ou registre a pressão).`,
+      ]
+    return []
+  }
+  if (pressao === null)
+    return [
+      barometros.length
+        ? `Registre a pressão atmosférica medida com o ${lista} (POP 7.5).`
+        : 'Registre a pressão atmosférica, medida com o barômetro (escolha-o nos padrões; POP 7.5).',
+    ]
+  return barometros.length ? [] : ['Pressão informada sem barômetro nos padrões: escolha o barômetro usado (POP 6.2).']
+}
+
+/**
+ * O que a tela mostra para conferir, sem impedir a emissão, das regras de `pendenciasEmissao`: a calibração que sai
+ * sem a pressão atmosférica onde a falta dela é só aviso (`pressaoComoAviso`, `AVISO_SEM_PRESSAO`).
+ */
+export function avisosEmissao(
+  c: Parameters<typeof pressaoComoAviso>[0] & Pick<CalibracaoInput, 'ambiente'>,
+  contexto: { padroes: Pick<Padrao, 'tipo'>[]; classe?: ClasseExatidao },
+): string[] {
+  const semPressao = c.ambiente.pressao === null && !contexto.padroes.some((x) => x.tipo === 'BAROMETRO')
+  return semPressao && pressaoComoAviso(c, contexto.classe) ? [AVISO_SEM_PRESSAO] : []
+}
+
 export function pendenciasEmissao(
   c: CalibracaoInput,
   contexto: {
@@ -2218,16 +2280,7 @@ export function pendenciasEmissao(
   if (amb.temperaturaInicial === null || amb.temperaturaFinal === null)
     p.push('Registre a temperatura no início e no fim da calibração.')
   p.push(...pendenciasAmbiente(amb))
-  // A pressão sai no certificado com o barômetro que a mediu (rastreável); o barômetro listado foi usado
-  const barometros = contexto.padroes.filter((x) => x.tipo === 'BAROMETRO').map((x) => x.identificacao)
-  if (amb.pressao !== null && !barometros.length)
-    p.push('Pressão informada sem barômetro nos padrões: escolha o barômetro usado ou apague a pressão.')
-  if (barometros.length && amb.pressao === null)
-    p.push(
-      `${barometros.length > 1 ? 'Barômetros escolhidos' : 'Barômetro escolhido'} sem a pressão registrada (tire ${barometros.join(', ')} dos padrões ou registre a pressão).`,
-    )
-  if (pressaoObrigatoria(contexto.classe) && amb.pressao === null && !barometros.length)
-    p.push(`Balança classe ${contexto.classe}: registre a pressão atmosférica, medida com o barômetro (escolha-o nos padrões).`)
+  p.push(...pendenciasPressao(c, contexto))
   const jogos = contexto.padroes.filter((x) => x.tipo === 'PESOS')
   // Revisão de certificado emitido antes do cálculo da classe I: as exigências da época (ver `calculoLegado`)
   if (contexto.classe === 'I' && !calculoLegado(c)) {

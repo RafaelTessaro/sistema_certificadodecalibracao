@@ -7,10 +7,11 @@ import {
   CLASSES_PESO,
   massaLegivel,
   minimosDoPopComoAviso,
+  numeroBr,
   regrasDoPopComoAviso,
   valorAmbiente,
 } from './dominio.ts'
-import { calcular, emaInstrumento, emaPeso, sugerirPontos } from './metrologia/index.ts'
+import { calcular, cargasDeMudancaDoEmaQueFaltam, emaInstrumento, emaPeso, sugerirPontos } from './metrologia/index.ts'
 import type {
   ArCalculo,
   EntradaCalculo,
@@ -189,13 +190,39 @@ export function pesosAtendemNaCarga(carga: number, pecas: PecaCarga[], balanca: 
  * Pontos sugeridos do erro de indicação (`sugerirPontos`) para os pesos escolhidos: na classe I, as cargas perto de
  * 25, 50 e 75 % de Max ficam no múltiplo de 10 g mais próximo em que as peças montadas (`montarCarga`, como o
  * editor e a folha montam) atendem a 6.1 do POP (`pesosAtendemNaCarga`; quando os pesos não fecham a carga ou não
- * têm classe, a série E2). O botão "Sugerir pontos" e a folha de campo sem rascunho usam esta: as cargas batem.
+ * têm classe, a série E2). As cargas em que o EMA muda entram só com a declaração de conformidade pedida
+ * (`conformidade`; POP 7.7). O botão "Sugerir pontos" e a folha de campo sem os pontos no rascunho usam esta: as
+ * cargas batem.
  */
-export function pontosSugeridos(balanca: Balanca, padroes: Padrao[]): number[] {
-  return sugerirPontos(balanca, (carga) => {
-    const m = montarCarga(carga, balanca.unidade, padroes, balanca)
-    return m.falta > 0 ? null : pesosAtendemNaCarga(carga, m.pecas, balanca, padroes)
-  })
+export function pontosSugeridos(balanca: Balanca, padroes: Padrao[], conformidade = false): number[] {
+  return sugerirPontos(
+    balanca,
+    (carga) => {
+      const m = montarCarga(carga, balanca.unidade, padroes, balanca)
+      return m.falta > 0 ? null : pesosAtendemNaCarga(carga, m.pecas, balanca, padroes)
+    },
+    { conformidade },
+  )
+}
+
+/**
+ * O cliente pediu declaração de conformidade e o erro de indicação já tem os pontos, sem alguma das cargas em que o EMA
+ * muda (POP 7.7 e Tabela 2; `cargasDeMudancaDoEmaQueFaltam`): a folha de campo saiu antes do pedido, ou os pontos
+ * vieram sem elas. O aviso, que não impede a emissão, diz quais faltam. Sem o pedido, sem classe ou ainda sem os pontos
+ * (a sugestão e a folha já as trazem): null.
+ */
+export function avisoCargasDaConformidade(
+  k: Pick<CalibracaoInput, 'conformidade' | 'indicacao'>,
+  balanca: Pick<Balanca, 'classe' | 'tipoFaixas' | 'faixas' | 'unidade'>,
+): string | null {
+  if (!k.conformidade.solicitada || !k.indicacao.pontos.length) return null
+  const faltam = cargasDeMudancaDoEmaQueFaltam(
+    balanca,
+    k.indicacao.pontos.map((p) => p.carga),
+  ).map((c) => `${numeroBr(c)} ${balanca.unidade}`)
+  if (!faltam.length) return null
+  const lista = faltam.length > 1 ? `${faltam.slice(0, -1).join(', ')} e ${faltam.at(-1)}` : faltam[0]
+  return `Declaração de conformidade pedida: o POP (7.7) pede também as cargas em que o EMA muda, e ${faltam.length > 1 ? 'faltam' : 'falta'} ${lista} no erro de indicação.`
 }
 
 /** Carga de pesos padrão de cada etapa de substituição (0 quando o ensaio não usa substituição). */

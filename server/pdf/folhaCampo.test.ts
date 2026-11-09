@@ -621,13 +621,38 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
     expect(jsonDe(folhaPlataforma())).not.toContain('FRENTE · INDICADOR')
   })
 
-  it('identificação da balança sem a finalidade (fica no cadastro do sistema)', () => {
+  it('identificação da balança sem a finalidade e sem as dimensões do prato (o cadastro guardado continua)', () => {
     for (const dados of [folhaPlataforma, folhaMultiIntervalo, folhaClasseI, folhaEmBranco]) {
       const t = jsonDe(dados())
       expect(t, dados.name).not.toMatch(/Finalidade|comercial|laboratório \/ CQ|"saúde"|Processo \/ produção/)
+      expect(t, dados.name).not.toMatch(/Dimensões|dimensões/)
     }
+    // As balanças de exemplo têm as dimensões no cadastro: o receptor sai só com o formato e os apoios
+    const plataforma = folhaPlataforma()
+    expect(plataforma.balanca!.dimensoes).toBe('100 × 100 cm')
+    expect(jsonDe(plataforma)).not.toMatch(/100\u00a0×\u00a0100|100 × 100/)
+    const multi = folhaMultiIntervalo()
+    expect(multi.balanca!.dimensoes).not.toBe('')
+    expect(jsonDe(multi)).not.toMatch(/prato 38|38\u00a0×\u00a028|38 × 28/)
     // Na em branco, Min fica com as faixas (Max, e, d), da altura das três
     expect(jsonDe(folhaEmBranco())).toContain('"Carga mínima (Min)"')
+  })
+
+  it('a inscrição estadual do cliente embaixo do CNPJ, quando ele tem (folha com a balança e só com o cliente); sem ela, nada', () => {
+    const ie = 'IE\u00a0587.114.226.118'
+    for (const dados of [folhaPlataforma, folhaDoClienteComOs]) {
+      const d = dados()
+      expect(d.cliente!.inscricaoEstadual, dados.name).toBe('587.114.226.118')
+      expect(jsonDe(d), dados.name).toContain(JSON.stringify(['11.444.777/0001-61', `\n${ie}`]))
+      // Sem a IE no cadastro: só o CNPJ (sem rótulo nem traço)
+      const sem = jsonDe({ ...d, cliente: { ...d.cliente!, inscricaoEstadual: '' } })
+      expect(sem, dados.name).not.toMatch(/IE\u00a0|Inscrição estadual|INSCRIÇÃO ESTADUAL/)
+      expect(sem, dados.name).toContain('"text":"11.444.777/0001-61"')
+    }
+    expect(folhaMultiIntervalo().cliente!.inscricaoEstadual).toBe('')
+    expect(jsonDe(folhaMultiIntervalo())).not.toMatch(/IE\u00a0|Inscrição estadual|INSCRIÇÃO ESTADUAL/)
+    // A folha em branco não tem cliente: o campo do CNPJ / CPF para escrever, como antes
+    expect(jsonDe(folhaEmBranco())).not.toMatch(/IE\u00a0/)
   })
 })
 
@@ -1161,9 +1186,11 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     conferirComum(texto)
     const t = corrido(texto)
     expect(t).toContain('1 ANTES DE SAIR: PADRÕES Em branco: marque os padrões levados e, no cliente, os usados.')
-    // Apoios e dimensões em caixas de escrever (o curto em campos em linha, o longo com o rótulo em cima)
+    // Os apoios em campo em linha; a plataforma e a portaria em caixas de escrever, com o rótulo em cima. Sem as
+    // dimensões do prato (1.0.5: não saem mais no certificado)
     expect(t).toMatch(/Identificação \/ TAG \(\*\) Local de instalação \(\*\) Ano de fabricação Nº de apoios/)
-    expect(t).toContain('Dimensões do prato (sai no certificado)')
+    expect(t).toMatch(/Plataforma \(fabricante, modelo, nº de série\) Portaria de aprovação de modelo/)
+    expect(t).not.toMatch(/Dimensões|dimensões/)
     expect(t).not.toMatch(/Nº de apoios: _/)
     expect(t).toContain('cadastre a balança antes')
     // A unidade vai escrita com cada valor das faixas (como na plaqueta), sem caixas de marcar à parte; Min ao lado. Os
@@ -1381,14 +1408,13 @@ describe.runIf(temPdftotext)(
     it('escrita à mão com folga (≈ 6,5 mm): livres embaixo do rótulo (caixas de rótulo em cima) ou de fio a fio (campos em linha)', async () => {
       const branco = await gerarFolhaCampoPdf(folhaEmBranco())
       const pb = palavrasDoPdf(branco)
-      // Caixas com o rótulo em cima (o que é longo: endereço, plataforma, portaria, dimensões). A carga aplicada da
+      // Caixas com o rótulo em cima (o que é longo: endereço, plataforma, portaria). A carga aplicada da
       // repetibilidade é uma coluna (uma linha por faixa), com o rótulo no cabeçalho e a altura das leituras
       for (const rotulo of [
         ['Endereço', 'da', 'calibração'],
         ['Contato', 'e', 'telefone'],
         ['Plataforma', '(fabricante,'],
         ['Portaria', 'de', 'aprovação'],
-        ['Dimensões', 'do', 'prato'],
       ]) {
         const { mm } = livreEmbaixo(branco, pb, rotulo)
         expect(mm, rotulo.join(' ')).toBeGreaterThanOrEqual(6.4)
@@ -2992,16 +3018,17 @@ describe.runIf(temPdftotext)(
       const json = (d: DadosFolhaCampo) => JSON.stringify(definicaoFolhaCampo(d))
       const rod = json(folhaRodoviariaMultiIntervalo())
       expect(rod).toContain('8 apoios')
-      expect(rod).toContain('24,0 × 3,2 m')
+      // As dimensões do prato não saem mais (1.0.5), mesmo com elas no cadastro
+      expect(rod).not.toMatch(/24,0.×.3,2.m/)
       expect(rod).toContain('(19) 3526-4400')
       expect(rod).toContain('nº CQ24-2021-0088')
       // Entre a capacidade e a divisão, a linha só quebra antes do "×"
       expect(rod).toContain('80 000 kg × 10/20/50 kg')
       expect(rod).toContain('200 kg')
       // O "·" vai com o item seguinte (abre a linha de baixo, nunca fica sozinho no fim dela)
-      expect(rod).toContain('Rodoviária / ferroviária · 8 apoios · 24,0')
+      expect(rod).toContain('"Rodoviária / ferroviária · 8 apoios"')
       expect(json(folhaPlataforma())).toContain('Toledo do Brasil 2180 · nº 2180-0041273')
-      expect(json(folhaClasseI())).toContain('prato Ø 80 mm')
+      expect(json(folhaClasseI())).not.toMatch(/prato.Ø.80.mm/)
       // No PDF: nenhuma célula do passo 3 com só a unidade, só o número do telefone (sem o DDD) ou só o "nº"
       for (const dados of [
         folhaRodoviariaMultiIntervalo,

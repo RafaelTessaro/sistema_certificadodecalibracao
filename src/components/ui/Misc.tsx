@@ -189,7 +189,7 @@ export function SearchInput({
           }
         }}
         placeholder={placeholder}
-        className="h-10 w-full rounded-xl border border-line-strong/80 bg-surface pr-9 pl-9 text-sm text-ink shadow-xs transition-[border-color,box-shadow] placeholder:text-muted/80 hover:border-line-strong focus:border-brand focus:ring-4 focus:ring-[var(--ring)] focus:outline-none"
+        className="min-h-10 max-h-10 w-full rounded-xl border border-line-strong/80 bg-surface pr-9 pl-9 text-sm text-ink shadow-xs transition-[border-color,box-shadow] placeholder:text-muted/80 hover:border-line-strong focus:border-brand focus:ring-4 focus:ring-[var(--ring)] focus:outline-none"
       />
       <AnimatePresence>
         {valor && (

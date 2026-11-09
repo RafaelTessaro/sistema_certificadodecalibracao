@@ -380,9 +380,16 @@ function ensaio(metodo: MetodoCarregamento, pontos: PontoIndicacao[], retornoZer
 
 /**
  * A emissão das amostras com as regras do POP, como a desta versão (`montarEmissao`, em server/certificados.ts): com a
- * marca do texto do "crescente e decrescente" (`EmissaoCertificado.carregamentoSemZerar`).
+ * marca do texto do "crescente e decrescente" (`EmissaoCertificado.carregamentoSemZerar`) e, da 1.0.5, sem a
+ * finalidade de uso e as dimensões do prato e com a inscrição estadual do cliente, quando há
+ * (`semFinalidadeEDimensoes`, `inscricaoEstadualDoCliente`). Os registros de antes (legado) vêm sem as marcas.
  */
-const COM_REGRAS = { regrasDoPop: true, carregamentoSemZerar: true } as const
+const COM_REGRAS = {
+  regrasDoPop: true,
+  carregamentoSemZerar: true,
+  semFinalidadeEDimensoes: true,
+  inscricaoEstadualDoCliente: true,
+} as const
 
 function montar(
   calibracao: Calibracao,
@@ -450,6 +457,7 @@ function plataformaToledo(): { k: Calibracao; e: EmissaoCertificado; pesos: Padr
     nome: 'Frigorífico Vale do Corumbataí',
     razaoSocial: 'FRIGORÍFICO VALE DO CORUMBATAÍ LTDA',
     documento: '11.444.777/0001-61',
+    inscricaoEstadual: '587.114.226.118',
     contato: 'Juliana Prado (Qualidade)',
     telefone: '(19) 3524-1100',
     email: 'qualidade@valecorumbatai.com.br',
@@ -534,8 +542,20 @@ function plataformaToledo(): { k: Calibracao; e: EmissaoCertificado; pesos: Padr
  * outra pessoa ligada: as duas assinaturas, de quem executou e de quem autorizou.
  */
 export function exemploPlataforma300kg(): DadosCertificadoPdf {
-  const { k, e } = plataformaToledo()
+  const { k, e } = comPressao(plataformaToledo(), 945)
   return montar(k, { ...e, ...COM_REGRAS, assinaturas: 'TECNICO_E_SIGNATARIO' })
+}
+
+/**
+ * Da 1.0.5: a pressão atmosférica, obrigatória em toda calibração (POP 7.5), medida com o barômetro BR-01, que entra
+ * entre os padrões (a pressão absoluta do local, Rio Claro a ≈ 612 m).
+ */
+function comPressao<T extends { k: Calibracao; e: EmissaoCertificado }>(x: T, pressao: number): T {
+  return {
+    ...x,
+    k: { ...x.k, padroesIds: [...x.k.padroesIds, BR01.id], ambiente: { ...x.k.ambiente, pressao } },
+    e: { ...x.e, padroes: [...x.e.padroes, BR01] },
+  }
 }
 
 /**
@@ -568,7 +588,7 @@ export function exemploPlataformaLegado(): DadosCertificadoPdf {
 // ---- 2. Bancada 30 kg × 5 g -----------------------------------------------------------------------
 
 export function exemploBancada(): DadosCertificadoPdf {
-  const padroes = [JP05, TH01]
+  const padroes = [JP05, TH01, BR01]
   const pesos = [JP05]
   const b = balanca({
     id: 'bal-bancada',
@@ -618,8 +638,8 @@ export function exemploBancada(): DadosCertificadoPdf {
     tecnicoId: RESPONSAVEL.id,
     signatarioId: RESPONSAVEL.id,
     padroesIds: padroes.map((p) => p.id),
-    // Sem barômetro entre os padrões: a pressão não foi medida
-    ambiente: { temperaturaInicial: 21, temperaturaFinal: 22.5, umidadeInicial: 55, umidadeFinal: 54, pressao: null },
+    // A pressão (obrigatória em toda calibração, POP 7.5), com o barômetro entre os padrões
+    ambiente: { temperaturaInicial: 21, temperaturaFinal: 22.5, umidadeInicial: 55, umidadeFinal: 54, pressao: 943 },
     repetibilidade: [{ id: 'rep1', carga: 15, leituras: [15, 15.005, 15, 15, 15.005, 15] }],
     excentricidade: {
       aplicavel: true,
@@ -876,7 +896,7 @@ const JP02 = padrao({
  * posições), cargas crescentes e decrescentes, sem ajuste e sem declaração de conformidade.
  */
 export function exemploBalanca32kg(): DadosCertificadoPdf {
-  const padroes = [JP02, TH01]
+  const padroes = [JP02, TH01, BR01]
   const pesos = [JP02]
   const b = balanca({
     id: 'bal-32',
@@ -926,7 +946,7 @@ export function exemploBalanca32kg(): DadosCertificadoPdf {
     tecnicoId: TECNICO.id,
     signatarioId: RESPONSAVEL.id,
     padroesIds: padroes.map((p) => p.id),
-    ambiente: { temperaturaInicial: 23.4, temperaturaFinal: 24.1, umidadeInicial: 58, umidadeFinal: 56, pressao: null },
+    ambiente: { temperaturaInicial: 23.4, temperaturaFinal: 24.1, umidadeInicial: 58, umidadeFinal: 56, pressao: 942 },
     repetibilidade: [{ id: 'rep1', carga: 16, leituras: [16, 16.005, 16, 16, 16.005] }],
     excentricidade: {
       aplicavel: true,

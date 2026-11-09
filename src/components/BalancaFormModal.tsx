@@ -21,7 +21,6 @@ import {
   capacidadeTexto,
   converterMassa,
   divisaoLegivel,
-  FINALIDADES,
   LIMITES,
   massaNaUnidadeLegivel,
   normalizarBalanca,
@@ -41,7 +40,6 @@ import type {
   ClasseExatidao,
   Cliente,
   ClienteResumo,
-  Finalidade,
   Receptor,
   TipoBalanca,
   TipoFaixas,
@@ -471,7 +469,9 @@ function FormularioBalanca({
 
         {/* ---- Identificação ---- */}
         <SecaoFormulario titulo="Identificação">
-          <Field label="Tipo de balança" htmlFor={`${ids}-tipo`} className="sm:col-span-3">
+          {/* Sem a finalidade de uso (1.0.5): a declaração fixa do certificado já trata da verificação do Inmetro; o que
+              foi guardado continua no cadastro */}
+          <Field label="Tipo de balança" htmlFor={`${ids}-tipo`} className="sm:col-span-6">
             <Select
               id={`${ids}-tipo`}
               value={f.tipo}
@@ -486,32 +486,6 @@ function FormularioBalanca({
               ))}
             </Select>
           </Field>
-          <Field
-            label="Para que é usada"
-            htmlFor={`${ids}-finalidade`}
-            className="sm:col-span-3"
-            hint={
-              f.finalidade === 'COMERCIAL' || f.finalidade === 'SAUDE' ? (
-                <span className="text-warning">Exige também a verificação do Inmetro/IPEM: a calibração não a substitui.</span>
-              ) : (
-                'Opcional.'
-              )
-            }
-          >
-            <Select
-              id={`${ids}-finalidade`}
-              value={f.finalidade}
-              onChange={(e) => set('finalidade', e.target.value as Finalidade)}
-            >
-              <option value="">Não informada</option>
-              {(Object.keys(FINALIDADES) as Array<keyof typeof FINALIDADES>).map((k) => (
-                <option key={k} value={k}>
-                  {FINALIDADES[k]}
-                </option>
-              ))}
-            </Select>
-          </Field>
-
           {/* A balança é identificada pelo indicador (o mostrador): é o nº de série dele que vale */}
           <Field label="Fabricante" htmlFor={`${ids}-fab`} className="sm:col-span-2" hint="Do indicador.">
             <Input
@@ -856,7 +830,7 @@ function FormularioBalanca({
           <Field
             label="Formato"
             htmlFor={`${ids}-receptor`}
-            className={COM_APOIOS.includes(f.receptor) ? 'sm:col-span-3' : 'sm:col-span-4'}
+            className={COM_APOIOS.includes(f.receptor) ? 'sm:col-span-4' : 'sm:col-span-6'}
             hint={
               f.receptor === RECEPTOR_DO_TIPO[f.tipo] ? 'O mais comum para este tipo de balança.' : 'Onde a carga é colocada.'
             }
@@ -881,7 +855,7 @@ function FormularioBalanca({
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.96 }}
                 transition={{ duration: 0.16 }}
-                className="sm:col-span-1"
+                className="sm:col-span-2"
               >
                 <Field label="Apoios" htmlFor={`${ids}-apoios`} hint="Células de carga.">
                   <NumberInput id={`${ids}-apoios`} valor={f.apoios} aoMudar={(v) => set('apoios', v ?? 0)} min={1} max={64} />
@@ -889,14 +863,7 @@ function FormularioBalanca({
               </motion.div>
             )}
           </AnimatePresence>
-          <Field label="Dimensões" htmlFor={`${ids}-dim`} className="sm:col-span-2" hint="Do prato ou da plataforma.">
-            <Input
-              id={`${ids}-dim`}
-              value={f.dimensoes}
-              onChange={(e) => set('dimensoes', e.target.value)}
-              placeholder="Ex.: 40 × 50 cm"
-            />
-          </Field>
+          {/* Sem as dimensões do prato (1.0.5): não saem mais no certificado; o que foi guardado continua no cadastro */}
 
           <div className="flex items-start gap-3 rounded-xl bg-surface-2/60 px-3.5 py-3 sm:col-span-6">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted" />

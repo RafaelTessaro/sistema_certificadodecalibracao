@@ -6,7 +6,7 @@
 import { spawnSync } from 'node:child_process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { BALANCA_VAZIA } from '#shared/dominio.ts'
+import { AVISO_SEM_PRESSAO, BALANCA_VAZIA } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Padrao } from '#shared/tipos.ts'
 import { cenarioCalibracao, criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
 import { planoConformeAoPop } from './rascunhos.ts'
@@ -188,6 +188,35 @@ describe('mínimos do POP bloqueiam a emissão', () => {
     expect((await revisar(r2)).descidaComoAviso).toBe(true)
     const outra = await c.emitir(await c.calibracaoPronta())
     expect((await revisar(outra.json().calibracao as Calibracao)).descidaComoAviso).toBeUndefined()
+  })
+
+  it('revisão de um certificado emitido sem a pressão (opcional na classe III até a 1.0.4): a falta dela é só aviso', async () => {
+    const r = await c.emitir(await c.calibracaoPronta())
+    expect(r.statusCode, r.body).toBe(200)
+    const emitida = r.json().calibracao as Calibracao
+    // Gravado como a 1.0.4 emitia na classe III: sem a pressão e sem o barômetro
+    const daEpoca: Calibracao = {
+      ...emitida,
+      padroesIds: [c.pesos.id],
+      ambiente: { ...emitida.ambiente, pressao: null },
+      emissao: { ...emitida.emissao!, padroes: emitida.emissao!.padroes.filter((p) => p.tipo !== 'BAROMETRO') },
+    }
+    t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(daEpoca), emitida.id)
+    const rev = await revisar(emitida)
+    expect(rev.regrasDoPop).toBe(true)
+    expect(rev.pressaoComoAviso).toBe(true)
+    expect(await pendenciasDe(rev)).toEqual([])
+    expect((await detalhe(rev)).avisos).toContain(AVISO_SEM_PRESSAO)
+    const r1 = await emitir(rev)
+    expect(r1.statusCode, r1.body).toBe(200)
+    // A revisão da revisão continua com a marca (a mesma visita); a de um certificado com a pressão segue a regra
+    expect((await revisar(r1.json().calibracao as Calibracao)).pressaoComoAviso).toBe(true)
+    const outra = await c.emitir(await c.calibracaoPronta())
+    const comPressao = await revisar(outra.json().calibracao as Calibracao)
+    expect(comPressao.pressaoComoAviso).toBeUndefined()
+    // Apagada a pressão na revisão dela: pendência
+    const semPressao = await salvar(comPressao, (k) => ({ ...k, ambiente: { ...k.ambiente, pressao: null } }))
+    expect(semPressao.pendencias.map(sem)).toEqual(['Registre a pressão atmosférica medida com o BR-90 (POP 7.5).'])
   })
 
   it('passada para "crescente e decrescente" depois das leituras ("Usar o método do POP"): a descida que falta impede a emissão, mesmo medida antes das regras', async () => {
@@ -829,7 +858,8 @@ describe('padrão calibrado há mais de 24 meses', () => {
       await salvar(await c.calibracaoPronta(), (x) => ({
         ...x,
         dataCalibracao: '2026-11-04',
-        padroesIds: [velho.id],
+        // Com o barômetro do cenário (a pressão é obrigatória em toda calibração)
+        padroesIds: [velho.id, ...x.padroesIds.filter((id) => id !== c.pesos.id)],
         indicacao: {
           ...x.indicacao,
           pontos: x.indicacao.pontos.map((p) => ({ ...p, pecas: p.pecas.map((q) => ({ ...q, padraoId: velho.id })) })),

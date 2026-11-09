@@ -272,7 +272,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
               }
             }}
             placeholder="Buscar clientes, balanças, nº de série, certificados, OS…"
-            className="h-14 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-muted"
+            className="max-h-14 min-h-14 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-muted"
           />
           <kbd className="rounded-md border border-line bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted">Esc</kbd>
         </div>

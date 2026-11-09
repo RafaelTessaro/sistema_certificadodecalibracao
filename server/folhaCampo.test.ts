@@ -76,6 +76,18 @@ beforeEach(async () => {
       ],
     })
   ).padrao
+  // O barômetro (a pressão é obrigatória em toda calibração, POP 7.5): o rascunho novo já o traz
+  await criar('/api/padroes', {
+    ...PADRAO_VAZIO,
+    tipo: 'BAROMETRO',
+    identificacao: 'BR-90',
+    descricao: 'Barômetro digital',
+    certificado: 'LAB-0789/2026',
+    laboratorio: 'Laboratório de Pressão Exemplo',
+    acreditacao: 'CAL 0456',
+    dataCalibracao: '2026-01-10',
+    validade: '2099-01-10',
+  })
 })
 afterEach(async () => {
   await t.fechar()
@@ -167,7 +179,7 @@ describe('folha de campo de uma calibração', { timeout: 30_000 }, () => {
     })
     const dados: CalibracaoInput = {
       ...k,
-      ambiente: { temperaturaInicial: 22.1, temperaturaFinal: 22.6, umidadeInicial: 55, umidadeFinal: 57, pressao: null },
+      ambiente: { temperaturaInicial: 22.1, temperaturaFinal: 22.6, umidadeInicial: 55, umidadeFinal: 57, pressao: 927 },
       repetibilidade: [{ id: 'r1', carga: 15, leituras: [15, 15, 15.01, 15, 15, 15] }],
       excentricidade: {
         aplicavel: true,
@@ -237,7 +249,7 @@ describe('folha de campo de uma calibração', { timeout: 30_000 }, () => {
     })
     const dados: CalibracaoInput = {
       ...k,
-      ambiente: { temperaturaInicial: 22, temperaturaFinal: 22.4, umidadeInicial: 50, umidadeFinal: 52, pressao: null },
+      ambiente: { temperaturaInicial: 22, temperaturaFinal: 22.4, umidadeInicial: 50, umidadeFinal: 52, pressao: 927 },
       repetibilidade: [{ id: 'r1', carga: 10, leituras: [10, 10, 10, 10, 10] }],
       excentricidade: {
         aplicavel: true,
@@ -463,7 +475,7 @@ async function emitir(k: Calibracao): Promise<Calibracao> {
   })
   const dados: CalibracaoInput = {
     ...k,
-    ambiente: { temperaturaInicial: 22.1, temperaturaFinal: 22.6, umidadeInicial: 55, umidadeFinal: 57, pressao: null },
+    ambiente: { temperaturaInicial: 22.1, temperaturaFinal: 22.6, umidadeInicial: 55, umidadeFinal: 57, pressao: 927 },
     repetibilidade: [{ id: 'r1', carga: 15, leituras: [15, 15, 15.01, 15, 15, 15] }],
     excentricidade: {
       aplicavel: true,
