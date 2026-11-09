@@ -471,7 +471,7 @@ function FormularioCliente({
             id="cli-ie"
             value={f.inscricaoEstadual}
             onChange={(e) => set('inscricaoEstadual', e.target.value)}
-            placeholder="Opcional"
+            placeholder="Vem da consulta do CNPJ, quando houver"
           />
         </Field>
       )}

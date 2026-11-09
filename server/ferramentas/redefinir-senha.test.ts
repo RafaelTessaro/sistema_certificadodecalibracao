@@ -173,7 +173,7 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
         (db.prepare("SELECT detalhe FROM auditoria WHERE acao = 'FERRAMENTA_LOCAL' ORDER BY id DESC LIMIT 1").get() as Linha)
           .detalhe,
     )
-    expect(detalhe).toContain('nível: Técnico → Administrador')
+    expect(detalhe).toContain('nível: Operador → Administrador')
 
     // Sem tornarAdmin, o nível fica como está
     await cadastrarComum(banco, 'joao', 'João Lima')

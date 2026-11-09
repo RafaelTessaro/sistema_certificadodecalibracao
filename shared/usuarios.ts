@@ -160,6 +160,8 @@ export function normalizarNovoUsuario(e: unknown): Resultado<NovoUsuario> {
       login,
       nivel,
       senha,
+      // Sem a marca no pedido, técnico (como todos ficaram na atualização para a 1.0.5); o administrador desmarca
+      tecnico: r.tecnico !== false,
       signatario: r.signatario === true,
       cargo: linha(r.cargo, 80),
       registro: linha(r.registro, 60),
@@ -183,11 +185,15 @@ export function normalizarAlteracaoUsuario(e: unknown): Resultado<AlteracaoUsuar
   }
   if ('nivel' in r) {
     if (NIVEIS.includes(r.nivel as NivelUsuario)) valor.nivel = r.nivel as NivelUsuario
-    else erros.push('Nível inválido. Escolha Administrador ou Técnico.')
+    else erros.push('Nível inválido. Escolha Administrador ou Operador.')
   }
   if ('ativo' in r) {
     if (typeof r.ativo === 'boolean') valor.ativo = r.ativo
     else erros.push('Situação inválida: informe se o usuário fica ativo ou desativado.')
+  }
+  if ('tecnico' in r) {
+    if (typeof r.tecnico === 'boolean') valor.tecnico = r.tecnico
+    else erros.push('Informe se o usuário é técnico.')
   }
   if ('signatario' in r) {
     if (typeof r.signatario === 'boolean') valor.signatario = r.signatario
@@ -223,6 +229,8 @@ export const GRUPOS_AUDITORIA: Record<GrupoAuditoria, readonly AcaoAuditoria[]> 
     'CERTIFICADO_EMITIDO',
     'CERTIFICADO_CANCELADO',
     'CERTIFICADO_ENVIADO',
+    'AUTORIZACAO_PEDIDA',
+    'AUTORIZACAO_DEVOLVIDA',
     'NUMERO_RESERVADO',
     'NUMERO_NAO_UTILIZADO',
   ],
@@ -259,6 +267,8 @@ export const ROTULO_ACAO_AUDITORIA: Record<AcaoAuditoria, string> = {
   CERTIFICADO_EMITIDO: 'Emitiu um certificado',
   CERTIFICADO_CANCELADO: 'Cancelou um certificado',
   CERTIFICADO_ENVIADO: 'Enviou um certificado por e-mail',
+  AUTORIZACAO_PEDIDA: 'Enviou uma calibração para autorização',
+  AUTORIZACAO_DEVOLVIDA: 'Devolveu uma calibração sem autorizar',
   NUMERO_RESERVADO: 'Reservou um nº de certificado',
   NUMERO_NAO_UTILIZADO: 'Nº de certificado não utilizado',
   ALTERACAO: 'Alterou os dados',

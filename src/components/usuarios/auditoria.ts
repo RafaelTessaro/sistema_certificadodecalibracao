@@ -103,7 +103,7 @@ export const grupoDaAcao = (acao: AcaoAuditoria): GrupoAuditoria => GRUPO_DA_ACA
 
 export interface DescricaoRegistro {
   titulo: string
-  /** Segunda linha (ex.: "nível: Técnico → Administrador"), ou ''. */
+  /** Segunda linha (ex.: "nível: Operador → Administrador"), ou ''. */
   detalhe: string
   /** Ficha do registro afetado. */
   link?: { tipo: TipoLink; id: string }

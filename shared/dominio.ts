@@ -310,7 +310,7 @@ export const TIPOS_PADRAO: Record<TipoPadrao, string> = {
 
 export const STATUS_CALIBRACAO: Record<StatusCalibracao, { label: string; tom: Tone }> = {
   RASCUNHO: { label: 'Rascunho', tom: 'neutral' },
-  REVISAO: { label: 'Aguardando revisão', tom: 'info' },
+  REVISAO: { label: 'Aguardando autorização', tom: 'info' },
   EMITIDO: { label: 'Emitido', tom: 'success' },
   CANCELADO: { label: 'Cancelado', tom: 'danger' },
   SUBSTITUIDO: { label: 'Substituído', tom: 'warning' },

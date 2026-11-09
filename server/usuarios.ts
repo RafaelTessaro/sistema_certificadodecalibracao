@@ -80,6 +80,8 @@ interface LinhaUsuario {
   senha_alterada_em: string
   ultimo_acesso_em: string
   ultimo_acesso_ip: string
+  /** Marca de técnico (migração 17; o banco de antes dela não tem a coluna e vale 1). */
+  tecnico?: number
   signatario: number
   cargo: string
   registro: string
@@ -107,6 +109,7 @@ const paraSessao = (l: LinhaUsuario): UsuarioSessao => ({
   nome: l.nome,
   nivel: l.nivel,
   trocarSenha: !!l.trocar_senha,
+  tecnico: l.tecnico !== 0,
   signatario: !!l.signatario,
 })
 
@@ -123,6 +126,7 @@ const paraUsuario = (l: LinhaUsuario, sessoesAtivas: number): Usuario => ({
   senhaAlteradaEm: l.senha_alterada_em,
   ultimoAcessoEm: l.ultimo_acesso_em,
   ultimoAcessoIp: l.ultimo_acesso_ip,
+  tecnico: l.tecnico !== 0,
   signatario: !!l.signatario,
   cargo: l.cargo,
   registro: l.registro,
@@ -459,15 +463,28 @@ export class ServicoUsuarios {
         this.db
           .prepare(
             `INSERT INTO usuarios (id, login, nome, nivel, senha_hash, ativo, trocar_senha, versao, criado_em, atualizado_em,
-                                   senha_alterada_em, signatario, cargo, registro)
-             VALUES (?, ?, ?, ?, ?, 1, 1, 1, ?, ?, ?, ?, ?, ?)`,
+                                   senha_alterada_em, tecnico, signatario, cargo, registro)
+             VALUES (?, ?, ?, ?, ?, 1, 1, 1, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(id, dados.login, dados.nome, dados.nivel, hash, em, em, em, dados.signatario ? 1 : 0, dados.cargo, dados.registro)
+          .run(
+            id,
+            dados.login,
+            dados.nome,
+            dados.nivel,
+            hash,
+            em,
+            em,
+            em,
+            dados.tecnico ? 1 : 0,
+            dados.signatario ? 1 : 0,
+            dados.cargo,
+            dados.registro,
+          )
         this.registrar('USUARIO_CRIADO', {
           usuario: autor,
           ip,
           alvo: id,
-          detalhe: `${dados.login} (${NOME_NIVEL[dados.nivel]}); senha ${senhaTemporaria ? 'gerada pelo sistema' : 'digitada pelo administrador'}`,
+          detalhe: `${dados.login} (${[NOME_NIVEL[dados.nivel], dados.tecnico ? 'técnico' : '', dados.signatario ? 'signatário' : ''].filter(Boolean).join(', ')}); senha ${senhaTemporaria ? 'gerada pelo sistema' : 'digitada pelo administrador'}`,
         })
       })
     } catch (erro) {
@@ -496,27 +513,39 @@ export class ServicoUsuarios {
       const mudouAtivo = ativo !== !!atual.ativo
       const mudouNome = nome !== atual.nome
       const mudouLogin = login !== atual.login
+      const tecnico = dados.tecnico ?? atual.tecnico !== 0
       const signatario = dados.signatario ?? !!atual.signatario
       const cargo = dados.cargo ?? atual.cargo
       const registro = dados.registro ?? atual.registro
       const assinatura = dados.assinatura ?? atual.assinatura
+      const mudouTecnico = tecnico !== (atual.tecnico !== 0)
       const mudouSignatario = signatario !== !!atual.signatario
       const mudouDadosAssinatura = cargo !== atual.cargo || registro !== atual.registro || assinatura !== atual.assinatura
-      if (!mudouNivel && !mudouAtivo && !mudouNome && !mudouLogin && !mudouSignatario && !mudouDadosAssinatura) return []
+      if (
+        !mudouNivel &&
+        !mudouAtivo &&
+        !mudouNome &&
+        !mudouLogin &&
+        !mudouTecnico &&
+        !mudouSignatario &&
+        !mudouDadosAssinatura
+      )
+        return []
       if (id === autor.id && (mudouNivel || mudouAtivo))
         throw new ErroApi(409, MENSAGENS.propriaConta, { codigo: 'PROPRIA_CONTA' })
       this.verificarUltimoAdmin(atual, nivel === 'ADMIN' && ativo)
       if (mudouLogin && this.linhaPorLogin(login)) throw new ErroApi(409, MENSAGENS.loginExistente, { codigo: 'LOGIN_EXISTENTE' })
       this.db
         .prepare(
-          `UPDATE usuarios SET nome = ?, login = ?, nivel = ?, ativo = ?, signatario = ?, cargo = ?, registro = ?, assinatura = ?,
-                  versao = versao + 1, atualizado_em = ? WHERE id = ?`,
+          `UPDATE usuarios SET nome = ?, login = ?, nivel = ?, ativo = ?, tecnico = ?, signatario = ?, cargo = ?, registro = ?,
+                  assinatura = ?, versao = versao + 1, atualizado_em = ? WHERE id = ?`,
         )
         .run(
           nome,
           login,
           nivel,
           ativo ? 1 : 0,
+          tecnico ? 1 : 0,
           signatario ? 1 : 0,
           cargo,
           registro,
@@ -530,6 +559,7 @@ export class ServicoUsuarios {
         mudouLogin ? `login: ${atual.login} → ${login}` : '',
         mudouNivel ? `nível: ${NOME_NIVEL[atual.nivel]} → ${NOME_NIVEL[nivel]}` : '',
         mudouAtivo ? (ativo ? 'reativado' : 'desativado') : '',
+        mudouTecnico ? (tecnico ? 'passou a ser técnico' : 'deixou de ser técnico') : '',
         mudouSignatario ? (signatario ? 'passou a ser signatário' : 'deixou de ser signatário') : '',
         mudouDadosAssinatura ? 'cargo, registro ou assinatura' : '',
       ]
@@ -824,7 +854,7 @@ export class ServicoUsuarios {
         usuario: { id, login: dados.login },
         ip,
         alvo: id,
-        detalhe: `${dados.login} (Administrador, signatário); primeiro acesso pelo servidor`,
+        detalhe: `${dados.login} (Administrador, técnico, signatário); primeiro acesso pelo servidor`,
       })
     })
     return this.entrar({ login: dados.login, senha: dados.senha }, ip, null)

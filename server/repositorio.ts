@@ -275,7 +275,10 @@ const chaveSerie = (serie: string) => serie.replace(/[\s.\-/]+/g, '').toUpperCas
 const chaveTexto = (t: string) => t.trim().replace(/\s+/g, ' ').toUpperCase()
 
 export interface FiltroCalibracoes {
-  status?: StatusCalibracao | 'ABERTAS' | ''
+  /** 'AUTORIZAR': as enviadas para a autorização de `usuario` (e as enviadas para revisão antes da 1.0.5, se for signatário). */
+  status?: StatusCalibracao | 'ABERTAS' | 'AUTORIZAR' | ''
+  /** Quem está vendo a lista (para 'AUTORIZAR'). */
+  usuario?: { id: string; signatario: boolean } | null
   clienteId?: string
   balancaId?: string
   busca?: string
@@ -995,7 +998,15 @@ export class Repositorio {
     const condicoes: string[] = filtro.status === 'SUBSTITUIDO' ? [] : [`NOT (k.status = 'SUBSTITUIDO' AND ${VERSAO_ANTERIOR})`]
     const params: Array<string | number> = []
     if (filtro.status === 'ABERTAS') condicoes.push("k.status IN ('RASCUNHO','REVISAO')")
-    else if (filtro.status) {
+    else if (filtro.status === 'AUTORIZAR') {
+      // As enviadas para ele; as de antes do pedido (sem signatário escolhido), para qualquer signatário menos o técnico
+      const pedidoPara = "json_extract(k.dados, '$.autorizacao.signatarioId')"
+      condicoes.push(
+        `k.status = 'REVISAO' AND (${pedidoPara} = ? OR (? = 1 AND ${pedidoPara} IS NULL AND json_extract(k.dados, '$.tecnicoId') IS NOT ?))`,
+      )
+      const u = filtro.usuario
+      params.push(u?.id ?? '', u?.signatario ? 1 : 0, u?.id ?? '')
+    } else if (filtro.status) {
       condicoes.push('k.status = ?')
       params.push(filtro.status)
     }
@@ -1114,6 +1125,11 @@ export class Repositorio {
       ...(versoes.versaoAnterior ? { versaoAnterior: true } : {}),
       ...(aberta && versoes.numeroCorrigido ? { numeroCorrigido: versoes.numeroCorrigido } : {}),
       ...(numeroReservado ? { numeroReservado } : {}),
+      // Enviada para a autorização de um signatário: quem; devolvida por ele (até o próximo pedido): quem devolveu
+      ...(k.status === 'REVISAO' && k.autorizacao
+        ? { aguardando: { id: k.autorizacao.signatarioId, nome: k.autorizacao.signatarioNome } }
+        : {}),
+      ...(k.status === 'RASCUNHO' && k.devolucao ? { devolvidaPor: k.devolucao.por } : {}),
     }
   }
 
@@ -1132,7 +1148,11 @@ export class Repositorio {
     })
   }
 
-  criarCalibracao(entrada: unknown, autor: { id: string; nome: string }): Calibracao {
+  /**
+   * Rascunho novo. Sem o técnico na entrada, é quem cria, se tiver a marca de técnico (`autor.tecnico`; ausente = tem);
+   * senão, fica para escolher.
+   */
+  criarCalibracao(entrada: unknown, autor: { id: string; nome: string; tecnico?: boolean }): Calibracao {
     const valor = validar(normalizarCalibracao(entrada))
     return transacao(this.db, () => {
       this.verificarLigacoes(valor, valor.substituiId)
@@ -1148,7 +1168,7 @@ export class Repositorio {
         revisao: 0,
         // Ainda não foi emitida (a correção e a recalibração copiam os dados de um certificado emitido)
         dataEmissao: '',
-        tecnicoId: valor.tecnicoId || autor.id,
+        tecnicoId: valor.tecnicoId || (autor.tecnico === false ? '' : autor.id),
         // Quem indicou o técnico: quem criou (na revisão, o do certificado revisado, abaixo)
         tecnicoDefinidoPorId: autor.id,
         cancelamento: null,
@@ -1228,14 +1248,32 @@ export class Repositorio {
     })
   }
 
-  /** Muda a situação de um rascunho (RASCUNHO ↔ REVISAO). */
-  mudarSituacao(id: string, status: 'RASCUNHO' | 'REVISAO', versao?: number): Calibracao {
+  /**
+   * Muda a situação da calibração em andamento: REVISAO = enviada para autorização (com o pedido, `extra.autorizacao`,
+   * que tira a devolução de antes); RASCUNHO = voltou (o pedido sai; com `extra.devolucao`, devolvida pelo signatário).
+   * `antes`: confere a calibração lida antes (a rota confere quem pode, e nada muda entre a conferência e a gravação).
+   */
+  mudarSituacao(
+    id: string,
+    status: 'RASCUNHO' | 'REVISAO',
+    versao?: number,
+    extra: Pick<Calibracao, 'autorizacao' | 'devolucao'> = {},
+    antes?: (atual: Calibracao) => void,
+  ): Calibracao {
     return transacao(this.db, () => {
       const atual = this.obterCalibracao(id)
       if (!atual) throw new ErroApi(404, 'Calibração não encontrada.')
       if (atual.status !== 'RASCUNHO' && atual.status !== 'REVISAO') throw new ErroApi(409, 'Este certificado já foi emitido.')
       if (versao !== undefined && versao !== atual.versao) throw conflito('esta calibração')
-      const k: Calibracao = { ...atual, status, versao: atual.versao + 1, atualizadoEm: this.agora().toISOString() }
+      antes?.(atual)
+      const k: Calibracao = {
+        ...atual,
+        status,
+        autorizacao: status === 'REVISAO' ? (extra.autorizacao ?? atual.autorizacao ?? null) : null,
+        devolucao: status === 'REVISAO' ? null : (extra.devolucao ?? atual.devolucao ?? null),
+        versao: atual.versao + 1,
+        atualizadoEm: this.agora().toISOString(),
+      }
       this.gravarCalibracao(k, false)
       this.mudou('calibracao', id)
       return k
@@ -1559,13 +1597,15 @@ export class Repositorio {
    * a revisão de um certificado feito sem folha, não ganha nº novo (409). `pdf`: o arquivo da primeira
    * impressão, se já guardado (`guardarPdfFolhaCampo`): a reimpressão é esse arquivo.
    * `numeroCertificado`: o nº do certificado que sai na folha (ver `numeroParaFolha`), reservado na primeira
-   * impressão; '' = nenhum. `eventos`: os nºs reservados agora, para o registro de atividades.
+   * impressão; '' = nenhum. `eventos`: os nºs reservados agora, para o registro de atividades. `ordemServico`: a OS
+   * impressa na folha avulsa (passa para a calibração sem OS a que ela for ligada; ver `vincularFolhaCampo`).
    */
   reservarFolhaCampo(e: {
     chave: string
     calibracaoId?: string
     balancaId?: string
     clienteId?: string
+    ordemServico?: string
     por: string
     nova?: boolean
   }): FolhaCampoImpressa & {
@@ -1633,8 +1673,8 @@ export class Repositorio {
       const numero = `FC-${ano}-${String(sequencia).padStart(5, '0')}`
       this.db
         .prepare(
-          `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, impressa_por, impressa_em, ultima_em)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, ordem_servico, impressa_por, impressa_em, ultima_em)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           numero,
@@ -1644,6 +1684,7 @@ export class Repositorio {
           e.calibracaoId ?? '',
           e.balancaId ?? '',
           e.clienteId ?? '',
+          (e.ordemServico ?? '').trim().slice(0, 40),
           e.por.slice(0, 120),
           agora,
           agora,

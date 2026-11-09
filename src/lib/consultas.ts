@@ -30,6 +30,8 @@ export interface DadosCnpj {
   bairro: string
   cidade: string
   uf: string
+  /** Inscrição estadual ativa na UF da empresa (do CNPJ.ws); '' quando não há ou não veio. */
+  inscricaoEstadual: string
   fonte: string
 }
 
@@ -125,6 +127,8 @@ export function camposDoCnpj(d: DadosCnpj): Partial<ClienteInput> {
     cidade: d.cidade,
     uf: d.uf,
     situacaoCadastral: d.situacaoCadastral,
+    // Respostas de um servidor anterior a esta versão não têm o campo
+    inscricaoEstadual: d.inscricaoEstadual ?? '',
   }
 }
 
@@ -149,6 +153,12 @@ export function camposMantidos(form: ClienteInput, novos: Partial<ClienteInput>)
 const SEMPRE: Array<keyof ClienteInput> = ['situacaoCadastral']
 
 /**
+ * Campos que a consulta só preenche quando estão vazios (ou vieram da consulta anterior), também no "Consultar": a
+ * inscrição estadual digitada à mão vale mais que a do serviço, que pode estar desatualizada ou nem vir.
+ */
+const SO_VAZIO: Array<keyof ClienteInput> = ['inscricaoEstadual']
+
+/**
  * Aplica os dados de uma consulta ao formulário.
  *
  * - `sobrescrever` (botão "Consultar"): troca todos os campos que vieram preenchidos.
@@ -171,7 +181,10 @@ export function mesclarConsulta(
     if (typeof novo !== 'string') continue
     const valorAtual = String(atual[k] ?? '')
     const veioDaConsulta = anteriores[k] !== undefined && anteriores[k] === valorAtual
-    const pode = SEMPRE.includes(k) || veioDaConsulta || (novo !== '' && (sobrescrever || valorAtual.trim() === ''))
+    const pode =
+      SEMPRE.includes(k) ||
+      veioDaConsulta ||
+      (novo !== '' && ((sobrescrever && !SO_VAZIO.includes(k)) || valorAtual.trim() === ''))
     if (!pode) continue
     ;(form as Record<string, unknown>)[k] = novo
     aplicados[k] = novo as never

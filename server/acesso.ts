@@ -98,8 +98,12 @@ export const TABELA_ACESSO: Record<string, RegraAcesso> = {
   'POST /api/calibracoes': 'logado',
   'PUT /api/calibracoes/:id': 'logado',
   'DELETE /api/calibracoes/:id': 'logado', // só rascunho (o repositório recusa o emitido)
-  'POST /api/calibracoes/:id/situacao': 'logado',
-  'POST /api/calibracoes/:id/emitir': 'logado', // + signatário (conferido na rota)
+  'POST /api/calibracoes/:id/situacao': 'logado', // volta para rascunho (retira o pedido de autorização)
+  // Com a revisão por outra pessoa ligada: o pedido vai para um signatário (conferido na rota), só ele autoriza (emite) ou
+  // devolve (`impedimentoParaEmitir`, `podeDevolver`); desligada, quem entrou emite
+  'POST /api/calibracoes/:id/autorizacao': 'logado',
+  'POST /api/calibracoes/:id/devolver': 'logado',
+  'POST /api/calibracoes/:id/emitir': 'logado',
   'POST /api/calibracoes/:id/cancelar': 'cancelarCertificado',
   'POST /api/calibracoes/:id/revisar': 'logado',
   'POST /api/calibracoes/:id/recalibrar': 'logado',
@@ -139,6 +143,7 @@ export const USUARIO_TESTE: UsuarioSessao = {
   nome: 'Teste',
   nivel: 'ADMIN',
   trocarSenha: false,
+  tecnico: true,
   signatario: true,
 }
 
@@ -208,6 +213,8 @@ const foraDaAuditoria = (url: string) =>
 const ACAO_DA_ROTA: Record<string, AcaoAuditoria> = {
   'GET /api/backups/:arquivo': 'BACKUP_BAIXADO',
   'POST /api/calibracoes/:id/emitir': 'CERTIFICADO_EMITIDO',
+  'POST /api/calibracoes/:id/autorizacao': 'AUTORIZACAO_PEDIDA',
+  'POST /api/calibracoes/:id/devolver': 'AUTORIZACAO_DEVOLVIDA',
   'POST /api/calibracoes/:id/cancelar': 'CERTIFICADO_CANCELADO',
   'POST /api/calibracoes/:id/email': 'CERTIFICADO_ENVIADO',
   'POST /api/numeros-reservados/:reserva/nao-utilizado': 'NUMERO_NAO_UTILIZADO',

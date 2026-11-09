@@ -34,6 +34,7 @@ const empresaA: DadosCnpj = {
   bairro: 'Centro',
   cidade: 'Rio Claro',
   uf: 'SP',
+  inscricaoEstadual: '',
   fonte: 'BrasilAPI',
 }
 
@@ -77,6 +78,30 @@ describe('mesclarConsulta', () => {
     expect(novo.nome).toBe('Padaria X')
     expect(novo.telefone).toBe('(19) 3524-0000')
     expect(camposMantidos(novo, camposDoCnpj(empresaA))).toEqual([])
+  })
+
+  it('inscrição estadual: só preenche o campo vazio, também no "Consultar"; a de outra empresa consultada, troca', () => {
+    const comIe = { ...empresaA, inscricaoEstadual: '587229409110' }
+    expect(camposDoCnpj(comIe).inscricaoEstadual).toBe('587229409110')
+    // Resposta de um servidor anterior a esta versão (sem o campo): nada muda no formulário
+    const { inscricaoEstadual: _ie, ...antiga } = empresaA
+    expect(camposDoCnpj(antiga as DadosCnpj).inscricaoEstadual).toBe('')
+    for (const sobrescrever of [false, true]) {
+      expect(mesclarConsulta(form(), camposDoCnpj(comIe), {}, sobrescrever).form.inscricaoEstadual).toBe('587229409110')
+      // A digitada à mão (ou já gravada no cadastro) fica, e conta como mantida
+      const digitada = mesclarConsulta(form({ inscricaoEstadual: '123.456.789.110' }), camposDoCnpj(comIe), {}, sobrescrever)
+      expect(digitada.form.inscricaoEstadual).toBe('123.456.789.110')
+      expect(camposMantidos(digitada.form, camposDoCnpj(comIe))).toContain('inscricaoEstadual')
+      // Sem IE na consulta (isenta, MEI, serviço sem resposta): a do formulário fica
+      expect(
+        mesclarConsulta(form({ inscricaoEstadual: '123' }), camposDoCnpj(empresaA), {}, sobrescrever).form.inscricaoEstadual,
+      ).toBe('123')
+    }
+    // Trocou o CNPJ no cadastro novo: a IE que veio da empresa anterior sai (a nova veio sem, ou com a dela)
+    const r1 = mesclarConsulta(form(), camposDoCnpj(comIe), {}, false)
+    expect(mesclarConsulta(r1.form, camposDoCnpj(empresaB), r1.aplicados, false).form.inscricaoEstadual).toBe('')
+    const outra = { ...empresaB, inscricaoEstadual: '110042490114' }
+    expect(mesclarConsulta(r1.form, camposDoCnpj(outra), r1.aplicados, true).form.inscricaoEstadual).toBe('110042490114')
   })
 
   it('no cadastro novo, trocar o CNPJ substitui o que veio da consulta anterior', () => {

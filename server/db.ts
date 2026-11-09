@@ -259,6 +259,15 @@ const MIGRACOES: Migracao[] = [
   // acontecer com essa folha, e na 1.0.3 a descida era opcional. A que já tem os mínimos como avisos não precisa. As
   // novas seguem a regra, e também a sem folha que só tem o zero que "Sugerir os pontos" preenche (nada medido).
   descidasAntesDaRegra,
+
+  // 17: a marca de técnico de calibração de cada usuário (executa as calibrações: só quem a tem aparece em "Técnico que
+  // executou"), à parte do nível e da marca de signatário. Todos os usuários de antes ganham a marca (era assim: todos
+  // apareciam na lista); o administrador desmarca quem não executa calibrações. 1.0.5.
+  (db) => acrescentarColuna(db, 'usuarios', 'tecnico', 'INTEGER NOT NULL DEFAULT 1'),
+
+  // 18: a OS (ordem de serviço) impressa na folha de campo avulsa (a do cliente com a balança ainda não cadastrada): ao
+  // ligar a folha a uma calibração sem OS, ela passa para a calibração ('' nas outras folhas e nas de antes). 1.0.5.
+  (db) => acrescentarColuna(db, 'folhas_campo', 'ordem_servico', "TEXT NOT NULL DEFAULT ''"),
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */

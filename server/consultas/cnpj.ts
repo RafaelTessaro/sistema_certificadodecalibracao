@@ -37,6 +37,11 @@ export interface DadosCnpj {
   bairro: string
   cidade: string
   uf: string
+  /**
+   * Inscrição estadual ativa na UF do estabelecimento; vazia quando não há (isenta, MEI…) ou não se sabe. Só o CNPJ.ws
+   * a traz: com outro serviço na consulta principal, ela vem de uma consulta ao CNPJ.ws feita junto (servico.ts).
+   */
+  inscricaoEstadual: string
   /** Serviço que respondeu a consulta. */
   fonte: string
 }
@@ -58,6 +63,7 @@ interface Bruto {
   bairro: unknown
   cidade: unknown
   uf: unknown
+  inscricaoEstadual?: string
 }
 
 /** Converte os campos crus de qualquer provedor no formato do sistema. */
@@ -84,6 +90,7 @@ function montar(b: Bruto, fonte: string): Interpretacao<DadosCnpj> {
       bairro: formatoTitulo(textoLimpo(b.bairro)),
       cidade: formatoTitulo(textoLimpo(b.cidade)),
       uf: formatarUf(b.uf),
+      inscricaoEstadual: b.inscricaoEstadual ?? '',
       fonte,
     },
   }
@@ -119,6 +126,24 @@ function interpretarFormatoReceita(fonte: string) {
   }
 }
 
+/**
+ * Inscrição estadual na resposta do CNPJ.ws (`estabelecimento.inscricoes_estaduais`: [{ inscricao_estadual, ativo,
+ * estado: { sigla } }]): a ativa da UF do estabelecimento; '' sem nenhuma (isenta, MEI, só inscrições baixadas ou de
+ * outra UF).
+ */
+export function inscricaoEstadualCnpjWs(corpo: unknown): string {
+  const e = comoObjeto(comoObjeto(corpo).estabelecimento)
+  const uf = formatarUf(comoObjeto(e.estado).sigla)
+  if (!uf) return ''
+  const ativa = (Array.isArray(e.inscricoes_estaduais) ? e.inscricoes_estaduais : [])
+    .map(comoObjeto)
+    .find((i) => i.ativo === true && formatarUf(comoObjeto(i.estado).sigla) === uf && textoLimpo(i.inscricao_estadual))
+  return ativa ? textoLimpo(ativa.inscricao_estadual).slice(0, 30) : ''
+}
+
+/** Endereço da consulta no CNPJ.ws (a principal e a da inscrição estadual pedem o mesmo). */
+export const urlCnpjWs = (cnpj: string) => `https://publica.cnpj.ws/cnpj/${cnpj}`
+
 /** CNPJ.ws (API pública): dados do estabelecimento ficam em `estabelecimento`. */
 function interpretarCnpjWs(status: number, corpo: unknown): Interpretacao<DadosCnpj> {
   if (status === 404) return { tipo: 'naoEncontrado', definitivo: true }
@@ -143,6 +168,7 @@ function interpretarCnpjWs(status: number, corpo: unknown): Interpretacao<DadosC
       bairro: e.bairro,
       cidade: comoObjeto(e.cidade).nome,
       uf: comoObjeto(e.estado).sigla,
+      inscricaoEstadual: inscricaoEstadualCnpjWs(corpo),
     },
     'CNPJ.ws',
   )
@@ -217,7 +243,7 @@ function interpretarCnpja(status: number, corpo: unknown): Interpretacao<DadosCn
 export const PROVEDORES_CNPJ: Provedor<DadosCnpj>[] = [
   { nome: 'OpenCNPJ', url: (cnpj) => `https://api.opencnpj.org/${cnpj}`, interpretar: interpretarOpenCnpj },
   { nome: 'CNPJá', url: (cnpj) => `https://open.cnpja.com/office/${cnpj}`, interpretar: interpretarCnpja },
-  { nome: 'CNPJ.ws', url: (cnpj) => `https://publica.cnpj.ws/cnpj/${cnpj}`, interpretar: interpretarCnpjWs },
+  { nome: 'CNPJ.ws', url: urlCnpjWs, interpretar: interpretarCnpjWs },
   {
     nome: 'BrasilAPI',
     url: (cnpj) => `https://brasilapi.com.br/api/cnpj/v1/${cnpj}`,

@@ -13,6 +13,7 @@
 // de um certificado emitido com as regras do POP passa a segui-las.
 // Migração 16: a calibração em andamento já medida (ou com a folha de campo impressa) antes de a descida ser obrigatória
 // (1.0.4) fica com ela como aviso e com o método de carregamento gravado.
+// Migração 17: a marca de técnico de cada usuário (todos os de antes ganham a marca).
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
@@ -32,7 +33,7 @@ import { detalheTrocaIndicador, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 16
+const ULTIMA = 17
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -1338,5 +1339,44 @@ describe('migração 16: a calibração em andamento já medida antes de a desci
     nada.exec("DELETE FROM calibracoes WHERE id IN ('k1', 'k2', 'r6')")
     migrar(nada)
     expect(registros(nada).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toEqual([])
+  })
+})
+
+describe('migração 17: a marca de técnico dos usuários', () => {
+  /** Banco na versão 16, com dois usuários (um signatário, outro não). */
+  function bancoV16() {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 16)
+    const inserir = db.prepare(
+      `INSERT INTO usuarios (id, login, nome, nivel, senha_hash, ativo, trocar_senha, versao, criado_em, atualizado_em,
+                             senha_alterada_em, signatario)
+       VALUES (?, ?, ?, ?, 'x', 1, 0, 1, ?, ?, ?, ?)`,
+    )
+    inserir.run('u1', 'fabio', 'Fábio', 'ADMIN', EM, EM, EM, 1)
+    inserir.run('u2', 'lizi', 'Lizi', 'COMUM', EM, EM, EM, 1)
+    inserir.run('u3', 'mauricio', 'Maurício', 'COMUM', EM, EM, EM, 0)
+    return db
+  }
+  const marcas = (db: DatabaseSync) =>
+    db.prepare('SELECT id, nivel, signatario, tecnico FROM usuarios ORDER BY id').all() as Array<Record<string, unknown>>
+
+  it('todos os usuários de antes ficam técnicos (todos apareciam na lista); o nível e o signatário não mudam', () => {
+    const db = bancoV16()
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(marcas(db)).toEqual([
+      { id: 'u1', nivel: 'ADMIN', signatario: 1, tecnico: 1 },
+      { id: 'u2', nivel: 'COMUM', signatario: 1, tecnico: 1 },
+      { id: 'u3', nivel: 'COMUM', signatario: 0, tecnico: 1 },
+    ])
+  })
+
+  it('pode ser repetida: a marca tirada depois continua tirada', () => {
+    const db = bancoV16()
+    migrar(db)
+    db.exec("UPDATE usuarios SET tecnico = 0 WHERE id = 'u2'")
+    db.exec('PRAGMA user_version = 16')
+    migrar(db)
+    expect(marcas(db).find((u) => u.id === 'u2')).toMatchObject({ tecnico: 0 })
   })
 })

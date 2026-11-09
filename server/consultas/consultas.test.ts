@@ -7,9 +7,9 @@ import { criarApp } from '../app.ts'
 import { ErroApi } from '../erros.ts'
 import { rotasConsultas } from '../rotas/consultas.ts'
 import { PROVEDORES_CEP } from './cep.ts'
-import { PROVEDORES_CNPJ } from './cnpj.ts'
+import { inscricaoEstadualCnpjWs, PROVEDORES_CNPJ } from './cnpj.ts'
 import { CacheTemporario, consultarEmOrdem, type Fetch } from './motor.ts'
-import { criarServicoConsultas, MENSAGENS } from './servico.ts'
+import { criarServicoConsultas, LIMITE_CNPJ_WS_POR_MINUTO, MENSAGENS } from './servico.ts'
 import { formatarTelefone, formatoTitulo, juntarLogradouro } from './texto.ts'
 
 const fixture = (nome: string): unknown => JSON.parse(readFileSync(join(import.meta.dirname, '__fixtures__', nome), 'utf8'))
@@ -67,6 +67,8 @@ const ESPERADO_EMPRESA = {
   bairro: 'Bairro da Boa Morte',
   cidade: 'Rio Claro',
   uf: 'SP',
+  // Só o CNPJ.ws traz a inscrição estadual (a desta empresa não vem nas respostas gravadas)
+  inscricaoEstadual: '',
 }
 
 describe('formato de título', () => {
@@ -230,10 +232,13 @@ describe('normalização de cada provedor de CEP', () => {
   })
 })
 
+// A ordem e a contagem dos pedidos da consulta principal, sem a da inscrição estadual (testada à parte, abaixo)
+const SEM_IE = { inscricaoEstadual: false } as const
+
 describe('consulta de CNPJ com fallback', () => {
   it('usa o primeiro provedor quando ele responde', async () => {
     const { fetch, chamadas } = fetchFalso({ [OPENCNPJ]: { status: 200, corpo: fixture('cnpj-opencnpj.json') } })
-    const s = criarServicoConsultas({ fetch })
+    const s = criarServicoConsultas({ fetch, ...SEM_IE })
     const r = await s.cnpj('12.403.843/0001-18')
     expect(r).toMatchObject({ ...ESPERADO_EMPRESA, email: 'balancas.com@gmail.com', fonte: 'OpenCNPJ' })
     expect(chamadas).toEqual([`${OPENCNPJ}${CNPJ}`])
@@ -247,7 +252,7 @@ describe('consulta de CNPJ com fallback', () => {
       [BRASILAPI_CNPJ]: { status: 503 },
       [MINHA_RECEITA]: { status: 200, corpo: fixture('cnpj-minhareceita.json') },
     })
-    const r = await criarServicoConsultas({ fetch }).cnpj(CNPJ)
+    const r = await criarServicoConsultas({ fetch, ...SEM_IE }).cnpj(CNPJ)
     expect(r.fonte).toBe('Minha Receita')
     expect(chamadas).toEqual([OPENCNPJ, CNPJA, CNPJWS, BRASILAPI_CNPJ, MINHA_RECEITA].map((u) => `${u}${CNPJ}`))
   })
@@ -267,7 +272,7 @@ describe('consulta de CNPJ com fallback', () => {
       [OPENCNPJ]: { status: 404, corpo: { message: 'CNPJ não encontrado' } },
       [CNPJA]: { status: 200, corpo: fixture('cnpj-cnpja.json') },
     })
-    const p = criarServicoConsultas({ fetch }).cnpj(CNPJ)
+    const p = criarServicoConsultas({ fetch, ...SEM_IE }).cnpj(CNPJ)
     await expect(p).rejects.toMatchObject({ status: 404, message: MENSAGENS.cnpjNaoEncontrado })
     expect(chamadas).toHaveLength(1)
   })
@@ -341,7 +346,7 @@ describe('consulta de CNPJ com fallback', () => {
   it('guarda o resultado em cache por 24 h', async () => {
     let agora = 1_000_000
     const { fetch, chamadas } = fetchFalso({ [OPENCNPJ]: { status: 200, corpo: fixture('cnpj-opencnpj.json') } })
-    const s = criarServicoConsultas({ fetch, agora: () => agora })
+    const s = criarServicoConsultas({ fetch, agora: () => agora, ...SEM_IE })
     await s.cnpj(CNPJ)
     agora += 23 * 60 * 60 * 1000
     await s.cnpj('12.403.843/0001-18')
@@ -355,11 +360,131 @@ describe('consulta de CNPJ com fallback', () => {
     const { fetch, chamadas } = fetchFalso({
       [OPENCNPJ]: ['rede', { status: 200, corpo: fixture('cnpj-opencnpj.json') }],
     })
-    const s = criarServicoConsultas({ fetch })
+    const s = criarServicoConsultas({ fetch, ...SEM_IE })
     await expect(s.cnpj(CNPJ)).rejects.toMatchObject({ status: 503 })
     const [a, b] = await Promise.all([s.cnpj(CNPJ), s.cnpj(CNPJ)])
     expect(a).toEqual(b)
     expect(chamadas).toHaveLength(PROVEDORES_CNPJ.length + 1)
+  })
+})
+
+/** A resposta do CNPJ.ws com as inscrições estaduais (como a de 24.414.402/0001-09, conferida em 09/11/2026). */
+function cnpjWsComIe(inscricoes: unknown[], uf = 'SP') {
+  const ws = fixture('cnpj-cnpjws.json') as { estabelecimento: Record<string, unknown> }
+  ws.estabelecimento.inscricoes_estaduais = inscricoes
+  ws.estabelecimento.estado = { ...(ws.estabelecimento.estado as object), sigla: uf }
+  return ws
+}
+const IE_SP = { inscricao_estadual: '587229409110', ativo: true, estado: { sigla: 'SP' } }
+
+describe('inscrição estadual pelo CNPJ.ws', () => {
+  it('a ativa da UF do estabelecimento; nenhuma: em branco', () => {
+    const baixada = { inscricao_estadual: '111111111111', ativo: false, estado: { sigla: 'SP' } }
+    const outraUf = { inscricao_estadual: '0012345670012', ativo: true, estado: { sigla: 'MG' } }
+    expect(inscricaoEstadualCnpjWs(cnpjWsComIe([baixada, outraUf, IE_SP]))).toBe('587229409110')
+    // Só a baixada, só de outra UF, nenhuma (isenta, MEI) ou a resposta sem a lista: em branco
+    expect(inscricaoEstadualCnpjWs(cnpjWsComIe([baixada, outraUf]))).toBe('')
+    expect(inscricaoEstadualCnpjWs(cnpjWsComIe([]))).toBe('')
+    expect(inscricaoEstadualCnpjWs(fixture('cnpj-cnpjws.json'))).toBe('')
+    expect(inscricaoEstadualCnpjWs(cnpjWsComIe([outraUf], 'MG'))).toBe('0012345670012')
+    expect(inscricaoEstadualCnpjWs(null)).toBe('')
+    expect(inscricaoEstadualCnpjWs(cnpjWsComIe(['x', null, { ativo: true }]))).toBe('')
+    // Respondida pelo CNPJ.ws, a consulta principal já traz a IE
+    const ws = provedor(PROVEDORES_CNPJ, 'CNPJ.ws').interpretar(200, cnpjWsComIe([IE_SP]))
+    expect(ws.tipo === 'ok' && ws.dados.inscricaoEstadual).toBe('587229409110')
+  })
+
+  it('vem junto com o serviço principal, sem atrasar além do tempo dele, e nada mais muda', async () => {
+    const { fetch, chamadas } = fetchFalso({
+      [OPENCNPJ]: { status: 200, corpo: fixture('cnpj-opencnpj.json') },
+      [CNPJWS]: { status: 200, corpo: cnpjWsComIe([IE_SP]) },
+    })
+    const s = criarServicoConsultas({ fetch })
+    const r = await s.cnpj(CNPJ)
+    expect(r).toEqual({ ...ESPERADO_EMPRESA, email: 'balancas.com@gmail.com', fonte: 'OpenCNPJ', inscricaoEstadual: '587229409110' })
+    // Os dois ao mesmo tempo: a IE é pedida logo antes, sem esperar a consulta principal terminar
+    expect(chamadas).toEqual([`${CNPJWS}${CNPJ}`, `${OPENCNPJ}${CNPJ}`])
+    // A mesma empresa de novo: tudo do cache
+    expect((await s.cnpj(CNPJ)).inscricaoEstadual).toBe('587229409110')
+    expect(chamadas).toHaveLength(2)
+  })
+
+  it('CNPJ.ws fora do ar, lento ou sem a empresa: a consulta sai do mesmo jeito, com a IE em branco', async () => {
+    for (const resposta of [{ status: 500 }, { status: 429 }, { status: 404 }, 'rede', 'tempo'] as const) {
+      const { fetch } = fetchFalso({ [OPENCNPJ]: { status: 200, corpo: fixture('cnpj-opencnpj.json') }, [CNPJWS]: resposta })
+      const r = await criarServicoConsultas({ fetch }).cnpj(CNPJ)
+      expect(r).toMatchObject({ razaoSocial: 'FABIO DE GODOY LIMA LTDA', fonte: 'OpenCNPJ', inscricaoEstadual: '' })
+    }
+    // A IE nunca transforma o "não encontrado" ou o "indisponível" da consulta principal em outra coisa
+    const naoAchou = fetchFalso({ [OPENCNPJ]: { status: 404 }, [CNPJWS]: { status: 200, corpo: cnpjWsComIe([IE_SP]) } })
+    await expect(criarServicoConsultas({ fetch: naoAchou.fetch }).cnpj(CNPJ)).rejects.toMatchObject({ status: 404 })
+  })
+
+  it('tempo limite curto e próprio: a resposta principal não espera um CNPJ.ws travado', async () => {
+    const travado = (async (entrada: string | URL | Request, init?: RequestInit) => {
+      const url = String(entrada)
+      if (url.startsWith(OPENCNPJ)) return new Response(JSON.stringify(fixture('cnpj-opencnpj.json')), { status: 200 })
+      // Só termina quando o tempo limite do pedido acaba
+      return new Promise<Response>((_, rejeitar) =>
+        init?.signal?.addEventListener('abort', () => rejeitar(new DOMException('Tempo esgotado', 'TimeoutError'))),
+      )
+    }) as Fetch
+    const inicio = Date.now()
+    const r = await criarServicoConsultas({ fetch: travado, timeoutInscricaoMs: 150 }).cnpj(CNPJ)
+    expect(r).toMatchObject({ fonte: 'OpenCNPJ', inscricaoEstadual: '' })
+    expect(Date.now() - inicio).toBeLessThan(2000)
+  })
+
+  it('a consulta principal que chega ao CNPJ.ws usa a mesma resposta, sem um segundo pedido', async () => {
+    const { fetch, chamadas } = fetchFalso({
+      [OPENCNPJ]: { status: 503 },
+      [CNPJA]: { status: 429 },
+      [CNPJWS]: { status: 200, corpo: cnpjWsComIe([IE_SP]) },
+    })
+    const r = await criarServicoConsultas({ fetch }).cnpj(CNPJ)
+    expect(r).toMatchObject({ fonte: 'CNPJ.ws', inscricaoEstadual: '587229409110' })
+    expect(chamadas.filter((u) => u.startsWith(CNPJWS))).toEqual([`${CNPJWS}${CNPJ}`])
+    // Fora do ar para a IE, também para a consulta principal: passa para o seguinte
+    const fora = fetchFalso({
+      [OPENCNPJ]: { status: 503 },
+      [CNPJA]: { status: 429 },
+      [CNPJWS]: 'rede',
+      [BRASILAPI_CNPJ]: { status: 200, corpo: fixture('cnpj-brasilapi.json') },
+    })
+    expect(await criarServicoConsultas({ fetch: fora.fetch }).cnpj(CNPJ)).toMatchObject({ fonte: 'BrasilAPI', inscricaoEstadual: '' })
+    expect(fora.chamadas.filter((u) => u.startsWith(CNPJWS))).toHaveLength(1)
+  })
+
+  it('respeita o limite do CNPJ.ws: 3 pedidos por minuto e, depois de um 429, 1 minuto de espera', async () => {
+    let agora = 1_000_000
+    const cnpjs = ['11122233000183', '22233344000183', '33344455000183', '44455566000183']
+    const { fetch, chamadas } = fetchFalso({
+      [OPENCNPJ]: { status: 200, corpo: fixture('cnpj-opencnpj.json') },
+      [CNPJWS]: { status: 200, corpo: cnpjWsComIe([IE_SP]) },
+    })
+    const s = criarServicoConsultas({ fetch, agora: () => agora })
+    const ies = []
+    for (const c of cnpjs) ies.push((await s.cnpj(c)).inscricaoEstadual)
+    expect(LIMITE_CNPJ_WS_POR_MINUTO).toBe(3)
+    // O 4º no mesmo minuto sai sem a IE (o CNPJ.ws não é chamado)
+    expect(ies).toEqual(['587229409110', '587229409110', '587229409110', ''])
+    expect(chamadas.filter((u) => u.startsWith(CNPJWS))).toHaveLength(3)
+    // Um minuto depois, o 4º ganha a IE (a consulta principal vem do cache)
+    agora += 61_000
+    expect((await s.cnpj(cnpjs[3])).inscricaoEstadual).toBe('587229409110')
+    expect(chamadas.filter((u) => u.startsWith(CNPJWS))).toHaveLength(4)
+
+    // 429: espera 1 minuto antes de pedir de novo
+    const limite = fetchFalso({
+      [OPENCNPJ]: { status: 200, corpo: fixture('cnpj-opencnpj.json') },
+      [CNPJWS]: [{ status: 429 }, { status: 200, corpo: cnpjWsComIe([IE_SP]) }],
+    })
+    const s2 = criarServicoConsultas({ fetch: limite.fetch, agora: () => agora })
+    expect((await s2.cnpj(cnpjs[0])).inscricaoEstadual).toBe('')
+    expect((await s2.cnpj(cnpjs[1])).inscricaoEstadual).toBe('')
+    expect(limite.chamadas.filter((u) => u.startsWith(CNPJWS))).toHaveLength(1)
+    agora += 61_000
+    expect((await s2.cnpj(cnpjs[0])).inscricaoEstadual).toBe('587229409110')
   })
 })
 

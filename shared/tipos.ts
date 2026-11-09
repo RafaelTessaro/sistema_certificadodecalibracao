@@ -337,10 +337,34 @@ export interface AnexoEmailDisponivel {
 // ---- Calibração e certificado ----------------------------------------------------
 
 /**
- * RASCUNHO = em preenchimento; REVISAO = concluída pelo técnico, aguardando quem autoriza;
- * EMITIDO = certificado emitido (não muda mais); CANCELADO; SUBSTITUIDO = trocado por uma revisão.
+ * RASCUNHO = em preenchimento; REVISAO = enviada para a autorização de um signatário (`Calibracao.autorizacao`; com a
+ * revisão por outra pessoa ligada), aguardando ele; EMITIDO = certificado emitido (não muda mais); CANCELADO;
+ * SUBSTITUIDO = trocado por uma revisão.
  */
 export type StatusCalibracao = 'RASCUNHO' | 'REVISAO' | 'EMITIDO' | 'CANCELADO' | 'SUBSTITUIDO'
+
+/**
+ * Pedido de autorização (com a revisão por outra pessoa ligada): o signatário escolhido para autorizar a emissão e quem
+ * pediu. Só esse signatário autoriza (`impedimentoParaEmitir` em shared/permissoes.ts).
+ */
+export interface PedidoAutorizacao {
+  signatarioId: ID
+  /** O nome na hora do pedido (para a lista e a tela). */
+  signatarioNome: string
+  porId: ID
+  por: string
+  /** ISO */
+  em: string
+}
+
+/** O signatário devolveu a calibração sem autorizar, com o que precisa ser visto. */
+export interface DevolucaoAutorizacao {
+  nota: string
+  porId: ID
+  por: string
+  /** ISO */
+  em: string
+}
 
 export type LocalCalibracao = 'CLIENTE' | 'LABORATORIO'
 
@@ -523,17 +547,28 @@ export interface Calibracao {
   local: LocalCalibracao
   /** Endereço onde a calibração foi feita (padrão: o endereço do cliente ou da empresa). */
   localEndereco: string
-  /** Técnico que executou (usuário). */
+  /**
+   * Técnico que executou (usuário). Escolhido entre os usuários com a marca de técnico (`Usuario.tecnico`); o de uma
+   * calibração continua valendo mesmo que a pessoa perca a marca depois.
+   */
   tecnicoId: ID
   /**
    * Quem indicou o técnico (usuário): quem criou a calibração, quem trocou o técnico depois ou o próprio técnico ao
-   * gravar a calibração dele. Com a revisão por outra pessoa (`Configuracoes.exigirRevisor`), quem indicou outra
-   * pessoa como técnico também não emite (`impedimentoDoRevisor`). A revisão de um certificado mantém o do revisado.
-   * Quem define é o servidor; ausente = calibração de antes deste campo (só vale o técnico).
+   * gravar a calibração dele. Fica registrado (a troca vai também para o registro de atividades); não impede ninguém de
+   * autorizar desde a 1.0.5 (só o técnico não autoriza a própria). A revisão de um certificado mantém o do revisado.
+   * Quem define é o servidor; ausente = calibração de antes deste campo.
    */
   tecnicoDefinidoPorId?: ID
-  /** Quem revisou e autorizou a emissão (usuário signatário). */
+  /** Não é usado pelo servidor na emissão (quem autoriza é quem emite); a prévia o mostra só sem pedido de autorização. */
   signatarioId: ID
+  /**
+   * Pedido de autorização a um signatário (com a revisão por outra pessoa ligada; status REVISAO). Quem define é o
+   * servidor (`POST /api/calibracoes/:id/autorizacao`); ausente ou null = nenhum (também a enviada para revisão antes da
+   * 1.0.5, que qualquer signatário que não seja o técnico autoriza).
+   */
+  autorizacao?: PedidoAutorizacao | null
+  /** A última devolução do signatário, sem autorizar (até o próximo pedido). Quem define é o servidor. */
+  devolucao?: DevolucaoAutorizacao | null
   /** Padrões usados: jogos de pesos, termo-higrômetro, barômetro. */
   padroesIds: ID[]
   ambiente: CondicoesAmbientais
@@ -636,6 +671,8 @@ export type CalibracaoInput = Omit<
   | 'sequencia'
   | 'revisao'
   | 'tecnicoDefinidoPorId'
+  | 'autorizacao'
+  | 'devolucao'
   | 'emissao'
   | 'cancelamento'
   | 'criadoPor'
@@ -683,6 +720,13 @@ export interface CalibracaoResumo {
    * recebe na emissão. Ausente ou '' = ainda sem nº (é dado na emissão).
    */
   numeroReservado?: string
+  /**
+   * Enviada para a autorização de um signatário (status REVISAO, com o pedido): quem autoriza. Ausente nos outros casos
+   * (também na enviada para revisão antes da 1.0.5, sem signatário escolhido).
+   */
+  aguardando?: { id: ID; nome: string }
+  /** Rascunho devolvido pelo signatário sem autorizar (até o próximo pedido): quem devolveu. Ausente nos outros casos. */
+  devolvidaPor?: string
 }
 
 /**
@@ -966,7 +1010,11 @@ export interface ResultadoEmail {
 
 // ---- Usuários e sessão -------------------------------------------------------------
 
-/** O administrador faz tudo; o comum (técnico) cadastra, calibra e emite conforme a permissão de assinar. */
+/**
+ * O administrador faz tudo; o operador ('COMUM', "Operador" nas telas) faz o dia a dia, menos o que é só do administrador
+ * (shared/permissoes.ts). Quem executa calibrações (`Usuario.tecnico`) e quem autoriza certificados (`Usuario.signatario`)
+ * são marcas à parte, em qualquer nível.
+ */
 export type NivelUsuario = 'ADMIN' | 'COMUM'
 
 /** Usuário como as telas recebem (o hash da senha nunca sai do servidor). */
@@ -981,7 +1029,12 @@ export interface Usuario {
   ativo: boolean
   /** Senha temporária: troca obrigatória ao entrar. */
   trocarSenha: boolean
-  /** Pode revisar e autorizar (assinar) certificados. */
+  /**
+   * Técnico de calibração: executa as calibrações (só quem tem a marca aparece em "Técnico que executou" e na folha de
+   * campo). Na atualização para a 1.0.5, todos os usuários ganharam a marca.
+   */
+  tecnico: boolean
+  /** Signatário: autoriza (assina) os certificados quando a revisão por outra pessoa está ligada. */
   signatario: boolean
   /** Cargo ou função que sai no certificado (ex.: "Técnico em metrologia", "Responsável técnico"). */
   cargo: string
@@ -1000,7 +1053,7 @@ export interface Usuario {
 }
 
 /** Quem está usando este navegador. */
-export type UsuarioSessao = Pick<Usuario, 'id' | 'login' | 'nome' | 'nivel' | 'trocarSenha' | 'signatario'>
+export type UsuarioSessao = Pick<Usuario, 'id' | 'login' | 'nome' | 'nivel' | 'trocarSenha' | 'tecnico' | 'signatario'>
 
 /** GET /api/sessao */
 export interface EstadoSessao {
@@ -1031,6 +1084,7 @@ export interface NovoUsuario {
   login: string
   nivel: NivelUsuario
   senha: string
+  tecnico: boolean
   signatario: boolean
   cargo: string
   registro: string
@@ -1041,6 +1095,7 @@ export interface AlteracaoUsuario {
   login?: string
   nivel?: NivelUsuario
   ativo?: boolean
+  tecnico?: boolean
   signatario?: boolean
   cargo?: string
   registro?: string
@@ -1094,6 +1149,8 @@ export type AcaoAuditoria =
   | 'CERTIFICADO_EMITIDO'
   | 'CERTIFICADO_CANCELADO'
   | 'CERTIFICADO_ENVIADO'
+  | 'AUTORIZACAO_PEDIDA'
+  | 'AUTORIZACAO_DEVOLVIDA'
   | 'NUMERO_RESERVADO'
   | 'NUMERO_NAO_UTILIZADO'
   | 'ALTERACAO'

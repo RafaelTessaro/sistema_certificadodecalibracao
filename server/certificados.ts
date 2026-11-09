@@ -25,7 +25,7 @@ import {
   PENDENCIA_TECNICO_EXCLUIDO,
   pendenciasEmissao,
 } from '#shared/dominio.ts'
-import { impedimentoDoRevisor } from '#shared/permissoes.ts'
+import { impedimentoParaEmitir } from '#shared/permissoes.ts'
 import type {
   AnexoEmailDisponivel,
   ArquivoAnexo,
@@ -370,33 +370,36 @@ export const AVISO_PDF_NAO_GRAVADO =
  * Emite: confere, dá o número (o reservado na impressão da folha de campo, se houver; ver `Repositorio.emitir`),
  * congela os dados, gera e guarda o PDF. A emissão fica gravada antes do PDF (o nº já foi dado): se a gravação do PDF
  * falhar, ela não é desfeita nem repetida, e volta com `aviso`; o PDF é gerado e gravado ao abrir (`pdfEmitido`, sem
- * o hash registrado).
+ * o hash registrado). Quem emite fica registrado (`emissao.signatario`, `emitidoPor`); com a revisão por outra pessoa
+ * ligada, emitir é autorizar, e só quem pode (`impedimentoParaEmitir`: um signatário que não seja o técnico e, com o
+ * pedido de autorização, o escolhido) assina como "Autorizado por".
  */
 export async function emitirCertificado(
   ctx: Contexto,
   id: string,
   autor: { id: string; nome: string; signatario: boolean },
-  entrada: { signatarioId?: string; versao?: number },
+  entrada: { versao?: number },
 ): Promise<{ calibracao: Calibracao; aviso?: string }> {
   const config = ctx.repo.obterConfig()
   const atual = ctx.repo.obterCalibracao(id)
   if (!atual) throw new ErroApi(404, 'Calibração não encontrada.')
   if (atual.status !== 'RASCUNHO' && atual.status !== 'REVISAO') throw new ErroApi(409, 'Este certificado já foi emitido.')
-  // Quem emite é quem autoriza: precisa ser signatário
+  // Quem emite é quem fica registrado (e, com a revisão ligada, quem assina como "Autorizado por")
   const signatarioId = autor.id
-  if (!autor.signatario)
-    throw new ErroApi(403, 'Só um signatário autoriza a emissão do certificado. Envie para revisão de um signatário.', {
-      codigo: 'SEM_PERMISSAO',
-    })
-  // Nem o técnico, nem quem indicou o técnico (trocar o técnico para um colega não contorna a regra)
-  const impedimento = impedimentoDoRevisor(config.exigirRevisor, atual, signatarioId)
-  if (impedimento) throw new ErroApi(409, impedimento)
+  const impedimento = impedimentoParaEmitir(config.exigirRevisor, atual, autor)
+  if (impedimento) throw new ErroApi(autor.signatario ? 409 : 403, impedimento, autor.signatario ? {} : { codigo: 'SEM_PERMISSAO' })
   const pendencias = pendenciasDa(ctx, atual)
   if (pendencias.length) throw new ErroApi(409, pendencias[0], { pendencias })
 
   const emitida = ctx.repo.emitir(
     id,
-    (k, n) => montarEmissao(ctx, k, config, { numero: n.numero, codigo: n.codigo, emitidoPor: autor.nome, signatarioId }),
+    (k, n) => {
+      // De novo dentro da transação (o gravado ainda é o de antes da emissão): o pedido pode ter ido para outro signatário
+      const gravada = ctx.repo.obterCalibracao(id)
+      const agora = gravada && impedimentoParaEmitir(config.exigirRevisor, gravada, autor)
+      if (agora) throw new ErroApi(409, agora)
+      return montarEmissao(ctx, k, config, { numero: n.numero, codigo: n.codigo, emitidoPor: autor.nome, signatarioId })
+    },
     {
       versao: entrada.versao,
       numero: (seq, ano, revisao) => formatarNumeroCertificado(config.numeracao, seq, ano, revisao),
@@ -539,7 +542,8 @@ export async function previa(ctx: Contexto, k: Calibracao, config = ctx.repo.obt
     numero: provisorio.numero,
     codigo: 'XXXX-XXXX',
     emitidoPor: '',
-    signatarioId: k.signatarioId,
+    // Com o pedido de autorização, o signatário escolhido (a prévia não leva as imagens das assinaturas)
+    signatarioId: (k.status === 'REVISAO' && k.autorizacao?.signatarioId) || k.signatarioId,
   })
   return gerarPdf(provisorio, emissao, 'PRÉVIA — SEM VALOR', true)
 }

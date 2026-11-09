@@ -24,6 +24,8 @@ export async function rotasGeral(app: FastifyInstance, { repo, usuarios }: Conte
         id: u.id,
         nome: u.nome,
         cargo: u.cargo,
+        // Só os técnicos aparecem em "Técnico que executou"; só os signatários recebem o pedido de autorização
+        tecnico: u.tecnico,
         signatario: u.signatario,
         // A imagem da assinatura fica no servidor (o PDF a usa); a tela só precisa saber se existe
         temAssinatura: !!u.assinatura,
