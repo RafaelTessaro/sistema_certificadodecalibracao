@@ -34,14 +34,7 @@ import type { Contexto } from '../contexto.ts'
 import type { criarModuloEmail } from '../email.ts'
 import { conferirAnexos, destinatarios, LIMITES_EMAIL } from '../email.ts'
 import { ErroApi } from '../erros.ts'
-import {
-  comPecasDosPadroes,
-  naUnidadeAtual as naUnidadeAtualDe,
-  padroesDoHistorico,
-  planoConformeAoPop,
-  rascunhoInicial,
-  semLeituras,
-} from '../rascunhos.ts'
+import { naUnidadeAtual as naUnidadeAtualDe, padroesDoHistorico, planoDoHistorico, rascunhoInicial } from '../rascunhos.ts'
 import { registrarNumeros } from './numeros.ts'
 
 type ComId = FastifyRequest<{ Params: { id: string } }>
@@ -301,7 +294,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
 
   /**
    * Calibrar de novo a mesma balança: mesmos pontos e padrões, sem as leituras, com o método da excentricidade da
-   * classe e sem o modo de serviço (`planoConformeAoPop`); sem ajuste, reparo nem "como encontrado".
+   * classe e sem o modo de serviço (`planoDoHistorico`: sem a declaração de conformidade, sem as cargas em que o EMA
+   * muda); sem ajuste, reparo nem "como encontrado".
    */
   app.post('/api/calibracoes/:id/recalibrar', async (req: ComId, reply) => {
     const u = autor(req)
@@ -316,9 +310,11 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     // Os que continuam ativos, com o barômetro (a pressão é obrigatória em toda calibração, POP 7.5)
     const padroesIds = padroesDoHistorico(anterior.padroesIds, ativos)
     const entrada = naUnidadeAtual(anterior)
-    // Só com as peças dos padrões que continuam (o jogo desativado depois do certificado sai dos pontos)
-    const plano = comPecasDosPadroes(
-      planoConformeAoPop({ ...semLeituras(entrada), opcoes: entrada.opcoes }, balanca?.classe),
+    // Só com as peças dos padrões que continuam (o jogo desativado depois do certificado sai dos pontos) e, sem a
+    // declaração de conformidade, sem as cargas em que o EMA muda (POP 7.7)
+    const plano = planoDoHistorico(
+      entrada,
+      balanca,
       ativos.filter((p) => padroesIds.includes(p.id)),
     )
     const k = repo.criarCalibracao(

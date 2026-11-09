@@ -30,8 +30,9 @@ describe('planoDaFolha', () => {
     const p = plano(folhaPlataforma())
     expect(p.origem).toBe('RASCUNHO')
     expect(p.metodo).toBe('CRESCENTE_DECRESCENTE')
-    // Com Min (1 kg), marcada na plaqueta
-    expect(p.pontos.map((x) => x.carga)).toEqual([0, 1, 10, 50, 100, 150, 200, 300])
+    // Com Min (1 kg), marcada na plaqueta, e as cargas em que o EMA muda (25 e 100 kg: a conformidade foi pedida)
+    expect(p.pontos.map((x) => x.carga)).toEqual([0, 1, 10, 25, 100, 150, 200, 300])
+    expect(p.pontos.find((x) => x.carga === 25)?.pesos).toBe('20 kg + 5 kg')
     expect(p.pontos.find((x) => x.carga === 150)?.pesos).toBe('7 × 20 kg + 10 kg')
     expect(p.pontos.every((x) => x.falta === 0)).toBe(true)
     // Conformidade pedida: EMA da Portaria 157 em serviço (classe III, e = 50 g): 2e até 500e, 4e acima
@@ -40,12 +41,12 @@ describe('planoDaFolha', () => {
     expect(p.repetibilidade).toEqual([expect.objectContaining({ carga: 150, leituras: 5, minimo: 3 })])
     expect(p.excentricidade).toMatchObject({ aplicavel: true, carga: 100, metodo: 1, pesos: '5 × 20 kg' })
     expect(p.excentricidade.posicoes).toHaveLength(5)
-    // Peças a separar: a união das cargas (15 de 20 kg do PP20; 10 kg e 1 kg, de Min, do JP-01)
+    // Peças a separar: a união das cargas (15 de 20 kg do PP20; 10 kg, 5 kg, de 25 kg, e 1 kg, de Min, do JP-01)
     // E o barômetro da empresa, fora do rascunho (copiado do certificado de antes da 1.0.5, sem ele): a pressão é
     // obrigatória em toda classe (POP 7.5), e ele vai inteiro na lista
     expect(p.padroes.map((x) => [x.padrao.identificacao, x.separar, x.naFolha])).toEqual([
       ['PP20-01 a 15', '15 × 20 kg', true],
-      ['JP-01', '10 kg + 1 kg', true],
+      ['JP-01', '10 kg + 5 kg + 1 kg', true],
       ['TH-01', '', true],
       ['BR-01', '', true],
     ])
@@ -94,6 +95,13 @@ describe('planoDaFolha', () => {
     expect(planoDaFolha(comPontos, d.balanca!, d.padroes, '2026-10-22').pontos.map((x) => x.carga)).toEqual([
       0, 0.04, 8.25, 16.5, 25, 33,
     ])
+    // A folha avisa em "Resolva antes de sair" (o técnico com o papel na mão), como a Min fora das cargas
+    expect(planoDaFolha(comPontos, d.balanca!, d.padroes, '2026-10-22').avisos).toEqual([
+      'Declaração de conformidade pedida: as cargas em que o EMA muda (1 kg, 4 kg, 10 kg e 20 kg) não estão entre as do erro de indicação: inclua-as no sistema (POP 7.7).',
+    ])
+    expect(
+      planoDaFolha({ ...comPontos, conformidade: sem.calibracao.conformidade }, d.balanca!, d.padroes, '2026-10-22').avisos,
+    ).toEqual([])
     expect(avisoCargasDaConformidade(comPontos, d.balanca!)).toBe(
       'Declaração de conformidade pedida: o POP (7.7) pede também as cargas em que o EMA muda, e faltam 1 kg, 4 kg, 10 kg e 20 kg no erro de indicação.',
     )
@@ -109,6 +117,20 @@ describe('planoDaFolha', () => {
     expect(avisoCargasDaConformidade({ ...comPontos, indicacao: { ...comPontos.indicacao, pontos: semUma } }, d.balanca!)).toBe(
       'Declaração de conformidade pedida: o POP (7.7) pede também as cargas em que o EMA muda, e falta 20 kg no erro de indicação.',
     )
+  })
+
+  it('a folha da calibração com a folha impressa antes da 1.0.5: as cargas em que o EMA muda continuam, como no papel', () => {
+    const d = folhaMultiIntervalo()
+    const semPedido = { ...d.calibracao!, conformidade: { ...d.calibracao!.conformidade, solicitada: false } }
+    expect(planoDaFolha(semPedido, d.balanca!, d.padroes, '2026-10-22').pontos.map((x) => x.carga)).toEqual([
+      0, 0.04, 8.25, 16.5, 25, 33,
+    ])
+    const marcada = { ...semPedido, cargasDoEmaNaFolha: true }
+    const p = planoDaFolha(marcada, d.balanca!, d.padroes, '2026-10-22')
+    expect(p.pontos.map((x) => x.carga)).toEqual([0, 0.04, 1, 4, 8.25, 10, 16.5, 20, 25, 33])
+    // As mesmas cargas de "Sugerir pontos"
+    expect(p.pontos.map((x) => x.carga)).toEqual(pontosSugeridos(d.balanca!, d.padroes, true))
+    expect(p.avisos).toEqual([])
   })
 
   it('Min fora das cargas do rascunho: avisa para incluí-la', () => {

@@ -5,8 +5,10 @@
 // posições"): as linhas do papel batem com as da tela na hora de digitar. Puro (navegador e servidor).
 
 import {
+  avisoDaFolhaCargasDaConformidade,
   cargaDaEtapa,
   cargaDasPecas,
+  comCargasDoEma,
   descreverPecas,
   diferencaDoPonto,
   montarCarga,
@@ -86,6 +88,13 @@ export const FORMULARIO_FOLHA_CAMPO = {
   titulo: 'Folha de campo de calibração de balança',
   referencia: 'EURAMET cg-18 v4.0',
 } as const
+
+/**
+ * Nas palavras-chave do PDF de toda folha impressa desde a 1.0.5: as regras dela (a pressão obrigatória em toda classe;
+ * as cargas em que o EMA muda só com a declaração de conformidade). A folha que volta da pasta das folhas sem a marca
+ * foi impressa pela 1.0.4 ou antes (`antes_105`), qualquer que seja a data. Não mude: as folhas impressas a trazem.
+ */
+export const MARCA_FOLHA_REGRAS_105 = 'regras 1.0.5'
 
 /**
  * Referência do formulário no rodapé de toda página: o POP configurado (`textos.procedimento`, ex.:
@@ -343,8 +352,9 @@ export function planoDaFolha(
   const substituicaoAtiva = !!sub?.ativa
   const pontosBase = doRascunho
     ? ensaio!.pontos.map((p) => ({ carga: p.carga, pecas: p.pecasManuais ? p.pecas : undefined, nivel: p.nivelSubstituicao }))
-    : // Sem os pontos no rascunho, os sugeridos: as cargas em que o EMA muda só com a conformidade pedida (POP 7.7)
-      pontosSugeridos(balanca, pesos, !!conformidade).map((carga) => ({
+    : // Sem os pontos no rascunho, os sugeridos: as cargas em que o EMA muda só com a conformidade pedida (POP 7.7) ou
+      // com a folha da calibração impressa antes da 1.0.5, que as trazia (`comCargasDoEma`, como "Sugerir pontos")
+      pontosSugeridos(balanca, pesos, !!calibracao && comCargasDoEma(calibracao)).map((carga) => ({
         carga,
         pecas: undefined as PecaCarga[] | undefined,
         nivel: 0,
@@ -446,6 +456,9 @@ export function planoDaFolha(
   // Min marcada fica entre as cargas (as sugeridas já a têm); nas do rascunho, o aviso para incluí-la
   if (balanca.min > 0 && balanca.min < max && !pontos.some((p) => Math.abs(p.carga - balanca.min) <= TOL * max))
     avisos.push(`Min (${numeroBr(balanca.min)} ${u}) não está entre as cargas do erro de indicação: inclua-a no sistema.`)
+  // Conformidade pedida e os pontos do rascunho (copiados ou sugeridos antes do pedido) sem as cargas em que o EMA muda
+  const semCargasDoEma = calibracao && doRascunho ? avisoDaFolhaCargasDaConformidade(calibracao, balanca) : null
+  if (semCargasDoEma) avisos.push(semCargasDoEma)
 
   // ---- Repetibilidade (sugerida: um ensaio por intervalo ou faixa de d diferente; na classe I, 10 leituras)
   const minimoPara = (carga: number) =>

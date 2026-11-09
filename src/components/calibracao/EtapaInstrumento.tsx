@@ -22,9 +22,12 @@ import { Field, Input } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
 import type { ContextoEtapa } from './contexto'
 import { Info } from './EtapaIdentificacao'
+import { type MarcaCampo, marcasDaEtapa } from './obrigatorios'
 import { pedeAjusteInterno } from './util'
 
-export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: ContextoEtapa) {
+export function EtapaInstrumento(ctx: ContextoEtapa) {
+  const { f, alterar, balanca, editarBalanca } = ctx
+  const { marca } = marcasDaEtapa(ctx)
   // Ajuste externo, "como encontrado", reparo e verificação preliminar "não": só nos registros de antes do POP
   const anterior = registroAnterior(f)
   const ajusteAnterior = !!anterior && (anterior.ajusteExterno || anterior.comoEncontrado)
@@ -116,7 +119,7 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
               )}
               {f.ajuste.realizado === 'INTERNO' && (
                 <>
-                  <Field label="Observação (opcional)" htmlFor="k-ajuste" hint="Sai no certificado, entre parênteses.">
+                  <Field label="Observação" htmlFor="k-ajuste" hint="Sai no certificado, entre parênteses." opcional>
                     <Input
                       id="k-ajuste"
                       value={f.ajuste.descricao}
@@ -135,7 +138,7 @@ export function EtapaInstrumento({ f, alterar, balanca, editarBalanca }: Context
         </div>
       </Card>
 
-      {anterior && <RegistroDeAntes f={f} alterar={alterar} />}
+      {anterior && <RegistroDeAntes f={f} alterar={alterar} marcaAjuste={marca('ajusteDescricao')} />}
     </div>
   )
 }
@@ -149,7 +152,14 @@ const rotuloAjuste = (a: CalibracaoInput['ajuste']['realizado']) =>
  * preliminar com item "não" ficam só para conferência e saem no certificado como antes. "Tirar do registro" deixa
  * a calibração como uma nova (`semRegistroAnterior`).
  */
-export function RegistroDeAntes({ f, alterar }: Pick<ContextoEtapa, 'f' | 'alterar'>) {
+export function RegistroDeAntes({
+  f,
+  alterar,
+  marcaAjuste,
+}: Pick<ContextoEtapa, 'f' | 'alterar'> & {
+  /** A marca do texto do ajuste externo (obrigatório para emitir). */
+  marcaAjuste?: MarcaCampo
+}) {
   const r = registroAnterior(f)
   if (!r) return null
   const pontos = f.comoEncontrado?.pontos.filter((p) => p.crescente !== null || p.decrescente !== null).length ?? 0
@@ -176,7 +186,7 @@ export function RegistroDeAntes({ f, alterar }: Pick<ContextoEtapa, 'f' | 'alter
           <li className="flex flex-col gap-2 px-5 py-3">
             <ItemAnterior rotulo="Ajuste">{AJUSTES.EXTERNO}</ItemAnterior>
             {/* O texto do ajuste externo é pedido para emitir: continua editável */}
-            <Field label="Como foi o ajuste" htmlFor="k-ajuste-anterior">
+            <Field label="Como foi o ajuste" htmlFor="k-ajuste-anterior" {...marcaAjuste}>
               <Input
                 id="k-ajuste-anterior"
                 value={f.ajuste.descricao}

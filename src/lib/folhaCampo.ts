@@ -41,3 +41,37 @@ export const textoReimprimir = (f: { numero: string; impressaEm: string }) =>
   `Reimprimir a folha ${f.numero} (igual à impressa em ${dataDaFolha(f.impressaEm)})`
 
 export const TEXTO_FOLHA_NOVA = 'Imprimir folha nova com os dados atuais'
+
+/** "OS 2026/0777": a OS com "OS" na frente quando não o tem ('' sem OS). */
+export const textoOs = (os: string) => {
+  const t = os.trim()
+  return t && (/^OS\b/i.test(t) ? t : `OS ${t}`)
+}
+
+/**
+ * Ao ligar a folha do cliente impressa com OS: a OS passou para a calibração (`aplicada`) ou a folha saiu com outra e
+ * ficou a da calibração (`diferente`). O "OS" na frente uma vez só, mesmo quando a pessoa já o escreveu.
+ */
+export function textosOsDaFolha(os: { daFolha: string; aplicada: boolean; daCalibracao?: string } | null | undefined): {
+  aplicada?: string
+  diferente?: string
+} {
+  if (!os) return {}
+  if (os.aplicada) return { aplicada: `A ${textoOs(os.daFolha)}, impressa na folha, passou para esta calibração.` }
+  return {
+    diferente: `A folha saiu com a ${textoOs(os.daFolha)}; esta calibração ficou com a ${textoOs(os.daCalibracao ?? '')}.`,
+  }
+}
+
+/**
+ * Ao ligar uma folha impressa antes da 1.0.5 (a pressão era opcional nela) a uma calibração ainda sem a pressão: o
+ * barômetro que o rascunho já trazia saiu dos padrões, e a falta da pressão ficou só como aviso.
+ */
+export function textoBarometrosRetirados(identificacoes: string[]): { titulo: string; texto: string } {
+  const varios = identificacoes.length > 1
+  const lista = varios ? `${identificacoes.slice(0, -1).join(', ')} e ${identificacoes.at(-1)}` : (identificacoes[0] ?? '')
+  return {
+    titulo: varios ? 'Os barômetros saíram dos padrões' : 'O barômetro saiu dos padrões',
+    texto: `A folha foi impressa antes da versão 1.0.5, quando a pressão era opcional: ${varios ? 'os' : 'o'} ${lista} ${varios ? 'saíram' : 'saiu'} dos padrões, e a falta da pressão fica só como aviso. Se a pressão foi medida, registre-a e escolha o barômetro de novo em Padrões e ambiente.`,
+  }
+}

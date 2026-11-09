@@ -18,14 +18,20 @@ import type { MetodoExcentricidade, Receptor } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
-import { Field, Input, Select } from '../ui/Form'
+import { Field, Input, MarcaObrigatorio, Select, TEXTO_PENDENTE } from '../ui/Form'
 import { useSessao } from '../../store/sessao'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
+import { marcasDaEtapa } from './obrigatorios'
 import { Resultado } from './EtapaRepetibilidade'
 import { casasDe, dicaDoMetodoExcentricidade, maxDe } from './util'
 
-export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa) {
+export function EtapaExcentricidade(ctx: ContextoEtapa) {
+  const { f, alterar, balanca, calc } = ctx
+  // Obrigatórios para emitir: as leituras das posições ou, dispensado o ensaio, o motivo (sai no certificado)
+  const { marca } = marcasDaEtapa(ctx)
+  const mMotivo = marca('excentricidadeMotivo')
+  const mLeituras = marca('excentricidadeLeituras')
   const admin = useSessao((x) => x.usuario?.nivel === 'ADMIN')
   const ecc = f.excentricidade
   const u = balanca.unidade
@@ -70,11 +76,10 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
   // de um certificado de antes das regras, e a calibração já medida antes delas, ficam como na época
   const podeDispensar = balanca.receptor === 'GANCHO' || minimosDoPopComoAviso(f)
   const mostrarRealizado = podeDispensar || !ecc.aplicavel
-  const semMotivo = !ecc.aplicavel && !ecc.motivo.trim()
 
   return (
     <div className="flex flex-col gap-6">
-      <Card>
+      <Card id="k-excentricidade">
         <CardHeader
           icone={<Crosshair className="h-4 w-4" />}
           titulo="Excentricidade"
@@ -101,20 +106,13 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
                 leituras das posições.
               </p>
             )}
-            <Field
-              label="Por que o ensaio não foi feito"
-              htmlFor="ecc-motivo"
-              hint="Obrigatório. Sai no certificado."
-              erro={semMotivo ? 'Informe o motivo.' : undefined}
-            >
+            <Field label="Por que o ensaio não foi feito" htmlFor="ecc-motivo" hint="Sai no certificado." {...mMotivo}>
               <Input
                 id="ecc-motivo"
                 value={ecc.motivo}
                 onChange={(e) => set((x) => ({ ...x, motivo: e.target.value }))}
                 placeholder="Ex.: balança suspensa, a carga se centraliza sozinha"
                 maxLength={LIMITES.motivoExcentricidade}
-                aria-invalid={semMotivo ? true : undefined}
-                className={cn(semMotivo && 'border-danger!')}
               />
             </Field>
           </div>
@@ -184,7 +182,12 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
       {ecc.aplicavel && (
         <Card>
           <CardHeader
-            titulo="Leituras por posição"
+            titulo={
+              <span className="inline-flex items-center gap-1.5">
+                Leituras por posição
+                {mLeituras.obrigatorio && <MarcaObrigatorio />}
+              </span>
+            }
             descricao={
               usaReferencia
                 ? ecc.metodo === 3
@@ -200,6 +203,11 @@ export function EtapaExcentricidade({ f, alterar, balanca, calc }: ContextoEtapa
               )
             }
           />
+          {mLeituras.pendente && (
+            <p className="-mt-1 px-5 pb-3 text-xs font-medium text-warning">
+              {TEXTO_PENDENTE}: registre a indicação em cada posição.
+            </p>
+          )}
           {ecc.posicoes.length === 0 ? (
             <div className="flex flex-col items-center gap-3 px-6 pb-8 text-center">
               <p className="text-sm text-muted">Prepare as posições conforme o formato do prato/plataforma.</p>

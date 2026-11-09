@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { create } from 'zustand'
-import { formatarDataBr, STATUS_CALIBRACAO } from '#shared/dominio.ts'
+import { formatarDataBr, rotuloDaSituacao } from '#shared/dominio.ts'
 import type { BalancaResumo, CalibracaoResumo, ClienteResumo } from '#shared/tipos.ts'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
@@ -188,7 +188,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
         detalhe: [
           k.clienteNome,
           k.balancaDescricao,
-          STATUS_CALIBRACAO[k.status].label,
+          rotuloDaSituacao(k.status, k.semAutorizacao),
           formatarDataBr(k.dataEmissao || k.dataCalibracao),
         ]
           .filter(Boolean)

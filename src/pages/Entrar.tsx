@@ -253,7 +253,7 @@ function CriarAdministrador() {
       <Titulo
         icone={<BadgeCheck className="h-5 w-5" />}
         titulo="Bem-vindo ao BC Calibração"
-        texto="Este é o primeiro acesso. Crie a conta do administrador, que também assina os certificados."
+        texto="Este é o primeiro acesso. Crie a conta do administrador."
       />
       {/* Enter e Tab seguem a mesma ordem: nome → usuário → cargo → nova senha → repetição → botão */}
       <form onSubmit={enviar} onKeyDown={enterVaiParaOProximo} className="flex flex-col gap-4" noValidate>
@@ -261,7 +261,7 @@ function CriarAdministrador() {
           label="Seu nome completo"
           htmlFor="pa-nome"
           erro={tentou ? erroNome : null}
-          hint="Sai nos certificados que você autorizar."
+          hint="Sai nos certificados das calibrações que você executar ou autorizar."
         >
           <Input
             id="pa-nome"

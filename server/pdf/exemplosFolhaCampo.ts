@@ -24,6 +24,7 @@
 // nº do certificado reservado na impressão, como no sistema: as com balança, o da calibração; as em branco
 // (folha avulsa), um nº da folha, que passa para a calibração a que ela for ligada.
 
+import { pontosEmOrdemDeCarga } from '#shared/calibracao.ts'
 import { calibracaoVazia, EMPRESA_PADRAO, padroesSemHistorico } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
 import {
@@ -60,6 +61,21 @@ function entrada(k: Calibracao): CalibracaoInput {
  * Rascunho como o POST /api/calibracoes cria a partir do último certificado da balança: mesmos pontos,
  * pesos, posições, padrões, opções e conformidade, sem as leituras; o resto volta ao padrão.
  */
+/** O rascunho com o ponto de `de` trocado por um de `para` (com os pesos automáticos), no lugar dele na ordem das cargas. */
+function trocarCarga(k: CalibracaoInput, de: number, para: number): CalibracaoInput {
+  const ponto = {
+    id: `p${para}`,
+    carga: para,
+    pecas: [],
+    pecasManuais: false,
+    crescente: null,
+    decrescente: null,
+    nivelSubstituicao: 0,
+  }
+  const pontos = k.indicacao.pontos.filter((p) => p.carga !== de)
+  return { ...k, indicacao: { ...k.indicacao, pontos: pontosEmOrdemDeCarga([...pontos, ponto]) } }
+}
+
 function rascunhoDe(ultima: Calibracao, extra: Partial<CalibracaoInput>): CalibracaoInput {
   const k = entrada(ultima)
   const base = calibracaoVazia(k.opcoes)
@@ -102,12 +118,18 @@ export function folhaPlataforma(): DadosFolhaCampo {
     empresa: EMPRESA_PADRAO,
     cliente: d.emissao.cliente,
     balanca: d.emissao.balanca,
-    calibracao: rascunhoDe(d.calibracao, {
-      ordemServico: 'OS-2026-0512',
-      dataCalibracao: '2026-10-21',
-      proximaCalibracao: proxima,
-      anotacoesInternas: 'Procurar a Juliana na portaria 2; acesso à doca só com botina.',
-    }),
+    calibracao: trocarCarga(
+      rascunhoDe(d.calibracao, {
+        ordemServico: 'OS-2026-0512',
+        dataCalibracao: '2026-10-21',
+        proximaCalibracao: proxima,
+        anotacoesInternas: 'Procurar a Juliana na portaria 2; acesso à doca só com botina.',
+      }),
+      // Com a declaração de conformidade pedida, as cargas em que o EMA muda (POP 7.7 e Tabela 2): 500e = 25 kg no lugar
+      // de 50 kg (a de 2000e, 100 kg, já estava), com as mesmas linhas no passo 5
+      50,
+      25,
+    ),
     // Os do certificado anterior e o barômetro da empresa: a pressão é obrigatória em toda classe (1.0.5; o certificado
     // anterior saiu sem ela), e a folha o lista para levar
     padroes: [...d.emissao.padroes, ...exemploRodoviaria().emissao.padroes.filter((p) => p.tipo === 'BAROMETRO')],

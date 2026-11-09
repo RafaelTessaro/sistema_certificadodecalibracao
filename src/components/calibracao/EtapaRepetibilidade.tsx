@@ -4,12 +4,16 @@ import { formatarNumero, leituraImplausivel, repetibilidadesSugeridas } from '#s
 import type { EnsaioRepetibilidade } from '#shared/tipos.ts'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
-import { Field } from '../ui/Form'
+import { Field, TEXTO_PENDENTE } from '../ui/Form'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
+import { marcasDaEtapa } from './obrigatorios'
 import { casasDe, dicaRepetibilidade, gradeRepetibilidade, proximosEnsaiosRepetibilidade } from './util'
 
-export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa) {
+export function EtapaRepetibilidade(ctx: ContextoEtapa) {
+  const { f, alterar, balanca, calc } = ctx
+  // O ensaio é obrigatório para emitir (POP 7.9): a carga e as leituras
+  const m = marcasDaEtapa(ctx).marca('repetibilidade')
   const u = balanca.unidade
   const casas = casasDe(balanca)
   const resultados = new Map((calc?.resultado.repetibilidade ?? []).map((r) => [r.id, r]))
@@ -28,7 +32,7 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
 
   return (
     <div className="flex flex-col gap-6">
-      <Card>
+      <Card id="k-repetibilidade">
         <CardHeader
           icone={<Repeat className="h-4 w-4" />}
           titulo="Repetibilidade"
@@ -52,6 +56,7 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
       {f.repetibilidade.length === 0 && (
         <Card className="flex flex-col items-center gap-3 px-6 py-10 text-center">
           <p className="text-sm text-muted">Nenhum ensaio de repetibilidade ainda.</p>
+          {m.pendente && <p className="-mt-1 text-xs font-medium text-warning">{TEXTO_PENDENTE}</p>}
           <Button variante="primary" icone={<Wand2 className="h-4 w-4" />} onClick={novo}>
             Começar com a carga sugerida
           </Button>
@@ -87,6 +92,7 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
                 label="Carga aplicada"
                 htmlFor={`rep-c-${ens.id}`}
                 erro={semCarga ? 'Informe a carga do ensaio.' : undefined}
+                obrigatorio={m.obrigatorio}
               >
                 <CampoNumero
                   id={`rep-c-${ens.id}`}
@@ -97,7 +103,13 @@ export function EtapaRepetibilidade({ f, alterar, balanca, calc }: ContextoEtapa
                 />
               </Field>
               <div>
-                <Field label="Indicações" htmlFor={`rep-${ens.id}-1`}>
+                <Field
+                  label="Indicações"
+                  htmlFor={`rep-${ens.id}-1`}
+                  obrigatorio={m.obrigatorio}
+                  pendente={m.pendente}
+                  aoSair={m.aoSair}
+                >
                   {/* Quantas colunas couberem, cada uma larga o bastante para "160,05 kg" */}
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-2">
                     {ens.leituras.map((v, i) => (

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MembroEquipe } from '../../lib/api'
-import { dicaDoTecnico, estadoDaEmissao } from './equipe'
+import { cabecalhoDaRevisao, dicaDoTecnico, estadoDaEmissao } from './equipe'
 
 const membro = (id: string, tecnico: boolean, signatario: boolean, cargo = ''): MembroEquipe => ({
   id,
@@ -64,5 +64,30 @@ describe('o que a emissão oferece', () => {
     expect(estadoDaEmissao(true, enviada, eu(FABIO), EQUIPE)).toMatchObject({ modo: 'autorizar', podeDevolver: true })
     for (const m of [RAFAEL, LIZI, MAURICIO])
       expect(estadoDaEmissao(true, enviada, eu(m), EQUIPE)).toMatchObject({ modo: 'aguardando', podeDevolver: false })
+  })
+})
+
+describe('o alto de "Revisão e emissão"', () => {
+  const base = { pronto: true, autorizaVoce: false, aguardandoDe: null, irParaItens: false }
+  it('cada modo diz o que quem está usando faz', () => {
+    expect(cabecalhoDaRevisao({ ...base, modo: 'emitir' }).titulo).toBe('Tudo pronto para emitir')
+    expect(cabecalhoDaRevisao({ ...base, modo: 'escolher' }).titulo).toBe('Tudo pronto para enviar para autorização')
+    expect(cabecalhoDaRevisao({ ...base, modo: 'escolher', autorizaVoce: true }).titulo).toBe(
+      'Tudo pronto para autorizar e emitir',
+    )
+    expect(cabecalhoDaRevisao({ ...base, modo: 'autorizar' }).titulo).toBe('Tudo pronto para autorizar e emitir')
+    expect(cabecalhoDaRevisao({ ...base, modo: 'aguardando', aguardandoDe: 'Rafael' })).toEqual({
+      titulo: 'Aguardando autorização de Rafael',
+      descricao: 'O certificado é emitido quando Rafael autorizar. Até lá, dá para ver a prévia.',
+      aguardando: true,
+    })
+    // Sem o nome (não deveria acontecer): genérico
+    expect(cabecalhoDaRevisao({ ...base, modo: 'aguardando' }).titulo).toBe('Aguardando autorização')
+  })
+
+  it('com pendências: o que falta para a ação de quem está usando, e o convite a clicar', () => {
+    expect(cabecalhoDaRevisao({ ...base, pronto: false, modo: 'escolher', irParaItens: true }).descricao).toBe(
+      'Resolva os itens abaixo para poder enviar para autorização. Clique num item para ir até ele.',
+    )
   })
 })

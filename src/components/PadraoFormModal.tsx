@@ -20,6 +20,7 @@ import {
 } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
 import { linhaTabelaE1 } from '#shared/metrologia/index.ts'
+import { obrigatoriosPadrao, PADRAO_PARA_EMITIR } from '#shared/obrigatorios.ts'
 import type { ClassePeso, Padrao, PadraoInput, PesoPadrao, TipoPadrao, UsoPesos } from '#shared/tipos.ts'
 import { api, ErroApi } from '../lib/api'
 import { cn } from '../lib/cn'
@@ -41,7 +42,7 @@ import {
 import { ValidadePadraoBadge } from './Selos'
 import { Button } from './ui/Button'
 import { confirmar } from './ui/Feedback'
-import { Field, Input, Select, Textarea } from './ui/Form'
+import { Field, Input, LegendaObrigatorio, MarcaObrigatorio, Select, Textarea } from './ui/Form'
 import { Segmented } from './ui/Misc'
 import { Modal } from './ui/Modal'
 
@@ -243,6 +244,9 @@ function comMarcas(existentes: PesoTexto[], novas: number[]): { existentes: Peso
 
 // ---- Modal --------------------------------------------------------------------------------
 
+/** Do certificado do padrão, o que a emissão pede (a marca "○": não impede salvar, impede usar o padrão num certificado). */
+const paraEmitir = (campo: string) => (PADRAO_PARA_EMITIR as readonly string[]).includes(campo)
+
 export function PadraoFormModal({
   aberto,
   aoFechar,
@@ -430,7 +434,8 @@ function FormularioPadrao({
 
   return (
     <form id="form-padrao" ref={formRef} onSubmit={salvar} className="flex flex-col gap-7 pb-1" noValidate>
-      <Field label="Tipo de padrão">
+      {/* ● para salvar; ○ para usar o padrão na emissão (as pendências do certificado do padrão) */}
+      <Field label="Tipo de padrão" extra={<LegendaObrigatorio para="salvar" vazada />}>
         <Segmented
           valor={f.tipo}
           aoMudar={(t) => set('tipo', t)}
@@ -453,6 +458,7 @@ function FormularioPadrao({
           label="Identificação"
           htmlFor={`${ids}-ident`}
           className="sm:col-span-2"
+          obrigatorio={obrigatoriosPadrao(f).includes('identificacao')}
           erro={tentou || erroIdentServidor ? erroIdent : null}
           hint="Código único, usado para escolher o padrão na calibração."
         >
@@ -518,7 +524,14 @@ function FormularioPadrao({
 
       {/* ---- Certificado do padrão ---- */}
       <SecaoFormulario titulo="Certificado de calibração do padrão">
-        <Field label="Nº do certificado" htmlFor={`${ids}-cert`} className="sm:col-span-2" hint="Sai no certificado da balança.">
+        <Field
+          label="Nº do certificado"
+          htmlFor={`${ids}-cert`}
+          className="sm:col-span-2"
+          hint="Sai no certificado da balança."
+          obrigatorio={paraEmitir('certificado')}
+          vazada
+        >
           <Input
             id={`${ids}-cert`}
             className="tnum"
@@ -537,7 +550,14 @@ function FormularioPadrao({
             placeholder="Quem calibrou o padrão"
           />
         </Field>
-        <Field label="Acreditação" htmlFor={`${ids}-acred`} className="sm:col-span-2" hint="Nº do laboratório na Cgcre (RBC).">
+        <Field
+          label="Acreditação"
+          htmlFor={`${ids}-acred`}
+          className="sm:col-span-2"
+          hint="Nº do laboratório na Cgcre (RBC)."
+          obrigatorio={paraEmitir('acreditacao')}
+          vazada
+        >
           <Input
             id={`${ids}-acred`}
             className="tnum"
@@ -560,6 +580,8 @@ function FormularioPadrao({
           label="Próxima calibração"
           htmlFor={`${ids}-validade`}
           className="sm:col-span-3"
+          obrigatorio={paraEmitir('validade')}
+          vazada
           extra={
             dataCalOk && (
               <span className="flex gap-1">
@@ -950,6 +972,7 @@ function TabelaPecas({
   return (
     <SecaoFormulario
       titulo="Peças do jogo"
+      obrigatorio={obrigatoriosPadrao({ tipo: 'PESOS' }).includes('pesos')}
       extra={
         pesos.length > 0 && (
           <span className="tnum text-[13px] font-medium whitespace-nowrap text-ink-2">
@@ -973,7 +996,10 @@ function TabelaPecas({
               )}
             >
               <span>Marca</span>
-              <span>Nominal</span>
+              <span className="inline-flex items-center gap-1.5">
+                Nominal
+                <MarcaObrigatorio />
+              </span>
               <span className="text-right" title="Valor do certificado menos o nominal">
                 Correção (mg)
               </span>

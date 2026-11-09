@@ -1,7 +1,7 @@
 import { Dices, KeyRound } from 'lucide-react'
 import { SENHA_MIN } from '#shared/usuarios.ts'
 import { CampoSenha } from '../sessao/CampoSenha'
-import { Field } from '../ui/Form'
+import { Field, MarcaObrigatorio } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
 
 export type ModoSenha = 'gerar' | 'digitar'
@@ -29,7 +29,11 @@ export function SenhaInicial({
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[13px] font-medium text-ink-2">{rotulo}</span>
+        {/* Digitada, a senha é obrigatória para salvar; gerada, o sistema cria */}
+        <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ink-2">
+          {rotulo}
+          {modo === 'digitar' && <MarcaObrigatorio />}
+        </span>
         <Segmented
           tamanho="sm"
           valor={modo}

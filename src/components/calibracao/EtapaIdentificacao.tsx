@@ -12,12 +12,17 @@ import { Field, Input, Select, Textarea } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
 import type { ContextoEtapa } from './contexto'
 import { dicaDoTecnico } from './equipe'
+import { marcasDaEtapa } from './obrigatorios'
 import { proximaAcompanhando } from './util'
 
-export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaCampo, vincularFolha, novaFolha }: ContextoEtapa) {
+export function EtapaIdentificacao(ctx: ContextoEtapa) {
+  const { f, alterar, cliente, equipe, config, folhaCampo, vincularFolha, novaFolha } = ctx
+  // Os obrigatórios para emitir (a OS só com reparo, o endereço só nas instalações do cliente)
+  const { marca, regraDe } = marcasDaEtapa(ctx)
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => alterar((s) => ({ ...s, [k]: v }))
-  // Só quem tem a marca de técnico; o desta calibração continua na lista mesmo sem a marca hoje
-  const tecnicos = tecnicosParaEscolher(equipe, f.tecnicoId)
+  // Só quem tem a marca de técnico; o desta calibração continua na lista mesmo sem a marca hoje. Aguardando a
+  // autorização, sem quem recebeu o pedido (o técnico nunca autoriza o próprio certificado)
+  const tecnicos = tecnicosParaEscolher(equipe, f.tecnicoId, { status: ctx.status, autorizacao: ctx.autorizacao ?? null })
   const mudarLocal = (local: LocalCalibracao) =>
     alterar((s) => ({
       ...s,
@@ -66,6 +71,8 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
             htmlFor="k-os"
             className="sm:col-span-2"
             hint="O número da OS no sistema de ordens de serviço da empresa."
+            opcional={!regraDe('ordemServico')}
+            {...marca('ordemServico')}
           >
             <Input
               id="k-os"
@@ -74,7 +81,7 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
               placeholder="Ex.: 12345"
             />
           </Field>
-          <Field label="Data da calibração" htmlFor="k-data" className="sm:col-span-2">
+          <Field label="Data da calibração" htmlFor="k-data" className="sm:col-span-2" {...marca('dataCalibracao')}>
             <Input
               id="k-data"
               type="date"
@@ -91,7 +98,13 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
             />
           </Field>
           {/* Só o nome na lista (cabe na coluna); o cargo de quem foi escolhido aparece embaixo */}
-          <Field label="Técnico que executou" htmlFor="k-tec" className="sm:col-span-2" hint={dicaDoTecnico(equipe, f.tecnicoId)}>
+          <Field
+            label="Técnico que executou"
+            htmlFor="k-tec"
+            className="sm:col-span-2"
+            hint={dicaDoTecnico(equipe, f.tecnicoId)}
+            {...marca('tecnicoId')}
+          >
             <Select id="k-tec" value={f.tecnicoId} onChange={(e) => set('tecnicoId', e.target.value)}>
               <option value="">Escolha…</option>
               {tecnicos.map((u) => (
@@ -123,6 +136,7 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
             htmlFor="k-end"
             className={f.local === 'LABORATORIO' ? 'sm:col-span-4' : 'sm:col-span-6'}
             hint="Sai no certificado como local de execução."
+            {...marca('localEndereco')}
           >
             <div className="relative">
               <MapPin className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted" />
@@ -130,7 +144,13 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
             </div>
           </Field>
           {f.local === 'LABORATORIO' && (
-            <Field label="Data de recebimento" htmlFor="k-receb" className="sm:col-span-2" hint="Quando a balança chegou.">
+            <Field
+              label="Data de recebimento"
+              htmlFor="k-receb"
+              className="sm:col-span-2"
+              hint="Quando a balança chegou."
+              opcional
+            >
               <Input
                 id="k-receb"
                 type="date"
@@ -146,6 +166,7 @@ export function EtapaIdentificacao({ f, alterar, cliente, equipe, config, folhaC
             htmlFor="k-notas"
             className="sm:col-span-6"
             hint="Ficam só no sistema (não saem no certificado)."
+            opcional
           >
             <Textarea
               id="k-notas"
@@ -196,6 +217,7 @@ function CampoFolhaCampo({
       label="Folha de campo nº"
       htmlFor="k-folha"
       className="sm:col-span-6"
+      opcional
       hint={
         !folha && revisao
           ? 'O certificado corrigido foi feito sem folha de campo impressa pelo sistema: a correção é da mesma visita, sem folha para imprimir. Se houve nova visita com uma folha avulsa, informe o nº do alto dela.'

@@ -34,12 +34,62 @@ function dicaSeCortado(e: MouseEvent<HTMLElement>) {
 }
 
 /**
+ * A marca de campo obrigatório: o "●" da folha de campo, na cor da marca, com o texto para o leitor de tela. `vazada`
+ * (○): o que o cadastro não pede para salvar, mas a emissão pede (ex.: o nº do certificado do padrão).
+ */
+export function MarcaObrigatorio({ vazada, className }: { vazada?: boolean; className?: string }) {
+  return (
+    <span className={cn('inline-flex shrink-0 items-center', className)}>
+      <span
+        aria-hidden
+        className={cn('block h-[6px] w-[6px] rounded-full', vazada ? 'border-[1.5px] border-brand' : 'bg-brand')}
+      />
+      <span className="sr-only">{vazada ? ' (obrigatório para emitir)' : ' (obrigatório)'}</span>
+    </span>
+  )
+}
+
+/**
+ * A legenda de uma linha do alto do formulário ou da etapa: "● obrigatório para salvar" (cadastros) ou "● obrigatório
+ * para emitir" (etapas da calibração). `vazada`: também a "○ obrigatório para emitir" do cadastro.
+ */
+export function LegendaObrigatorio({
+  para,
+  vazada,
+  className,
+}: {
+  para: 'salvar' | 'emitir' | 'começar'
+  vazada?: boolean
+  className?: string
+}) {
+  return (
+    <p aria-hidden className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted', className)}>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+        <MarcaObrigatorio /> obrigatório para {para}
+      </span>
+      {vazada && (
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+          <MarcaObrigatorio vazada /> obrigatório para emitir
+        </span>
+      )}
+    </p>
+  )
+}
+
+/** O texto curto do campo obrigatório para emitir ainda em branco (as etapas da calibração). */
+export const TEXTO_PENDENTE = 'Obrigatório para emitir'
+
+/**
  * Campo de formulário: rótulo, controle e dica (ou erro) embaixo.
  *
  * O rótulo ocupa sempre uma linha de altura fixa, tenha ou não `extra` ao lado: em qualquer linha de campos
  * lado a lado (grade ou flex), os controles começam na mesma altura. O rótulo nunca quebra em duas linhas;
  * se não couber, corta com "…" e mostra o texto inteiro ao passar o mouse. Por isso o rótulo deve ser curto
  * (o detalhe vai na dica) e a coluna, larga o bastante para ele.
+ *
+ * `obrigatorio`: a marca "●" ao lado do rótulo (`vazada`: "○", obrigatório só para emitir); `opcional`: "opcional" ao
+ * lado. `pendente`: o campo obrigatório ainda em branco depois de a pessoa passar por ele, com a borda em destaque e o
+ * texto curto no lugar da dica (`TEXTO_PENDENTE`, ou o texto dado). `aoSair`: quando o foco sai do campo.
  */
 export function Field({
   label,
@@ -49,6 +99,11 @@ export function Field({
   className,
   htmlFor,
   extra,
+  obrigatorio,
+  vazada,
+  opcional,
+  pendente,
+  aoSair,
 }: {
   label?: ReactNode
   hint?: ReactNode
@@ -57,18 +112,27 @@ export function Field({
   className?: string
   htmlFor?: string
   extra?: ReactNode
+  obrigatorio?: boolean
+  vazada?: boolean
+  opcional?: boolean
+  pendente?: boolean | string
+  aoSair?: () => void
 }) {
   return (
-    <div className={cn('flex min-w-0 flex-col gap-1.5', className)}>
+    <div
+      className={cn('flex min-w-0 flex-col gap-1.5', className)}
+      data-pendente={pendente && !erro ? '' : undefined}
+      onBlur={aoSair}
+    >
       {(label || extra) && (
         <div className="flex h-5 min-w-0 items-center justify-between gap-2">
           {label && (
-            <label
-              htmlFor={htmlFor}
-              onMouseEnter={dicaSeCortado}
-              className="min-w-0 truncate text-[13px] leading-5 font-medium text-ink-2"
-            >
-              {label}
+            <label htmlFor={htmlFor} className="flex min-w-0 items-center gap-1.5 text-[13px] leading-5 font-medium text-ink-2">
+              <span onMouseEnter={dicaSeCortado} className="min-w-0 truncate">
+                {label}
+              </span>
+              {obrigatorio && <MarcaObrigatorio vazada={vazada} />}
+              {opcional && !obrigatorio && <span className="shrink-0 text-xs font-normal text-muted">opcional</span>}
             </label>
           )}
           {extra && <div className="flex shrink-0 items-center">{extra}</div>}
@@ -77,6 +141,8 @@ export function Field({
       {children}
       {erro ? (
         <p className="text-xs font-medium text-danger">{erro}</p>
+      ) : pendente ? (
+        <p className="text-xs font-medium text-warning">{typeof pendente === 'string' ? pendente : TEXTO_PENDENTE}</p>
       ) : hint ? (
         <p className="text-xs text-muted">{hint}</p>
       ) : null}

@@ -5,6 +5,7 @@ import {
   cargasDeMudancaDoEmaQueFaltam,
   excentricidadeAbaixoDoMinimo,
   faixasSemRepetibilidade,
+  folhaDeAntesComCargasDoEma,
   minimoExcentricidade,
   ondeFaltaRepetibilidade,
   posicoesExcentricidade,
@@ -121,6 +122,18 @@ describe('sugerirPontos', () => {
     // A menos de meio e conta como ela (4,001 kg com e = 2 g); 9,99 kg, não (e = 5 g)
     expect(cargasDeMudancaDoEmaQueFaltam(prix, [0, 1, 4.001, 9.99, 20, 32])).toEqual([10])
     expect(cargasDeMudancaDoEmaQueFaltam({ ...prix, classe: '' }, [0, 32])).toEqual([])
+  })
+
+  it('a folha impressa antes da 1.0.5 trazia as cargas em que o EMA muda? Só se afirma o que os pontos não desmentem', () => {
+    const b = { classe: 'III' as const, tipoFaixas: 'UNICA' as const, faixas: [{ max: 30, e: 0.01, d: 0.01 }] }
+    // Sem pontos, a folha da 1.0.4 saiu com as sugestões (com 5 e 20 kg); com todas elas entre os pontos, também
+    expect(folhaDeAntesComCargasDoEma(b, [])).toBe(true)
+    expect(folhaDeAntesComCargasDoEma(b, [0, 5, 7.5, 15, 20, 22.5, 30])).toBe(true)
+    // A folha do rascunho com pontos saía com os pontos dele: sem 5 e 20 kg, elas não estavam no papel
+    expect(folhaDeAntesComCargasDoEma(b, [0, 7.5, 15, 22.5, 30])).toBe(false)
+    expect(folhaDeAntesComCargasDoEma(b, [0, 5, 7.5, 15, 22.5, 30])).toBe(false)
+    // Sem classe, não há essas cargas
+    expect(folhaDeAntesComCargasDoEma({ ...b, classe: '' }, [])).toBe(false)
   })
 
   it('classe I: 25, 50 e 75 % de Max em múltiplos de 10 g, montáveis só com peças de 10 g ou mais (POP 6.1)', () => {

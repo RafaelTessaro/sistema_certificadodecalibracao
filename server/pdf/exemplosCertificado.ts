@@ -891,9 +891,11 @@ const JP02 = padrao({
 })
 
 /**
- * Balança de balcão 32 kg × 5 g, classe III, no local de uso: os pontos, a repetibilidade e a excentricidade
- * que o sistema sugere para ela (0, Min, 2,5, 8, 10, 16, 24 e 32 kg; 5 leituras com 16 kg; 15 kg nas 5
- * posições), cargas crescentes e decrescentes, sem ajuste e sem declaração de conformidade.
+ * Balança de balcão 32 kg × 5 g, classe III, no local de uso: 5 leituras com 16 kg na repetibilidade e 15 kg nas 5
+ * posições da excentricidade, cargas crescentes e decrescentes, sem ajuste e sem declaração de conformidade. Os pontos
+ * (0, Min, 2,5, 8, 10, 16, 24 e 32 kg) são os que o sistema sugeria até a 1.0.4, com as cargas em que o EMA muda
+ * (2,5 kg = 500e e 10 kg = 2000e); desde a 1.0.5, sem a declaração de conformidade, ele sugere só 0, Min, 8, 16, 24 e
+ * 32 kg (POP 7.7). A amostra fica como está: é o registro de um certificado emitido assim.
  */
 export function exemploBalanca32kg(): DadosCertificadoPdf {
   const padroes = [JP02, TH01, BR01]

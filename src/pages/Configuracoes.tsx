@@ -52,6 +52,7 @@ import {
   TEXTOS_PADRAO,
   UFS,
 } from '#shared/dominio.ts'
+import { OBRIGATORIOS_EMPRESA } from '#shared/obrigatorios.ts'
 import type { ConfigNumeracao, Configuracoes as Config, DadosEmpresa, OpcoesCalculo, TextosCertificado } from '#shared/tipos.ts'
 import { CartaoPop } from '../components/CartaoPop'
 import { Logo } from '../components/Logo'
@@ -59,7 +60,7 @@ import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { confirmar } from '../components/ui/Feedback'
-import { Field, Input, NumberInput, Select, Textarea } from '../components/ui/Form'
+import { Field, Input, LegendaObrigatorio, NumberInput, Select, Textarea } from '../components/ui/Form'
 import { EmptyState, PageHeader, Segmented } from '../components/ui/Misc'
 import { CampoSenha } from '../components/sessao/CampoSenha'
 import { api, type ConfigEmail } from '../lib/api'
@@ -941,6 +942,8 @@ function SecaoEmpresa({ config, salvarParte, aoSujo }: PropsSecao) {
           label="Razão social"
           htmlFor="emp-razao"
           className="sm:col-span-6"
+          obrigatorio={OBRIGATORIOS_EMPRESA.includes('razaoSocial')}
+          extra={<LegendaObrigatorio para="salvar" />}
           erro={mostrar('razaoSocial')}
           hint="Como consta no CNPJ. Também entra no lugar de {empresa} nos textos do certificado."
         >
@@ -966,7 +969,7 @@ function SecaoEmpresa({ config, salvarParte, aoSujo }: PropsSecao) {
             className={cn('tnum', mostrar('cnpj') && 'border-danger!')}
           />
         </Field>
-        <Field label="Inscrição estadual" htmlFor="emp-ie" className="sm:col-span-3" hint="Opcional.">
+        <Field label="Inscrição estadual" htmlFor="emp-ie" className="sm:col-span-3" opcional>
           <Input
             id="emp-ie"
             value={e.inscricaoEstadual}

@@ -1,6 +1,8 @@
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { motion } from 'motion/react'
 import type { HTMLAttributes, ReactNode, TdHTMLAttributes, ThHTMLAttributes } from 'react'
 import { cn } from '../../lib/cn'
+import { Button } from './Button'
 import { deveAbrirPelaTecla } from './linhaTeclado'
 
 export function Tabela({ children, className }: { children: ReactNode; className?: string }) {
@@ -74,5 +76,59 @@ export function Linha({
     >
       {children}
     </motion.tr>
+  )
+}
+
+/** Rodapé das listas paginadas: quantos resultados e, com mais de uma página, as setas de página. */
+export function RodapeTabela({
+  total,
+  pagina,
+  paginas,
+  aoMudarPagina,
+  formatar = (n) => String(n),
+  esquerda,
+}: {
+  total: number
+  pagina: number
+  paginas: number
+  aoMudarPagina: (p: number) => void
+  formatar?: (n: number) => string
+  esquerda?: ReactNode
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-t border-line px-5 py-3 text-[13px] text-muted">
+      <span>
+        {esquerda ?? (
+          <>
+            {formatar(total)} {total === 1 ? 'resultado' : 'resultados'}
+          </>
+        )}
+      </span>
+      {paginas > 1 && (
+        <div className="flex items-center gap-2">
+          <Button
+            tamanho="icon-sm"
+            variante="ghost"
+            onClick={() => aoMudarPagina(Math.max(1, pagina - 1))}
+            disabled={pagina <= 1}
+            aria-label="Página anterior"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <span className="tnum">
+            {pagina} de {paginas}
+          </span>
+          <Button
+            tamanho="icon-sm"
+            variante="ghost"
+            onClick={() => aoMudarPagina(Math.min(paginas, pagina + 1))}
+            disabled={pagina >= paginas}
+            aria-label="Próxima página"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+    </div>
   )
 }

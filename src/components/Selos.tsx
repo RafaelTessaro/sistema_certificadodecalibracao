@@ -1,5 +1,5 @@
 import { Ban, CircleCheck, Clock, FilePen, Hourglass, RefreshCcw, Undo2 } from 'lucide-react'
-import { diasEntre, ROTULO_VALIDADE, situacaoValidade, STATUS_CALIBRACAO } from '#shared/dominio.ts'
+import { diasEntre, ROTULO_VALIDADE, rotuloDaSituacao, situacaoValidade, STATUS_CALIBRACAO } from '#shared/dominio.ts'
 import type { StatusCalibracao } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
 import { hojeISO, relativoDias } from '../lib/format'
@@ -15,12 +15,13 @@ const ICONE_STATUS: Record<StatusCalibracao, typeof FilePen> = {
 
 /**
  * Situação do documento (pílula com ícone): rascunho (ou devolvido pelo signatário), aguardando autorização (de quem,
- * com `aguardando`), emitido, cancelado, substituído.
+ * com `aguardando`; "Enviada para revisão" com a revisão por outra pessoa desligada), emitido, cancelado, substituído.
  */
 export function StatusCalibracaoBadge({
   status,
   aguardando,
   devolvida,
+  semAutorizacao,
   className,
 }: {
   status: StatusCalibracao
@@ -28,15 +29,18 @@ export function StatusCalibracaoBadge({
   aguardando?: string
   /** Rascunho devolvido pelo signatário sem autorizar. */
   devolvida?: boolean
+  /** A revisão por outra pessoa está desligada: a enviada não aguarda a autorização de ninguém (`rotuloDaSituacao`). */
+  semAutorizacao?: boolean
   className?: string
 }) {
   const s = STATUS_CALIBRACAO[status]
+  const rotulo = rotuloDaSituacao(status, semAutorizacao)
   const voltou = status === 'RASCUNHO' && devolvida
   const Icone = voltou ? Undo2 : ICONE_STATUS[status]
   return (
     <Badge tom={voltou ? 'warning' : s.tom} ponto={false} className={cn('gap-1', className)}>
       <Icone className="h-3 w-3" />
-      {voltou ? 'Devolvida' : status === 'REVISAO' && aguardando ? `${s.label} de ${aguardando}` : s.label}
+      {voltou ? 'Devolvida' : status === 'REVISAO' && aguardando && !semAutorizacao ? `${rotulo} de ${aguardando}` : rotulo}
     </Badge>
   )
 }

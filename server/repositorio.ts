@@ -48,7 +48,9 @@ import {
   type FinalidadeArquivo,
 } from '#shared/arquivos.ts'
 import { somenteDigitos, normalizarCnpj } from '#shared/documentos.ts'
+import { MARCA_FOLHA_REGRAS_105 } from '#shared/folhaCampo.ts'
 import { novoId } from '#shared/id.ts'
+import { impedimentoDaTrocaDoTecnico } from '#shared/permissoes.ts'
 import type {
   ArquivoAnexo,
   Balanca,
@@ -63,15 +65,18 @@ import type {
   EmissaoCertificado,
   Envio,
   FolhaCampoImpressa,
+  FolhaCampoListada,
   MensagemTempoReal,
   NumeroReservado,
   Padrao,
   ResumoPainel,
+  SituacaoNumero,
   StatusCalibracao,
   Vencimento,
   VersaoCertificado,
   VersaoPop,
 } from '#shared/tipos.ts'
+import { cargasDeMudancaDoEma, folhaDeAntesComCargasDoEma } from '#shared/metrologia/sugestoes.ts'
 import { type Banco, gravarMeta, lerMeta, transacao } from './db.ts'
 import { ErroApi } from './erros.ts'
 
@@ -106,6 +111,22 @@ export interface OsDaFolha {
   daFolha: string
   aplicada: boolean
   daCalibracao?: string
+}
+
+/**
+ * A folha impressa antes da 1.0.5 ligada a uma calibração em andamento: as marcas que ela ganhou (só as novas). A folha
+ * da balança das classes III e IIII ou sem classe dizia "Pressão, opcional" (`pressaoComoAviso`), e o plano trazia as
+ * cargas em que o EMA muda (`cargasDoEmaNaFolha`). A tela fica com elas (a versão não sobe: a tela não as grava).
+ */
+export type MarcasDaFolha = Partial<Pick<Calibracao, 'pressaoComoAviso' | 'cargasDoEmaNaFolha'>>
+
+/**
+ * A folha impressa antes da 1.0.5 deixou a pressão como aviso numa calibração ainda sem ela: o barômetro que o rascunho
+ * novo já trazia saiu dos padrões (`identificacoes`), e a calibração ficou com `padroesIds` (a versão subiu).
+ */
+export interface BarometrosRetirados {
+  identificacoes: string[]
+  padroesIds: string[]
 }
 
 /** "OS 2026/0456", "os: 2026/0456" e "2026/0456" são a mesma OS. */
@@ -168,6 +189,12 @@ const numeroDaLinha = (l: LinhaNumero): NumeroReservado => ({
  * à impressão dela): 'recuperada:FC-2026-00042'.
  */
 export const CHAVE_RECUPERADA = 'recuperada:'
+
+/**
+ * A primeira impressão de uma folha reserva os nºs e só depois gera o PDF (segundos). Sem o PDF depois disto, ela não
+ * terminou (o serviço caiu ou a geração deu erro) e não vai terminar sozinha: a reimpressão diz o que fazer.
+ */
+export const ESPERA_PRIMEIRA_IMPRESSAO_MS = 2 * 60_000
 
 /**
  * A data da impressão gravada no PDF da folha (/CreationDate: a da reserva do nº, ver server/pdf/folhaCampo.ts),
@@ -236,6 +263,17 @@ export function numeroDoCertificadoNoPdf(pdf: Buffer): string {
   return m ? m[1] : ''
 }
 
+/**
+ * A folha de campo foi impressa com as regras da 1.0.5 ou depois (a pressão obrigatória em toda classe; as cargas em
+ * que o EMA muda só com a declaração de conformidade)? O próprio PDF diz: a marca nas palavras-chave
+ * (`MARCA_FOLHA_REGRAS_105`), que a 1.0.4 e as de antes não gravavam. Não depende da data da impressão nem de quando o
+ * banco foi atualizado (uma cópia de antes da 1.0.5 que volta é atualizada depois das folhas impressas na 1.0.5).
+ */
+export function folhaImpressaComRegrasDa105(pdf: Buffer): boolean {
+  const palavras = palavrasChaveDoPdf(pdf)
+  return palavras !== null && palavras.split(';').some((p) => p.trim() === MARCA_FOLHA_REGRAS_105)
+}
+
 /** As palavras-chave gravadas no PDF (/Keywords), ou null se não houver. */
 function palavrasChaveDoPdf(pdf: Buffer): string | null {
   const texto = pdf.toString('latin1')
@@ -301,12 +339,28 @@ const chaveSerie = (serie: string) => serie.replace(/[\s.\-/]+/g, '').toUpperCas
 const chaveTexto = (t: string) => t.trim().replace(/\s+/g, ' ').toUpperCase()
 
 export interface FiltroCalibracoes {
-  /** 'AUTORIZAR': as enviadas para a autorização de `usuario` (e as enviadas para revisão antes da 1.0.5, se for signatário). */
+  /**
+   * 'AUTORIZAR': as que `usuario` pode autorizar agora (signatário, nunca o técnico): as enviadas para ele e as enviadas
+   * para revisão antes da 1.0.5; nenhuma com a revisão por outra pessoa desligada (Configurações).
+   */
   status?: StatusCalibracao | 'ABERTAS' | 'AUTORIZAR' | ''
   /** Quem está vendo a lista (para 'AUTORIZAR'). */
   usuario?: { id: string; signatario: boolean } | null
   clienteId?: string
   balancaId?: string
+  busca?: string
+  de?: string
+  ate?: string
+  limite?: number
+  pagina?: number
+}
+
+/**
+ * Filtro da lista das folhas de campo impressas (aba "Folhas de campo"). `situacao`: '' = todas; 'NAO_USADAS' = as
+ * substituídas e as que não vão ser usadas. `de`/`ate` (AAAA-MM-DD): o dia da primeira impressão, no horário daqui.
+ */
+export interface FiltroFolhasCampo {
+  situacao?: '' | 'NAO_LIGADAS' | 'LIGADAS' | 'NAO_USADAS'
   busca?: string
   de?: string
   ate?: string
@@ -1025,13 +1079,18 @@ export class Repositorio {
     const params: Array<string | number> = []
     if (filtro.status === 'ABERTAS') condicoes.push("k.status IN ('RASCUNHO','REVISAO')")
     else if (filtro.status === 'AUTORIZAR') {
-      // As enviadas para ele; as de antes do pedido (sem signatário escolhido), para qualquer signatário menos o técnico
+      // Só com a revisão por outra pessoa ligada (desligada, ninguém autoriza: qualquer pessoa emite) e só as que ele
+      // pode autorizar (`impedimentoParaEmitir`): signatário e nunca o técnico; as enviadas para ele e as de antes do
+      // pedido (sem signatário escolhido)
       const pedidoPara = "json_extract(k.dados, '$.autorizacao.signatarioId')"
-      condicoes.push(
-        `k.status = 'REVISAO' AND (${pedidoPara} = ? OR (? = 1 AND ${pedidoPara} IS NULL AND json_extract(k.dados, '$.tecnicoId') IS NOT ?))`,
-      )
       const u = filtro.usuario
-      params.push(u?.id ?? '', u?.signatario ? 1 : 0, u?.id ?? '')
+      if (!this.obterConfig().exigirRevisor || !u?.signatario) condicoes.push('0')
+      else {
+        condicoes.push(
+          `k.status = 'REVISAO' AND json_extract(k.dados, '$.tecnicoId') IS NOT ? AND (${pedidoPara} = ? OR ${pedidoPara} IS NULL)`,
+        )
+        params.push(u.id, u.id)
+      }
     } else if (filtro.status) {
       condicoes.push('k.status = ?')
       params.push(filtro.status)
@@ -1094,6 +1153,7 @@ export class Repositorio {
       }
     >
     const nomes = this.nomesUsuarios()
+    const { exigirRevisor } = this.obterConfig()
     return {
       total,
       itens: linhas.map((l) =>
@@ -1105,6 +1165,7 @@ export class Repositorio {
           nomes,
           l.numero_reservado ?? '',
           { versaoAnterior: !!l.versao_anterior, numeroCorrigido: l.numero_corrigido ?? '' },
+          exigirRevisor,
         ),
       ),
     }
@@ -1123,6 +1184,8 @@ export class Repositorio {
     nomes: Map<string, string>,
     numeroReservado: string,
     versoes: { versaoAnterior: boolean; numeroCorrigido: string },
+    /** A revisão por outra pessoa (Configurações) agora: desligada, a enviada não aguarda a autorização de ninguém. */
+    exigirRevisor: boolean,
   ): CalibracaoResumo {
     // Emitido: os dados congelados no certificado (o cadastro pode ter mudado depois)
     const balanca = k.emissao?.balanca ?? b
@@ -1151,8 +1214,10 @@ export class Repositorio {
       ...(versoes.versaoAnterior ? { versaoAnterior: true } : {}),
       ...(aberta && versoes.numeroCorrigido ? { numeroCorrigido: versoes.numeroCorrigido } : {}),
       ...(numeroReservado ? { numeroReservado } : {}),
-      // Enviada para a autorização de um signatário: quem; devolvida por ele (até o próximo pedido): quem devolveu
-      ...(k.status === 'REVISAO' && k.autorizacao
+      // Enviada para a autorização de um signatário: quem; devolvida por ele (até o próximo pedido): quem devolveu. Com a
+      // revisão por outra pessoa desligada, ninguém autoriza: só "enviada para revisão" (qualquer pessoa emite)
+      ...(k.status === 'REVISAO' && !exigirRevisor ? { semAutorizacao: true } : {}),
+      ...(k.status === 'REVISAO' && exigirRevisor && k.autorizacao
         ? { aguardando: { id: k.autorizacao.signatarioId, nome: k.autorizacao.signatarioNome } }
         : {}),
       ...(k.status === 'RASCUNHO' && k.devolucao ? { devolvidaPor: k.devolucao.por } : {}),
@@ -1168,10 +1233,16 @@ export class Repositorio {
     const envios = (this.db.prepare('SELECT COUNT(*) AS n FROM envios WHERE calibracao_id = ?').get(id) as { n: number }).n
     const anterior =
       k.status === 'SUBSTITUIDO' && !!this.db.prepare(`SELECT 1 FROM calibracoes k WHERE k.id = ? AND ${VERSAO_ANTERIOR}`).get(id)
-    return this.resumo(k, c.nome, b, envios, this.nomesUsuarios(), this.numeroReservadoDa(id)?.numero ?? '', {
-      versaoAnterior: anterior,
-      numeroCorrigido: this.numeroPrevistoDaRevisao(k) ?? '',
-    })
+    return this.resumo(
+      k,
+      c.nome,
+      b,
+      envios,
+      this.nomesUsuarios(),
+      this.numeroReservadoDa(id)?.numero ?? '',
+      { versaoAnterior: anterior, numeroCorrigido: this.numeroPrevistoDaRevisao(k) ?? '' },
+      this.obterConfig().exigirRevisor,
+    )
   }
 
   /**
@@ -1259,6 +1330,9 @@ export class Repositorio {
       // A revisão é a do certificado gravado, nunca a que o corpo do PUT diz
       this.verificarLigacoes(valor, atual.substituiId)
       const tecnicoId = valor.tecnicoId || atual.tecnicoId
+      // Aguardando a autorização, quem recebeu o pedido não passa a ser o técnico (nunca autoriza o próprio certificado)
+      const impedimento = tecnicoId !== atual.tecnicoId && impedimentoDaTrocaDoTecnico(atual, tecnicoId)
+      if (impedimento) throw new ErroApi(409, impedimento)
       const k: Calibracao = {
         ...atual,
         ...valor,
@@ -2153,8 +2227,10 @@ export class Repositorio {
    * (`CHAVE_RECUPERADA`), com a data da impressão gravada no PDF (`dataDaImpressaoNoPdf`; sem ela, a do
    * arquivo) e o sha256 do arquivo. O nº de certificado impresso nela (`numeroCertificadoNoPdf`) volta
    * reservado no papel (`reservarDoPapel`): nunca é dado a outra folha ou calibração, e passa para a calibração
-   * a que a folha for ligada. O papel preenchido continua podendo ser ligado à calibração, confirmando,
-   * porque não se sabe para qual balança ele foi impresso. A folha que está no banco sem PDF (a cópia foi
+   * a que a folha for ligada. O PDF sem a marca das regras da 1.0.5 (`folhaImpressaComRegrasDa105`) volta como
+   * impresso antes dela (`antes_105`: ligado, deixa a pressão como aviso e as cargas em que o EMA muda), qualquer que
+   * seja a data. O papel preenchido continua podendo ser ligado à calibração, confirmando, porque não se sabe para
+   * qual balança ele foi impresso. A folha que está no banco sem PDF (a cópia foi
    * feita entre a reserva do nº e a gravação do arquivo) fica com o arquivo da pasta: a reimpressão é o papel.
    * Roda quando o servidor sobe e, para um nº (`numero`), quando ele é ligado. Quando o servidor sobe, também
    * deixa cada calibração com uma folha vigente só (`conciliarFolhasVigentes`). Devolve os nºs que voltaram;
@@ -2185,8 +2261,9 @@ export class Repositorio {
         'SELECT numero, pdf_arquivo, pdf IS NULL AS sem_blob FROM folhas_campo WHERE numero = ? OR (ano = ? AND sequencia = ?)',
       )
       const inserir = this.db.prepare(
-        `INSERT INTO folhas_campo (numero, ano, sequencia, chave, impressa_em, ultima_em, pdf_arquivo, pdf_sha256, numero_certificado)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO folhas_campo (numero, ano, sequencia, chave, impressa_em, ultima_em, pdf_arquivo, pdf_sha256, numero_certificado,
+                                   antes_105)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       const adotar = this.db.prepare(
         "UPDATE folhas_campo SET pdf_arquivo = ?, pdf_sha256 = ? WHERE numero = ? AND pdf_arquivo = '' AND pdf IS NULL",
@@ -2210,7 +2287,9 @@ export class Repositorio {
         const em = this.dataValida(dataDaImpressaoNoPdf(pdf)) ?? statSync(caminho).mtime.toISOString()
         // O nº do certificado impresso nela também volta: reservado no papel (livre), nunca dado a outro
         const certificado = numeroCertificadoNoPdf(pdf)
-        inserir.run(n, f.ano, f.sequencia, `${CHAVE_RECUPERADA}${n}`, em, em, f.arquivo, sha256, certificado)
+        // Impressa pela 1.0.4 ou antes (a pressão opcional, as cargas em que o EMA muda no plano): o PDF não tem a marca
+        const antes = folhaImpressaComRegrasDa105(pdf) ? 0 : 1
+        inserir.run(n, f.ano, f.sequencia, `${CHAVE_RECUPERADA}${n}`, em, em, f.arquivo, sha256, certificado, antes)
         if (certificado && this.reservarDoPapel(certificado, n, f.ano, em)) numeros.push(certificado)
         voltaram.push(n)
       }
@@ -2656,6 +2735,8 @@ export class Repositorio {
     eventos: EventoNumero[]
     numeroDaFolha: NumeroDaFolha | null
     ordemServico: OsDaFolha | null
+    marcas: MarcasDaFolha | null
+    barometrosRetirados: BarometrosRetirados | null
   } {
     // Sem registro, mas com o PDF na pasta: o banco voltou de uma cópia anterior à impressão dela, que volta
     // ao registro (fica lá mesmo que a ligação abaixo seja recusada ou peça confirmação)
@@ -2665,8 +2746,8 @@ export class Repositorio {
         throw new ErroApi(409, 'A folha de campo só pode ser ligada a uma calibração em andamento (rascunho ou em revisão).')
       const linha = this.db
         .prepare(
-          `SELECT calibracao_id, balanca_id, cliente_id, chave, substituida_por, substituida_em, ordem_servico FROM folhas_campo
-            WHERE numero = ?`,
+          `SELECT calibracao_id, balanca_id, cliente_id, chave, substituida_por, substituida_em, ordem_servico, antes_105
+             FROM folhas_campo WHERE numero = ?`,
         )
         .get(numero) as
         | {
@@ -2677,6 +2758,7 @@ export class Repositorio {
             substituida_por: string
             substituida_em: string
             ordem_servico: string
+            antes_105: number
           }
         | undefined
       if (!linha) throw new ErroApi(404, `A folha ${numero} não foi impressa por este sistema. Confira o nº no alto da folha.`)
@@ -2699,6 +2781,8 @@ export class Repositorio {
           eventos: [...troca.eventos, ...cert.eventos],
           numeroDaFolha: cert.numeroDaFolha,
           ordemServico: null,
+          marcas: null,
+          barometrosRetirados: null,
         }
       }
       // Já é a folha da calibração. Se ela tem outra vigente (uma cópia antiga do banco voltou com a folha
@@ -2787,6 +2871,20 @@ export class Repositorio {
       // A OS impressa na avulsa (a do cliente com a balança em branco) passa para a calibração sem OS
       const ordemServico = this.osDaFolhaLigada(linha.ordem_servico, k.id)
       if (ordemServico?.aplicada) notas.push('a OS impressa na folha passou para a calibração')
+      // Impressa antes da 1.0.5: a pressão "opcional" e as cargas em que o EMA muda da folha valem para a calibração
+      // (a em branco e a só do cliente, sem balança, mandavam aplicar as cargas em que o EMA muda)
+      const semBalanca = !linha.balanca_id && !linha.chave.startsWith(CHAVE_RECUPERADA)
+      const marcas = Number(linha.antes_105) === 1 ? this.marcarFolhaDeAntes(k.id, semBalanca) : null
+      if (marcas) notas.push('impressa antes da versão 1.0.5')
+      // A falta da pressão passou a ser aviso e ela ainda não foi registrada: o barômetro que o rascunho novo já traz
+      // sai dos padrões (o certificado não lista o que não foi usado; com ele e sem a pressão, a emissão ficaria pendente)
+      const barometrosRetirados = marcas?.pressaoComoAviso ? this.tirarBarometrosSemPressao(k.id) : null
+      if (barometrosRetirados) {
+        const ids = barometrosRetirados.identificacoes
+        notas.push(
+          `${ids.length > 1 ? 'os barômetros' : 'o barômetro'} ${ids.join(', ')} ${ids.length > 1 ? 'saíram' : 'saiu'} dos padrões (a pressão era opcional na folha)`,
+        )
+      }
       if (outra) this.mudou('calibracao', outra.id)
       this.mudou('calibracao', k.id)
       return {
@@ -2797,8 +2895,59 @@ export class Repositorio {
         eventos: [...troca.eventos, ...cert.eventos],
         numeroDaFolha: cert.numeroDaFolha,
         ordemServico,
+        marcas,
+        barometrosRetirados,
       }
     })
+  }
+
+  /**
+   * A folha impressa antes da 1.0.5 (a 1.0.4 ou antes) ligada agora à calibração em andamento: a visita é (ou foi) feita
+   * com ela. Na balança das classes III e IIII ou sem classe, a folha dizia "Pressão, opcional" (a em branco,
+   * "obrigatória na classe II"): a falta da pressão fica como aviso (`pressaoComoAviso`), como nas calibrações marcadas
+   * pela migração 19. A folha em branco e a só do cliente (`semBalanca`) mandavam aplicar as cargas em que o EMA muda; a
+   * da balança e a de uma calibração saíam com o plano dela (as sugestões, que as traziam, ou os pontos já escolhidos):
+   * "Sugerir pontos" e a folha nova continuam com elas (`cargasDoEmaNaFolha`) na em branco e, nas outras, quando os pontos
+   * da calibração não desmentem (`folhaDeAntesComCargasDoEma`). Não sobe a versão (a tela não grava as marcas). Devolve
+   * as marcas novas (null: nenhuma).
+   */
+  private marcarFolhaDeAntes(calibracaoId: string, semBalanca: boolean): MarcasDaFolha | null {
+    const k = this.obterCalibracao(calibracaoId)
+    if (!k) return null
+    const balanca = this.obterBalanca(k.balancaId)
+    const classe = balanca?.classe
+    const marcas: MarcasDaFolha = {}
+    if (classe !== 'I' && classe !== 'II' && k.pressaoComoAviso !== true) marcas.pressaoComoAviso = true
+    const comCargas =
+      !!balanca &&
+      (semBalanca
+        ? cargasDeMudancaDoEma(balanca).length > 0
+        : folhaDeAntesComCargasDoEma(
+            balanca,
+            k.indicacao.pontos.map((p) => p.carga),
+          ))
+    if (comCargas && k.cargasDoEmaNaFolha !== true) marcas.cargasDoEmaNaFolha = true
+    if (!Object.keys(marcas).length) return null
+    this.gravarCalibracao({ ...k, ...marcas }, false)
+    return marcas
+  }
+
+  /**
+   * A calibração que acabou de ficar com a falta da pressão como aviso (`marcarFolhaDeAntes`: a folha impressa antes da
+   * 1.0.5 dizia "Pressão, opcional"), ainda sem a pressão registrada: os barômetros saem dos padrões. O rascunho novo
+   * já os traz (a pressão é obrigatória nas novas), e o barômetro sem a pressão impede a emissão (o certificado listaria
+   * um padrão que não foi usado). Se a pressão foi medida, a pessoa a registra e escolhe o barômetro de novo. A versão
+   * sobe (a tela fica com os padrões novos). null: a pressão já está registrada, ou não há barômetro.
+   */
+  private tirarBarometrosSemPressao(calibracaoId: string): BarometrosRetirados | null {
+    const k = this.obterCalibracao(calibracaoId)
+    if (!k || k.ambiente.pressao !== null) return null
+    const barometros = k.padroesIds.map((id) => this.obterPadrao(id)).filter((p) => p?.tipo === 'BAROMETRO') as Padrao[]
+    if (!barometros.length) return null
+    const fora = new Set(barometros.map((p) => p.id))
+    const padroesIds = k.padroesIds.filter((id) => !fora.has(id))
+    this.gravarCalibracao({ ...k, padroesIds, versao: k.versao + 1, atualizadoEm: this.agora().toISOString() }, false)
+    return { identificacoes: barometros.map((p) => p.identificacao), padroesIds }
   }
 
   /**
@@ -2819,23 +2968,200 @@ export class Repositorio {
    * Reimpressão de uma folha de campo pelo nº (FC-2026-00042), de qualquer tela: o PDF da primeira impressão, byte a
    * byte, com os mesmos nºs da folha e do certificado (nunca um nº novo nem um PDF refeito). Conta a impressão. Sem
    * registro, mas com o PDF na pasta (o banco voltou de uma cópia anterior à impressão), ela volta ao registro. 404: não
-   * foi impressa por este sistema; 409: a primeira impressão ainda não terminou de ser gerada (ou o PDF sumiu da pasta).
-   * `ordemServico`: a da calibração dona da folha ou, sem dona, a impressa nela (o nome do arquivo).
+   * foi impressa por este sistema; 409: a primeira impressão ainda está sendo gerada, não terminou
+   * (`ESPERA_PRIMEIRA_IMPRESSAO_MS`: a da calibração termina pela calibração, com o mesmo nº; a avulsa nunca saiu no
+   * papel e é marcada como não usada), ou o PDF sumiu da pasta. `ordemServico`: a da calibração dona da folha ou, sem
+   * dona, a impressa nela (o nome do arquivo).
    */
   reimprimirFolhaCampo(numero: string): { pdf: Buffer; ordemServico: string; calibracaoId: string } {
     if (!this.db.prepare('SELECT 1 FROM folhas_campo WHERE numero = ?').get(numero)) this.recuperarFolhasDaPasta(numero)
     return transacao(this.db, () => {
-      const l = this.db.prepare('SELECT calibracao_id, ordem_servico FROM folhas_campo WHERE numero = ?').get(numero) as
-        { calibracao_id: string; ordem_servico: string } | undefined
+      const l = this.db
+        .prepare('SELECT calibracao_id, ordem_servico, impressa_em FROM folhas_campo WHERE numero = ?')
+        .get(numero) as { calibracao_id: string; ordem_servico: string; impressa_em: string } | undefined
       if (!l) throw new ErroApi(404, `A folha ${numero} não foi impressa por este sistema. Confira o nº no alto da folha.`)
       const pdf = this.pdfFolhaCampo(numero)
-      if (!pdf) throw new ErroApi(409, `A folha ${numero} ainda está sendo gerada. Espere um instante e tente de novo.`)
+      if (!pdf) {
+        if (!this.impressaoInterrompida(l.impressa_em))
+          throw new ErroApi(409, `A folha ${numero} ainda está sendo gerada. Espere um instante e tente de novo.`)
+        // A da calibração: a impressão pela calibração gera agora a primeira, com o mesmo nº (a mesma chave)
+        const daCalibracao = !!l.calibracao_id && this.folhaCampoDaCalibracao(l.calibracao_id)?.numero === numero
+        throw new ErroApi(
+          409,
+          daCalibracao
+            ? `A primeira impressão da folha ${numero} não terminou (o sistema foi interrompido). Abra a calibração e imprima a folha de campo por ela: sai com o mesmo nº.`
+            : `A primeira impressão da folha ${numero} não terminou (o sistema foi interrompido), então ela não saiu no papel. Marque-a como “Não vai ser usada” (em Números não utilizados) e imprima uma folha nova.`,
+          { codigo: 'IMPRESSAO_INTERROMPIDA' },
+        )
+      }
       this.db
         .prepare('UPDATE folhas_campo SET impressoes = impressoes + 1, ultima_em = ? WHERE numero = ?')
         .run(this.agora().toISOString(), numero)
+      // A lista das folhas mostra quantas vezes cada uma foi impressa
+      this.mudou('calibracao')
       const dona = l.calibracao_id ? this.obterCalibracao(l.calibracao_id) : undefined
       return { pdf, ordemServico: (dona?.ordemServico || l.ordem_servico).trim(), calibracaoId: l.calibracao_id }
     })
+  }
+
+  /** A primeira impressão reservada em `impressaEm` (ISO), ainda sem o PDF, não terminou (`ESPERA_PRIMEIRA_IMPRESSAO_MS`). */
+  private impressaoInterrompida(impressaEm: string): boolean {
+    const desde = Date.parse(impressaEm)
+    return Number.isFinite(desde) && this.agora().getTime() - desde > ESPERA_PRIMEIRA_IMPRESSAO_MS
+  }
+
+  /**
+   * Todas as folhas de campo impressas, da mais nova para a mais antiga (aba "Folhas de campo" da página Certificados):
+   * para quem foi impressa, o nº de certificado impresso nela (o pré-nº), quando e por quem, e a situação — ligada a uma
+   * calibração (a vigente dela), não ligada, substituída por uma folha nova (não foi a campo) ou que não vai ser usada (o
+   * nº dela foi registrado como não utilizado por alguém, com o motivo: ver `descartarNumeroReservado`). As que só estão
+   * na pasta de dados (o banco veio de uma cópia anterior à impressão delas) voltam ao registro antes
+   * (`recuperarFolhasDaPasta`). A `busca` procura no nº da folha, no pré-nº, no cliente, na OS, na balança e na
+   * calibração ligada.
+   */
+  listarFolhasCampo(filtro: FiltroFolhasCampo = {}): { itens: FolhaCampoListada[]; total: number } {
+    if (this.temFolhaSoNaPasta() && this.voltarFolhasDaPasta().length) this.mudou('calibracao')
+    const condicoes: string[] = []
+    const params: Array<string | number> = []
+    const situacoes: Record<string, string[]> = {
+      NAO_LIGADAS: ['nao_ligada'],
+      LIGADAS: ['ligada'],
+      NAO_USADAS: ['substituida', 'descartada'],
+    }
+    const daSituacao = filtro.situacao ? situacoes[filtro.situacao] : undefined
+    if (daSituacao) {
+      condicoes.push(`x.situacao_folha IN (${daSituacao.map(() => '?').join(', ')})`)
+      params.push(...daSituacao)
+    }
+    // O dia da impressão no horário daqui (a data gravada é ISO, em UTC)
+    const inicioDoDia = (d: string) => new Date(`${d}T00:00:00`).toISOString()
+    if (dataIsoValida(filtro.de)) {
+      condicoes.push('x.impressa_em >= ?')
+      params.push(inicioDoDia(filtro.de))
+    }
+    if (dataIsoValida(filtro.ate)) {
+      const seguinte = new Date(`${filtro.ate}T12:00:00Z`)
+      seguinte.setUTCDate(seguinte.getUTCDate() + 1)
+      condicoes.push('x.impressa_em < ?')
+      params.push(inicioDoDia(seguinte.toISOString().slice(0, 10)))
+    }
+    for (const t of textoBusca(filtro.busca ?? '')
+      .split(' ')
+      .filter(Boolean)) {
+      const campos = [
+        'lower(x.numero)',
+        'lower(x.numero_certificado)',
+        'lower(x.ordem_servico)',
+        "lower(COALESCE(x.k_os, ''))",
+        "lower(COALESCE(x.k_reservado, ''))",
+        "COALESCE(x.cliente_busca, '')",
+        "COALESCE(x.balanca_busca, '')",
+        "COALESCE(x.k_busca, '')",
+      ]
+      condicoes.push(`(${campos.map((c) => `${c} LIKE ? ESCAPE '\\'`).join(' OR ')})`)
+      params.push(...campos.map(() => `%${t.replace(/[\\%_]/g, '\\$&')}%`))
+    }
+    // Uma linha por folha: a calibração dona (se ainda existe), o cliente e a balança da impressão e o registro do nº de
+    // certificado impresso nela (o do papel, se o texto do nº se repetiu noutro ano: ver `linhaDoNumero`)
+    const base = `
+      WITH nr AS (
+        SELECT f.numero AS folha, r.id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY f.numero
+                 ORDER BY r.folha = f.numero DESC, r.situacao = 'reservado' DESC, r.situacao = 'nao_utilizado' DESC, r.id DESC
+               ) AS ordem
+          FROM folhas_campo f
+          JOIN numeros_reservados r ON f.numero_certificado <> '' AND r.numero = f.numero_certificado
+      ),
+      x AS (
+        SELECT f.numero, f.ano, f.sequencia, f.chave, f.cliente_id, f.ordem_servico, f.impressa_por, f.impressa_em,
+               f.impressoes, f.substituida_por, f.numero_certificado, (f.pdf_arquivo = '' AND f.pdf IS NULL) AS sem_pdf,
+               c.nome AS cliente_nome, c.busca AS cliente_busca, b.dados AS balanca_dados, b.busca AS balanca_busca,
+               k.id AS k_id, k.status AS k_status, k.numero AS k_numero, k.ordem_servico AS k_os, k.busca AS k_busca,
+               kc.nome AS k_cliente_nome,
+               (SELECT r.numero FROM numeros_reservados r WHERE r.calibracao_id = k.id AND r.situacao = 'reservado') AS k_reservado,
+               n.situacao AS n_situacao, n.motivo AS n_motivo, n.situacao_em AS n_situacao_em, n.situacao_por AS n_situacao_por,
+               CASE
+                 WHEN k.id IS NOT NULL AND f.substituida_por = '' THEN 'ligada'
+                 WHEN k.id IS NOT NULL THEN 'substituida'
+                 WHEN n.situacao = 'nao_utilizado' AND n.calibracao_id = '' AND n.folha = f.numero AND n.situacao_por <> ''
+                   THEN 'descartada'
+                 ELSE 'nao_ligada'
+               END AS situacao_folha
+          FROM folhas_campo f
+          LEFT JOIN clientes c ON f.cliente_id <> '' AND c.id = f.cliente_id
+          LEFT JOIN balancas b ON f.balanca_id <> '' AND b.id = f.balanca_id
+          LEFT JOIN calibracoes k ON f.calibracao_id <> '' AND k.id = f.calibracao_id
+          LEFT JOIN clientes kc ON kc.id = k.cliente_id
+          LEFT JOIN nr ON nr.folha = f.numero AND nr.ordem = 1
+          LEFT JOIN numeros_reservados n ON n.id = nr.id
+      )`
+    const onde = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : ''
+    const total = (this.db.prepare(`${base} SELECT COUNT(*) AS n FROM x ${onde}`).get(...params) as { n: number }).n
+    const limite = Math.min(Math.max(Math.trunc(filtro.limite ?? 50) || 50, 1), 500)
+    const pagina = Math.max(Math.trunc(filtro.pagina ?? 1) || 1, 1)
+    const linhas = this.db
+      .prepare(`${base} SELECT * FROM x ${onde} ORDER BY x.ano DESC, x.sequencia DESC LIMIT ? OFFSET ?`)
+      .all(...params, limite, (pagina - 1) * limite) as Array<Record<string, string | number | null>>
+    const texto = (v: string | number | null | undefined) => (v === null || v === undefined ? '' : String(v))
+    const { exigirRevisor } = this.obterConfig()
+    return {
+      total,
+      itens: linhas.map((l): FolhaCampoListada => {
+        const balanca = l.balanca_dados ? (JSON.parse(String(l.balanca_dados)) as Balanca) : null
+        const situacao = texto(l.situacao_folha) as FolhaCampoListada['situacao']
+        const chave = texto(l.chave)
+        return {
+          numero: texto(l.numero),
+          origem: chave.startsWith(CHAVE_RECUPERADA) ? 'recuperada' : chave.startsWith('calibracao:') ? 'calibracao' : 'avulsa',
+          clienteNome: texto(l.cliente_nome),
+          ...(l.cliente_id && l.cliente_nome === null ? { clienteExcluido: true } : {}),
+          balancaDescricao: balanca ? descricaoBalanca(balanca) : '',
+          balancaSerie: balanca?.numeroSerie ?? '',
+          ordemServico: (texto(l.k_os) || texto(l.ordem_servico)).trim(),
+          numeroCertificado: texto(l.numero_certificado),
+          ...(l.n_situacao ? { situacaoNumero: texto(l.n_situacao) as SituacaoNumero } : {}),
+          impressaEm: texto(l.impressa_em),
+          impressaPor: texto(l.impressa_por),
+          impressoes: Number(l.impressoes) || 1,
+          // A primeira impressão não terminou (sem o PDF): não há o que reimprimir
+          ...(l.sem_pdf && this.impressaoInterrompida(texto(l.impressa_em)) ? { impressaoInterrompida: true } : {}),
+          situacao,
+          ...(l.k_id
+            ? {
+                calibracao: {
+                  id: texto(l.k_id),
+                  status: texto(l.k_status) as StatusCalibracao,
+                  numero: texto(l.k_numero),
+                  ...(l.k_reservado ? { numeroReservado: texto(l.k_reservado) } : {}),
+                  clienteNome: texto(l.k_cliente_nome),
+                  ...(l.k_status === 'REVISAO' && !exigirRevisor ? { semAutorizacao: true } : {}),
+                },
+              }
+            : {}),
+          ...(situacao === 'substituida' ? { substituidaPor: texto(l.substituida_por) } : {}),
+          ...(situacao === 'descartada'
+            ? { motivo: texto(l.n_motivo), descartadaEm: texto(l.n_situacao_em), descartadaPor: texto(l.n_situacao_por) }
+            : {}),
+        }
+      }),
+    }
+  }
+
+  /** Há na pasta das folhas um PDF de folha (FC-AAAA-NNNNN) que o banco não conhece? (Só lê os nomes dos arquivos.) */
+  private temFolhaSoNaPasta(): boolean {
+    if (!this.pastaFolhas || !existsSync(this.pastaFolhas)) return false
+    const conhecidas = new Set(
+      (this.db.prepare('SELECT numero FROM folhas_campo').all() as Array<{ numero: string }>).map((l) => l.numero),
+    )
+    for (const ano of readdirSync(this.pastaFolhas, { withFileTypes: true })) {
+      if (!ano.isDirectory() || !/^\d{4}$/.test(ano.name)) continue
+      for (const arquivo of readdirSync(join(this.pastaFolhas, ano.name))) {
+        const m = /^(FC-(\d{4})-\d{5})(?:-[0-9a-f]{12})?\.pdf$/.exec(arquivo)
+        if (m && m[2] === ano.name && !conhecidas.has(m[1])) return true
+      }
+    }
+    return false
   }
 
   /** "para a balança Toledo 9094, nº de série TL-2231" (ou "… que foi excluída"), para as mensagens da folha. */

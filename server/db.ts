@@ -14,6 +14,7 @@ import {
   textoBuscaBalanca,
   textoBuscaCalibracao,
 } from '#shared/dominio.ts'
+import { folhaDeAntesComCargasDoEma } from '#shared/metrologia/sugestoes.ts'
 import type { Balanca, Calibracao, Cliente } from '#shared/tipos.ts'
 
 export type Banco = DatabaseSync
@@ -275,6 +276,16 @@ const MIGRACOES: Migracao[] = [
   // (`pressaoComoAviso`): a visita já aconteceu, ou vai acontecer com a folha que dizia "opcional". As novas seguem a
   // regra. A que já tem os mínimos como avisos não precisa.
   pressoesAntesDaRegra,
+
+  // 20: as folhas de campo impressas até a 1.0.4 (`antes_105`; a que voltar da pasta das folhas é marcada pelo próprio
+  // PDF, sem a marca das regras da 1.0.5: `Repositorio.recuperarFolhasDaPasta`): a da balança das classes III e IIII ou
+  // sem classe dizia "Pressão, opcional" (a em branco, "obrigatória na classe II"), e as sugestões traziam sempre as
+  // cargas em que o EMA muda (a em branco mandava aplicá-las). A folha dessas ligada depois a uma calibração deixa a falta
+  // da pressão como aviso e mantém as cargas em "Sugerir pontos" e na folha nova (`Repositorio.vincularFolhaCampo`). A
+  // calibração em andamento que já tem uma folha impressa fica com as cargas (`cargasDoEmaNaFolha`): as da folha que foi
+  // (ou vai) a campo, quando os pontos dela não desmentem (`folhaDeAntesComCargasDoEma`: a folha do rascunho com pontos
+  // saía com os pontos dele). 1.0.5.
+  folhasAntesDa105,
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
@@ -531,6 +542,76 @@ function pressoesAntesDaRegra(db: Banco) {
         marcadas.length === 1
           ? 'A calibração em andamento medida ou com a folha impressa antes desta versão, sem a pressão atmosférica, sai sem ela, com um aviso (a visita já aconteceu); nas novas, a pressão é obrigatória em toda classe. Confira: '
           : `${marcadas.length} calibrações em andamento medidas ou com a folha impressa antes desta versão, sem a pressão atmosférica, saem sem ela, com um aviso (a visita já aconteceu); nas novas, a pressão é obrigatória em toda classe. Confira: `,
+        marcadas,
+      ),
+    )
+}
+
+/**
+ * Migração 20 (ver acima). Repetível: a coluna e a marca nas folhas que já estavam no banco (só quando a coluna nasce).
+ * A folha que voltar depois da pasta das folhas (o banco veio de uma cópia anterior à impressão dela) é marcada pelo
+ * próprio PDF, não pela data: uma cópia de antes da 1.0.5 posta no lugar é atualizada depois das folhas impressas na
+ * 1.0.5 (`folhaImpressaComRegrasDa105`). Marca a calibração em andamento (rascunho ou em revisão, também a revisão de
+ * um certificado) com uma folha de campo impressa, de uma balança com cargas em que o EMA muda (com classe), ainda sem a
+ * marca, sem pontos no erro de indicação (a folha saiu com as sugestões, que as traziam) ou com todas elas entre os
+ * pontos (`folhaDeAntesComCargasDoEma`): com pontos sem alguma, a folha saiu com esses pontos, sem elas. Não sobe a
+ * versão: a marca não muda nada do que a tela grava. O registro de atividades diz quais.
+ */
+function folhasAntesDa105(db: Banco) {
+  const colunas = db.prepare('PRAGMA table_info(folhas_campo)').all() as Array<{ name: string }>
+  // Só quando a coluna nasce: repetida, a migração não marca as folhas impressas depois dela
+  if (!colunas.some((c) => c.name === 'antes_105')) {
+    acrescentarColuna(db, 'folhas_campo', 'antes_105', 'INTEGER NOT NULL DEFAULT 0')
+    db.exec('UPDATE folhas_campo SET antes_105 = 1')
+  }
+  const linhas = db
+    .prepare(
+      `SELECT k.id, k.dados, b.dados AS balanca, c.nome AS cliente, o.numero AS revisado,
+              (SELECT n.numero FROM numeros_reservados n
+                WHERE n.calibracao_id = k.id AND n.situacao = 'reservado' ORDER BY n.id DESC LIMIT 1) AS reservado
+         FROM calibracoes k LEFT JOIN clientes c ON c.id = k.cliente_id
+              LEFT JOIN balancas b ON b.id = k.balanca_id
+              LEFT JOIN calibracoes o ON o.id = k.substitui_id AND k.substitui_id <> ''
+        WHERE k.status IN ('RASCUNHO','REVISAO')
+          AND EXISTS (SELECT 1 FROM folhas_campo f WHERE f.calibracao_id = k.id)
+        ORDER BY k.criado_em, k.id`,
+    )
+    .all() as Array<{
+    id: string
+    dados: string
+    balanca: string | null
+    cliente: string | null
+    revisado: string | null
+    reservado: string | null
+  }>
+  const gravar = db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
+  const marcadas: string[] = []
+  for (const l of linhas) {
+    const k = JSON.parse(l.dados) as Calibracao
+    const b = l.balanca ? (JSON.parse(l.balanca) as Partial<Balanca>) : null
+    // Só o que os pontos do rascunho não desmentem: até a 1.0.4, a folha do rascunho com pontos saía com os pontos dele
+    const pontos = Array.isArray(k.indicacao?.pontos) ? k.indicacao.pontos.map((p) => Number(p.carga)) : []
+    const comCargas =
+      !!b?.classe &&
+      Array.isArray(b.faixas) &&
+      folhaDeAntesComCargasDoEma({ classe: b.classe, tipoFaixas: b.tipoFaixas ?? 'UNICA', faixas: b.faixas }, pontos)
+    if (k.cargasDoEmaNaFolha === true || !comCargas) continue
+    gravar.run(JSON.stringify({ ...k, cargasDoEmaNaFolha: true }), l.id)
+    const os = String(k.ordemServico ?? '').trim()
+    marcadas.push(
+      l.revisado
+        ? `revisão do ${l.revisado}`
+        : l.reservado ||
+            (os ? `OS ${os}` : `${l.cliente || 'Cliente'}${k.dataCalibracao ? ` (${formatarDataBr(k.dataCalibracao)})` : ''}`),
+    )
+  }
+  if (marcadas.length)
+    db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)").run(
+      new Date().toISOString(),
+      detalheLista(
+        marcadas.length === 1
+          ? 'A calibração em andamento com a folha de campo impressa antes desta versão continua com as cargas em que o EMA muda em “Sugerir pontos” e na folha nova, como a folha que foi a campo; nas novas, só com a declaração de conformidade. Confira: '
+          : `${marcadas.length} calibrações em andamento com a folha de campo impressa antes desta versão continuam com as cargas em que o EMA muda em “Sugerir pontos” e na folha nova, como a folha que foi a campo; nas novas, só com a declaração de conformidade. Confira: `,
         marcadas,
       ),
     )

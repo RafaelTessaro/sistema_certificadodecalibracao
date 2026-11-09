@@ -5,6 +5,14 @@ import { normalizarArquivoAnexo } from './arquivos.ts'
 import { cnpjValido, cpfValido, mascaraCep, mascaraCnpj, mascaraCpf, normalizarCnpj, somenteDigitos } from './documentos.ts'
 import { novoId } from './id.ts'
 import { DENSIDADE_PESOS_KG_M3, densidadePesosPlausivel } from './metrologia/ar.ts'
+import {
+  PENDENCIA_AR_MEDIDO,
+  PENDENCIA_CONVECCAO,
+  PENDENCIA_LEITURAS_EXCENTRICIDADE,
+  PENDENCIA_RETORNO_ZERO,
+  PENDENCIA_SEM_LEITURAS_INDICACAO,
+  pendenciaSemRepetibilidade,
+} from './metrologia/calculo.ts'
 import { classeMinimaPesos, montarCarga as montarCargaNominal } from './metrologia/pesos.ts'
 import type {
   AjusteRealizado,
@@ -318,6 +326,17 @@ export const STATUS_CALIBRACAO: Record<StatusCalibracao, { label: string; tom: T
   EMITIDO: { label: 'Emitido', tom: 'success' },
   CANCELADO: { label: 'Cancelado', tom: 'danger' },
   SUBSTITUIDO: { label: 'Substituído', tom: 'warning' },
+}
+
+/** REVISAO com a revisão por outra pessoa desligada (`CalibracaoResumo.semAutorizacao`): ninguém autoriza. */
+export const ROTULO_ENVIADA_PARA_REVISAO = 'Enviada para revisão'
+
+/**
+ * O nome da situação nas telas e na exportação: o de `STATUS_CALIBRACAO`, menos a REVISAO com a revisão por outra pessoa
+ * desligada (`semAutorizacao`: "Enviada para revisão", não aguarda a autorização de ninguém).
+ */
+export function rotuloDaSituacao(status: StatusCalibracao, semAutorizacao?: boolean): string {
+  return status === 'REVISAO' && semAutorizacao ? ROTULO_ENVIADA_PARA_REVISAO : STATUS_CALIBRACAO[status].label
 }
 
 export const LOCAIS: Record<LocalCalibracao, string> = {
@@ -2226,6 +2245,217 @@ export function avisosEmissao(
   return semPressao && pressaoComoAviso(c, contexto.classe) ? [AVISO_SEM_PRESSAO] : []
 }
 
+// ---- Campos obrigatórios para emitir (a marca "●" das etapas, como na folha de campo) --------------------------
+
+/** As etapas do editor da calibração, na ordem. */
+export const ETAPAS_CALIBRACAO = [
+  'identificacao',
+  'instrumento',
+  'padroes',
+  'repetibilidade',
+  'excentricidade',
+  'indicacao',
+  'conclusao',
+  'revisao',
+] as const
+export type EtapaCalibracao = (typeof ETAPAS_CALIBRACAO)[number]
+
+/** Os campos das etapas que podem ser obrigatórios para emitir. */
+export type CampoEmissao =
+  | 'dataCalibracao'
+  | 'tecnicoId'
+  | 'localEndereco'
+  | 'ordemServico'
+  | 'ajusteDescricao'
+  | 'pesos'
+  | 'temperaturaInicial'
+  | 'temperaturaFinal'
+  | 'umidade'
+  | 'pressao'
+  | 'barometro'
+  | 'deltaTPesos'
+  | 'repetibilidade'
+  | 'excentricidadeMotivo'
+  | 'excentricidadeLeituras'
+  | 'indicacaoLeituras'
+  | 'retornoZero'
+  | 'toleranciaCliente'
+  | 'proximaCalibracao'
+
+export interface CampoObrigatorio {
+  campo: CampoEmissao
+  etapa: EtapaCalibracao
+  /**
+   * `obrigatorio`: a falta impede a emissão (a marca "●"). `aviso`: a falta só dá o aviso (a calibração medida antes da
+   * regra, `pressaoComoAviso`): a tela não marca o campo como obrigatório.
+   */
+  regra: 'obrigatorio' | 'aviso'
+  /** O campo está em branco. */
+  falta: boolean
+  /** O que a falta dá na emissão: as pendências (ou, na regra `aviso`, o aviso), com os textos de `pendenciasEmissao` e do cálculo. */
+  pendencias: string[]
+  /** O id do controle na tela, para levar até ele. */
+  alvo?: string
+}
+
+const TEXTO_CAMPO = {
+  dataCalibracao: 'Informe a data da calibração.',
+  tecnicoId: 'Informe o técnico que executou a calibração.',
+  padroes: 'Escolha os padrões utilizados.',
+  pesos: 'Escolha pelo menos um jogo de pesos padrão.',
+  temperatura: 'Registre a temperatura no início e no fim da calibração.',
+  excentricidadeMotivo: 'Excentricidade: informe por que o ensaio não foi feito (sai no certificado).',
+  localEndereco: 'Informe o endereço onde a calibração foi feita.',
+  ajusteDescricao: 'Descreva o ajuste externo (peso usado).',
+  ordemServico: 'Houve reparo: informe o número da ordem de serviço.',
+  toleranciaCliente: 'Informe a tolerância do cliente para a declaração de conformidade.',
+  proximaCalibracao: 'Informe a data da próxima calibração pedida pelo cliente.',
+} as const
+
+/**
+ * Os campos obrigatórios para emitir nesta calibração, pelas mesmas regras das pendências: `pendenciasEmissao` usa estas
+ * (o que falta é pendência) e o cálculo dá as dele com os mesmos textos (`PENDENCIA_*` em metrologia/calculo.ts). Por
+ * isso as marcas "●" das etapas nunca discordam do que impede a emissão. Dependem da calibração e da classe: o endereço
+ * só nas instalações do cliente; a umidade com o empuxo pela densidade do ar medida (classe I); o ΔT pesos − ar com a
+ * convecção no cálculo (classe I); a pressão e o barômetro em toda calibração (POP 7.5), só aviso onde a falta dela é
+ * aviso (`pressaoComoAviso`); o retorno ao zero e o motivo da excentricidade dispensada pelas regras do POP. Só os que
+ * valem nesta calibração; `falta`: em branco (o valor fora da faixa é outra pendência, `pendenciasAmbiente`).
+ */
+export function camposObrigatoriosEmissao(
+  c: CalibracaoInput,
+  contexto: {
+    padroes: Pick<Padrao, 'tipo' | 'identificacao'>[]
+    classe?: ClasseExatidao
+    /** Há jogo de pesos entre os padrões (sem isto, pelos padrões). */
+    temPesos?: boolean
+  },
+): CampoObrigatorio[] {
+  const lista: CampoObrigatorio[] = []
+  const campo = (
+    campo: CampoEmissao,
+    etapa: EtapaCalibracao,
+    falta: boolean,
+    pendencias: string[],
+    alvo?: string,
+    regra: CampoObrigatorio['regra'] = 'obrigatorio',
+  ) => lista.push({ campo, etapa, regra, falta, pendencias: falta ? pendencias : [], ...(alvo ? { alvo } : {}) })
+  const amb = c.ambiente
+  const regrasDoPop = !regrasDoPopComoAviso(c)
+  const minimosDoPop = !minimosDoPopComoAviso(c)
+
+  // Cliente e OS
+  campo('dataCalibracao', 'identificacao', !dataIsoValida(c.dataCalibracao), [TEXTO_CAMPO.dataCalibracao], 'k-data')
+  campo('tecnicoId', 'identificacao', !c.tecnicoId, [TEXTO_CAMPO.tecnicoId], 'k-tec')
+  if (c.local === 'CLIENTE')
+    campo('localEndereco', 'identificacao', !c.localEndereco.trim(), [TEXTO_CAMPO.localEndereco], 'k-end')
+  if (c.reparo.houve) campo('ordemServico', 'identificacao', !c.ordemServico.trim(), [TEXTO_CAMPO.ordemServico], 'k-os')
+  // Balança e ajuste (o ajuste externo, só no registro de antes do POP)
+  if (c.ajuste.realizado === 'EXTERNO')
+    campo('ajusteDescricao', 'instrumento', !c.ajuste.descricao.trim(), [TEXTO_CAMPO.ajusteDescricao], 'k-ajuste-anterior')
+
+  // Padrões e ambiente
+  const temPesos = contexto.temPesos ?? contexto.padroes.some((x) => x.tipo === 'PESOS')
+  const semPadroes = !c.padroesIds.length
+  campo(
+    'pesos',
+    'padroes',
+    semPadroes || !temPesos,
+    [...(semPadroes ? [TEXTO_CAMPO.padroes] : []), ...(temPesos ? [] : [TEXTO_CAMPO.pesos])],
+    'k-pesos',
+  )
+  // Empuxo pela densidade do ar medida (classe I): o cálculo pede a temperatura, a umidade e a pressão (a média do
+  // início e do fim; uma leitura só basta) e dá a pendência dele com a que faltar
+  const arMedido = c.opcoes.empuxo === 'MEDIDO'
+  const doAr = arMedido ? [PENDENCIA_AR_MEDIDO] : []
+  const semTemperatura = amb.temperaturaInicial === null && amb.temperaturaFinal === null
+  campo(
+    'temperaturaInicial',
+    'padroes',
+    amb.temperaturaInicial === null,
+    [TEXTO_CAMPO.temperatura, ...(semTemperatura ? doAr : [])],
+    'amb-ti',
+  )
+  campo(
+    'temperaturaFinal',
+    'padroes',
+    amb.temperaturaFinal === null,
+    [TEXTO_CAMPO.temperatura, ...(semTemperatura ? doAr : [])],
+    'amb-tf',
+  )
+  if (arMedido) campo('umidade', 'padroes', amb.umidadeInicial === null && amb.umidadeFinal === null, doAr, 'amb-ui')
+  // A pressão e o barômetro (POP 6.2 e 7.5). Onde a falta dela é aviso, a pressão sem o barômetro (ou o barômetro sem
+  // a pressão) continua pendência, e o empuxo pela densidade do ar medida também a pede: só a falta dos dois é o aviso
+  const aviso = pressaoComoAviso(c, contexto.classe)
+  const temBarometro = contexto.padroes.some((x) => x.tipo === 'BAROMETRO')
+  const daPressao = pendenciasPressao(c, contexto)
+  const avisoPressao = avisosEmissao(c, contexto)
+  const semPressao = amb.pressao === null
+  const pressaoObrigatoria = !aviso || temBarometro || arMedido
+  campo(
+    'pressao',
+    'padroes',
+    semPressao,
+    pressaoObrigatoria ? [...daPressao, ...doAr] : avisoPressao,
+    'amb-p',
+    pressaoObrigatoria ? 'obrigatorio' : 'aviso',
+  )
+  campo(
+    'barometro',
+    'padroes',
+    !temBarometro,
+    !aviso || !semPressao ? daPressao : avisoPressao,
+    'k-instrumentos',
+    !aviso || !semPressao ? 'obrigatorio' : 'aviso',
+  )
+  // Convecção no cálculo (classe I): o ΔT pesos − ar medido ou a aclimatação dos pesos
+  if ((c.opcoes.conveccao ?? 'NAO_CONSIDERAR') === 'CALCULAR')
+    campo('deltaTPesos', 'padroes', (amb.deltaTPesos ?? null) === null && !amb.aclimatacao, [PENDENCIA_CONVECCAO], 'amb-dtp')
+
+  // Os ensaios (as pendências são do cálculo)
+  campo(
+    'repetibilidade',
+    'repetibilidade',
+    !c.repetibilidade.some((r) => r.leituras.filter((l) => l !== null).length >= 2),
+    [pendenciaSemRepetibilidade(!minimosDoPop, contexto.classe === 'I')],
+    'k-repetibilidade',
+  )
+  // Excentricidade dispensada: o motivo sai no certificado (na calibração de antes das regras, como na época)
+  if (!c.excentricidade.aplicavel) {
+    if (regrasDoPop)
+      campo(
+        'excentricidadeMotivo',
+        'excentricidade',
+        !c.excentricidade.motivo.trim(),
+        [TEXTO_CAMPO.excentricidadeMotivo],
+        'ecc-motivo',
+      )
+  } else
+    campo(
+      'excentricidadeLeituras',
+      'excentricidade',
+      !c.excentricidade.posicoes.some((x) => x.leitura !== null),
+      [PENDENCIA_LEITURAS_EXCENTRICIDADE],
+      'k-excentricidade',
+    )
+  campo(
+    'indicacaoLeituras',
+    'indicacao',
+    !c.indicacao.pontos.some((x) => x.crescente !== null || x.decrescente !== null),
+    [PENDENCIA_SEM_LEITURAS_INDICACAO],
+    'k-indicacao',
+  )
+  // O retorno ao zero (POP 7.7); na calibração já medida antes das regras era opcional
+  if (minimosDoPop)
+    campo('retornoZero', 'indicacao', c.indicacao.retornoZero === null, [PENDENCIA_RETORNO_ZERO], 'k-retorno-zero')
+
+  // Conclusão
+  if (c.conformidade.solicitada && c.conformidade.criterio === 'CLIENTE')
+    campo('toleranciaCliente', 'conclusao', !(c.conformidade.toleranciaCliente > 0), [TEXTO_CAMPO.toleranciaCliente], 'conf-tol')
+  if (c.proximaNoCertificado)
+    campo('proximaCalibracao', 'conclusao', !c.proximaCalibracao, [TEXTO_CAMPO.proximaCalibracao], 'k-prox')
+  return lista
+}
+
 export function pendenciasEmissao(
   c: CalibracaoInput,
   contexto: {
@@ -2240,11 +2470,16 @@ export function pendenciasEmissao(
   const p: string[] = []
   /** As regras do POP valem (calibração nova, ou revisão de um certificado emitido com elas): ver `regrasDoPopComoAviso`. */
   const regrasDoPop = !regrasDoPopComoAviso(c)
-  if (!dataIsoValida(c.dataCalibracao)) p.push('Informe a data da calibração.')
-  else if (c.dataCalibracao > contexto.hoje) p.push('A data da calibração não pode ser futura.')
-  if (!c.tecnicoId) p.push('Informe o técnico que executou a calibração.')
-  if (!c.padroesIds.length) p.push('Escolha os padrões utilizados.')
-  if (!contexto.temPesos) p.push('Escolha pelo menos um jogo de pesos padrão.')
+  // Os campos em branco: as mesmas regras das marcas "●" das etapas (`camposObrigatoriosEmissao`)
+  const campos = new Map(camposObrigatoriosEmissao(c, contexto).map((x) => [x.campo, x]))
+  const falta = (campo: CampoEmissao): string[] => {
+    const x = campos.get(campo)
+    return x?.regra === 'obrigatorio' ? x.pendencias : []
+  }
+  p.push(...falta('dataCalibracao'))
+  if (dataIsoValida(c.dataCalibracao) && c.dataCalibracao > contexto.hoje) p.push('A data da calibração não pode ser futura.')
+  p.push(...falta('tecnicoId'))
+  p.push(...falta('pesos'))
   for (const pad of contexto.padroes) {
     // Desativado depois de escolhido (na revisão, o congelado na emissão vale: `padroesDaCalibracao`)
     if (!pad.ativo)
@@ -2277,8 +2512,7 @@ export function pendenciasEmissao(
       p.push(`O padrão ${pad.identificacao} está sem a acreditação Cgcre do laboratório que o calibrou.`)
   }
   const amb = c.ambiente
-  if (amb.temperaturaInicial === null || amb.temperaturaFinal === null)
-    p.push('Registre a temperatura no início e no fim da calibração.')
+  if (falta('temperaturaInicial').length || falta('temperaturaFinal').length) p.push(TEXTO_CAMPO.temperatura)
   p.push(...pendenciasAmbiente(amb))
   p.push(...pendenciasPressao(c, contexto))
   const jogos = contexto.padroes.filter((x) => x.tipo === 'PESOS')
@@ -2325,14 +2559,10 @@ export function pendenciasEmissao(
       p.push(
         'Excentricidade: o POP (7.10, Tabela 6) só dispensa o ensaio na balança suspensa (gancho); registre as leituras das posições.',
       )
-    if (!c.excentricidade.motivo.trim()) p.push('Excentricidade: informe por que o ensaio não foi feito (sai no certificado).')
+    p.push(...falta('excentricidadeMotivo'))
   }
-  if (c.local === 'CLIENTE' && !c.localEndereco.trim()) p.push('Informe o endereço onde a calibração foi feita.')
-  if (c.ajuste.realizado === 'EXTERNO' && !c.ajuste.descricao.trim()) p.push('Descreva o ajuste externo (peso usado).')
-  if (c.reparo.houve && !c.ordemServico.trim()) p.push('Houve reparo: informe o número da ordem de serviço.')
-  if (c.conformidade.solicitada && c.conformidade.criterio === 'CLIENTE' && !(c.conformidade.toleranciaCliente > 0))
-    p.push('Informe a tolerância do cliente para a declaração de conformidade.')
-  if (c.proximaNoCertificado && !c.proximaCalibracao) p.push('Informe a data da próxima calibração pedida pelo cliente.')
+  p.push(...falta('localEndereco'), ...falta('ajusteDescricao'), ...falta('ordemServico'))
+  p.push(...falta('toleranciaCliente'), ...falta('proximaCalibracao'))
   // Datas incoerentes (vão para o certificado; a próxima também para os vencimentos e lembretes)
   if (dataIsoValida(c.dataCalibracao)) {
     if (dataIsoValida(c.proximaCalibracao) && c.proximaCalibracao <= c.dataCalibracao)

@@ -59,10 +59,12 @@ describe('calibração nova conforme o POP', () => {
     const { calibracao: nova } = (await c.criar('/api/calibracoes', { balancaId: c.balanca.id })) as { calibracao: Calibracao }
     expect(nova.excentricidade.metodo).toBe(1)
     expect(nova.opcoes.divisaoTeste).toBe(0)
-    // O resto do plano continua o da última (posições, carga, pontos)
+    // O resto do plano continua o da última (posições, carga, pontos); sem a declaração de conformidade, sem as cargas
+    // em que o EMA muda (5 kg = 500e e 20 kg = 2000e; POP 7.7), com as sugeridas no lugar
     expect(nova.excentricidade.posicoes.map((p) => p.rotulo)).toEqual(emitida.excentricidade.posicoes.map((p) => p.rotulo))
     expect(nova.excentricidade.carga).toBe(emitida.excentricidade.carga)
-    expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual(emitida.indicacao.pontos.map((p) => p.carga))
+    expect(emitida.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
+    expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual([0, 7.5, 10, 15, 22.5, 30])
     expect(nova).toMatchObject({ ajuste: { realizado: 'NAO' }, comoEncontrado: null, reparo: { houve: false } })
 
     const { calibracao: denovo } = (await c.criar(`/api/calibracoes/${emitida.id}/recalibrar`, {})) as {

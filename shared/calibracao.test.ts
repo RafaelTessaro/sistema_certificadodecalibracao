@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { exemploRodoviaria } from '../server/pdf/exemplosCertificado.ts'
 import {
   arDoAmbiente,
+  avisoCargasDaConformidade,
+  avisoDaFolhaCargasDaConformidade,
   calcularCalibracao,
+  comCargasDoEma,
   cargaDasPecas,
   entradaDoCalculo,
   leiturasOriginais,
@@ -12,6 +15,7 @@ import {
   pecaParaCalculo,
   pesosAtendemNaCarga,
   pontosEmOrdemDeCarga,
+  planoDoHistoricoSemConformidade,
   pontosSugeridos,
   regrasDoPopComoAviso,
   termicaDoAmbiente,
@@ -1146,5 +1150,135 @@ describe('pontos em ordem de carga (o ponto acrescentado no fim com carga menor)
     expect(cargas(entradaDoCalculo(k, balanca30, [J]).indicacao.pontos)).toEqual([0, 10, 20, 30, 5])
     const legado = { ...calibracaoDe([0, 10, 20, 30, 5].map((c) => ponto(c))), calculoLegado: true }
     expect(cargas(calcularCalibracao(legado, balanca30, [J]).resultado.pontos)).toEqual([0, 10, 20, 30, 5])
+  })
+})
+
+describe('cargas em que o EMA muda: o plano copiado e a folha impressa antes da 1.0.5 (POP 7.7)', () => {
+  const prix: Balanca = {
+    ...BALANCA_VAZIA,
+    id: 'prix',
+    versao: 1,
+    tipo: 'BALCAO',
+    classe: 'III',
+    tipoFaixas: 'MULTI_INTERVALO',
+    faixas: [
+      { max: 6, e: 0.002, d: 0.002 },
+      { max: 15, e: 0.005, d: 0.005 },
+      { max: 32, e: 0.01, d: 0.01 },
+    ],
+    min: 0.04,
+    criadoEm: '',
+    atualizadoEm: '',
+  }
+  const b30: Balanca = { ...prix, id: 'b30', tipoFaixas: 'UNICA', faixas: [{ max: 30, e: 0.01, d: 0.01 }], min: 0 }
+  const pontos = (cargas: number[], nivel = 0) =>
+    cargas.map((carga, i) => ({
+      id: `p${i}`,
+      carga,
+      pecas: [],
+      pecasManuais: false,
+      crescente: null,
+      decrescente: null,
+      nivelSubstituicao: carga > 20 ? nivel : 0,
+    }))
+  const plano = (cargas: number[], nivel = 0) => ({
+    indicacao: { ...calibracaoVazia().indicacao, pontos: pontos(cargas, nivel) },
+  })
+  const cargas = (k: { indicacao: { pontos: Array<{ carga: number }> } }) => k.indicacao.pontos.map((p) => p.carga)
+
+  it('o plano das sugestões até a 1.0.4, copiado sem a declaração de conformidade, fica com o mínimo do cg-18', () => {
+    const k = plano([0, 0.04, 1, 4, 8, 10, 16, 20, 24, 32])
+    expect(cargas(planoDoHistoricoSemConformidade(k, prix, [], false))).toEqual([0, 0.04, 8, 16, 24, 32])
+    // Os pontos que ficam são os mesmos (o id, as peças)
+    expect(planoDoHistoricoSemConformidade(k, prix, [], false).indicacao.pontos[2]).toBe(k.indicacao.pontos[4])
+    // Com a declaração pedida, sem classe ou sem cargas em que o EMA muda: o plano como veio
+    expect(planoDoHistoricoSemConformidade(k, prix, [], true)).toBe(k)
+    expect(planoDoHistoricoSemConformidade(k, { ...prix, classe: '' }, [], false)).toBe(k)
+    const semElas = plano([0, 0.04, 8, 16, 24, 32])
+    expect(planoDoHistoricoSemConformidade(semElas, prix, [], false)).toBe(semElas)
+    expect(planoDoHistoricoSemConformidade(k, undefined, [], false)).toBe(k)
+  })
+
+  it('a carga acordada fica; com menos de 5 cargas, entram as sugeridas que faltam', () => {
+    // 30 kg × 10 g: 5 kg = 500e e 20 kg = 2000e saem; 10 kg (acordada) fica; 0, 10 e 30 são só 3: entram 7,5, 15 e 22,5
+    const k = plano([0, 5, 10, 20, 30])
+    const r = planoDoHistoricoSemConformidade(k, b30, [], false)
+    expect(cargas(r)).toEqual([0, 7.5, 10, 15, 22.5, 30])
+    expect(r.indicacao.pontos.find((p) => p.carga === 7.5)).toMatchObject({
+      pecas: [],
+      pecasManuais: false,
+      crescente: null,
+      decrescente: null,
+      nivelSubstituicao: 0,
+    })
+    expect(new Set(r.indicacao.pontos.map((p) => p.id)).size).toBe(6)
+    // Com 5 ou mais depois de tirar, nada entra: 0; 5; 7,5; 15; 20; 22,5; 30 → 0; 7,5; 15; 22,5; 30
+    expect(cargas(planoDoHistoricoSemConformidade(plano([0, 5, 7.5, 15, 20, 22.5, 30]), b30, [], false))).toEqual([
+      0, 7.5, 15, 22.5, 30,
+    ])
+  })
+
+  it('a carga em que o EMA muda que também é do mínimo do cg-18 fica; a das etapas de substituição também', () => {
+    // 80 kg × 10 g: 2000e = 20 kg = 25 % de Max
+    const b80 = { ...b30, faixas: [{ max: 80, e: 0.01, d: 0.01 }] }
+    expect(cargas(planoDoHistoricoSemConformidade(plano([0, 5, 20, 40, 60, 80]), b80, [], false))).toEqual([0, 20, 40, 60, 80])
+    // Rodoviária: o ponto montado sobre as etapas de substituição é da sequência delas e fica
+    const k = plano([0, 5, 7.5, 15, 20, 22.5, 30], 1)
+    expect(cargas(planoDoHistoricoSemConformidade(k, b30, [], false))).toEqual([0, 7.5, 15, 22.5, 30])
+    const comEtapa = plano([0, 5, 7.5, 15, 22.5, 25, 30], 1)
+    comEtapa.indicacao.pontos[5] = { ...comEtapa.indicacao.pontos[5], carga: 20, nivelSubstituicao: 1 }
+    expect(cargas(planoDoHistoricoSemConformidade(comEtapa, b30, [], false))).toEqual(
+      [0, 7.5, 15, 22.5, 20, 30].sort((a, b) => a - b),
+    )
+  })
+
+  it('a folha impressa antes da 1.0.5 (com as cargas em que o EMA muda): a sugestão as mantém, e o aviso diz as que faltam', () => {
+    const k = { ...calibracaoVazia(), indicacao: { ...calibracaoVazia().indicacao, pontos: [] } }
+    expect(comCargasDoEma(k)).toBe(false)
+    expect(comCargasDoEma({ ...k, cargasDoEmaNaFolha: true })).toBe(true)
+    expect(comCargasDoEma({ ...k, conformidade: { ...k.conformidade, solicitada: true } })).toBe(true)
+    // Sem os pontos: nada a avisar (a sugestão já as traz)
+    expect(avisoCargasDaConformidade({ ...k, cargasDoEmaNaFolha: true }, prix)).toBeNull()
+    const semElas = { ...k, cargasDoEmaNaFolha: true, indicacao: { ...k.indicacao, pontos: pontos([0, 0.04, 8, 16, 24, 32]) } }
+    expect(avisoCargasDaConformidade(semElas, prix)).toBe(
+      'A folha de campo desta calibração foi impressa antes da versão 1.0.5, com as cargas em que o EMA muda, e faltam 1 kg, 4 kg, 10 kg e 20 kg no erro de indicação: se foram medidas, inclua-as.',
+    )
+    // Sem a marca e sem o pedido: o mínimo do cg-18 basta
+    expect(avisoCargasDaConformidade({ ...semElas, cargasDoEmaNaFolha: undefined }, prix)).toBeNull()
+  })
+  it('declaração pedida depois da folha: as linhas das cargas em que o EMA muda sem leitura não contam (não foram medidas)', () => {
+    // 32 kg × 5 g, classe III: 500e = 2,5 kg e 2000e = 10 kg. "Sugerir pontos" depois do pedido traz as duas, em branco
+    const b32: Balanca = { ...b30, id: 'b32', faixas: [{ max: 32, e: 0.005, d: 0.005 }], min: 0.1 }
+    const lido = (carga: number) => ({ crescente: carga, decrescente: carga })
+    const linhas = pontos([0, 0.1, 2.5, 8, 10, 16, 24, 32]).map((p) =>
+      p.carga === 2.5 || p.carga === 10 ? p : { ...p, ...lido(p.carga) },
+    )
+    const k = {
+      ...calibracaoVazia(),
+      conformidade: { ...calibracaoVazia().conformidade, solicitada: true },
+      indicacao: { ...calibracaoVazia().indicacao, pontos: linhas },
+    }
+    expect(avisoCargasDaConformidade(k, b32)).toBe(
+      'Declaração de conformidade pedida: o POP (7.7) pede também as cargas em que o EMA muda, e faltam 2,5 kg e 10 kg no erro de indicação.',
+    )
+    // Lida uma delas (só a subida já vale): falta a outra
+    const umaLida = {
+      ...k,
+      indicacao: { ...k.indicacao, pontos: linhas.map((p) => (p.carga === 10 ? { ...p, crescente: 10 } : p)) },
+    }
+    expect(avisoCargasDaConformidade(umaLida, b32)).toBe(
+      'Declaração de conformidade pedida: o POP (7.7) pede também as cargas em que o EMA muda, e falta 2,5 kg no erro de indicação.',
+    )
+    // Ainda sem nenhuma carga lida (só o zero que a sugestão preenche): os pontos são o plano, e ele as tem
+    const plano = {
+      ...k,
+      indicacao: {
+        ...k.indicacao,
+        pontos: pontos([0, 0.1, 2.5, 8, 10, 16, 24, 32]).map((p) => (p.carga === 0 ? { ...p, ...lido(0) } : p)),
+      },
+    }
+    expect(avisoCargasDaConformidade(plano, b32)).toBeNull()
+    // A folha (antes de sair) olha o plano: as linhas em branco vão ser medidas
+    expect(avisoDaFolhaCargasDaConformidade(k, b32)).toBeNull()
   })
 })

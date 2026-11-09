@@ -33,11 +33,11 @@ import {
 } from '#shared/dominio.ts'
 import type { Balanca, Calibracao } from '#shared/tipos.ts'
 import { exemploClasseI } from './pdf/exemplosCertificado.ts'
-import { detalheTrocaIndicador, migrar } from './db.ts'
+import { detalheTrocaIndicador, lerMeta, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 19
+const ULTIMA = 20
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -1539,5 +1539,171 @@ describe('migração 19: a calibração em andamento sem a pressão, de antes de
     nada.exec("DELETE FROM calibracoes WHERE id IN ('p1', 'p2', 'r8')")
     migrar(nada)
     expect(registros(nada).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toEqual([])
+  })
+})
+
+describe('migração 20: as folhas de campo impressas antes da 1.0.5', () => {
+  const OPCOES = { ...OPCOES_CALCULO_PADRAO }
+  const semLeitura = {
+    metodo: 'CRESCENTE_DECRESCENTE',
+    retornoZero: null,
+    substituicao: { ativa: false, pecas: [], etapas: [] },
+    pontos: [],
+  }
+  /**
+   * Banco na versão 19 com as balanças b3 (30 kg × 10 g, classe III: 500e = 5 kg e 2000e = 20 kg) e b0 (sem classe) e:
+   * k1 (b3, com a folha impressa), k2 (b0, com a folha), k3 (b3, sem folha), k4 (b3, já marcada) e o5 (emitido, com a
+   * folha). E a folha avulsa FC-2026-00009, não ligada. `comPontos`: mais rascunhos da b3 com a folha impressa
+   * (FC-2026-00011…) e os pontos do erro de indicação.
+   */
+  function bancoV19(comPontos: Array<{ id: string; os: string; cargas: number[] }> = []) {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 1)
+    db.prepare(
+      `INSERT INTO clientes (id, tipo, documento, nome, busca, ativo, dados, versao, criado_em, atualizado_em)
+       VALUES ('c1', 'PJ', '', 'Frigorífico', 'frigorifico', 1, '{}', 1, ?, ?)`,
+    ).run(EM, EM)
+    inserirBalanca(db, 'b3', { numeroSerie: 'TL-1', classe: 'III', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
+    inserirBalanca(db, 'b0', { numeroSerie: 'TL-0', classe: '', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
+    migrar(db, 19)
+    const inserir = db.prepare(
+      `INSERT INTO calibracoes (id, status, numero, cliente_id, balanca_id, ordem_servico, substitui_id, dados, versao,
+                                criado_em, atualizado_em)
+       VALUES (?, ?, ?, 'c1', ?, ?, '', ?, 2, ?, ?)`,
+    )
+    let minutos = 0
+    const calibracao = (id: string, status: string, o: { balanca?: string; os?: string; numero?: string }, dados: object) => {
+      const em = new Date(Date.parse(EM) + ++minutos * 60_000).toISOString()
+      const k = {
+        id,
+        status,
+        numero: o.numero ?? '',
+        clienteId: 'c1',
+        balancaId: o.balanca ?? 'b3',
+        ordemServico: o.os ?? '',
+        dataCalibracao: '2026-11-04',
+        substituiId: '',
+        opcoes: OPCOES,
+        emissao: null,
+        conformidade: { solicitada: false },
+        repetibilidade: [],
+        excentricidade: { aplicavel: true, carga: 10, posicoes: [] },
+        indicacao: semLeitura,
+        ...dados,
+      }
+      inserir.run(id, status, o.numero ?? '', o.balanca ?? 'b3', o.os ?? '', JSON.stringify(k), em, em)
+    }
+    calibracao('k1', 'RASCUNHO', { os: '90' }, {})
+    calibracao('k2', 'RASCUNHO', { balanca: 'b0', os: '91' }, {})
+    calibracao('k3', 'RASCUNHO', { os: '92' }, {})
+    calibracao('k4', 'RASCUNHO', { os: '93' }, { cargasDoEmaNaFolha: true })
+    calibracao('o5', 'EMITIDO', { numero: 'CC-2026-00005' }, { emissao: { padroes: [] } })
+    for (const m of comPontos)
+      calibracao(
+        m.id,
+        'RASCUNHO',
+        { os: m.os },
+        {
+          indicacao: {
+            ...semLeitura,
+            pontos: m.cargas.map((carga, i) => ({
+              id: `${m.id}-${i}`,
+              carga,
+              pecas: [],
+              pecasManuais: false,
+              crescente: null,
+              decrescente: null,
+              nivelSubstituicao: 0,
+            })),
+          },
+        },
+      )
+    const folha = db.prepare(
+      `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, impressa_por,
+         impressa_em, ultima_em, substituida_por, substituida_em)
+       VALUES (?, 2026, ?, ?, ?, ?, 'c1', 'Ana', ?, ?, '', '')`,
+    )
+    for (const [n, k, b] of [
+      [1, 'k1', 'b3'],
+      [2, 'k2', 'b0'],
+      [4, 'k4', 'b3'],
+      [5, 'o5', 'b3'],
+      [9, '', 'b3'],
+    ] as const)
+      folha.run(`FC-2026-0000${n}`, n, k ? `calibracao:${k}` : `avulsa:${n}`, k, b, EM, EM)
+    comPontos.forEach((m, i) => folha.run(`FC-2026-000${11 + i}`, 11 + i, `calibracao:${m.id}`, m.id, 'b3', EM, EM))
+    return db
+  }
+  const dados = (db: DatabaseSync) =>
+    Object.fromEntries(
+      (db.prepare('SELECT id, dados FROM calibracoes ORDER BY id').all() as Array<{ id: string; dados: string }>).map((l) => [
+        l.id,
+        JSON.parse(l.dados) as Record<string, unknown>,
+      ]),
+    )
+
+  it('marca as folhas que já estavam no banco e a calibração em andamento com folha de uma balança com classe', () => {
+    const db = bancoV19()
+    const antes = dados(db)
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(db.prepare('SELECT numero, antes_105 FROM folhas_campo ORDER BY numero').all()).toEqual(
+      [1, 2, 4, 5, 9].map((n) => ({ numero: `FC-2026-0000${n}`, antes_105: 1 })),
+    )
+    // Nenhuma data de atualização: a folha que voltar da pasta é marcada pelo próprio PDF (a cópia de antes da 1.0.5
+    // posta no lugar é atualizada depois das folhas impressas na 1.0.5)
+    expect(lerMeta(db, 'folhas_antes_105_ate')).toBeUndefined()
+    const depois = dados(db)
+    expect(depois.k1).toEqual({ ...antes.k1, cargasDoEmaNaFolha: true })
+    // Sem classe (sem cargas em que o EMA muda), sem folha, já marcada e o emitido: como estavam
+    for (const id of ['k2', 'k3', 'k4', 'o5']) expect(depois[id], id).toEqual(antes[id])
+    // A versão não sobe (a tela não grava a marca)
+    expect(db.prepare("SELECT versao FROM calibracoes WHERE id = 'k1'").get()).toEqual({ versao: 2 })
+    // O registro de atividades diz qual
+    expect(
+      registros(db)
+        .filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
+        .map((r) => r.detalhe),
+    ).toEqual([
+      'A calibração em andamento com a folha de campo impressa antes desta versão continua com as cargas em que o EMA muda em “Sugerir pontos” e na folha nova, como a folha que foi a campo; nas novas, só com a declaração de conformidade. Confira: OS 90.',
+    ])
+  })
+
+  it('não afirma que a folha trazia as cargas em que o EMA muda quando os pontos do rascunho não as têm', () => {
+    // Até a 1.0.4, a folha do rascunho com pontos saía com os pontos dele (sem 5 e 20 kg, elas não estavam no papel)
+    const db = bancoV19([
+      { id: 'k6', os: '96', cargas: [0, 7.5, 15, 22.5, 30] },
+      { id: 'k7', os: '97', cargas: [0, 5, 7.5, 15, 20, 22.5, 30] },
+      { id: 'k8', os: '98', cargas: [0, 5, 7.5, 15, 22.5, 30] },
+    ])
+    const antes = dados(db)
+    migrar(db)
+    const depois = dados(db)
+    // Sem pontos (a folha saiu com as sugestões) ou com todas elas: marcada; com alguma faltando, como estava
+    expect(depois.k1).toEqual({ ...antes.k1, cargasDoEmaNaFolha: true })
+    expect(depois.k7).toEqual({ ...antes.k7, cargasDoEmaNaFolha: true })
+    expect(depois.k6).toEqual(antes.k6)
+    expect(depois.k8).toEqual(antes.k8)
+    expect(
+      registros(db)
+        .filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
+        .map((r) => r.detalhe),
+    ).toEqual([
+      '2 calibrações em andamento com a folha de campo impressa antes desta versão continuam com as cargas em que o EMA muda em “Sugerir pontos” e na folha nova, como a folha que foi a campo; nas novas, só com a declaração de conformidade. Confira: OS 90, OS 97.',
+    ])
+  })
+
+  it('repetida, não marca as folhas impressas depois', () => {
+    const db = bancoV19()
+    migrar(db)
+    db.prepare(
+      `INSERT INTO folhas_campo (numero, ano, sequencia, chave, impressa_em, ultima_em) VALUES ('FC-2026-00010', 2026, 10, 'avulsa:10', ?, ?)`,
+    ).run(EM, EM)
+    const depois = dados(db)
+    db.exec('PRAGMA user_version = 19')
+    migrar(db)
+    expect(db.prepare("SELECT antes_105 FROM folhas_campo WHERE numero = 'FC-2026-00010'").get()).toEqual({ antes_105: 0 })
+    expect(dados(db)).toEqual(depois)
+    expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(1)
   })
 })

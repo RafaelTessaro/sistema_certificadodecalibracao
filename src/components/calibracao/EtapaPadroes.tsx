@@ -23,13 +23,22 @@ import { hojeISO } from '../../lib/format'
 import { ValidadePadraoBadge } from '../Selos'
 import { Badge } from '../ui/Badge'
 import { Card, CardHeader } from '../ui/Card'
-import { Field } from '../ui/Form'
+import { Field, MarcaObrigatorio, TEXTO_PENDENTE } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
+import { type MarcaCampo, marcasDaEtapa } from './obrigatorios'
 import { calibradoDepois, cartoesDosPadroes, textoDeltaT } from './util'
 
-export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanca, calc }: ContextoEtapa) {
+export function EtapaPadroes(ctx: ContextoEtapa) {
+  const { f, alterar, padroes, selecionados, config, balanca, calc } = ctx
+  // Os obrigatórios para emitir: os pesos, a temperatura, a pressão com o barômetro (toda classe, POP 7.5) e, com o
+  // empuxo pela densidade do ar medida e a convecção (classe I), a umidade e o ΔT pesos − ar
+  const { marca, regraDe } = marcasDaEtapa(ctx)
+  const mPesos = marca('pesos')
+  const mPressao = marca('pressao')
+  const umidadeObrigatoria = regraDe('umidade') === 'obrigatorio'
+  const mUmidade = marca('umidade')
   const escolhidos = new Set(f.padroesIds)
   const alternar = (p: Padrao) =>
     alterar((s) => ({
@@ -59,15 +68,21 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
   // POP 6.2: o termo-higrômetro em todas as calibrações (a temperatura e a umidade saem no certificado com ele)
   const semTermoHigrometro =
     (amb.temperaturaInicial !== null || amb.temperaturaFinal !== null) && !selecionados.some((p) => p.tipo === 'TERMOHIGROMETRO')
-  // POP 6.2 e 7.5: a pressão sai no certificado com o barômetro que a mediu
-  const semBarometro = amb.pressao !== null && !selecionados.some((p) => p.tipo === 'BAROMETRO')
+  // POP 6.2 e 7.5: a pressão sai no certificado com o barômetro que a mediu (obrigatório também sem a pressão ainda, já
+  // depois de a pessoa passar por ele)
+  const semBarometro = !selecionados.some((p) => p.tipo === 'BAROMETRO') && (amb.pressao !== null || marca('barometro').pendente)
 
   return (
     <div className="flex flex-col gap-6">
-      <Card>
+      <Card id="k-pesos">
         <CardHeader
           icone={<Weight className="h-4 w-4" />}
-          titulo="Pesos padrão usados"
+          titulo={
+            <span className="inline-flex items-center gap-1.5">
+              Pesos padrão usados
+              {mPesos.obrigatorio && <MarcaObrigatorio />}
+            </span>
+          }
           descricao="Escolha os jogos de pesos levados para a calibração. As cargas são montadas com eles."
           acoes={
             <Link to="/padroes" target="_blank" className="text-[13px] font-medium text-brand-ink hover:underline">
@@ -76,6 +91,12 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
           }
         />
         <div className="grid grid-cols-1 gap-3 px-5 pb-5 md:grid-cols-2">
+          {mPesos.pendente && pesos.length > 0 && (
+            <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] font-medium text-warning md:col-span-2">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              {TEXTO_PENDENTE}: escolha pelo menos um jogo de pesos.
+            </p>
+          )}
           {pesos.length === 0 && (
             <p className="rounded-xl bg-warning-soft px-3.5 py-3 text-[13px] text-warning md:col-span-2">
               Nenhum jogo de pesos cadastrado. Cadastre em{' '}
@@ -106,7 +127,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
         />
         <div className="flex flex-col gap-5 px-5 pb-5">
           {instrumentos.length > 0 && (
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div id="k-instrumentos" className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {instrumentos.map((p) => (
                 <CartaoPadrao
                   key={p.id}
@@ -129,6 +150,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
               <GrupoAmbiente
                 icone={<Thermometer className="h-3.5 w-3.5" />}
                 titulo="Temperatura"
+                obrigatorio={marca('temperaturaInicial').obrigatorio}
                 extra={
                   deltaT !== null && (
                     <span
@@ -143,7 +165,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
                   )
                 }
               >
-                <Field label="Início" htmlFor="amb-ti">
+                <Field label="Início" htmlFor="amb-ti" {...semMarca(marca('temperaturaInicial'))}>
                   <CampoNumero
                     id="amb-ti"
                     valor={amb.temperaturaInicial}
@@ -153,7 +175,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
                     grade={{ grupo: 'amb', lin: 0, col: 0 }}
                   />
                 </Field>
-                <Field label="Fim" htmlFor="amb-tf">
+                <Field label="Fim" htmlFor="amb-tf" {...semMarca(marca('temperaturaFinal'))}>
                   <CampoNumero
                     id="amb-tf"
                     valor={amb.temperaturaFinal}
@@ -164,8 +186,13 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
                   />
                 </Field>
               </GrupoAmbiente>
-              <GrupoAmbiente icone={<Droplets className="h-3.5 w-3.5" />} titulo="Umidade relativa">
-                <Field label="Início" htmlFor="amb-ui">
+              <GrupoAmbiente
+                icone={<Droplets className="h-3.5 w-3.5" />}
+                titulo="Umidade relativa"
+                obrigatorio={umidadeObrigatoria}
+              >
+                {/* Com o empuxo pela densidade do ar medida, o início ou o fim (o cálculo usa a média) */}
+                <Field label="Início" htmlFor="amb-ui" {...semMarca(mUmidade)}>
                   <CampoNumero
                     id="amb-ui"
                     valor={amb.umidadeInicial}
@@ -175,7 +202,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
                     grade={{ grupo: 'amb', lin: 0, col: 1 }}
                   />
                 </Field>
-                <Field label="Fim" htmlFor="amb-uf">
+                <Field label="Fim" htmlFor="amb-uf" {...semMarca(mUmidade)}>
                   <CampoNumero
                     id="amb-uf"
                     valor={amb.umidadeFinal}
@@ -186,12 +213,18 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
                   />
                 </Field>
               </GrupoAmbiente>
-              <GrupoAmbiente icone={<Gauge className="h-3.5 w-3.5" />} titulo="Pressão" colunas={1}>
-                {/* "Obrigatória" no rótulo (e não numa dica embaixo): os três grupos ficam da mesma altura */}
-                <Field label="Obrigatória" htmlFor="amb-p">
+              <GrupoAmbiente
+                icone={<Gauge className="h-3.5 w-3.5" />}
+                titulo="Pressão"
+                colunas={1}
+                obrigatorio={mPressao.obrigatorio}
+              >
+                {/* A marca vai no título do grupo, como na folha ("Pressão ●"). Na calibração medida quando ela era
+                    opcional, "opcional" no rótulo (sem ela, sai com o aviso) */}
+                <Field label="Leitura" htmlFor="amb-p" opcional={regraDe('pressao') === 'aviso'} {...semMarca(mPressao)}>
                   <CampoNumero
                     id="amb-p"
-                    aria-label="Pressão atmosférica (obrigatória)"
+                    aria-label={mPressao.obrigatorio ? 'Pressão atmosférica (obrigatória)' : 'Pressão atmosférica (opcional)'}
                     valor={amb.pressao}
                     aoMudar={(v) => setAmb('pressao', v)}
                     tom={tomFaixa(amb.pressao, 'pressao')}
@@ -245,6 +278,7 @@ export function EtapaPadroes({ f, alterar, padroes, selecionados, config, balanc
             <GrupoConveccao
               ambiente={amb}
               classeI={balanca.classe === 'I'}
+              marca={marca('deltaTPesos')}
               semTermometro={semTermometroDuasEntradas(balanca.classe, lista)}
               jogos={selecionados.filter((p) => p.tipo === 'PESOS')}
               aoMudar={(mudar) => alterar((s) => ({ ...s, ambiente: mudar(s.ambiente) }))}
@@ -275,12 +309,15 @@ const quandoAmbiente = (classeI: boolean): string =>
 function GrupoConveccao({
   ambiente,
   classeI,
+  marca,
   semTermometro,
   jogos,
   aoMudar,
 }: {
   ambiente: CondicoesAmbientais
   classeI: boolean
+  /** Obrigatório para emitir com a convecção no cálculo (classe I): medido ou pela aclimatação. */
+  marca: MarcaCampo
   /** Classe I sem nenhum padrão "Outro" ativo: o ΔT medido não tem termômetro para escolher nos padrões. */
   semTermometro: boolean
   jogos: Padrao[]
@@ -319,13 +356,14 @@ function GrupoConveccao({
       : null
   return (
     <fieldset className="min-w-0 rounded-xl border border-line bg-surface-2/40 px-3.5 pt-3 pb-3.5">
-      <legend className="sr-only">Pesos × ar (convecção)</legend>
+      <legend className="sr-only">Pesos × ar (convecção){marca.obrigatorio ? ' (obrigatório)' : ''}</legend>
       <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
         <div aria-hidden className="flex h-5 min-w-0 items-center gap-2">
           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-surface text-ink-2 shadow-xs ring-1 ring-line">
             <ThermometerSun className="h-3.5 w-3.5" />
           </span>
           <span className="truncate text-[13px] font-semibold text-ink">Pesos × ar (convecção)</span>
+          {marca.obrigatorio && <MarcaObrigatorio />}
         </div>
         <Segmented
           tamanho="sm"
@@ -345,6 +383,7 @@ function GrupoConveccao({
             htmlFor="amb-dtp"
             className="max-w-xs"
             hint="Termômetro de duas entradas: uma sonda entre os pesos, outra no ar junto ao prato. Nunca infravermelho."
+            {...semMarca(marca)}
           >
             <CampoNumero
               id="amb-dtp"
@@ -375,7 +414,7 @@ function GrupoConveccao({
       ) : (
         <div className="flex flex-col gap-3">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Diferença na chegada" htmlFor="amb-acl-dt">
+            <Field label="Diferença na chegada" htmlFor="amb-acl-dt" {...semMarca(marca)}>
               <CampoNumero
                 id="amb-acl-dt"
                 valor={acl.deltaT0}
@@ -388,6 +427,7 @@ function GrupoConveccao({
               label="Pesos no local até o 1º ensaio"
               htmlFor="amb-acl-min"
               hint="Da hora de chegada (passo 2) até o Início do ambiente (passo 4) da folha."
+              {...semMarca(marca)}
             >
               <CampoNumero
                 id="amb-acl-min"
@@ -419,6 +459,12 @@ function GrupoConveccao({
   )
 }
 
+/**
+ * O destaque e o fim do foco do campo, sem a marca no rótulo: no ambiente, a marca vai no título do grupo (como na folha
+ * de campo, "Temperatura ●"), e os campos dele são "Início" e "Fim".
+ */
+const semMarca = ({ pendente, aoSair }: MarcaCampo) => ({ pendente, aoSair })
+
 /** Campo do ambiente fora da faixa aceita (`FAIXAS_AMBIENTE`): em vermelho. */
 const tomFaixa = (v: number | null | undefined, faixa: FaixaAmbiente) => (foraDaFaixaAmbiente(v, faixa) ? 'erro' : 'normal')
 
@@ -435,22 +481,29 @@ function GrupoAmbiente({
   titulo,
   extra,
   colunas = 2,
+  obrigatorio,
   children,
 }: {
   icone: ReactNode
   titulo: string
   extra?: ReactNode
   colunas?: 1 | 2
+  /** Obrigatório para emitir: a marca "●" depois do título. */
+  obrigatorio?: boolean
   children: ReactNode
 }) {
   return (
     <fieldset className="min-w-0 rounded-xl border border-line bg-surface-2/40 px-3.5 pt-3 pb-3.5">
-      <legend className="sr-only">{titulo}</legend>
+      <legend className="sr-only">
+        {titulo}
+        {obrigatorio ? ' (obrigatório)' : ''}
+      </legend>
       <div aria-hidden className="mb-2.5 flex h-5 items-center gap-2">
         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-surface text-ink-2 shadow-xs ring-1 ring-line">
           {icone}
         </span>
         <span className="min-w-0 truncate text-[13px] font-semibold text-ink">{titulo}</span>
+        {obrigatorio && <MarcaObrigatorio className="-ml-0.5" />}
         {extra && <span className="ml-auto shrink-0">{extra}</span>}
       </div>
       <div className={cn('grid grid-cols-2 gap-3', colunas === 1 && '@4xl:grid-cols-1')}>{children}</div>
@@ -524,6 +577,19 @@ function CartaoPadrao({
           <span className="mt-2 flex items-center gap-1.5 text-xs font-medium text-danger">
             <TriangleAlert className="h-3.5 w-3.5" />
             {situacao === 'SEM_DATA' ? 'Sem a data da próxima calibração' : 'Vencido na data da calibração'}: impede a emissão
+          </span>
+        )}
+        {/* A declaração de rastreabilidade cita o certificado e a acreditação Cgcre do laboratório (pendências) */}
+        {marcado && !p.certificado.trim() && (
+          <span className="mt-2 flex items-start gap-1.5 text-xs font-medium text-danger">
+            <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+            Sem o nº do certificado no cadastro: impede a emissão
+          </span>
+        )}
+        {marcado && !p.acreditacao?.trim() && (
+          <span className="mt-2 flex items-start gap-1.5 text-xs font-medium text-danger">
+            <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+            Sem a acreditação Cgcre do laboratório no cadastro: impede a emissão
           </span>
         )}
         {marcado && depois && (

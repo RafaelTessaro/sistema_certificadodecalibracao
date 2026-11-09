@@ -1,11 +1,12 @@
 import { AtSign, UserPlus } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
+import { OBRIGATORIOS_USUARIO } from '#shared/obrigatorios.ts'
 import type { NivelUsuario, ResultadoSenha, Usuario } from '#shared/tipos.ts'
 import { LOGIN_MAX, NOME_USUARIO_MAX, normalizarLogin, validarLogin, validarSenhaNova } from '#shared/usuarios.ts'
 import { api, ErroApi } from '../../lib/api'
 import { avisarErro, toast } from '../../store/ui'
 import { Button } from '../ui/Button'
-import { Field, Input } from '../ui/Form'
+import { Field, Input, LegendaObrigatorio } from '../ui/Form'
 import { Modal } from '../ui/Modal'
 import { DadosCertificado, type DadosNoCertificado } from './DadosCertificado'
 import { EscolhaNivel } from './EscolhaNivel'
@@ -118,8 +119,15 @@ function FormNovoUsuario({
 
   return (
     <form id="form-novo-usuario" onSubmit={enviar} className="flex flex-col gap-5" noValidate>
+      <LegendaObrigatorio para="salvar" className="-mb-3 justify-end" />
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Nome" htmlFor="novo-nome" erro={tentou ? erroNome : null} hint="Como aparece nas telas e no certificado.">
+        <Field
+          label="Nome"
+          htmlFor="novo-nome"
+          erro={tentou ? erroNome : null}
+          hint="Como aparece nas telas e no certificado."
+          obrigatorio={OBRIGATORIOS_USUARIO.includes('nome')}
+        >
           <Input
             id="novo-nome"
             autoFocus
@@ -133,6 +141,7 @@ function FormNovoUsuario({
         <Field
           label="Usuário"
           htmlFor="novo-login"
+          obrigatorio={OBRIGATORIOS_USUARIO.includes('login')}
           erro={mostrarErroLogin ? erroLogin : null}
           hint="Para entrar. Combine com a pessoa; dá para trocar depois."
         >

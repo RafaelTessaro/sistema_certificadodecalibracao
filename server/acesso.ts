@@ -120,6 +120,7 @@ export const TABELA_ACESSO: Record<string, RegraAcesso> = {
   'PUT /api/calibracoes/:id/folha-campo': 'logado', // liga a folha avulsa preenchida no cliente à calibração
   'GET /api/folha-campo': 'logado',
   'GET /api/folha-campo/:numero': 'logado', // reimpressão pelo nº: o PDF da primeira impressão (vai para o registro)
+  'GET /api/folhas-campo': 'logado', // a lista das folhas impressas, com a situação de cada uma (aba "Folhas de campo")
 
   // rotas/numeros.ts (nºs de certificado reservados na impressão da folha de campo; o descarte do nº de uma
   // folha avulsa, que deixa um buraco na numeração, só com a permissão de cancelar certificados)

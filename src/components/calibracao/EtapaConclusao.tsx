@@ -18,9 +18,14 @@ import { Card, CardHeader } from '../ui/Card'
 import { Field, Input, Select, Textarea } from '../ui/Form'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
+import { marcasDaEtapa } from './obrigatorios'
 import { diaSeguinte } from './util'
 
-export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
+export function EtapaConclusao(ctx: ContextoEtapa) {
+  const { f, alterar, balanca, config } = ctx
+  // Obrigatórios para emitir: a tolerância do cliente (na conformidade pela tolerância dele) e a próxima calibração
+  // (quando o cliente pediu a data no certificado)
+  const { marca } = marcasDaEtapa(ctx)
   const conf = f.conformidade
   const setConf = <K extends keyof typeof conf>(k: K, v: (typeof conf)[K]) =>
     alterar((s) => ({ ...s, conformidade: { ...s.conformidade, [k]: v } }))
@@ -65,7 +70,7 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
               </Select>
             </Field>
             {conf.criterio === 'CLIENTE' && (
-              <Field label="Tolerância do cliente (±)" htmlFor="conf-tol">
+              <Field label="Tolerância do cliente (±)" htmlFor="conf-tol" {...marca('toleranciaCliente')}>
                 <CampoNumero
                   id="conf-tol"
                   valor={conf.toleranciaCliente || null}
@@ -115,7 +120,7 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
         />
         <div className="flex flex-col gap-4 px-5 pb-5">
           <div className="flex flex-wrap items-end gap-3">
-            <Field label="Data" htmlFor="k-prox" className="w-48">
+            <Field label="Data" htmlFor="k-prox" className="w-48" opcional {...marca('proximaCalibracao')}>
               <Input
                 id="k-prox"
                 type="date"
@@ -159,6 +164,7 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
         <div className="flex flex-col gap-4 px-5 pb-5">
           <Field
             label="Observações"
+            opcional
             htmlFor="k-obs"
             hint={config.textos.observacoesPadrao ? 'As observações padrão (Configurações) também saem.' : 'Saem no certificado.'}
           >
@@ -170,7 +176,8 @@ export function EtapaConclusao({ f, alterar, balanca, config }: ContextoEtapa) {
             />
           </Field>
           <Field
-            label="Opiniões e interpretações (opcional)"
+            label="Opiniões e interpretações"
+            opcional
             htmlFor="k-opi"
             hint="Separadas dos resultados no certificado, como pede a ISO/IEC 17025 (7.8.7)."
           >
@@ -231,7 +238,7 @@ export function OpcoesAvancadas({
   const faltamDaClasseI = classeI && !legado && faltamOpcoesDaClasse(opcoes, classe)
   const comDeltaTLocal = opcoes.empuxo === 'DELTA_T' || opcoes.empuxo === 'MEDIDO'
   return (
-    <Card>
+    <Card id="k-opcoes">
       <button
         type="button"
         onClick={() => setAberto((a) => !a)}

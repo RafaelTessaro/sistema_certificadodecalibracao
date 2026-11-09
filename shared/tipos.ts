@@ -661,6 +661,15 @@ export interface Calibracao {
    */
   pressaoComoAviso?: boolean
   /**
+   * Calibração em andamento com a folha de campo impressa antes da 1.0.5 com as cargas em que o EMA muda (migração 20,
+   * ou a folha avulsa de antes ligada depois): até a 1.0.4 as sugestões sempre as traziam e a folha em branco mandava
+   * aplicá-las; a folha do rascunho com pontos saía com os pontos dele, e por isso só é marcada quando os pontos não
+   * desmentem (`folhaDeAntesComCargasDoEma`). A visita as mede (ou mediu). "Sugerir pontos" e a folha nova continuam com
+   * elas mesmo sem a declaração de conformidade pedida (`comCargasDoEma` em calibracao.ts), e o aviso diz as que faltam
+   * entre os pontos. Quem define é o servidor; ausente = não.
+   */
+  cargasDoEmaNaFolha?: boolean
+  /**
    * Revisão: os padrões como foram congelados na emissão do certificado que ela substitui (o certificado e as
    * correções da época, mesmo que o padrão tenha sido calibrado de novo ou desativado depois; ver
    * `padroesDaCalibracao` em dominio.ts). Quem define é o servidor, ao criar a revisão; ausente = não é revisão.
@@ -739,6 +748,11 @@ export interface CalibracaoResumo {
    * (também na enviada para revisão antes da 1.0.5, sem signatário escolhido).
    */
   aguardando?: { id: ID; nome: string }
+  /**
+   * Em REVISAO com a revisão por outra pessoa desligada (Configurações): ninguém autoriza (qualquer pessoa emite, só com a
+   * assinatura do técnico); aparece como "Enviada para revisão" (`rotuloDaSituacao`). Ausente nos outros casos.
+   */
+  semAutorizacao?: boolean
   /** Rascunho devolvido pelo signatário sem autorizar (até o próximo pedido): quem devolveu. Ausente nos outros casos. */
   devolvidaPor?: string
 }
@@ -1003,6 +1017,60 @@ export interface FolhaCampoImpressa {
    * ou "rascunho da OS 77, …"); continua sendo o registro dos dados brutos dele.
    */
   passouPara?: string
+}
+
+/**
+ * Situação de uma folha de campo impressa, na aba "Folhas de campo": `ligada` a uma calibração (a vigente dela),
+ * `nao_ligada` (avulsa ainda não ligada, ou de uma calibração excluída: pode ser ligada), `substituida` (trocada por
+ * uma folha nova da calibração: não foi a campo) ou `descartada` (não ligada, e o nº de certificado dela foi
+ * registrado como não utilizado: perdida, inutilizada…).
+ */
+export type SituacaoFolhaCampo = 'ligada' | 'nao_ligada' | 'substituida' | 'descartada'
+
+/** Uma folha de campo na lista de todas as impressas (aba "Folhas de campo" da página Certificados). */
+export interface FolhaCampoListada {
+  numero: string
+  /**
+   * Como foi impressa: pela calibração, avulsa (da balança, só do cliente ou em branco) ou de volta da pasta de dados (o
+   * banco veio de uma cópia anterior à impressão: não se sabe para quem foi).
+   */
+  origem: 'calibracao' | 'avulsa' | 'recuperada'
+  /** Para quem foi impressa: o cliente ('' = em branco) e a balança ('' = balança em branco). */
+  clienteNome: string
+  /** O cliente da folha foi excluído depois da impressão. */
+  clienteExcluido?: boolean
+  balancaDescricao: string
+  balancaSerie: string
+  /** A OS: a da calibração ligada; sem calibração, a impressa na folha ('' = nenhuma). */
+  ordemServico: string
+  /** O nº de certificado impresso na folha (o pré-nº, '' = nenhum) e a situação dele no registro dos nºs. */
+  numeroCertificado: string
+  situacaoNumero?: SituacaoNumero
+  impressaEm: string
+  impressaPor: string
+  impressoes: number
+  /**
+   * A primeira impressão não terminou (o serviço caiu ou a geração do PDF deu erro, depois da reserva dos nºs): não há
+   * PDF para reimprimir. A da calibração termina pela calibração (o mesmo nº); a avulsa não saiu no papel.
+   */
+  impressaoInterrompida?: boolean
+  situacao: SituacaoFolhaCampo
+  /** Ligada ou substituída: a calibração (o cliente dela, para a folha em branco). */
+  calibracao?: {
+    id: ID
+    status: StatusCalibracao
+    numero: string
+    numeroReservado?: string
+    clienteNome: string
+    /** Em REVISAO com a revisão por outra pessoa desligada (`CalibracaoResumo.semAutorizacao`). */
+    semAutorizacao?: boolean
+  }
+  /** Substituída: a folha nova que ficou no lugar dela. */
+  substituidaPor?: string
+  /** Não vai ser usada: o motivo, quando e quem registrou. */
+  motivo?: string
+  descartadaEm?: string
+  descartadaPor?: string
 }
 
 export interface Envio {

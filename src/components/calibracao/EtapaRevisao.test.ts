@@ -50,6 +50,7 @@ function etapa(
     gravada?: Partial<Pick<Calibracao, 'status' | 'autorizacao' | 'devolucao'>>
     equipe?: MembroEquipe[]
     correcao?: { substituiId: string; numeroRevisao: string | null }
+    pendencias?: string[]
   } = {},
 ) {
   const f: CalibracaoInput = { ...calibracaoVazia(), tecnicoId: o.tecnicoId ?? 'bia', substituiId: o.correcao?.substituiId ?? '' }
@@ -66,7 +67,7 @@ function etapa(
       ctx,
       gravada: { status: 'RASCUNHO', autorizacao: null, devolucao: null, ...o.gravada },
       numeroRevisao: o.correcao?.numeroRevisao ?? null,
-      pendencias: [],
+      pendencias: o.pendencias ?? [],
       salvando: false,
       aoVisualizar: () => {},
       aoPedirAutorizacao: () => {},
@@ -209,5 +210,55 @@ describe('o número na prévia da emissão', () => {
     )
     // Sem correção: o exemplo do nº que a emissão dá, sem sufixo
     expect(etapa({ exigirRevisor: false })).toMatch(/Gerado na emissão \(ex\.: CC-\d{4}-00001\)/)
+  })
+})
+
+describe('o título da revisão diz o que quem está usando pode fazer', () => {
+  it('desligada: pronto para emitir', () => {
+    usando(BIA)
+    const t = etapa({ exigirRevisor: false })
+    expect(t).toContain('Tudo pronto para emitir')
+    expect(t).toContain('Confira a prévia do certificado antes de emitir.')
+    expect(etapa({ exigirRevisor: false, pendencias: ['Registre a pressão.'] })).toContain(
+      'Resolva os itens abaixo para poder emitir o certificado.',
+    )
+  })
+
+  it('ligada, quem não autoriza: pronto para enviar para autorização (não para emitir)', () => {
+    usando(BIA)
+    const t = etapa({ tecnicoId: 'bia' })
+    expect(t).toContain('Tudo pronto para enviar para autorização')
+    expect(t).toContain('Confira a prévia do certificado e escolha quem autoriza a emissão.')
+    expect(t).not.toContain('Tudo pronto para emitir')
+    expect(t).not.toContain('antes de emitir.')
+    const falta = etapa({ tecnicoId: 'bia', pendencias: ['Registre a pressão.'] })
+    expect(falta).toContain('Falta completar')
+    expect(falta).toContain('Resolva os itens abaixo para poder enviar para autorização.')
+  })
+
+  it('ligada, o signatário que autoriza (escolhendo a si mesmo ou com o pedido): pronto para autorizar e emitir', () => {
+    usando(ANA)
+    expect(etapa({ tecnicoId: 'bia' })).toContain('Tudo pronto para autorizar e emitir')
+    const pedido = etapa({ gravada: { status: 'REVISAO', autorizacao: pedidoPara(ANA) } })
+    expect(pedido).toContain('Tudo pronto para autorizar e emitir')
+    expect(pedido).toContain('Confira os dados e a prévia do certificado antes de autorizar.')
+    expect(etapa({ tecnicoId: 'bia', pendencias: ['Registre a pressão.'] })).toContain(
+      'Resolva os itens abaixo para poder autorizar e emitir o certificado.',
+    )
+  })
+
+  it('ligada, enviada a outra pessoa: aguardando a autorização dela (ninguém ali emite)', () => {
+    for (const u of [BIA, CAIO]) {
+      usando(u)
+      const t = etapa({ gravada: { status: 'REVISAO', autorizacao: pedidoPara(ANA) } })
+      expect(t).toContain('Aguardando autorização de Ana Signatária')
+      expect(t).toContain('O certificado é emitido quando Ana Signatária autorizar. Até lá, dá para ver a prévia.')
+      expect(t).not.toContain('Tudo pronto')
+      expect(t).not.toContain('antes de emitir.')
+    }
+    usando(BIA)
+    const falta = etapa({ gravada: { status: 'REVISAO', autorizacao: pedidoPara(ANA) }, pendencias: ['Registre a pressão.'] })
+    expect(falta).toContain('Falta completar')
+    expect(falta).toContain('Estes itens impedem a emissão. Para corrigir, volte para rascunho.')
   })
 })

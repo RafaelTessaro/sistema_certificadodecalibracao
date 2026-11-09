@@ -34,6 +34,7 @@ import {
   UNIDADES,
 } from '#shared/dominio.ts'
 import { classeMinimaPesos, posicoesExcentricidade } from '#shared/metrologia/index.ts'
+import { OBRIGATORIOS_BALANCA } from '#shared/obrigatorios.ts'
 import type {
   Balanca,
   BalancaInput,
@@ -55,7 +56,7 @@ import { ClienteFormModal } from './ClienteFormModal'
 import { Button } from './ui/Button'
 import { Combobox, type OpcaoCombo } from './ui/Combobox'
 import { confirmar } from './ui/Feedback'
-import { Field, Input, NumberInput, Select, Textarea } from './ui/Form'
+import { Field, Input, LegendaObrigatorio, MarcaObrigatorio, NumberInput, Select, Textarea } from './ui/Form'
 import { Avatar, Segmented } from './ui/Misc'
 import { Modal } from './ui/Modal'
 import {
@@ -413,7 +414,7 @@ function FormularioBalanca({
     <>
       <form id="form-balanca" ref={formRef} onSubmit={enviar} className="flex flex-col gap-7 pb-1" noValidate>
         {/* ---- Cliente ---- */}
-        <SecaoFormulario titulo="Cliente">
+        <SecaoFormulario titulo="Cliente" extra={<LegendaObrigatorio para="salvar" />}>
           {fixo ? (
             <div className="flex items-center gap-3 rounded-xl border border-line bg-surface-2/60 px-3.5 py-2.5 sm:col-span-6">
               <Avatar nome={clienteAtual?.nome ?? '?'} className="h-9 w-9 rounded-lg text-xs" />
@@ -435,6 +436,7 @@ function FormularioBalanca({
               label="Cliente dono da balança"
               htmlFor={`${ids}-cliente`}
               className="sm:col-span-6"
+              obrigatorio={OBRIGATORIOS_BALANCA.includes('clienteId')}
               erro={tentou ? erroCliente : null}
               hint={
                 trocouCliente
@@ -626,6 +628,7 @@ function FormularioBalanca({
                   <CabecalhoColuna
                     curto="Max"
                     longo="Capacidade (Max)"
+                    obrigatorio={OBRIGATORIOS_BALANCA.includes('max')}
                     unidade={f.un.max}
                     aoMudar={(u) => mudarUnidadeColuna('max', u)}
                     rotulo="Unidade da capacidade máxima (Max)"
@@ -642,6 +645,7 @@ function FormularioBalanca({
                   <CabecalhoColuna
                     curto="d"
                     longo="Divisão (d)"
+                    obrigatorio={OBRIGATORIOS_BALANCA.includes('d')}
                     unidade={f.un.d}
                     aoMudar={(u) => mudarUnidadeColuna('d', u)}
                     rotulo="Unidade da divisão (d)"
@@ -1146,6 +1150,7 @@ function CabecalhoColuna({
   aoMudar,
   rotulo,
   automatica,
+  obrigatorio,
 }: {
   curto: string
   longo: string
@@ -1153,14 +1158,19 @@ function CabecalhoColuna({
   aoMudar: (u: Unidade) => void
   rotulo: string
   automatica: boolean
+  /** Obrigatório para salvar: a marca "●" depois do nome. */
+  obrigatorio?: boolean
 }) {
   const [inicial] = useState(unidade)
   const piscar = automatica && unidade !== inicial
   return (
     <div className="flex min-w-0 items-center justify-between gap-1.5">
-      <span aria-hidden className="truncate">
-        <span className="sm:hidden">{curto}</span>
-        <span className="max-sm:hidden">{longo}</span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span aria-hidden className="truncate">
+          <span className="sm:hidden">{curto}</span>
+          <span className="max-sm:hidden">{longo}</span>
+        </span>
+        {obrigatorio && <MarcaObrigatorio />}
       </span>
       <span className="relative inline-flex shrink-0">
         <SeletorUnidade valor={unidade} aoMudar={aoMudar} rotulo={rotulo} />
@@ -1185,18 +1195,24 @@ function CabecalhoColuna({
 export function SecaoFormulario({
   titulo,
   extra,
+  obrigatorio,
   children,
   className,
 }: {
   titulo: string
   extra?: ReactNode
+  /** A seção inteira é obrigatória para salvar (ex.: as peças do jogo de pesos): a marca "●" depois do título. */
+  obrigatorio?: boolean
   children: ReactNode
   className?: string
 }) {
   return (
     <section aria-label={titulo} className={cn('grid grid-cols-1 gap-4 sm:grid-cols-6', className)}>
       <div className="flex items-center gap-3 sm:col-span-6">
-        <h3 className="text-[11px] font-semibold tracking-[0.08em] whitespace-nowrap text-muted uppercase">{titulo}</h3>
+        <h3 className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.08em] whitespace-nowrap text-muted uppercase">
+          {titulo}
+          {obrigatorio && <MarcaObrigatorio />}
+        </h3>
         <span aria-hidden className="h-px flex-1 bg-line" />
         {extra}
       </div>

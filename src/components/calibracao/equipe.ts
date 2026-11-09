@@ -59,3 +59,61 @@ export function estadoDaEmissao(
   if (k.status === 'REVISAO' && !impedimento) return { ...base, modo: 'autorizar', sugerido }
   return { ...base, modo: 'escolher', sugerido }
 }
+
+/**
+ * O título e a frase do alto de "Revisão e emissão", pelo que quem está usando pode fazer: emitir (`emitir`), autorizar
+ * e emitir (`autorizar`, ou `escolher` com ele mesmo escolhido: `autorizaVoce`), enviar para a autorização de outro
+ * signatário (`escolher`) ou só aguardar a autorização pedida (`aguardando`; `aguardandoDe`: o nome do escolhido).
+ */
+export function cabecalhoDaRevisao(o: {
+  modo: ModoEmissao
+  pronto: boolean
+  autorizaVoce: boolean
+  aguardandoDe: string | null
+  /** As pendências levam à etapa delas (a frase convida a clicar). */
+  irParaItens: boolean
+}): { titulo: string; descricao: string; aguardando: boolean } {
+  const acao =
+    o.modo === 'aguardando'
+      ? 'aguardando'
+      : o.modo === 'autorizar' || (o.modo === 'escolher' && o.autorizaVoce)
+        ? 'autorizar'
+        : o.modo === 'escolher'
+          ? 'enviar'
+          : 'emitir'
+  const clique = o.irParaItens ? ' Clique num item para ir até ele.' : ''
+  if (!o.pronto)
+    return {
+      titulo: 'Falta completar',
+      descricao:
+        acao === 'aguardando'
+          ? `Estes itens impedem a emissão. Para corrigir, volte para rascunho.${clique}`
+          : `Resolva os itens abaixo para poder ${
+              acao === 'enviar'
+                ? 'enviar para autorização'
+                : acao === 'autorizar'
+                  ? 'autorizar e emitir o certificado'
+                  : 'emitir o certificado'
+            }.${clique}`,
+      aguardando: false,
+    }
+  if (acao === 'aguardando')
+    return {
+      titulo: o.aguardandoDe ? `Aguardando autorização de ${o.aguardandoDe}` : 'Aguardando autorização',
+      descricao: `O certificado é emitido quando ${o.aguardandoDe ?? 'o signatário'} autorizar. Até lá, dá para ver a prévia.`,
+      aguardando: true,
+    }
+  if (acao === 'enviar')
+    return {
+      titulo: 'Tudo pronto para enviar para autorização',
+      descricao: 'Confira a prévia do certificado e escolha quem autoriza a emissão.',
+      aguardando: false,
+    }
+  if (acao === 'autorizar')
+    return {
+      titulo: 'Tudo pronto para autorizar e emitir',
+      descricao: 'Confira os dados e a prévia do certificado antes de autorizar.',
+      aguardando: false,
+    }
+  return { titulo: 'Tudo pronto para emitir', descricao: 'Confira a prévia do certificado antes de emitir.', aguardando: false }
+}

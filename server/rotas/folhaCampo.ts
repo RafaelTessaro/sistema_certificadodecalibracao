@@ -14,7 +14,8 @@
 // o sha256 no banco), byte a byte: dois papéis com o mesmo nº controlado nunca têm conteúdo diferente (a
 // folha avulsa ligada a uma calibração sai como foi a campo, em branco; a de um certificado emitido, com o
 // plano de antes da visita). Qualquer folha impressa também se reimprime pelo nº (GET /api/folha-campo/:numero:
-// a lista dos nºs reservados em folhas ainda não ligadas), sem abrir a pasta de dados do Windows.
+// a lista dos nºs reservados em folhas ainda não ligadas e a aba "Folhas de campo" da página Certificados, com todas
+// as impressas e a situação de cada uma: GET /api/folhas-campo), sem abrir a pasta de dados do Windows.
 // A folha só do cliente (a balança ainda não cadastrada) pode sair com a OS e a data prevista da visita; a OS
 // fica guardada com a folha e passa para a calibração sem OS a que ela for ligada.
 // A primeira impressão também reserva o nº do certificado, que sai na folha para o técnico copiar na etiqueta
@@ -232,6 +233,8 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       eventos,
       numeroDaFolha: daFolha,
       ordemServico,
+      marcas,
+      barometrosRetirados,
       ...folhaCampo
     } = repo.vincularFolhaCampo(numero, k, {
       confirmar: corpo.confirmar === true,
@@ -244,12 +247,16 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     // `numeroDaFolha`: o nº de certificado impresso na avulsa, que passou para a calibração (`usado`) ou ficou
     // não utilizado (ela já tinha nº, ou é revisão): a tela avisa para corrigir a etiqueta. `ordemServico`: a OS
     // impressa na avulsa, que passou para a calibração sem OS (`aplicada`; a `versao` dela subiu) ou não (a calibração
-    // tem outra: a tela avisa)
+    // tem outra: a tela avisa). `marcas`: a folha impressa antes da 1.0.5 deixou a falta da pressão como aviso e as
+    // cargas em que o EMA muda na sugestão (a tela fica com elas; a versão não sobe). `barometrosRetirados`: com a
+    // pressão como aviso e ainda não registrada, o barômetro que o rascunho trazia saiu dos padrões (a versão subiu)
     return {
       folhaCampo,
       numeroReservado: repo.numeroReservadoDa(k.id),
       numeroDaFolha: daFolha,
       ordemServico,
+      marcas,
+      barometrosRetirados,
       versao: repo.obterCalibracao(k.id)?.versao ?? k.versao,
     }
   })
@@ -300,6 +307,27 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       dataPrevista: data,
     })
     return enviarPdf(reply, pdf, nomeArquivoDaFolha(ordemServico, numero), numero)
+  })
+
+  /**
+   * Todas as folhas impressas, da mais nova para a mais antiga (a aba "Folhas de campo" da página Certificados): para
+   * quem foi impressa, o nº de certificado impresso nela e a situação (ligada, não ligada, substituída, não vai ser
+   * usada). `situacao` (NAO_LIGADAS, LIGADAS ou NAO_USADAS; outra coisa = todas), `busca` (nº da folha ou do
+   * certificado, cliente, OS), `de`/`ate` (o dia da impressão, AAAA-MM-DD), `pagina` e `limite` (até 500). Só leitura.
+   */
+  app.get('/api/folhas-campo', async (req) => {
+    quem(req)
+    const q = req.query as Record<string, unknown>
+    const texto = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+    const situacao = texto(q.situacao).toUpperCase()
+    return repo.listarFolhasCampo({
+      situacao: situacao === 'NAO_LIGADAS' || situacao === 'LIGADAS' || situacao === 'NAO_USADAS' ? situacao : '',
+      busca: texto(q.busca).slice(0, 200),
+      de: texto(q.de),
+      ate: texto(q.ate),
+      pagina: Number(q.pagina) || 1,
+      limite: Number(q.limite) || 50,
+    })
   })
 
   /**

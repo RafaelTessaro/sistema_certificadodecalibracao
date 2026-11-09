@@ -2,9 +2,10 @@
 // folha de campo que nunca vão ser emitidos (a folha não foi a campo, foi ligada a uma revisão…), com quando e
 // o motivo, e os reservados em folhas ainda não ligadas a nenhuma calibração (a avulsa, a de uma calibração
 // excluída: o nº segue o papel). Qualquer pessoa reimprime a folha ainda não ligada (o PDF da primeira impressão, com
-// os mesmos nºs); o administrador registra como não utilizado o nº de uma folha perdida.
+// os mesmos nºs); o administrador registra como não utilizado o nº de uma folha perdida. Todas as folhas impressas
+// ficam na aba "Folhas de campo" da mesma página (`aoVerFolhas` leva até ela).
 
-import { Ban, FileX2, Loader2, Printer } from 'lucide-react'
+import { ArrowUp, Ban, FileX2, Loader2, Printer } from 'lucide-react'
 import { useState } from 'react'
 import { LIMITES } from '#shared/dominio.ts'
 import type { NumeroReservado } from '#shared/tipos.ts'
@@ -20,7 +21,8 @@ import { Button } from './ui/Button'
 import { Field, Textarea } from './ui/Form'
 import { Modal } from './ui/Modal'
 
-export function NumerosNaoUtilizados() {
+/** `aoVerFolhas`: abre a aba "Folhas de campo" (o link fica junto dos reservados em folhas não ligadas). */
+export function NumerosNaoUtilizados({ aoVerFolhas }: { aoVerFolhas?: () => void } = {}) {
   const { dados } = useConsulta('numeros-reservados', () => api.numerosReservados().then((r) => r.numeros), ['calibracao'])
   const podeDescartar = usePode('cancelarCertificado')
   const [descartando, setDescartando] = useState<NumeroReservado | null>(null)
@@ -31,6 +33,7 @@ export function NumerosNaoUtilizados() {
         podeDescartar={podeDescartar}
         aoDescartar={setDescartando}
         aoReimprimir={(n) => void abrirFolhaCampo(api.urlReimprimirFolha(n.folha))}
+        aoVerFolhas={aoVerFolhas}
       />
       <DescartarModal numero={descartando} aoFechar={() => setDescartando(null)} />
     </>
@@ -39,18 +42,21 @@ export function NumerosNaoUtilizados() {
 
 /**
  * A lista (recolhida), sem nada quando não há nº não utilizado nem reservado em folha não ligada. `aoReimprimir`: o
- * botão de reimprimir a folha ainda não ligada (igual à primeira impressão), para todos.
+ * botão de reimprimir a folha ainda não ligada (igual à primeira impressão), para todos. `aoVerFolhas`: o link para a
+ * aba com todas as folhas impressas.
  */
 export function ListaNumeros({
   numeros,
   podeDescartar = false,
   aoDescartar,
   aoReimprimir,
+  aoVerFolhas,
 }: {
   numeros: NumeroReservado[]
   podeDescartar?: boolean
   aoDescartar?: (n: NumeroReservado) => void
   aoReimprimir?: (n: NumeroReservado) => void
+  aoVerFolhas?: () => void
 }) {
   const { naoUtilizados, avulsos } = separarNumeros(numeros)
   if (!naoUtilizados.length && !avulsos.length) return null
@@ -91,9 +97,21 @@ export function ListaNumeros({
         )}
         {avulsos.length > 0 && (
           <>
-            <p className="border-t border-line px-4 pt-3 text-[11px] font-semibold tracking-[0.06em] text-muted uppercase">
-              Reservados em folhas ainda não ligadas
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-line px-4 pt-3">
+              <p className="text-[11px] font-semibold tracking-[0.06em] text-muted uppercase">
+                Reservados em folhas ainda não ligadas
+              </p>
+              {aoVerFolhas && (
+                <button
+                  type="button"
+                  onClick={aoVerFolhas}
+                  className="group inline-flex cursor-pointer items-center gap-0.5 text-xs font-medium text-brand-ink hover:underline"
+                >
+                  Ver todas as folhas de campo
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
             <ul className="divide-y divide-line">
               {avulsos.map((n) => {
                 const deQuem = deQuemEaFolha(n)

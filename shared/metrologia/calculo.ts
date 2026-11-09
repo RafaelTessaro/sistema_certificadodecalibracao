@@ -49,6 +49,23 @@ import type {
 
 const RAIZ3 = Math.sqrt(3)
 const RAIZ12 = Math.sqrt(12)
+
+// Pendências do cálculo que dizem um campo em branco: as marcas "●" das etapas (`camposObrigatoriosEmissao`, em
+// dominio.ts) usam os mesmos textos para levar de cada pendência ao campo
+export const PENDENCIA_SEM_LEITURAS_INDICACAO = 'Erro de indicação: nenhuma leitura registrada.'
+export const PENDENCIA_RETORNO_ZERO =
+  'Erro de indicação: registre o retorno ao zero, a indicação sem carga depois de retirar toda a carga (POP 7.7).'
+export const PENDENCIA_LEITURAS_EXCENTRICIDADE =
+  'Excentricidade: registre as leituras das posições (ou marque o ensaio como não aplicável).'
+export const PENDENCIA_AR_MEDIDO =
+  'Empuxo pela densidade do ar medida: registre a temperatura, a umidade relativa e a pressão atmosférica (etapa Padrões e ambiente).'
+export const PENDENCIA_CONVECCAO =
+  'Convecção: registre a diferença de temperatura entre os pesos e o ar antes do 1º ensaio, ou a aclimatação dos pesos (etapa Padrões e ambiente).'
+/** Nenhum ensaio de repetibilidade com 2 leituras ou mais: o mínimo do POP, ou o de antes das regras. */
+export const pendenciaSemRepetibilidade = (minimosComoAviso: boolean, classeI: boolean): string =>
+  minimosComoAviso
+    ? 'Repetibilidade: registre pelo menos 2 leituras (o mínimo recomendado é 5).'
+    : `Repetibilidade: registre as leituras do ensaio (no mínimo ${classeI ? '10' : '5; 3 com carga ≥ 100 kg'}; POP, Tabela 4).`
 /** O nome de cada método de carregamento, como a tela e a folha escrevem (`METODOS_CARREGAMENTO` em dominio.ts). */
 export const NOMES_METODO_CARREGAMENTO: Record<MetodoCarregamento, string> = {
   CRESCENTE_DECRESCENTE: 'Crescente e decrescente',
@@ -1024,15 +1041,9 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   })
 
   // ---- Pendências ----
-  if (!pontosLidos) pendencias.unshift('Erro de indicação: nenhuma leitura registrada.')
-  if (!ctx.repeticoes.length)
-    pendencias.unshift(
-      minimosComoAviso
-        ? 'Repetibilidade: registre pelo menos 2 leituras (o mínimo recomendado é 5).'
-        : `Repetibilidade: registre as leituras do ensaio (no mínimo ${instrumento.classe === 'I' ? '10' : '5; 3 com carga ≥ 100 kg'}; POP, Tabela 4).`,
-    )
-  if (entrada.excentricidade.aplicavel && !exc.valida)
-    pendencias.push('Excentricidade: registre as leituras das posições (ou marque o ensaio como não aplicável).')
+  if (!pontosLidos) pendencias.unshift(PENDENCIA_SEM_LEITURAS_INDICACAO)
+  if (!ctx.repeticoes.length) pendencias.unshift(pendenciaSemRepetibilidade(minimosComoAviso, instrumento.classe === 'I'))
+  if (entrada.excentricidade.aplicavel && !exc.valida) pendencias.push(PENDENCIA_LEITURAS_EXCENTRICIDADE)
   // Mínimos do POP (7.7 e 7.9, Tabela 4) na calibração nova; no registro anterior e na calibração já medida antes das
   // regras, avisos (mais abaixo)
   // Só as faixas que o erro de indicação alcançou (a calibração parcial acordada, POP 7.1). O ensaio sem carga não
@@ -1117,10 +1128,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   if (!legado && cargaLida) {
     // Não anotado na calibração já medida antes das regras (era opcional): como na época
     if (retornoZero === null) {
-      if (!minimosComoAviso)
-        pendencias.push(
-          'Erro de indicação: registre o retorno ao zero, a indicação sem carga depois de retirar toda a carga (POP 7.7).',
-        )
+      if (!minimosComoAviso) pendencias.push(PENDENCIA_RETORNO_ZERO)
     } else if (zeroFora)
       pendencias.push(
         `Erro de indicação: a balança não voltou ao zero (retorno de ${leituraTexto(retornoZero, 0)} ${unidade}; limite de ${textoLimite(limiteZero!)}); a balança não pesa corretamente e não é calibrada (POP 7.8).`,
@@ -1156,10 +1164,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
         ? 'Conformidade: informe a tolerância do cliente.'
         : 'Conformidade: a classe de exatidão da balança não está marcada; não há EMA para comparar.',
     )
-  if (opcoes.empuxo === 'MEDIDO' && !arCompleto)
-    pendencias.push(
-      'Empuxo pela densidade do ar medida: registre a temperatura, a umidade relativa e a pressão atmosférica (etapa Padrões e ambiente).',
-    )
+  if (opcoes.empuxo === 'MEDIDO' && !arCompleto) pendencias.push(PENDENCIA_AR_MEDIDO)
   // A densidade e u(ρ) de cada jogo usado num ponto lido (cg-18 7.1.2-4 e 7.1.2-5a)
   if (substituicaoLida && cadeia) conferirDensidade(cadeia.massa)
   const jogosSemDensidade = [...new Set(semDensidade)]
@@ -1171,10 +1176,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     pendencias.push(
       `Empuxo pela densidade do ar medida: o jogo ${jogo} está com densidade de ${formatarNumero(rho, Math.min(casasDecimais(rho), 6))} kg/m³, fora da faixa dos pesos; confira a unidade no cadastro do padrão (7,95 g/cm³ = 7 950 kg/m³).`,
     )
-  if (semDeltaT)
-    pendencias.push(
-      'Convecção: registre a diferença de temperatura entre os pesos e o ar antes do 1º ensaio, ou a aclimatação dos pesos (etapa Padrões e ambiente).',
-    )
+  if (semDeltaT) pendencias.push(PENDENCIA_CONVECCAO)
   if (conveccaoForaDaTabela)
     pendencias.push(
       'Convecção: diferença de temperatura acima de 20 °C ou peça acima de 50 kg, fora da Tabela F2.1 do cg-18; aguarde a aclimatação e meça de novo.',

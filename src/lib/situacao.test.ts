@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { rotuloDaSituacao } from '#shared/dominio.ts'
 import { detalheDaSituacao } from './situacao'
 
 describe('a situação nas listas de calibrações', () => {
@@ -18,5 +19,12 @@ describe('a situação nas listas de calibrações', () => {
     // A enviada para revisão antes da 1.0.5 (sem signatário escolhido) e a emitida não têm a linha
     expect(detalheDaSituacao({ status: 'REVISAO' }, 'lizi')).toBeNull()
     expect(detalheDaSituacao({ status: 'EMITIDO', devolvidaPor: 'Rafael' }, 'lizi')).toBeNull()
+  })
+
+  it('o nome da situação: com a revisão por outra pessoa desligada, a enviada é "Enviada para revisão"', () => {
+    expect(rotuloDaSituacao('REVISAO')).toBe('Aguardando autorização')
+    expect(rotuloDaSituacao('REVISAO', true)).toBe('Enviada para revisão')
+    expect(rotuloDaSituacao('RASCUNHO', true)).toBe('Rascunho')
+    expect(rotuloDaSituacao('EMITIDO', true)).toBe('Emitido')
   })
 })

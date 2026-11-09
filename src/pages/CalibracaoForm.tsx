@@ -23,7 +23,15 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { capacidadeTexto, pendenciasEmissao, TIPOS_BALANCA } from '#shared/dominio.ts'
+import {
+  camposObrigatoriosEmissao,
+  capacidadeTexto,
+  ETAPAS_CALIBRACAO,
+  pendenciasEmissao,
+  TIPOS_BALANCA,
+  type CampoEmissao,
+  type CampoObrigatorio,
+} from '#shared/dominio.ts'
 import type {
   Balanca,
   Calibracao,
@@ -54,6 +62,7 @@ import { EtapaInstrumento } from '../components/calibracao/EtapaInstrumento'
 import { EtapaPadroes } from '../components/calibracao/EtapaPadroes'
 import { EtapaRepetibilidade } from '../components/calibracao/EtapaRepetibilidade'
 import { EtapaRevisao } from '../components/calibracao/EtapaRevisao'
+import { destinoDaPendencia, etapaTemMarcas } from '../components/calibracao/obrigatorios'
 import { PainelResultados } from '../components/calibracao/PainelResultados'
 import { comMetodoDaClasse } from '../components/calibracao/util'
 import { ClienteFormModal } from '../components/ClienteFormModal'
@@ -65,14 +74,14 @@ import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Combobox } from '../components/ui/Combobox'
 import { avisar, confirmar } from '../components/ui/Feedback'
-import { Field, Input } from '../components/ui/Form'
+import { Field, Input, LegendaObrigatorio, MarcaObrigatorio } from '../components/ui/Form'
 import { Modal } from '../components/ui/Modal'
 import { EmptyState, PageHeader } from '../components/ui/Misc'
 import { api, ErroApi, type MembroEquipe } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
 import { criarFilaGravacao } from '../lib/filaGravacao'
-import { abrirFolhaCampo, TEXTO_FOLHA_NOVA, textoReimprimir } from '../lib/folhaCampo'
+import { abrirFolhaCampo, TEXTO_FOLHA_NOVA, textoBarometrosRetirados, textoReimprimir, textosOsDaFolha } from '../lib/folhaCampo'
 import { dataCurta, hojeISO } from '../lib/format'
 import { avisoNumeroDaFolha } from '../lib/numeros'
 import { useTempoReal } from '../store/tempoReal'
@@ -163,8 +172,10 @@ function NovaCalibracao() {
         }
       />
       <div className="mx-auto flex max-w-3xl flex-col gap-6">
+        {/* O cliente e a balança para começar (a folha do cliente com a balança em branco só pede o cliente) */}
+        <LegendaObrigatorio para="começar" className="-mb-3 justify-end" />
         <Card>
-          <CardHeader icone={<Building2 className="h-4 w-4" />} titulo="1. Cliente" />
+          <CardHeader icone={<Building2 className="h-4 w-4" />} titulo={<ComMarca>1. Cliente</ComMarca>} />
           <div className="px-5 pb-5">
             <Combobox
               opcoes={(clientes ?? []).map((c) => ({
@@ -187,7 +198,7 @@ function NovaCalibracao() {
         <Card className={cn(!clienteId && 'pointer-events-none opacity-50')}>
           <CardHeader
             icone={<Scale className="h-4 w-4" />}
-            titulo="2. Balança"
+            titulo={<ComMarca>2. Balança</ComMarca>}
             acoes={
               clienteId && (
                 <Button tamanho="sm" icone={<Plus className="h-3.5 w-3.5" />} onClick={() => setNovaBalanca(true)}>
@@ -260,8 +271,9 @@ function NovaCalibracao() {
               label="Nº da OS no sistema da empresa"
               htmlFor="nova-os"
               hint="Para saber a qual OS este certificado pertence."
+              opcional
             >
-              <Input id="nova-os" value={os} onChange={(e) => setOs(e.target.value)} placeholder="Opcional" />
+              <Input id="nova-os" value={os} onChange={(e) => setOs(e.target.value)} placeholder="Ex.: 12345" />
             </Field>
             <Field label="Data da calibração" htmlFor="nova-data" hint="Visita marcada para outro dia? Informe a data prevista.">
               <Input id="nova-data" type="date" value={data} onChange={(e) => setData(e.target.value)} />
@@ -318,6 +330,16 @@ function NovaCalibracao() {
         aoSalvar={(b) => setBalancaId(b.id)}
       />
     </>
+  )
+}
+
+/** Título de cartão com a marca de obrigatório ("●") depois. */
+function ComMarca({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {children}
+      <MarcaObrigatorio />
+    </span>
   )
 }
 
@@ -381,6 +403,14 @@ function EditorCalibracao({ id }: { id: string }) {
   const [escolhaFolha, setEscolhaFolha] = useState<EscolhaFolha | null>(null)
   /** Janela "Devolver sem autorizar" aberta. */
   const [devolvendo, setDevolvendo] = useState(false)
+  /**
+   * Por onde a pessoa já passou: as etapas de onde saiu e os campos de onde saiu o foco. O campo obrigatório ainda em
+   * branco fica em destaque depois disso (e em todas as etapas ao chegar à revisão com pendências).
+   */
+  const [vistos, setVistos] = useState<{ etapas: ReadonlySet<IdEtapa>; campos: ReadonlySet<CampoEmissao> }>(() => ({
+    etapas: new Set(),
+    campos: new Set(),
+  }))
   const versao = useRef<number | undefined>(undefined)
   const sujo = useRef(false)
   const fRef = useRef<CalibracaoInput | null>(null)
@@ -569,6 +599,17 @@ function EditorCalibracao({ id }: { id: string }) {
     return pendenciasDaTela({ locais, calc, semPop: !!pop && !pop.atual, servidor: pendenciasServidor, emDia })
   }, [f, dados, selecionados, calc, pendenciasServidor, pop, balanca, emDia])
 
+  // Os campos obrigatórios para emitir (as marcas "●" das etapas), pelas mesmas regras das pendências
+  const obrigatorios = useMemo<CampoObrigatorio[]>(
+    () => (f && balanca ? camposObrigatoriosEmissao(f, { padroes: selecionados, classe: balanca.classe }) : []),
+    [f, balanca, selecionados],
+  )
+  // Chegou à revisão com pendências: o que falta fica em destaque em todas as etapas
+  const comPendencias = pendencias.length > 0
+  useEffect(() => {
+    if (etapa === 'revisao' && comPendencias) setVistos((v) => ({ ...v, etapas: new Set(ETAPAS_CALIBRACAO) }))
+  }, [etapa, comPendencias])
+
   if (erro)
     return (
       <EmptyState
@@ -595,24 +636,34 @@ function EditorCalibracao({ id }: { id: string }) {
         versao.current = r.versao
         setF((atual) => (atual ? { ...atual, ordemServico: os.daFolha } : atual))
       }
+      // Folha impressa antes da 1.0.5: a pressão "opcional" dela fica como aviso e as cargas em que o EMA muda continuam
+      // na sugestão (marcas do servidor, que a tela não grava)
+      const marcas = r.marcas
+      if (marcas) setF((atual) => (atual ? { ...atual, ...marcas } : atual))
+      // Com ela, ainda sem a pressão: o barômetro que o rascunho trazia saiu dos padrões (o servidor gravou; a versão subiu)
+      const semBarometro = r.barometrosRetirados
+      if (semBarometro && r.versao !== undefined) {
+        versao.current = r.versao
+        setF((atual) => (atual ? { ...atual, padroesIds: semBarometro.padroesIds } : atual))
+      }
       const daFolha = r.numeroDaFolha
-      const textoOs = os?.aplicada ? `A OS ${os.daFolha}, impressa na folha, passou para esta calibração.` : ''
+      const textosOs = textosOsDaFolha(os)
       if (daFolha && !daFolha.usado)
         // O nº impresso na folha pode já estar na etiqueta da balança: avisa até a pessoa fechar
         void avisar(avisoNumeroDaFolha(daFolha, r.folhaCampo.numero))
       else
         toast.sucesso(
           `Folha de campo ${r.folhaCampo.numero} ligada a esta calibração`,
-          [daFolha ? `O certificado vai ser emitido com o nº ${daFolha.numero}, o impresso na folha.` : '', textoOs]
+          [daFolha ? `O certificado vai ser emitido com o nº ${daFolha.numero}, o impresso na folha.` : '', textosOs.aplicada]
             .filter(Boolean)
             .join(' ') || undefined,
         )
       // A folha saiu com outra OS: fica a da calibração, e a pessoa confere
-      if (os && !os.aplicada)
-        toast.aviso(
-          'A OS da folha é outra',
-          `A folha saiu com a OS ${os.daFolha}; esta calibração ficou com a OS ${os.daCalibracao}.`,
-        )
+      if (textosOs.diferente) toast.aviso('A OS da folha é outra', textosOs.diferente)
+      if (semBarometro) {
+        const t = textoBarometrosRetirados(semBarometro.identificacoes)
+        toast.aviso(t.titulo, t.texto)
+      }
       return true
     } catch (e) {
       if (!confirmado && e instanceof ErroApi && e.dados.codigo === 'CONFIRMAR_FOLHA') {
@@ -639,10 +690,14 @@ function EditorCalibracao({ id }: { id: string }) {
     config: dados.config,
     equipe: dados.equipe,
     status: dados.calibracao.status,
+    autorizacao: dados.calibracao.autorizacao ?? null,
     editarBalanca: () => void editarBalanca(),
     folhaCampo: folha,
     vincularFolha,
     novaFolha: () => setEscolhaFolha('nova'),
+    obrigatorios,
+    destacar: (c) => vistos.etapas.has(c.etapa) || vistos.campos.has(c.campo),
+    tocar: (campo) => setVistos((v) => (v.campos.has(campo) ? v : { ...v, campos: new Set(v.campos).add(campo) })),
   }
   const indice = ETAPAS.findIndex((e) => e.id === etapa)
   const completa = (e: IdEtapa) => etapaCompleta(e, ctx)
@@ -684,9 +739,24 @@ function EditorCalibracao({ id }: { id: string }) {
     if (b.classe !== antes.classe) alterar((s) => comMetodoDaClasse(s, b.classe))
   }
 
+  // Saindo de uma etapa, o que ficou em branco nela passa a ficar em destaque
   const irPara = (e: IdEtapa) => {
+    if (e !== etapa) setVistos((v) => (v.etapas.has(etapa) ? v : { ...v, etapas: new Set(v.etapas).add(etapa) }))
     setEtapa(e)
     document.getElementById('conteudo')?.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // Da pendência da revisão para a etapa dela e, quando há, para o campo (depois da troca de etapa animada)
+  const destinoDe = (p: string) => {
+    const d = destinoDaPendencia(p, obrigatorios)
+    if (!d) return null
+    return {
+      titulo: ETAPAS.find((e) => e.id === d.etapa)?.titulo ?? '',
+      ir: () => {
+        irPara(d.etapa)
+        if (d.alvo) levarAte(d.alvo)
+      },
+    }
   }
 
   const verPrevia = async () => {
@@ -821,9 +891,11 @@ function EditorCalibracao({ id }: { id: string }) {
         titulo={
           <span className="flex flex-wrap items-center gap-3">
             {dados.calibracao.substituiId ? 'Correção de certificado' : 'Calibração'}
+            {/* Com a revisão por outra pessoa desligada, a enviada não aguarda ninguém ("Enviada para revisão") */}
             <StatusCalibracaoBadge
               status={dados.calibracao.status}
               aguardando={dados.calibracao.status === 'REVISAO' ? dados.calibracao.autorizacao?.signatarioNome : undefined}
+              semAutorizacao={!dados.config.exigirRevisor}
             />
             {numeroReservado && <SeloNumeroReservado n={numeroReservado} />}
           </span>
@@ -931,6 +1003,9 @@ function EditorCalibracao({ id }: { id: string }) {
         </nav>
 
         <div className="min-w-0">
+          {etapa !== 'revisao' && etapaTemMarcas(obrigatorios, etapa) && (
+            <LegendaObrigatorio para="emitir" className="mb-3 justify-end" />
+          )}
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={etapa}
@@ -953,6 +1028,7 @@ function EditorCalibracao({ id }: { id: string }) {
                   numeroReservado={numeroReservado}
                   numeroRevisao={dados.numeroRevisao}
                   pendencias={pendencias}
+                  destinoDe={destinoDe}
                   avisos={avisosServidor}
                   salvando={salvo === 'salvando'}
                   aoVisualizar={() => void verPrevia()}
@@ -1041,6 +1117,22 @@ function EditorCalibracao({ id }: { id: string }) {
       </Modal>
     </>
   )
+}
+
+/**
+ * Leva até o campo da pendência: espera a etapa nova aparecer (a troca é animada), rola até ele e, se for um controle,
+ * põe o foco nele.
+ */
+function levarAte(alvo: string, tentativas = 12) {
+  setTimeout(() => {
+    const el = document.getElementById(alvo)
+    if (!el) {
+      if (tentativas > 0) levarAte(alvo, tentativas - 1)
+      return
+    }
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    if (el.matches('input, select, textarea, button')) el.focus({ preventScroll: true })
+  }, 120)
 }
 
 function IndicadorSalvo({ estado, aoTentar }: { estado: EstadoSalvo; aoTentar: () => void }) {

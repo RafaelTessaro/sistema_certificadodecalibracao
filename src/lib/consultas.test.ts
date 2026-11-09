@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { CLIENTE_VAZIO, normalizarCliente } from '#shared/dominio.ts'
 import type { Cliente, ClienteInput } from '#shared/tipos.ts'
 import { ErroApi } from './api'
+import { normalizarCnpj } from '#shared/documentos.ts'
 import {
   acharDuplicado,
+  anterioresDoCnpj,
+  avisoDaConsulta,
   camposDoCnpj,
   camposMantidos,
   duplicadoDoErro,
@@ -102,6 +105,47 @@ describe('mesclarConsulta', () => {
     expect(mesclarConsulta(r1.form, camposDoCnpj(empresaB), r1.aplicados, false).form.inscricaoEstadual).toBe('')
     const outra = { ...empresaB, inscricaoEstadual: '110042490114' }
     expect(mesclarConsulta(r1.form, camposDoCnpj(outra), r1.aplicados, true).form.inscricaoEstadual).toBe('110042490114')
+  })
+
+  it('a inscrição estadual de outro CNPJ (a do cadastro antes da troca, ou a digitada para o CNPJ de antes) dá lugar à da consulta', () => {
+    const cnpjA = normalizarCnpj(empresaA.cnpj)
+    const cnpjB = normalizarCnpj(empresaB.cnpj)
+    // O cliente gravado com a IE da empresa A, com o CNPJ trocado para o da B
+    const atual = form({
+      ...camposDoCnpj({ ...empresaA, inscricaoEstadual: '587229409110' }),
+      tipo: 'PJ',
+      documento: empresaB.cnpj,
+    })
+    const anteriores = anterioresDoCnpj(valoresDaConsultaAnterior(undefined), atual, cnpjA, cnpjB)
+    expect(anteriores).toEqual({ inscricaoEstadual: '587229409110' })
+    for (const sobrescrever of [false, true]) {
+      const comIe = camposDoCnpj({ ...empresaB, inscricaoEstadual: '587033391119' })
+      const r = mesclarConsulta(atual, comIe, anteriores, sobrescrever)
+      expect(r.form.inscricaoEstadual).toBe('587033391119')
+      expect(r.aplicados.inscricaoEstadual).toBe('587033391119')
+      expect(camposMantidos(r.form, comIe)).not.toContain('inscricaoEstadual')
+      // Sem IE na consulta nova (isenta, ou o serviço não respondeu): a de outro estabelecimento sai
+      expect(mesclarConsulta(atual, camposDoCnpj(empresaB), anteriores, sobrescrever).form.inscricaoEstadual).toBe('')
+    }
+    // A do mesmo CNPJ (digitada à mão para ele) continua valendo; sem CNPJ conhecido (digitada antes dele), também
+    expect(anterioresDoCnpj({}, atual, cnpjB, cnpjB)).toEqual({})
+    expect(anterioresDoCnpj({}, atual, '', cnpjB)).toEqual({})
+    // Campo vazio: nada a tratar (os outros valores da consulta anterior seguem iguais)
+    expect(anterioresDoCnpj({ razaoSocial: 'X' }, form(), cnpjA, cnpjB)).toEqual({ razaoSocial: 'X' })
+  })
+
+  it('o aviso da consulta: a inscrição estadual mantida não manda usar "Consultar" (ele não troca a IE)', () => {
+    const dados = { ...empresaB, inscricaoEstadual: '587033391119' }
+    expect(avisoDaConsulta([], dados)).toBe('Campos preenchidos com os dados da Receita. Confira e ajuste se precisar.')
+    expect(avisoDaConsulta(['inscricaoEstadual'], dados)).toBe(
+      'Campos preenchidos com os dados da Receita. Confira e ajuste se precisar. A inscrição estadual que já estava foi mantida (a consulta trouxe 587033391119).',
+    )
+    expect(avisoDaConsulta(['telefone', 'inscricaoEstadual'], dados)).toBe(
+      'Campos vazios preenchidos com os dados da Receita; o que já estava preenchido foi mantido. Use “Consultar” para trocar pelos dados da Receita. A inscrição estadual que já estava foi mantida (a consulta trouxe 587033391119).',
+    )
+    expect(avisoDaConsulta(['telefone'], dados)).toBe(
+      'Campos vazios preenchidos com os dados da Receita; o que já estava preenchido foi mantido. Use “Consultar” para trocar pelos dados da Receita.',
+    )
   })
 
   it('no cadastro novo, trocar o CNPJ substitui o que veio da consulta anterior', () => {

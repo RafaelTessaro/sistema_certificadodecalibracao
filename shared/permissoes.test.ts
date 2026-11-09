@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  impedimentoDaTrocaDoTecnico,
   impedimentoDoSignatario,
   impedimentoDoTecnico,
   impedimentoParaEmitir,
@@ -129,6 +130,30 @@ describe('as listas de técnicos e signatários', () => {
   it('"Técnico que executou": só quem tem a marca; o de uma calibração continua, mesmo sem a marca', () => {
     expect(tecnicosParaEscolher(equipe, '').map((u) => u.id)).toEqual(['fabio', 'mauricio'])
     expect(tecnicosParaEscolher(equipe, 'lizi').map((u) => u.id)).toEqual(['fabio', 'lizi', 'mauricio'])
+  })
+
+  it('aguardando a autorização: quem recebeu o pedido não passa a ser o técnico (nem aparece na lista)', () => {
+    const pedido: PedidoAutorizacao = {
+      signatarioId: 'fabio',
+      signatarioNome: 'Fábio',
+      porId: 'lizi',
+      por: 'Lizi',
+      em: '2026-11-09T12:00:00.000Z',
+    }
+    const aguardando = { status: 'REVISAO' as const, autorizacao: pedido }
+    expect(impedimentoDaTrocaDoTecnico(aguardando, 'fabio')).toBe(
+      'Fábio recebeu o pedido de autorização e não pode ser o técnico desta calibração. Para trocar, volte para rascunho e escolha outro signatário.',
+    )
+    expect(impedimentoDaTrocaDoTecnico(aguardando, 'mauricio')).toBeNull()
+    expect(impedimentoDaTrocaDoTecnico(aguardando, '')).toBeNull()
+    // Sem pedido (rascunho, ou a enviada para revisão antes da 1.0.5), a troca é livre
+    expect(impedimentoDaTrocaDoTecnico({ status: 'RASCUNHO', autorizacao: null }, 'fabio')).toBeNull()
+    expect(impedimentoDaTrocaDoTecnico({ status: 'REVISAO', autorizacao: null }, 'fabio')).toBeNull()
+    expect(tecnicosParaEscolher(equipe, 'mauricio', aguardando).map((u) => u.id)).toEqual(['mauricio'])
+    expect(tecnicosParaEscolher(equipe, 'mauricio', { status: 'RASCUNHO', autorizacao: pedido }).map((u) => u.id)).toEqual([
+      'fabio',
+      'mauricio',
+    ])
   })
 
   it('quem autoriza: os signatários, nunca o técnico da calibração', () => {

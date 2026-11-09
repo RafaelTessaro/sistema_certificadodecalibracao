@@ -217,6 +217,14 @@
   }
 }
 
+/* Campo obrigatório para emitir ainda em branco, depois de a pessoa passar por ele (Field `pendente`, nas etapas da
+   calibração): a borda e um fundo leve no tom de atenção, sem o vermelho do erro. Fora das camadas, para valer sobre a
+   borda das classes do campo; com o foco, volta a borda da marca. */
+[data-pendente] :is(input, select, textarea):not(:focus) {
+  border-color: color-mix(in srgb, var(--warning) 60%, transparent);
+  background-color: color-mix(in srgb, var(--warning-soft) 45%, var(--surface));
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

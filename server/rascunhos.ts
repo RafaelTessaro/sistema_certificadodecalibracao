@@ -3,7 +3,7 @@
 // criar a calibração (POST /api/calibracoes) e na folha de campo de uma balança sem rascunho, que assim
 // sai com o mesmo plano que o rascunho teria.
 
-import { pecasSemPadrao } from '#shared/calibracao.ts'
+import { pecasSemPadrao, planoDoHistoricoSemConformidade } from '#shared/calibracao.ts'
 import {
   calibracaoEmOutraUnidade,
   calibracaoVazia,
@@ -16,7 +16,7 @@ import {
   padroesSemHistorico,
   somarMeses,
 } from '#shared/dominio.ts'
-import type { Calibracao, CalibracaoInput, ClasseExatidao, EnsaioIndicacao, Padrao } from '#shared/tipos.ts'
+import type { Balanca, Calibracao, CalibracaoInput, ClasseExatidao, EnsaioIndicacao, Padrao } from '#shared/tipos.ts'
 import type { Contexto } from './contexto.ts'
 
 /** Só os dados de entrada (o que a tela edita) de uma calibração gravada. */
@@ -98,6 +98,26 @@ export function planoConformeAoPop<
 }
 
 /**
+ * O plano de uma calibração nova copiado de uma emitida da mesma balança (`anterior`, na unidade atual; "Nova
+ * calibração", "Calibrar de novo" e a folha da balança): sem as leituras (`semLeituras`), conforme o POP para a classe
+ * de hoje (`planoConformeAoPop`), só com as peças dos `padroes` que entram (os ativos da lista do rascunho novo;
+ * `comPecasDosPadroes`) e, sem a declaração de conformidade pedida, sem as cargas em que o EMA muda
+ * (`planoDoHistoricoSemConformidade`; POP 7.7).
+ */
+export function planoDoHistorico(
+  anterior: CalibracaoInput,
+  balanca: Balanca | null | undefined,
+  padroes: Padrao[],
+): Pick<CalibracaoInput, 'repetibilidade' | 'excentricidade' | 'indicacao' | 'opcoes'> {
+  return planoDoHistoricoSemConformidade(
+    comPecasDosPadroes(planoConformeAoPop({ ...semLeituras(anterior), opcoes: anterior.opcoes }, balanca?.classe), padroes),
+    balanca,
+    padroes,
+    anterior.conformidade.solicitada,
+  )
+}
+
+/**
  * Os padrões de uma calibração nova copiados de uma anterior (`ids`): os que continuam ativos (`ativos`, o cadastro de
  * hoje) e, se ela não tinha barômetro (a pressão era opcional nas classes III e IIII e sem classe até a 1.0.5), os
  * barômetros ativos: a pressão é obrigatória em toda calibração (POP 7.5).
@@ -126,7 +146,7 @@ export function naUnidadeAtual(ctx: Contexto, k: Calibracao): CalibracaoInput {
  * Rascunho novo: `pedido` traz o que a tela informou (cliente, balança, OS, data…). Sem histórico da
  * balança, os ensaios ficam vazios (a tela e a folha de campo sugerem os pontos), com os métodos da classe, e os
  * padrões são os de `padroesSemHistorico`. Com histórico, o plano da última calibração emitida, conforme o POP
- * (`planoConformeAoPop`). Na classe I, as opções do cálculo saem as da classe (empuxo pela densidade do ar medida e
+ * (`planoDoHistorico`). Na classe I, as opções do cálculo saem as da classe (empuxo pela densidade do ar medida e
  * convecção; `opcoesDaClasse`). Sem ajuste, reparo nem "como encontrado" (POP 7.8).
  */
 export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, tecnicoId: string): CalibracaoInput {
@@ -150,10 +170,12 @@ export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, 
     ? padroesDoHistorico(ultima.padroesIds, ativos)
     : padroesSemHistorico(ativos, balanca ?? null).map((p) => p.id)
   // Da última calibração, o plano (sem as leituras), com o método da excentricidade da classe e sem o modo de serviço,
-  // e só com as peças dos padrões que continuam
+  // e só com as peças dos padrões que continuam; sem a declaração de conformidade, sem as cargas em que o EMA muda
+  // (POP 7.7), que as sugestões até a 1.0.4 sempre traziam
   const historico = ultima
-    ? comPecasDosPadroes(
-        planoConformeAoPop({ ...semLeituras(ultima), opcoes: ultima.opcoes }, balanca?.classe),
+    ? planoDoHistorico(
+        ultima,
+        balanca,
         ativos.filter((p) => padroesIds.includes(p.id)),
       )
     : undefined

@@ -144,6 +144,39 @@ export function valoresDaConsultaAnterior(cliente?: Cliente): Partial<ClienteInp
   return Object.fromEntries(campos.map((k) => [k, cliente[k]]))
 }
 
+/**
+ * A inscrição estadual é de um estabelecimento (um CNPJ). A do formulário que pertence a outro CNPJ (`cnpjDaIe`: o
+ * gravado no cadastro antes da troca, o da consulta que a trouxe, ou o que estava no campo quando ela foi digitada) não
+ * vale para o CNPJ consultado agora (`cnpj`): entra nos valores "da consulta anterior" e dá lugar à da consulta (ou fica
+ * vazia, se ela não trouxer). Do mesmo CNPJ, a digitada à mão continua valendo (a consulta só preenche o campo vazio).
+ */
+export function anterioresDoCnpj(
+  anteriores: Partial<ClienteInput>,
+  atual: Pick<ClienteInput, 'inscricaoEstadual'>,
+  cnpjDaIe: string,
+  cnpj: string,
+): Partial<ClienteInput> {
+  if (!atual.inscricaoEstadual.trim() || !cnpjDaIe || cnpjDaIe === cnpj) return anteriores
+  return { ...anteriores, inscricaoEstadual: atual.inscricaoEstadual }
+}
+
+/**
+ * A frase embaixo do resultado da consulta. `mantidos`: os campos que ficaram como estavam (`camposMantidos`). O
+ * "Consultar" troca todos, menos a inscrição estadual digitada (`SO_VAZIO`): ela é dita à parte, com a da consulta.
+ */
+export function avisoDaConsulta(
+  mantidos: ReadonlyArray<keyof ClienteInput>,
+  dados: Pick<DadosCnpj, 'inscricaoEstadual'>,
+): string {
+  const outros = mantidos.filter((k) => !SO_VAZIO.includes(k))
+  const base = outros.length
+    ? 'Campos vazios preenchidos com os dados da Receita; o que já estava preenchido foi mantido. Use “Consultar” para trocar pelos dados da Receita.'
+    : 'Campos preenchidos com os dados da Receita. Confira e ajuste se precisar.'
+  return mantidos.includes('inscricaoEstadual') && dados.inscricaoEstadual
+    ? `${base} A inscrição estadual que já estava foi mantida (a consulta trouxe ${dados.inscricaoEstadual}).`
+    : base
+}
+
 /** Campos que vieram preenchidos na consulta, mas ficaram diferentes no formulário (o usuário já tinha digitado). */
 export function camposMantidos(form: ClienteInput, novos: Partial<ClienteInput>): Array<keyof ClienteInput> {
   return (Object.keys(novos) as Array<keyof ClienteInput>).filter((k) => !!novos[k] && form[k] !== novos[k])

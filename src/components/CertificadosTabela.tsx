@@ -2,7 +2,7 @@ import { ChevronRight, FileBadge2, Mail } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { CalibracaoResumo } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
-import { dataCurta } from '../lib/format'
+import { balancaNaLista, dataCurta } from '../lib/format'
 import { numeroDaLinha, quandoDaLinha, textoNumeroReservado } from '../lib/numeros'
 import { detalheDaSituacao } from '../lib/situacao'
 import { useSessao } from '../store/sessao'
@@ -42,14 +42,14 @@ export function SituacaoDaCalibracao({
   k,
   className,
 }: {
-  k: Pick<CalibracaoResumo, 'status' | 'aguardando' | 'devolvidaPor'>
+  k: Pick<CalibracaoResumo, 'status' | 'aguardando' | 'devolvidaPor' | 'semAutorizacao'>
   className?: string
 }) {
   const eu = useSessao((s) => s.usuario?.id)
   const detalhe = detalheDaSituacao(k, eu)
   return (
     <span className={cn('inline-flex flex-col items-start gap-1', className)}>
-      <StatusCalibracaoBadge status={k.status} devolvida={!!k.devolvidaPor} />
+      <StatusCalibracaoBadge status={k.status} devolvida={!!k.devolvidaPor} semAutorizacao={k.semAutorizacao} />
       {detalhe && (
         <span className={cn('text-xs', detalhe.destaque ? 'font-semibold text-info' : 'text-muted')}>{detalhe.texto}</span>
       )}
@@ -118,7 +118,7 @@ export function CertificadosTabela({
             {!ocultarBalanca && (
               <Td className="max-w-0 min-w-40 max-md:hidden">
                 <p className="truncate text-ink-2" title={k.balancaDescricao}>
-                  {k.balancaDescricao.replace(/^Balança /, '')}
+                  {balancaNaLista(k.balancaDescricao)}
                 </p>
                 {k.balancaSerie && <p className="tnum truncate text-xs text-muted">Série {k.balancaSerie}</p>}
               </Td>

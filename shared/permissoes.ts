@@ -108,10 +108,27 @@ type Membro = Pick<Usuario, 'id' | 'nome'> & Partial<Pick<Usuario, 'tecnico' | '
 
 /**
  * Para "Técnico que executou" (a lista é a dos usuários ativos): quem tem a marca de técnico e, se a calibração já tem
- * outra pessoa (sem a marca hoje, ou de antes dela), ela também, no lugar dela (continua valendo).
+ * outra pessoa (sem a marca hoje, ou de antes dela), ela também, no lugar dela (continua valendo). Aguardando a
+ * autorização (`k`), sem quem recebeu o pedido (`impedimentoDaTrocaDoTecnico`).
  */
-export function tecnicosParaEscolher<T extends Membro>(equipe: readonly T[], tecnicoId: string): T[] {
-  return equipe.filter((u) => u.tecnico || (!!tecnicoId && u.id === tecnicoId))
+export function tecnicosParaEscolher<T extends Membro>(
+  equipe: readonly T[],
+  tecnicoId: string,
+  k?: Pick<Calibracao, 'status' | 'autorizacao'>,
+): T[] {
+  return equipe.filter(
+    (u) => (!!tecnicoId && u.id === tecnicoId) || (!!u.tecnico && !(k && impedimentoDaTrocaDoTecnico(k, u.id))),
+  )
+}
+
+/**
+ * Por que o técnico não pode passar a ser esta pessoa agora, ou null: aguardando a autorização, quem recebeu o pedido
+ * não passa a ser o técnico (o técnico nunca autoriza o próprio certificado; o servidor confere a troca com esta).
+ */
+export function impedimentoDaTrocaDoTecnico(k: Pick<Calibracao, 'status' | 'autorizacao'>, tecnicoId: string): string | null {
+  const pedido = k.status === 'REVISAO' ? k.autorizacao : null
+  if (!pedido || !tecnicoId || tecnicoId !== pedido.signatarioId) return null
+  return `${pedido.signatarioNome} recebeu o pedido de autorização e não pode ser o técnico desta calibração. Para trocar, volte para rascunho e escolha outro signatário.`
 }
 
 /** Quem pode ser escolhido para autorizar: os signatários ativos, menos o técnico que executou. */

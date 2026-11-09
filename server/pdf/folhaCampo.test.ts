@@ -37,12 +37,14 @@ import {
   DICA_ETIQUETA,
   ETAPAS_SISTEMA,
   gerarFolhaCampoPdf,
+  INSTRUCAO_POSICOES_EM_BRANCO,
   LEMBRETE_AMBIENTE_FIM,
   METODO_EXCENTRICIDADE_FOLHA,
   montar,
   ROTULO_METODO_FOLHA,
   nomeArquivoFolhaCampo,
   ONDE_ANOTAR,
+  POSICOES_IMPRESSAS_EM_BRANCO,
   TITULO_ANOTACOES,
 } from './folhaCampo.ts'
 import { exemploBancada, exemploClasseI, POP_EXEMPLO } from './exemplosCertificado.ts'
@@ -1239,16 +1241,18 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).not.toMatch(/Pesos \(não precisa ser padrão\)|Hora ____/)
     // Repetibilidade: uma linha por faixa (1, 2 e 3), com 10 leituras (5 bastam; 3 com 100 kg ou mais; com 10, k = 2;
     // quantas vezes nos nº em cima das caixas), 9 pontos e 6 posições de excentricidade em duas faixas de 3 (mais, no
-    // espaço livre), com a posição escrita no local
+    // espaço livre): as 1 a 5 dos desenhos impressas, a 6ª escrita no local
     expect(t).toMatch(
       /Faixa Carga aplicada \(unid\.\) 1ª 2ª 3ª 4ª 5ª 6ª 7ª 8ª 9ª 10ª < 100 kg < 100 kg opcional( opcional){4} 1 2 3 7 EXCENTRICIDADE/,
     )
     expect(t).not.toContain('11ª')
     expect(t).toMatch(/\b9\b RETORNO AO ZERO/)
     expect(t).toContain(
-      '7 EXCENTRICIDADE NO SISTEMA 5 · Excentricidade Zere vazia e desloque a carga pelas posições (carga: no mínimo 1/3 de Max até 500 kg, 1/5 de Max até 3 t e 1/10 de Max acima), na ordem do desenho; escreva a posição de cada coluna (mais de 4 apoios ou tanque: uma por apoio). Frente: indicador (se remoto, o de acesso).',
+      '7 EXCENTRICIDADE NO SISTEMA 5 · Excentricidade Zere vazia e desloque a carga pelas posições (carga: no mínimo 1/3 de Max até 500 kg, 1/5 de Max até 3 t e 1/10 de Max acima), na ordem do desenho (posições 1 a 5); mais de 4 apoios ou tanque: escreva as demais, uma por apoio. Frente: indicador (se remoto, o de acesso).',
     )
-    expect(t).toMatch(/Posição escreva .*Indicação \(unid\.\) .*Posição escreva .*Indicação \(unid\.\)/)
+    // (os nº dos desenhos de referência, ao lado, entram no meio do texto)
+    expect(t).toMatch(/Posição 1 2 3 .{0,40}Indicação \(unid\.\) .{0,40}Posição 4 5 .{0,40}Indicação \(unid\.\)/)
+    expect(t).not.toMatch(/Posição escreva|escreva a posição de cada coluna/)
     expect(t).not.toContain('Zero antes')
     expect(t).not.toContain('Frente esquerda')
     expect(t).toMatch(/retangular .*redondo/)
@@ -1282,6 +1286,51 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(comRascunho).toContain('OS-2026-0512')
     expect(comRascunho).not.toContain('OS-9999')
     expect(comRascunho).not.toContain('15/01/2027')
+  })
+
+  it('a data prevista para o dia seguinte não some na folha impressa à noite (o dia é o de Brasília, não o UTC)', async () => {
+    // 22:30 de 09/11 em Brasília já é 10/11 em UTC: a visita de 10/11 ainda é "para a frente"
+    const noite = { ...folhaDoClienteComOs(), impressoEm: '2026-11-10T01:30:00.000Z', dataPrevista: '2026-11-10' }
+    const t = corrido(textoDoPdf(await gerarFolhaCampoPdf(noite)))
+    expect(t).toContain('Impressa em 09/11/2026')
+    expect(t).toMatch(/Data da calibração . .{0,80}prevista: 10\/11\/2026/)
+    // Visita no mesmo dia (de Brasília) da impressão: sem dica
+    const mesmoDia = { ...noite, dataPrevista: '2026-11-09' }
+    expect(corrido(textoDoPdf(await gerarFolhaCampoPdf(mesmoDia)))).not.toContain('prevista:')
+    // E no rascunho: a data marcada para o dia seguinte sai como dica mesmo impressa à noite
+    const rascunho = folhaPlataforma()
+    const k = { ...rascunho.calibracao!, dataCalibracao: '2026-11-10' }
+    const doRascunho = corrido(
+      textoDoPdf(await gerarFolhaCampoPdf({ ...rascunho, calibracao: k, impressoEm: '2026-11-10T01:30:00.000Z' })),
+    )
+    expect(doRascunho).toMatch(/Data da calibração . .{0,80}prevista: 10\/11\/2026/)
+  })
+
+  it('sem balança cadastrada (em branco e só do cliente): as posições 1 a 5 da excentricidade já impressas; a 6ª para escrever, com ≈ 6,5 mm', async () => {
+    expect(INSTRUCAO_POSICOES_EM_BRANCO).toBe(' (posições 1 a 5); mais de 4 apoios ou tanque: escreva as demais, uma por apoio')
+    for (const d of [folhaEmBranco(), folhaDoClienteComOs()]) {
+      const pdf = await gerarFolhaCampoPdf(d)
+      const texto = textoDoPdf(pdf)
+      // Frente e verso
+      expect(paginasDe(texto), d.numero).toHaveLength(2)
+      const t = corrido(texto)
+      expect(t).toContain(`na ordem do desenho${INSTRUCAO_POSICOES_EM_BRANCO}. Frente: indicador (se remoto, o de acesso).`)
+      // As posições impressas na ordem dos desenhos de referência (1 = centro; 2 a 5 = cantos ou bordas), sem "escreva"
+      // (os nº dos desenhos de referência, ao lado, entram no meio do texto)
+      expect(t).toMatch(/Posição 1 2 3 .{0,40}Indicação \(unid\.\) .{0,40}Posição 4 5 .{0,40}Indicação \(unid\.\)/)
+      expect(t).not.toContain('escreva a posição')
+      // As linhas da 2ª faixa (a da posição, com a 6ª para escrever, e a da indicação) com ≈ 6,5 mm, como as leituras
+      const palavras = palavrasDoPdf(pdf)
+      const pagina = palavras.findIndex((p) => p.some((w) => w.texto === 'Posição'))
+      const ultima = (texto: string) => palavras[pagina].findLastIndex((w) => w.texto === texto)
+      for (const rotulo of [['Posição'], ['Indicação', '(unid.)']]) {
+        const so = palavras.map((p, i) => (i === pagina ? p.slice(ultima(rotulo[0])) : []))
+        expect(alturaDaLinha(pdf, so, rotulo).mm, `${d.numero}: ${rotulo.join(' ')}`).toBeGreaterThanOrEqual(6.3)
+      }
+    }
+    // Balança cadastrada: as posições dela, sem a instrução da folha em branco
+    expect(corrido(textoDoPdf(await gerarFolhaCampoPdf(folhaPlataforma())))).not.toContain(INSTRUCAO_POSICOES_EM_BRANCO.trim())
+    expect(jsonDe(folhaPlataforma())).toMatch(/"Centro".*"Frente esquerda"/)
   })
 })
 
@@ -2773,14 +2822,10 @@ describe.runIf(temPdftotext)(
         for (const linha of ambiente.slice(1))
           for (const c of linha.slice(1)) expect(vazia(c) || c.fillColor !== '#FFFFFF', JSON.stringify(c)).toBe(true)
       }
-      // A repetibilidade (um ensaio com a carga e a tabela de vários ensaios) e as posições da excentricidade em branco:
-      // o nº de cada leitura (ou posição) numa linha miúda em cima; as caixas vazias
-      for (const [d, rotulo] of [
-        [folhaPlataforma(), 'Indicação'],
-        [folhaClasseI(), 'Indicação'],
-        [folhaMultiIntervalo(), 'Indicação'],
-        [folhaEmBranco(), 'Posição'],
-      ] as const) {
+      // A repetibilidade (um ensaio com a carga e a tabela de vários ensaios): o nº de cada leitura numa linha miúda em
+      // cima; as caixas vazias
+      for (const d of [folhaPlataforma(), folhaClasseI(), folhaMultiIntervalo()]) {
+        const rotulo = 'Indicação'
         const [tabela] = tabelas(d, rotulo)
         const linhas = tabela.filter((l) => JSON.stringify(l).includes(`"${rotulo}"`))
         expect(linhas.length, `${d.numero}: ${rotulo}`).toBeGreaterThanOrEqual(1)
@@ -2790,9 +2835,34 @@ describe.runIf(temPdftotext)(
           expect(caixas.length).toBeGreaterThanOrEqual(3)
           for (const c of caixas) expect(vazia(c), `${d.numero}: ${rotulo}`).toBe(true)
         }
-        // Os nº em cima ("1ª", "2"), numa linha própria
-        expect(JSON.stringify(tabela)).toMatch(rotulo === 'Posição' ? /"text":"1".*"text":"2".*"text":"3"/ : /"1ª".*"2ª".*"3ª"/)
+        // Os nº em cima ("1ª", "2ª"), numa linha própria
+        expect(JSON.stringify(tabela)).toMatch(/"1ª".*"2ª".*"3ª"/)
       }
+      // As posições da excentricidade sem balança cadastrada (em branco e só do cliente), em duas faixas: as 1 a 5 dos
+      // desenhos de referência impressas (cinza, sem "escreva" e sem a linha miúda dos nº em cima, que as repetiria), a
+      // 6ª para escrever (mais de 4 apoios ou tanque); as indicações vazias
+      expect(POSICOES_IMPRESSAS_EM_BRANCO).toBe(5)
+      for (const d of [folhaEmBranco(), folhaDoClienteComOs()]) {
+        const [tabela] = tabelas(d, 'Posição')
+        const posicoes = tabela.filter((l) => JSON.stringify(l[0]).includes('"Posição"'))
+        const indicacoes = tabela.filter((l) => JSON.stringify(l[0]).includes('"Indicação"'))
+        expect(posicoes, d.numero).toHaveLength(2)
+        expect(indicacoes, d.numero).toHaveLength(2)
+        // Só as linhas da posição e da indicação (nenhuma linha miúda em cima)
+        expect(tabela, d.numero).toHaveLength(4)
+        expect(JSON.stringify(tabela)).not.toContain('escreva')
+        const caixas = posicoes.flatMap((l) => l.slice(1))
+        expect(caixas).toHaveLength(6)
+        caixas.slice(0, 5).forEach((c, i) => {
+          expect(c.fillColor, `posição ${i + 1}`).toBe('#E3E3E3')
+          expect(JSON.stringify(c.stack)).toBe(JSON.stringify([{ text: String(i + 1) }]))
+        })
+        expect(vazia(caixas[5]), 'a 6ª posição, para escrever').toBe(true)
+        for (const c of indicacoes.flatMap((l) => l.slice(1))) expect(vazia(c), `${d.numero}: Indicação`).toBe(true)
+      }
+      // Balança cadastrada: as posições dela, como antes (sem as da folha em branco)
+      const [plataforma] = tabelas(folhaPlataforma(), 'Centro')
+      expect(JSON.stringify(plataforma)).toMatch(/"Centro".*"Frente esquerda".*"Frente direita"/)
       // A repetibilidade em branco: o cabeçalho (a faixa, a carga aplicada e o nº de cada leitura) numa linha própria e,
       // em cada faixa, a carga e as leituras em caixas vazias
       const [repetibilidade] = tabelas(folhaEmBranco(), 'Carga aplicada')

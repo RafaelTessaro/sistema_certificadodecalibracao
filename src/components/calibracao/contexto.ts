@@ -1,3 +1,4 @@
+import type { CampoEmissao, CampoObrigatorio, EtapaCalibracao } from '#shared/dominio.ts'
 import type { ResultadoCalculo } from '#shared/metrologia/tipos.ts'
 import type {
   Balanca,
@@ -6,6 +7,7 @@ import type {
   Configuracoes,
   FolhaCampoImpressa,
   Padrao,
+  PedidoAutorizacao,
   StatusCalibracao,
 } from '#shared/tipos.ts'
 import type { MembroEquipe } from '../../lib/api'
@@ -25,6 +27,8 @@ export interface ContextoEtapa {
   config: Configuracoes
   equipe: MembroEquipe[]
   status: StatusCalibracao
+  /** Aguardando a autorização (REVISAO): o pedido gravado (quem recebeu não pode passar a ser o técnico). */
+  autorizacao?: PedidoAutorizacao | null
   /** Reabre o cadastro da balança (para corrigir Max, d, classe… sem sair da calibração). */
   editarBalanca: () => void
   /** Folha de campo da calibração (impressa por ela ou avulsa e ligada), ou null. */
@@ -33,7 +37,12 @@ export interface ContextoEtapa {
   vincularFolha: (numero: string) => Promise<boolean>
   /** Imprime uma folha nova (nº novo, plano atual) no lugar da que a calibração tem (pede confirmação). */
   novaFolha: () => void
+  /** Os campos obrigatórios para emitir (`camposObrigatoriosEmissao`); sem eles, a etapa calcula. */
+  obrigatorios?: CampoObrigatorio[]
+  /** O campo obrigatório em branco já fica em destaque (a pessoa passou por ele ou chegou à revisão com pendências). */
+  destacar?: (campo: CampoObrigatorio) => boolean
+  /** A pessoa saiu do campo (o foco saiu dele): o destaque passa a valer. */
+  tocar?: (campo: CampoEmissao) => void
 }
 
-export type IdEtapa =
-  'identificacao' | 'instrumento' | 'padroes' | 'repetibilidade' | 'excentricidade' | 'indicacao' | 'conclusao' | 'revisao'
+export type IdEtapa = EtapaCalibracao

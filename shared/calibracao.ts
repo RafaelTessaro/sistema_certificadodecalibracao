@@ -11,7 +11,16 @@ import {
   regrasDoPopComoAviso,
   valorAmbiente,
 } from './dominio.ts'
-import { calcular, cargasDeMudancaDoEmaQueFaltam, emaInstrumento, emaPeso, sugerirPontos } from './metrologia/index.ts'
+import { novoId } from './id.ts'
+import {
+  calcular,
+  cargasDeMudancaDoEma,
+  cargasDeMudancaDoEmaQueFaltam,
+  contaComoCarga,
+  emaInstrumento,
+  emaPeso,
+  sugerirPontos,
+} from './metrologia/index.ts'
 import type {
   ArCalculo,
   EntradaCalculo,
@@ -206,23 +215,121 @@ export function pontosSugeridos(balanca: Balanca, padroes: Padrao[], conformidad
 }
 
 /**
- * O cliente pediu declaração de conformidade e o erro de indicação já tem os pontos, sem alguma das cargas em que o EMA
- * muda (POP 7.7 e Tabela 2; `cargasDeMudancaDoEmaQueFaltam`): a folha de campo saiu antes do pedido, ou os pontos
- * vieram sem elas. O aviso, que não impede a emissão, diz quais faltam. Sem o pedido, sem classe ou ainda sem os pontos
- * (a sugestão e a folha já as trazem): null.
+ * O erro de indicação leva as cargas em que o EMA muda (POP 7.7 e Tabela 2): o cliente pediu declaração de conformidade,
+ * ou a folha de campo da calibração saiu antes da 1.0.5, quando o plano sempre as trazia (`cargasDoEmaNaFolha`). É o que
+ * "Sugerir pontos" e a folha sem os pontos no rascunho sugerem (`pontosSugeridos`).
+ */
+export function comCargasDoEma(k: Pick<CalibracaoInput, 'conformidade'> & { cargasDoEmaNaFolha?: boolean }): boolean {
+  return k.conformidade.solicitada || k.cargasDoEmaNaFolha === true
+}
+
+/**
+ * "1 kg, 4 kg e 10 kg": as cargas em que o EMA muda que faltam entre os pontos ([] sem classe ou sem os pontos). Com
+ * `soMedidas` e alguma carga já lida (a subida ou a descida de um ponto com carga; o zero que a sugestão preenche não
+ * conta), só contam os pontos com leitura: a linha em branco não foi medida, e o cálculo e o certificado a deixam de
+ * fora (ex.: "Sugerir pontos" depois do pedido da declaração, com a folha já preenchida sem elas). Sem nenhuma carga
+ * lida, os pontos são o plano.
+ */
+function cargasDoEmaQueFaltam(
+  k: Pick<CalibracaoInput, 'indicacao'>,
+  balanca: Pick<Balanca, 'classe' | 'tipoFaixas' | 'faixas' | 'unidade'>,
+  soMedidas = false,
+): string[] {
+  const pontos = k.indicacao.pontos
+  if (!pontos.length) return []
+  const lido = (p: PontoIndicacao) => p.crescente !== null || p.decrescente !== null
+  const medidos = soMedidas && pontos.some((p) => p.carga > 0 && lido(p)) ? pontos.filter(lido) : pontos
+  return cargasDeMudancaDoEmaQueFaltam(
+    balanca,
+    medidos.map((p) => p.carga),
+  ).map((c) => `${numeroBr(c)} ${balanca.unidade}`)
+}
+
+const listaE = (l: string[]) => (l.length > 1 ? `${l.slice(0, -1).join(', ')} e ${l.at(-1)}` : (l[0] ?? ''))
+
+/**
+ * O erro de indicação já tem os pontos, sem alguma das cargas em que o EMA muda (POP 7.7 e Tabela 2;
+ * `cargasDeMudancaDoEmaQueFaltam`), e o cliente pediu declaração de conformidade (a folha de campo saiu antes do pedido,
+ * ou os pontos vieram sem elas) ou a folha da calibração saiu antes da 1.0.5 com elas (`cargasDoEmaNaFolha`; os pontos
+ * foram digitados sem elas). Com alguma carga já lida, a linha sem leitura conta como faltando (não foi medida). O
+ * aviso, que não impede a emissão, diz quais faltam. Sem nenhum dos dois, sem classe ou ainda sem os pontos (a sugestão
+ * e a folha já as trazem; sem leituras, a emissão já está pendente): null.
  */
 export function avisoCargasDaConformidade(
+  k: Pick<CalibracaoInput, 'conformidade' | 'indicacao'> & { cargasDoEmaNaFolha?: boolean },
+  balanca: Pick<Balanca, 'classe' | 'tipoFaixas' | 'faixas' | 'unidade'>,
+): string | null {
+  if (!comCargasDoEma(k)) return null
+  const faltam = cargasDoEmaQueFaltam(k, balanca, true)
+  if (!faltam.length) return null
+  const verbo = faltam.length > 1 ? 'faltam' : 'falta'
+  return k.conformidade.solicitada
+    ? `Declaração de conformidade pedida: o POP (7.7) pede também as cargas em que o EMA muda, e ${verbo} ${listaE(faltam)} no erro de indicação.`
+    : `A folha de campo desta calibração foi impressa antes da versão 1.0.5, com as cargas em que o EMA muda, e ${verbo} ${listaE(faltam)} no erro de indicação: se foram medidas, inclua-as.`
+}
+
+/**
+ * O aviso da folha de campo ("Resolva antes de sair") quando o cliente pediu declaração de conformidade e os pontos do
+ * rascunho não têm todas as cargas em que o EMA muda (POP 7.7): copiados da última calibração, ou sugeridos antes do
+ * pedido. Como o da Min fora das cargas. null: sem o pedido, sem os pontos ou com todas.
+ */
+export function avisoDaFolhaCargasDaConformidade(
   k: Pick<CalibracaoInput, 'conformidade' | 'indicacao'>,
   balanca: Pick<Balanca, 'classe' | 'tipoFaixas' | 'faixas' | 'unidade'>,
 ): string | null {
-  if (!k.conformidade.solicitada || !k.indicacao.pontos.length) return null
-  const faltam = cargasDeMudancaDoEmaQueFaltam(
-    balanca,
-    k.indicacao.pontos.map((p) => p.carga),
-  ).map((c) => `${numeroBr(c)} ${balanca.unidade}`)
+  if (!k.conformidade.solicitada) return null
+  const faltam = cargasDoEmaQueFaltam(k, balanca)
   if (!faltam.length) return null
-  const lista = faltam.length > 1 ? `${faltam.slice(0, -1).join(', ')} e ${faltam.at(-1)}` : faltam[0]
-  return `Declaração de conformidade pedida: o POP (7.7) pede também as cargas em que o EMA muda, e ${faltam.length > 1 ? 'faltam' : 'falta'} ${lista} no erro de indicação.`
+  const uma = faltam.length === 1
+  return `Declaração de conformidade pedida: ${uma ? 'a carga' : 'as cargas'} em que o EMA muda (${listaE(faltam)}) ${uma ? 'não está' : 'não estão'} entre as do erro de indicação: ${uma ? 'inclua-a' : 'inclua-as'} no sistema (POP 7.7).`
+}
+
+/**
+ * O plano do erro de indicação copiado da última calibração emitida para a nova da mesma balança ("Nova calibração",
+ * "Calibrar de novo" e a folha da balança), sem a declaração de conformidade pedida (`conformidade`): saem as cargas em
+ * que o EMA muda (`cargasDeMudancaDoEma`; POP 7.7), que as sugestões até a 1.0.4 sempre traziam. Fica a que também é
+ * uma das sugeridas (o mínimo do cg-18: 0, Min, ~25, 50 e 75 % de Max e Max; `pontosSugeridos`), a acordada com o
+ * cliente e a montada sobre as etapas de substituição (rodoviária: é da sequência delas). Sobrando menos de 5 cargas
+ * (contando o zero; o mínimo do POP), entram as sugeridas que faltam, sem leituras e com os pesos automáticos. Nada a
+ * tirar (com o pedido, sem classe, sem elas): o mesmo plano.
+ */
+export function planoDoHistoricoSemConformidade<T extends Pick<CalibracaoInput, 'indicacao'>>(
+  k: T,
+  balanca: Balanca | null | undefined,
+  padroes: Padrao[],
+  conformidade: boolean,
+): T {
+  if (!balanca || conformidade) return k
+  const ema = cargasDeMudancaDoEma(balanca)
+  if (!ema.length) return k
+  const sugeridas = pontosSugeridos(
+    balanca,
+    padroes.filter((p) => p.tipo === 'PESOS'),
+    false,
+  )
+  const pontos = k.indicacao.pontos
+  const sai = (p: PontoIndicacao) =>
+    p.carga > 0 &&
+    p.nivelSubstituicao === 0 &&
+    ema.some((c) => contaComoCarga(p.carga, c, balanca)) &&
+    !sugeridas.some((c) => contaComoCarga(p.carga, c, balanca))
+  const ficam = pontos.filter((p) => !sai(p))
+  if (ficam.length === pontos.length) return k
+  const novos: PontoIndicacao[] =
+    ficam.length >= 5
+      ? []
+      : sugeridas
+          .filter((c) => !ficam.some((p) => contaComoCarga(p.carga, c, balanca)))
+          .map((carga) => ({
+            id: novoId(),
+            carga,
+            pecas: [],
+            pecasManuais: false,
+            crescente: null,
+            decrescente: null,
+            nivelSubstituicao: 0,
+          }))
+  return { ...k, indicacao: { ...k.indicacao, pontos: pontosEmOrdemDeCarga([...ficam, ...novos]) } }
 }
 
 /** Carga de pesos padrão de cada etapa de substituição (0 quando o ensaio não usa substituição). */

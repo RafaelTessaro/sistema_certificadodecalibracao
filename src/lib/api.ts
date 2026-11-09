@@ -19,6 +19,7 @@ import type {
   Envio,
   EstadoSessao,
   FolhaCampoImpressa,
+  FolhaCampoListada,
   GrupoAuditoria,
   MensagemTempoReal,
   NovoUsuario,
@@ -148,6 +149,16 @@ export interface FolhaLigada {
    * ou é a mesma.
    */
   ordemServico?: { daFolha: string; aplicada: boolean; daCalibracao?: string } | null
+  /**
+   * A folha foi impressa antes da 1.0.5: a falta da pressão ficou como aviso e "Sugerir pontos" traz as cargas em que o
+   * EMA muda, como ela (as marcas novas; a versão não sobe). null = nenhuma.
+   */
+  marcas?: { pressaoComoAviso?: boolean; cargasDoEmaNaFolha?: boolean } | null
+  /**
+   * Com a pressão como aviso (`marcas`) e ainda não registrada: o barômetro que o rascunho trazia saiu dos padrões
+   * (`identificacoes`), e a calibração ficou com `padroesIds` (a `versao` dela subiu). null = nada saiu.
+   */
+  barometrosRetirados?: { identificacoes: string[]; padroesIds: string[] } | null
   /** A versão da calibração depois da ligação (a tela grava com ela). */
   versao?: number
 }
@@ -386,6 +397,12 @@ export const api = {
     })}`,
   /** Reimpressão de uma folha já impressa, pelo nº: o PDF da primeira impressão (o mesmo nº de folha e de certificado). */
   urlReimprimirFolha: (numero: string) => `/api/folha-campo/${enc(numero)}`,
+  /**
+   * Todas as folhas impressas, da mais nova para a mais antiga (aba "Folhas de campo"): `situacao` NAO_LIGADAS, LIGADAS
+   * ou NAO_USADAS ('' = todas), a busca (nº da folha ou do certificado, cliente, OS) e o dia da impressão.
+   */
+  folhasCampo: (f: { situacao?: string; busca?: string; de?: string; ate?: string; pagina?: number; limite?: number } = {}) =>
+    requisitar<{ itens: FolhaCampoListada[]; total: number }>('GET', `/api/folhas-campo${consulta(f)}`),
   /** Nºs de certificado ainda sem certificado (reservados) e os não utilizados, do mais novo para o mais antigo. */
   numerosReservados: () => requisitar<{ numeros: NumeroReservado[] }>('GET', '/api/numeros-reservados'),
   /** O nº de uma folha avulsa que não vai ser usada passa a não utilizado (só o administrador). */

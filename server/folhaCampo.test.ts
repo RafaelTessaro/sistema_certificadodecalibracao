@@ -12,7 +12,7 @@ import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#sha
 import { criarApp } from './app.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
 import { abrirBanco, type Banco } from './db.ts'
-import { dataDaImpressaoNoPdf, numeroCertificadoNoPdf, Repositorio } from './repositorio.ts'
+import { dataDaImpressaoNoPdf, folhaImpressaComRegrasDa105, numeroCertificadoNoPdf, Repositorio } from './repositorio.ts'
 import { PARAMETROS_LEVES } from './senha.ts'
 import { transplantarFolhasCampo } from './usuarios.ts'
 import { nomeArquivoDaFolha, numeroDaFolha } from './rotas/folhaCampo.ts'
@@ -1087,6 +1087,58 @@ describe('banco restaurado de uma cópia antiga: as folhas impressas depois dela
       .get(numero) as
       { calibracao_id: string; chave: string; substituida_por: string; pdf_arquivo: string; pdf_sha256: string } | undefined
 
+  it('a folha que volta da pasta: o próprio PDF diz se foi impressa antes da 1.0.5 (sem a marca das regras novas); ligada, deixa as marcas', async () => {
+    const antiga = await avulsa()
+    const nova = await avulsa()
+    // A "antiga" como a 1.0.4 gravava: as palavras-chave sem a marca
+    writeFileSync(
+      join(t.ctx.pastaDados, 'folhas-campo', String(ano), `${antiga}.pdf`),
+      Buffer.from(
+        `%PDF-1.7\n1 0 obj\n<< /Keywords (folha de campo; ${antiga}; FOR-CAL-01; EURAMET cg-18 v4.0) /CreationDate (D:20261020120000Z) >>\nendobj\n%%EOF\n`,
+        'latin1',
+      ),
+    )
+    // O banco volta de uma cópia anterior às duas (aberta e atualizada agora, depois das impressões)
+    t.ctx.db.exec('DELETE FROM folhas_campo')
+    const antes = (numero: string) =>
+      (t.ctx.db.prepare('SELECT antes_105 FROM folhas_campo WHERE numero = ?').get(numero) as { antes_105: number }).antes_105
+    const k = await rascunho('')
+    expect((await ligar(k.id, antiga)).statusCode).toBe(409)
+    expect(antes(antiga)).toBe(1)
+    const r = await ligar(k.id, antiga, true)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().marcas).toEqual({ pressaoComoAviso: true, cargasDoEmaNaFolha: true })
+    // A impressa na 1.0.5 (com a marca) não é de antes, embora o banco tenha sido aberto depois da impressão dela: a
+    // pressão impressa como obrigatória continua obrigatória
+    const k2 = await rascunho('')
+    const r2 = await ligar(k2.id, nova, true)
+    expect(r2.statusCode, r2.body).toBe(200)
+    expect(antes(nova)).toBe(0)
+    expect(r2.json().marcas).toBeNull()
+  })
+
+  it('folhaImpressaComRegrasDa105: a marca nas palavras-chave (direto, num objeto à parte ou em UTF-16); sem ela, não', async () => {
+    const pdf = (texto: string) => Buffer.from(texto, 'latin1')
+    expect(folhaImpressaComRegrasDa105(pdf('<< /Keywords (folha de campo; FC-2026-00001; FOR-CAL-01; regras 1.0.5) >>'))).toBe(
+      true,
+    )
+    expect(
+      folhaImpressaComRegrasDa105(pdf('<< /Keywords 31 0 R >>\n31 0 obj\n(folha de campo; regras 1.0.5; FOR-CAL-01)\nendobj')),
+    ).toBe(true)
+    // A 1.0.4 e antes: sem a marca, ou sem palavras-chave
+    expect(folhaImpressaComRegrasDa105(pdf('<< /Keywords (folha de campo; FC-2026-00001; certificado CC-2026-00042) >>'))).toBe(
+      false,
+    )
+    expect(folhaImpressaComRegrasDa105(pdf('%PDF-1.4'))).toBe(false)
+    // A folha de verdade (com o POP de nome acentuado, as palavras-chave em UTF-16)
+    const { gerarFolhaCampoPdf } = await import('./pdf/folhaCampo.ts')
+    const { folhaEmBranco } = await import('./pdf/exemplosFolhaCampo.ts')
+    expect(
+      folhaImpressaComRegrasDa105(await gerarFolhaCampoPdf({ ...folhaEmBranco(), procedimento: 'BALANÇAS-POP-123 rev. 00' })),
+    ).toBe(true)
+    expect(folhaImpressaComRegrasDa105(await gerarFolhaCampoPdf(folhaEmBranco()))).toBe(true)
+  })
+
   it('sem o transplante: a folha que tem PDF na pasta volta ao registro, livre, e é ligada confirmando', async () => {
     const k = await rascunho('OS 1')
     const fc1 = (await folhaDe(k.id)).headers['x-folha-campo'] as string
@@ -1475,6 +1527,62 @@ describe('1.0.5: reimpressão pelo nº e folha do cliente com a OS', { timeout: 
     expect((await t.chamar('GET', `/api/folha-campo/${a.numero}`)).statusCode).toBe(401)
   })
 
+  it('a primeira impressão que não terminou (o serviço caiu): "aguarde" só no começo; depois, o que fazer, sem nº novo', async () => {
+    // A reserva do nº ficou gravada, mas o PDF não chegou a ser gerado
+    const avulsaSemPdf = t.ctx.repo.reservarFolhaCampo({
+      chave: 'avulsa:queda-servidor-0002',
+      clienteId: cliente.id,
+      por: 'Admin Teste',
+    })
+    const k = await rascunho('OS 2026/0999')
+    const daCalibracao = t.ctx.repo.reservarFolhaCampo({ chave: `calibracao:${k.id}`, calibracaoId: k.id, por: 'Admin Teste' })
+    const [folhas, numeros] = [contar('folhas_campo'), contar('numeros_reservados')]
+    const reimprimir = (numero: string) => t.chamar('GET', `/api/folha-campo/${numero}`, { cookie: t.cookieComum })
+    // Logo depois da reserva: ainda pode estar sendo gerada
+    const logo = await reimprimir(avulsaSemPdf.numero)
+    expect(logo.statusCode).toBe(409)
+    expect(logo.json().erro).toBe(`A folha ${avulsaSemPdf.numero} ainda está sendo gerada. Espere um instante e tente de novo.`)
+    // Minutos depois: a primeira impressão não terminou e não vai terminar (cada clique da avulsa usa uma chave nova)
+    t.ctx.db
+      .prepare('UPDATE folhas_campo SET impressa_em = ? WHERE numero IN (?, ?)')
+      .run(new Date(Date.now() - 10 * 60_000).toISOString(), avulsaSemPdf.numero, daCalibracao.numero)
+    for (let i = 0; i < 2; i++) {
+      const depois = await reimprimir(avulsaSemPdf.numero)
+      expect(depois.statusCode).toBe(409)
+      expect(depois.json().erro).toBe(
+        `A primeira impressão da folha ${avulsaSemPdf.numero} não terminou (o sistema foi interrompido), então ela não saiu no papel. Marque-a como “Não vai ser usada” (em Números não utilizados) e imprima uma folha nova.`,
+      )
+    }
+    // A da calibração: a impressão pela calibração termina a primeira, com o mesmo nº
+    const pelaLista = await reimprimir(daCalibracao.numero)
+    expect(pelaLista.statusCode).toBe(409)
+    expect(pelaLista.json().erro).toBe(
+      `A primeira impressão da folha ${daCalibracao.numero} não terminou (o sistema foi interrompido). Abra a calibração e imprima a folha de campo por ela: sai com o mesmo nº.`,
+    )
+    // A lista das folhas mostra as duas como interrompidas (sem "Reimprimir")
+    const lista = (await t.chamar('GET', '/api/folhas-campo', { cookie: t.cookieComum })).json().itens as Array<{
+      numero: string
+      impressaoInterrompida?: boolean
+    }>
+    expect(
+      lista
+        .filter((f) => f.impressaoInterrompida)
+        .map((f) => f.numero)
+        .sort(),
+    ).toEqual([avulsaSemPdf.numero, daCalibracao.numero].sort())
+    const pelaCalibracao = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
+    expect(pelaCalibracao.statusCode, pelaCalibracao.body).toBe(200)
+    expect(pelaCalibracao.headers['x-folha-campo']).toBe(daCalibracao.numero)
+    expect((await reimprimir(daCalibracao.numero)).rawPayload.equals(pelaCalibracao.rawPayload)).toBe(true)
+    // Nenhum nº novo em nada disso
+    expect([contar('folhas_campo'), contar('numeros_reservados')]).toEqual([folhas, numeros])
+    const depois = (await t.chamar('GET', '/api/folhas-campo', { cookie: t.cookieComum })).json().itens as Array<{
+      numero: string
+      impressaoInterrompida?: boolean
+    }>
+    expect(depois.filter((f) => f.impressaoInterrompida).map((f) => f.numero)).toEqual([avulsaSemPdf.numero])
+  })
+
   it('também a folha de uma calibração, a mesma da reimpressão pela calibração, com o nome pela OS dela', async () => {
     const k = await rascunho('OS 2026/0456')
     const pelaCalibracao = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
@@ -1562,5 +1670,142 @@ describe('1.0.5: reimpressão pelo nº e folha do cliente com a OS', { timeout: 
     const k3 = await rascunho('')
     const r3 = await ligar(k3.id, semOs.numero)
     expect(r3.json()).toMatchObject({ ordemServico: null, versao: k3.versao })
+  })
+
+  it('a folha impressa antes da 1.0.5 ligada depois: a pressão "opcional" dela fica como aviso, e a sugestão mantém as cargas em que o EMA muda', async () => {
+    const velha = await avulsa(`?balancaId=${balanca.id}`)
+    const nova = await avulsa(`?balancaId=${balanca.id}`)
+    // Impressa na 1.0.4 (a migração 20 marca as que estavam no banco na atualização)
+    t.ctx.db.prepare('UPDATE folhas_campo SET antes_105 = 1 WHERE numero = ?').run(velha.numero)
+    const k = await rascunho('')
+    const r = await ligar(k.id, velha.numero)
+    expect(r.statusCode, r.body).toBe(200)
+    // As marcas vão para a tela (ela não as grava); a versão sobe só porque o barômetro pré-escolhido saiu (sem a pressão)
+    expect(r.json()).toMatchObject({ marcas: { pressaoComoAviso: true, cargasDoEmaNaFolha: true }, versao: k.versao + 1 })
+    const gravada: Calibracao = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().calibracao
+    expect(gravada).toMatchObject({ pressaoComoAviso: true, cargasDoEmaNaFolha: true, versao: k.versao + 1 })
+    // A tela grava sem a pressão e sem o barômetro (a folha dizia "opcional"): não é pendência, é aviso; as marcas ficam
+    const salvar = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieComum,
+      payload: {
+        ...gravada,
+        padroesIds: [pesos.id],
+        ambiente: { ...gravada.ambiente, pressao: null },
+        versao: r.json().versao,
+      },
+    })
+    expect(salvar.statusCode, salvar.body).toBe(200)
+    expect(salvar.json().pendencias.join(' ')).not.toMatch(/pressão/)
+    expect(salvar.json().avisos.join(' ')).toMatch(/pressão/)
+    expect(salvar.json().calibracao).toMatchObject({ pressaoComoAviso: true, cargasDoEmaNaFolha: true })
+    // O registro diz que a folha é de antes
+    const registro = registrosDaFolha().find(([, alvo, d]) => alvo === k.id && d.startsWith('PUT'))
+    expect(registro?.[2]).toContain('impressa antes da versão 1.0.5')
+    // Ligada de novo à mesma calibração: nada muda
+    expect((await ligar(k.id, velha.numero)).json().marcas).toBeNull()
+
+    // A impressa na 1.0.5: sem marcas, e a pressão é pendência
+    const k2 = await rascunho('')
+    const r2 = await ligar(k2.id, nova.numero)
+    expect(r2.json()).toMatchObject({ marcas: null, versao: k2.versao })
+    const g2: Calibracao = (await t.chamar('GET', `/api/calibracoes/${k2.id}`, { cookie: t.cookieAdmin })).json().calibracao
+    expect(g2.pressaoComoAviso).toBeUndefined()
+    expect(g2.cargasDoEmaNaFolha).toBeUndefined()
+    const s2 = await t.chamar('PUT', `/api/calibracoes/${k2.id}`, {
+      cookie: t.cookieComum,
+      payload: { ...g2, padroesIds: [pesos.id], ambiente: { ...g2.ambiente, pressao: null } },
+    })
+    expect(s2.json().pendencias.join(' ')).toMatch(/pressão/)
+  })
+
+  it('a folha de antes da 1.0.5 ligada ao rascunho novo, com o barômetro pré-escolhido e sem a pressão: o barômetro sai e a emissão não fica pendente', async () => {
+    const velha = await avulsa(`?balancaId=${balanca.id}`)
+    t.ctx.db.prepare('UPDATE folhas_campo SET antes_105 = 1 WHERE numero = ?').run(velha.numero)
+    // O rascunho novo já traz o barômetro (a pressão é obrigatória nas novas)
+    const k = await rascunho('')
+    const barometro = (await t.chamar('GET', '/api/padroes', { cookie: t.cookieAdmin }))
+      .json()
+      .padroes.find((x: { tipo: string }) => x.tipo === 'BAROMETRO')
+    expect(k.padroesIds).toContain(barometro.id)
+    const r = await ligar(k.id, velha.numero)
+    expect(r.statusCode, r.body).toBe(200)
+    // O barômetro sai dos padrões (a versão sobe: a tela fica com os padrões novos) e a tela diz qual
+    expect(r.json()).toMatchObject({
+      marcas: { pressaoComoAviso: true, cargasDoEmaNaFolha: true },
+      barometrosRetirados: { identificacoes: ['BR-90'], padroesIds: k.padroesIds.filter((id) => id !== barometro.id) },
+      versao: k.versao + 1,
+    })
+    const aberta = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json()
+    expect(aberta.calibracao.padroesIds).not.toContain(barometro.id)
+    expect(aberta.calibracao.versao).toBe(k.versao + 1)
+    // Sem pressão e sem barômetro: só o aviso, como na 1.0.4
+    expect(aberta.pendencias.join(' ')).not.toMatch(/[Bb]ar[ôo]metro|pressão/)
+    expect(aberta.avisos.join(' ')).toMatch(/pressão/)
+    const registro = registrosDaFolha().find(([, alvo, d]) => alvo === k.id && d.startsWith('PUT'))
+    expect(registro?.[2]).toContain('o barômetro BR-90 saiu dos padrões')
+
+    // Com a pressão já registrada antes de ligar (a folha trazia a medida): o barômetro fica
+    const velha2 = await avulsa(`?balancaId=${balanca.id}`)
+    t.ctx.db.prepare('UPDATE folhas_campo SET antes_105 = 1 WHERE numero = ?').run(velha2.numero)
+    const k2 = await rascunho('')
+    const salvo = await t.chamar('PUT', `/api/calibracoes/${k2.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...k2, ambiente: { ...k2.ambiente, pressao: 1013.2 } },
+    })
+    expect(salvo.statusCode, salvo.body).toBe(200)
+    const r2 = await ligar(k2.id, velha2.numero)
+    expect(r2.json()).toMatchObject({ barometrosRetirados: null, versao: salvo.json().calibracao.versao })
+    const g2 = (await t.chamar('GET', `/api/calibracoes/${k2.id}`, { cookie: t.cookieAdmin })).json().calibracao
+    expect(g2.padroesIds).toContain(barometro.id)
+  })
+
+  it('a folha de antes da 1.0.5 ligada ao rascunho com pontos sem as cargas em que o EMA muda: a da balança não afirma que estavam no papel; a em branco (mandava aplicá-las), sim', async () => {
+    const comPontos = async () => {
+      const k = await rascunho('')
+      // 30 kg × 10 g, classe III: sem 5 kg (500e) e 20 kg (2000e)
+      const pontos = [0, 7.5, 15, 22.5, 30].map((carga, i) => ({
+        id: `p${i}`,
+        carga,
+        pecas: [],
+        pecasManuais: false,
+        crescente: null,
+        decrescente: null,
+        nivelSubstituicao: 0,
+      }))
+      const r = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+        cookie: t.cookieAdmin,
+        payload: { ...k, ambiente: { ...k.ambiente, pressao: 1013.2 }, indicacao: { ...k.indicacao, pontos } },
+      })
+      expect(r.statusCode, r.body).toBe(200)
+      return r.json().calibracao as Calibracao
+    }
+    const daBalanca = await avulsa(`?balancaId=${balanca.id}`)
+    const emBranco = await avulsa()
+    t.ctx.db.prepare('UPDATE folhas_campo SET antes_105 = 1 WHERE numero IN (?, ?)').run(daBalanca.numero, emBranco.numero)
+    // A da balança saía com o plano da balança (podia não ter as cargas): os pontos sem elas desmentem
+    const k1 = await comPontos()
+    const r1 = await ligar(k1.id, daBalanca.numero)
+    expect(r1.statusCode, r1.body).toBe(200)
+    expect(r1.json().marcas).toEqual({ pressaoComoAviso: true })
+    const g1: Calibracao = (await t.chamar('GET', `/api/calibracoes/${k1.id}`, { cookie: t.cookieAdmin })).json().calibracao
+    expect(g1.cargasDoEmaNaFolha).toBeUndefined()
+    // A em branco (e a só do cliente) mandava aplicar as cargas em que o EMA muda: o aviso diz quais faltam
+    const k2 = await comPontos()
+    const r2 = await ligar(k2.id, emBranco.numero)
+    expect(r2.statusCode, r2.body).toBe(200)
+    expect(r2.json().marcas).toEqual({ pressaoComoAviso: true, cargasDoEmaNaFolha: true })
+  })
+
+  it('a folha de antes da 1.0.5 de uma balança da classe II: só as cargas (a pressão já era obrigatória)', async () => {
+    const atual: Balanca = (await t.chamar('GET', `/api/balancas/${balanca.id}`, { cookie: t.cookieAdmin })).json().balanca
+    const r = await t.chamar('PUT', `/api/balancas/${balanca.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...atual, classe: 'II', faixas: [{ max: 30, e: 0.001, d: 0.001 }], versao: atual.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    const velha = await avulsa(`?balancaId=${balanca.id}`)
+    t.ctx.db.prepare('UPDATE folhas_campo SET antes_105 = 1 WHERE numero = ?').run(velha.numero)
+    const k = await rascunho('')
+    expect((await ligar(k.id, velha.numero)).json().marcas).toEqual({ cargasDoEmaNaFolha: true })
   })
 })

@@ -11,7 +11,7 @@ import { Card, CardHeader } from '../components/ui/Card'
 import { PageHeader, StatCard } from '../components/ui/Misc'
 import { api } from '../lib/api'
 import { useConsulta } from '../lib/consulta'
-import { dataCurta, dataExtensa, hojeISO, mesCurto, numero } from '../lib/format'
+import { balancaNaLista, dataCurta, dataExtensa, hojeISO, mesCurto, numero } from '../lib/format'
 import { textoNumeroReservado } from '../lib/numeros'
 import { useCores } from '../lib/useCores'
 import { useSessao } from '../store/sessao'
@@ -34,11 +34,12 @@ export function Painel() {
     'calibracao',
     'balanca',
   ])
-  // As calibrações enviadas para a autorização de quem está vendo (tempo real)
+  // As calibrações enviadas para a autorização de quem está vendo (tempo real); nenhuma com a revisão por outra pessoa
+  // desligada (o servidor confere a configuração)
   const { dados: paraAutorizar } = useConsulta(
     usuario?.signatario ? 'calibracoes:autorizar' : null,
     () => api.calibracoes({ status: 'AUTORIZAR', limite: 1 }).then((r) => r.total),
-    ['calibracao'],
+    ['calibracao', 'config'],
   )
   const primeiroNome = usuario?.nome.trim().split(/\s+/)[0] ?? ''
   const variacao =
@@ -174,7 +175,7 @@ export function Painel() {
                         />
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-ink">{v.clienteNome}</p>
-                          <p className="truncate text-xs text-muted">{v.balancaDescricao.replace(/^Balança /, '')}</p>
+                          <p className="truncate text-xs text-muted">{balancaNaLista(v.balancaDescricao)}</p>
                         </div>
                         <span className={`tnum text-xs whitespace-nowrap ${dias < 0 ? 'font-medium text-danger' : 'text-ink-2'}`}>
                           {dias < 0 ? 'vencida' : dias === 0 ? 'hoje' : `${dias} d`}
@@ -307,7 +308,7 @@ function ListaCalibracoes({
                     <span className="font-normal text-muted"> · {k.clienteNome}</span>
                   </p>
                   <p className="truncate text-xs text-muted">
-                    {k.balancaDescricao.replace(/^Balança /, '')} · {dataCurta(k.dataEmissao || k.dataCalibracao)}
+                    {balancaNaLista(k.balancaDescricao)} · {dataCurta(k.dataEmissao || k.dataCalibracao)}
                   </p>
                 </div>
                 <span className="max-sm:hidden">

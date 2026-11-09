@@ -5,6 +5,7 @@ import {
   avisoCargasDaConformidade,
   cargaDasPecas,
   cargaDaEtapa,
+  comCargasDoEma,
   descreverPecas,
   diferencaDoPonto,
   leiturasDoMetodo,
@@ -18,7 +19,6 @@ import {
   METODOS_CARREGAMENTO,
   metodoIndicacaoDaVisita,
   metodoIndicacaoPadrao,
-  minimosDoPopComoAviso,
   registroAnterior,
   ROTULO_METODO_INDICACAO,
 } from '#shared/dominio.ts'
@@ -30,12 +30,13 @@ import { cn } from '../../lib/cn'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { confirmar } from '../ui/Feedback'
-import { Field, Select } from '../ui/Form'
+import { Field, MarcaObrigatorio, Select, TEXTO_PENDENTE } from '../ui/Form'
 import { Modal } from '../ui/Modal'
 import { Segmented } from '../ui/Misc'
 import { montagemDoPonto, pecasPara, recomporEnsaio } from './cargas'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
+import { marcasDaEtapa } from './obrigatorios'
 import {
   type AbaIndicacao,
   ensaioEmOrdemDeCarga,
@@ -150,9 +151,12 @@ export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicaca
   const setEnsaio = (mudar: (e: EnsaioIndicacao) => EnsaioIndicacao) =>
     alterar((s) => mudarEnsaioDaAba(s, aba, antes ? mudar : noMetodoDaClasse(mudar, balanca.classe, daVisita)))
   const rodoviaria = ehRodoviaria(balanca)
-  // Na calibração nova (as regras do POP), o retorno ao zero é obrigatório; no "como encontrado", no registro de antes
-  // e na calibração já medida antes das regras, opcional, como na época
-  const obrigatorio = !antes && !minimosDoPopComoAviso(f)
+  // Na calibração nova (as regras do POP), as leituras e o retorno ao zero são obrigatórios para emitir; no "como
+  // encontrado", no registro de antes e na calibração já medida antes das regras, o retorno ao zero é opcional
+  const { marca } = marcasDaEtapa(ctx)
+  const mLeituras = antes ? null : marca('indicacaoLeituras')
+  const mZero = antes ? null : marca('retornoZero')
+  const obrigatorio = !!mZero?.obrigatorio
 
   return (
     <>
@@ -164,6 +168,8 @@ export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicaca
         titulo={antes ? 'Erro de indicação antes do ajuste' : 'Erro de indicação'}
         grupo={`ind-${antes ? 'antes' : 'depois'}`}
         antes={antes}
+        obrigatorio={!!mLeituras?.obrigatorio}
+        pendente={!!mLeituras?.pendente}
       />
       {/* Cada aba tem as suas etapas de substituição (com ajuste, a cadeia é refeita depois dele) */}
       {(rodoviaria || ensaio.substituicao.ativa) && (
@@ -173,7 +179,12 @@ export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicaca
           substituição, ele entra na incerteza do ensaio) */}
       <Card>
         <CardHeader
-          titulo={antes ? 'Retorno ao zero antes do ajuste' : 'Retorno ao zero'}
+          titulo={
+            <span className="inline-flex items-center gap-1.5">
+              {antes ? 'Retorno ao zero antes do ajuste' : 'Retorno ao zero'}
+              {obrigatorio && <MarcaObrigatorio />}
+            </span>
+          }
           descricao={
             obrigatorio
               ? 'Indicação depois de retirar toda a carga (POP 7.7). A balança que não volta ao zero não é calibrada (7.8).'
@@ -181,13 +192,15 @@ export function PainelDaAba({ ctx, aba }: { ctx: ContextoEtapa; aba: AbaIndicaca
           }
         />
         <div className="px-5 pb-5">
-          <CampoNumero
-            className="w-48"
-            valor={ensaio.retornoZero}
-            aoMudar={(v) => setEnsaio((e) => ({ ...e, retornoZero: v }))}
-            unidade={balanca.unidade}
-            aria-label={antes ? 'Indicação no retorno ao zero antes do ajuste' : 'Indicação no retorno ao zero'}
-          />
+          <Field className="w-48" pendente={!!mZero?.pendente} aoSair={mZero?.aoSair}>
+            <CampoNumero
+              id={antes ? undefined : 'k-retorno-zero'}
+              valor={ensaio.retornoZero}
+              aoMudar={(v) => setEnsaio((e) => ({ ...e, retornoZero: v }))}
+              unidade={balanca.unidade}
+              aria-label={antes ? 'Indicação no retorno ao zero antes do ajuste' : 'Indicação no retorno ao zero'}
+            />
+          </Field>
           {resultado?.erroRetornoZero !== null && resultado?.erroRetornoZero !== undefined && resultado.erroRetornoZero !== 0 && (
             <p className="mt-2 text-[13px] text-warning">
               Não voltou exatamente a zero: {formatarNumero(resultado.erroRetornoZero, casasDe(balanca))} {balanca.unidade}.
@@ -207,6 +220,8 @@ function TabelaPontos({
   titulo,
   grupo,
   antes = false,
+  obrigatorio = false,
+  pendente = false,
 }: {
   ctx: ContextoEtapa
   ensaio: EnsaioIndicacao
@@ -216,6 +231,9 @@ function TabelaPontos({
   grupo: string
   /** O "como encontrado" de um registro de antes: o método como foi medido, sem o do POP. */
   antes?: boolean
+  /** As leituras são obrigatórias para emitir (a marca "●"); `pendente`: ainda sem nenhuma, já em destaque. */
+  obrigatorio?: boolean
+  pendente?: boolean
 }) {
   const { balanca, selecionados, f } = ctx
   const u = balanca.unidade
@@ -226,7 +244,10 @@ function TabelaPontos({
   const decrescente = ensaio.metodo === 'CRESCENTE_DECRESCENTE'
   const soDecrescente = ensaio.metodo === 'DECRESCENTE'
   const comConformidade = f.conformidade.solicitada
-  const avisoConformidade = avisoCargasDaConformidade({ conformidade: f.conformidade, indicacao: ensaio }, balanca)
+  const avisoConformidade = avisoCargasDaConformidade(
+    { conformidade: f.conformidade, cargasDoEmaNaFolha: f.cargasDoEmaNaFolha, indicacao: ensaio },
+    balanca,
+  )
   const substituicao = ensaio.substituicao.ativa
   // Múltiplas faixas com a descida sem descarregar: a faixa das leituras decrescentes (a mesma conta do cálculo)
   const cargaDescida = cargaDaDescida(
@@ -261,8 +282,9 @@ function TabelaPontos({
     )
     if (!pode) return
     // As mesmas cargas da folha de campo sem rascunho (na classe I, as que os pesos escolhidos montam dentro de 6.1); as
-    // cargas em que o EMA muda, só com a declaração de conformidade pedida (POP 7.7)
-    const cargas = pontosSugeridos(balanca, pesos, f.conformidade.solicitada)
+    // cargas em que o EMA muda, só com a declaração de conformidade pedida (POP 7.7) ou com a folha impressa antes da
+    // 1.0.5, que as trazia (`comCargasDoEma`)
+    const cargas = pontosSugeridos(balanca, pesos, comCargasDoEma(f))
     // Sem as leituras, não há método medido a guardar (`metodoMedido`)
     setEnsaio((e) => ({
       ...semMetodoMedido(e),
@@ -297,10 +319,15 @@ function TabelaPontos({
     ])
 
   return (
-    <Card className="overflow-hidden">
+    <Card id={antes ? undefined : 'k-indicacao'} className="overflow-hidden">
       <CardHeader
         icone={<Weight className="h-4 w-4" />}
-        titulo={titulo}
+        titulo={
+          <span className="inline-flex items-center gap-1.5">
+            {titulo}
+            {obrigatorio && <MarcaObrigatorio />}
+          </span>
+        }
         descricao="Aplique as cargas com os pesos padrão e anote a indicação de cada ponto. O erro e a incerteza saem na hora."
         acoes={
           <div className="flex gap-2">
@@ -317,6 +344,9 @@ function TabelaPontos({
         antes={antes}
         daVisita={metodoIndicacaoDaVisita(f)}
       />
+      {pendente && (
+        <p className="mx-5 mb-4 text-xs font-medium text-warning">{TEXTO_PENDENTE}: anote a indicação de cada ponto.</p>
+      )}
 
       {pesos.length === 0 && (
         <p className="mx-5 mb-4 flex items-center gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">

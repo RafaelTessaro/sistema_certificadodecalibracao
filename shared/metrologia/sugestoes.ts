@@ -132,10 +132,28 @@ export function cargasDeMudancaDoEmaQueFaltam(
   instrumento: Pick<InstrumentoCalculo, 'classe' | 'tipoFaixas' | 'faixas'>,
   cargas: number[],
 ): number[] {
-  return cargasDeMudancaDoEma(instrumento).filter((c) => {
-    const e = faixaDoValor(c, instrumento).e
-    return !cargas.some((x) => Math.abs(x - c) <= Math.max((e / 2) * (1 + 1e-6), TOL * c))
-  })
+  return cargasDeMudancaDoEma(instrumento).filter((c) => !cargas.some((x) => contaComoCarga(x, c, instrumento)))
+}
+
+/**
+ * A folha de campo impressa antes da 1.0.5 trazia as cargas em que o EMA muda (`Calibracao.cargasDoEmaNaFolha`)? Até a
+ * 1.0.4 as sugestões sempre as traziam, mas a folha do rascunho com pontos saía com os pontos dele (e a da balança, com
+ * os da última calibração). Só se afirma o que os `pontos` da calibração não desmentem: ainda sem pontos (a folha saiu
+ * com as sugestões) ou com todas elas. Com pontos e alguma delas faltando, não se sabe o que estava no papel: false.
+ * Sem essas cargas (sem classe): false.
+ */
+export function folhaDeAntesComCargasDoEma(
+  instrumento: Pick<InstrumentoCalculo, 'classe' | 'tipoFaixas' | 'faixas'>,
+  pontos: number[],
+): boolean {
+  if (!cargasDeMudancaDoEma(instrumento).length) return false
+  return !pontos.length || !cargasDeMudancaDoEmaQueFaltam(instrumento, pontos).length
+}
+
+/** A carga `x` conta como a carga `c`: a menos de meio e dela (o e do intervalo de `c`). */
+export function contaComoCarga(x: number, c: number, instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'>): boolean {
+  const e = faixaDoValor(c, instrumento).e
+  return Math.abs(x - c) <= Math.max((e / 2) * (1 + 1e-6), TOL * c)
 }
 
 /**

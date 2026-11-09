@@ -1,4 +1,5 @@
 import {
+  ArrowRight,
   CircleAlert,
   CircleCheck,
   Eye,
@@ -19,7 +20,7 @@ import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Select } from '../ui/Form'
 import type { ContextoEtapa } from './contexto'
-import { estadoDaEmissao } from './equipe'
+import { cabecalhoDaRevisao, estadoDaEmissao } from './equipe'
 import { AvisoItem } from './PainelResultados'
 
 export function EtapaRevisao({
@@ -28,6 +29,7 @@ export function EtapaRevisao({
   numeroReservado = null,
   numeroRevisao = null,
   pendencias,
+  destinoDe,
   avisos: avisosServidor = [],
   salvando,
   aoVisualizar,
@@ -44,6 +46,8 @@ export function EtapaRevisao({
   /** Correção: o nº com que ela sai (o mesmo do certificado corrigido). */
   numeroRevisao?: string | null
   pendencias: string[]
+  /** A etapa de cada pendência (o título dela) e a ida até o campo; null: não é de nenhuma etapa. */
+  destinoDe?: (pendencia: string) => { titulo: string; ir: () => void } | null
   /** Do servidor, para conferir sem impedir a emissão (ex.: a folha de campo saiu com outra revisão do POP). */
   avisos?: string[]
   salvando: boolean
@@ -83,6 +87,14 @@ export function EtapaRevisao({
       : modo === 'aguardando'
         ? (pedido?.signatarioNome ?? 'Um signatário')
         : (escolhido?.nome ?? '—')
+  // O alto da etapa diz o que quem está usando pode fazer (emitir, autorizar, enviar ou só aguardar)
+  const cabecalho = cabecalhoDaRevisao({
+    modo,
+    pronto,
+    autorizaVoce: !!signatarioId && signatarioId === eu,
+    aguardandoDe: pedido?.signatarioNome || null,
+    irParaItens: !!destinoDe,
+  })
   const emitir = async () => {
     setEmitindo(true)
     try {
@@ -96,25 +108,49 @@ export function EtapaRevisao({
     <div className="flex flex-col gap-6">
       <Card>
         <CardHeader
-          icone={pronto ? <CircleCheck className="h-4 w-4 text-success" /> : <CircleAlert className="h-4 w-4 text-warning" />}
-          titulo={pronto ? 'Tudo pronto para emitir' : 'Falta completar'}
-          descricao={
-            pronto
-              ? 'Confira a prévia do certificado antes de emitir.'
-              : 'Resolva os itens abaixo para poder emitir o certificado.'
+          icone={
+            !pronto ? (
+              <CircleAlert className="h-4 w-4 text-warning" />
+            ) : cabecalho.aguardando ? (
+              <Hourglass className="h-4 w-4 text-info" />
+            ) : (
+              <CircleCheck className="h-4 w-4 text-success" />
+            )
           }
+          titulo={cabecalho.titulo}
+          descricao={cabecalho.descricao}
         />
         {!pronto && (
           <ul className="flex flex-col gap-2 px-5 pb-5">
-            {pendencias.map((p) => (
-              <li
-                key={p}
-                className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] font-medium text-warning"
-              >
-                <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-                {p}
-              </li>
-            ))}
+            {pendencias.map((p) => {
+              // Cada pendência leva à etapa dela e, quando dá, ao campo
+              const destino = destinoDe?.(p) ?? null
+              return (
+                <li key={p}>
+                  {destino ? (
+                    <button
+                      type="button"
+                      onClick={destino.ir}
+                      title={`Ir para ${destino.titulo}`}
+                      className="group flex w-full cursor-pointer items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-left text-[13px] font-medium text-warning transition-[filter] hover:brightness-[0.97] dark:hover:brightness-125"
+                    >
+                      <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span className="min-w-0 flex-1">{p}</span>
+                      <span className="mt-px inline-flex shrink-0 items-center gap-1 text-xs font-semibold whitespace-nowrap underline-offset-2 group-hover:underline max-sm:hidden">
+                        {destino.titulo}
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </span>
+                      <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 sm:hidden" />
+                    </button>
+                  ) : (
+                    <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] font-medium text-warning">
+                      <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                      {p}
+                    </p>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
         {avisosServidor.length > 0 && (

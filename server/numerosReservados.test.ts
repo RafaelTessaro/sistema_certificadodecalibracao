@@ -28,8 +28,9 @@ vi.mock('./pdf/folhaCampo.ts', async (original) => {
       // Um pouco de espera, como o gerador de verdade: os pedidos ao mesmo tempo se intercalam
       await new Promise((r) => setTimeout(r, 15))
       const certificado = d.numeroCertificado ? `; certificado ${d.numeroCertificado}` : ''
+      // Com a marca das regras da 1.0.5, como a de verdade
       return Buffer.from(
-        `%PDF-1.7\n1 0 obj\n<< /Keywords (folha de campo; ${d.numero}${certificado}) >>\nendobj\n%%EOF\n`,
+        `%PDF-1.7\n1 0 obj\n<< /Keywords (folha de campo; ${d.numero}${certificado}; regras 1.0.5) >>\nendobj\n%%EOF\n`,
         'latin1',
       )
     },

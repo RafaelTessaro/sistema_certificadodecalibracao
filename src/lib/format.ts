@@ -15,6 +15,12 @@ export function dataCurta(iso: string | null | undefined) {
 /** Primeira letra maiúscula, o resto como está. */
 export const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
+/**
+ * A balança nas listas (`descricaoBalanca` sem "Balança" na frente): o tipo, que vem em minúscula no meio da frase,
+ * passa a abrir o texto com maiúscula ("Plataforma Toledo 9094 — 30 kg × 10 g").
+ */
+export const balancaNaLista = (descricao: string) => cap(descricao.replace(/^Balança /, ''))
+
 const dataLonga = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
 
 /** "Quarta-feira, 14 de outubro". */

@@ -17,11 +17,14 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { normalizarCliente, UFS } from '#shared/dominio.ts'
+import { obrigatoriosCliente } from '#shared/obrigatorios.ts'
 import { cnpjValido, mascaraCep, mascaraDocumento, mascaraTelefone, normalizarCnpj, somenteDigitos } from '#shared/documentos.ts'
 import type { Cliente, ClienteInput, TipoCliente } from '#shared/tipos.ts'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import {
+  anterioresDoCnpj,
+  avisoDaConsulta,
   avisoSituacao,
   camposDoCnpj,
   camposMantidos,
@@ -45,7 +48,7 @@ import { avisarErro, toast } from '../store/ui'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { confirmar } from './ui/Feedback'
-import { Field, Input, Select, Textarea } from './ui/Form'
+import { Field, Input, LegendaObrigatorio, Select, Textarea } from './ui/Form'
 import { Modal } from './ui/Modal'
 import { Segmented } from './ui/Misc'
 
@@ -99,8 +102,8 @@ export function ClienteFormModal({
 type EstadoConsulta =
   | { estado: 'ocioso' }
   | { estado: 'carregando'; cnpj: string }
-  /** `mantidos`: campos já preenchidos que a consulta automática não trocou. */
-  | { estado: 'ok'; cnpj: string; dados: DadosCnpj; mantidos: boolean }
+  /** `mantidos`: campos já preenchidos que a consulta não trocou (`camposMantidos`). */
+  | { estado: 'ok'; cnpj: string; dados: DadosCnpj; mantidos: Array<keyof ClienteInput> }
   /** `manual`: modo da consulta que falhou ("Tentar de novo" repete no mesmo modo). */
   | { estado: 'erro'; cnpj: string; tipo: TipoErroConsulta; mensagem: string; manual: boolean }
 
@@ -144,6 +147,11 @@ function FormularioCliente({
    * substitui razão social e endereço pelos da empresa nova, em vez de misturar as duas.
    */
   const valoresConsulta = useRef<Partial<ClienteInput>>(valoresDaConsultaAnterior(cliente))
+  /**
+   * CNPJ a que pertence a inscrição estadual do formulário (o do cadastro, o da consulta que a trouxe ou o que estava
+   * no campo quando ela foi digitada): a consulta de outro CNPJ a troca pela dela (`anterioresDoCnpj`).
+   */
+  const cnpjDaIe = useRef(cliente ? normalizarCnpj(cliente.documento) : '')
   const seqCnpj = useRef(0)
   const ultimoCep = useRef(cliente ? somenteDigitos(cliente.cep) : '')
   const seqCep = useRef(0)
@@ -171,14 +179,17 @@ function FormularioCliente({
         return setConsulta({ estado: 'ocioso' })
       }
       const novos = camposDoCnpj(dados)
-      const { form, aplicados } = mesclarConsulta(atual, novos, valoresConsulta.current, manual)
+      // A inscrição estadual de outro CNPJ (do cadastro antes da troca) nunca fica com o CNPJ novo
+      const anteriores = anterioresDoCnpj(valoresConsulta.current, atual, cnpjDaIe.current, cnpj)
+      const { form, aplicados } = mesclarConsulta(atual, novos, anteriores, manual)
       valoresConsulta.current = { ...valoresConsulta.current, ...aplicados }
       cnpjDaSituacao.current = cnpj
+      if (aplicados.inscricaoEstadual !== undefined) cnpjDaIe.current = cnpj
       // O endereço veio da Receita: não consulta o CEP por cima
       ultimoCep.current = somenteDigitos(form.cep)
       setCepEstado({ estado: 'ocioso' })
       setF(form)
-      setConsulta({ estado: 'ok', cnpj, dados, mantidos: camposMantidos(form, novos).length > 0 })
+      setConsulta({ estado: 'ok', cnpj, dados, mantidos: camposMantidos(form, novos) })
     } catch (e) {
       if (seq !== seqCnpj.current) return
       // Permite tentar de novo redigitando o mesmo número
@@ -265,6 +276,10 @@ function FormularioCliente({
   const erroEmail = erros.find((e) => /^E-mail/i.test(e))
   const erroEmails = erros.find((e) => /recebem os certificados/i.test(e))
   const erroCep = erros.find((e) => /CEP/.test(e))
+  // O obrigatório para salvar (a marca "●"): o nome; na empresa, a razão social, que pode faltar com o nome fantasia.
+  // O erro do nome aparece no campo marcado
+  const obrigatorios = obrigatoriosCliente(f)
+  const razaoObrigatoria = obrigatorios.includes('razaoSocial')
   // CNPJ pode ter letras (formato alfanumérico); CPF só números
   const docChave = ehPJ ? normalizarCnpj(f.documento) : somenteDigitos(f.documento)
 
@@ -338,7 +353,7 @@ function FormularioCliente({
 
   return (
     <form id="form-cliente" onSubmit={enviar} className="grid grid-cols-1 gap-4 sm:grid-cols-6" noValidate>
-      <Field label="Tipo de cliente" className="sm:col-span-6">
+      <Field label="Tipo de cliente" className="sm:col-span-6" extra={<LegendaObrigatorio para="salvar" />}>
         <Segmented
           valor={f.tipo}
           aoMudar={mudarTipo}
@@ -413,7 +428,13 @@ function FormularioCliente({
       </Field>
 
       {ehPJ && (
-        <Field label="Razão social" htmlFor="cli-razao" className="sm:col-span-3">
+        <Field
+          label="Razão social"
+          htmlFor="cli-razao"
+          className="sm:col-span-3"
+          obrigatorio={razaoObrigatoria}
+          erro={tentou && razaoObrigatoria ? erroNome : null}
+        >
           <Input
             id="cli-razao"
             value={f.razaoSocial}
@@ -454,7 +475,8 @@ function FormularioCliente({
         label={ehPJ ? 'Nome fantasia' : 'Nome completo'}
         htmlFor="cli-nome"
         className={ehPJ ? 'sm:col-span-3' : 'sm:col-span-4'}
-        erro={tentou ? erroNome : null}
+        obrigatorio={obrigatorios.includes('nome')}
+        erro={tentou && !razaoObrigatoria ? erroNome : null}
         hint={ehPJ ? 'Nome usado nas telas do sistema. No certificado sai a razão social.' : 'Sai no certificado.'}
       >
         <Input
@@ -470,7 +492,11 @@ function FormularioCliente({
           <Input
             id="cli-ie"
             value={f.inscricaoEstadual}
-            onChange={(e) => set('inscricaoEstadual', e.target.value)}
+            onChange={(e) => {
+              // Digitada para o CNPJ que está no campo agora
+              cnpjDaIe.current = normalizarCnpj(f.documento)
+              set('inscricaoEstadual', e.target.value)
+            }}
             placeholder="Vem da consulta do CNPJ, quando houver"
           />
         </Field>
@@ -636,7 +662,15 @@ function ConsultandoCnpj() {
   )
 }
 
-function ResultadoCnpj({ dados, mantidos, aoFechar }: { dados: DadosCnpj; mantidos: boolean; aoFechar: () => void }) {
+function ResultadoCnpj({
+  dados,
+  mantidos,
+  aoFechar,
+}: {
+  dados: DadosCnpj
+  mantidos: Array<keyof ClienteInput>
+  aoFechar: () => void
+}) {
   const aviso = avisoSituacao(dados.situacaoCadastral)
   const tom = tomSituacao(dados.situacaoCadastral)
   return (
@@ -689,9 +723,7 @@ function ResultadoCnpj({ dados, mantidos, aoFechar }: { dados: DadosCnpj; mantid
 
       <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
         <Sparkles className="h-3.5 w-3.5 shrink-0 text-brand" />
-        {mantidos
-          ? 'Campos vazios preenchidos com os dados da Receita; o que já estava preenchido foi mantido. Use “Consultar” para trocar tudo.'
-          : 'Campos preenchidos com os dados da Receita. Confira e ajuste se precisar.'}
+        {avisoDaConsulta(mantidos, dados)}
       </p>
     </div>
   )

@@ -1,12 +1,13 @@
 import { AtSign, UserPen } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
+import { OBRIGATORIOS_USUARIO } from '#shared/obrigatorios.ts'
 import { NOME_NIVEL } from '#shared/permissoes.ts'
 import type { AlteracaoUsuario, NivelUsuario, Usuario } from '#shared/tipos.ts'
 import { LOGIN_MAX, NOME_USUARIO_MAX, normalizarLogin, validarLogin } from '#shared/usuarios.ts'
 import { api, ErroApi } from '../../lib/api'
 import { avisarErro } from '../../store/ui'
 import { Button } from '../ui/Button'
-import { Field, Input } from '../ui/Form'
+import { Field, Input, LegendaObrigatorio } from '../ui/Form'
 import { Modal } from '../ui/Modal'
 import { DadosCertificado, type DadosNoCertificado } from './DadosCertificado'
 import { EscolhaNivel } from './EscolhaNivel'
@@ -147,8 +148,15 @@ function FormEditar({
 
   return (
     <form id="form-editar-usuario" onSubmit={enviar} className="flex flex-col gap-5" noValidate>
+      <LegendaObrigatorio para="salvar" className="-mb-3 justify-end" />
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Nome" htmlFor="editar-nome" erro={tentou ? erroNome : null} hint="Como aparece nas telas e no certificado.">
+        <Field
+          label="Nome"
+          htmlFor="editar-nome"
+          erro={tentou ? erroNome : null}
+          hint="Como aparece nas telas e no certificado."
+          obrigatorio={OBRIGATORIOS_USUARIO.includes('nome')}
+        >
           <Input
             id="editar-nome"
             autoFocus
@@ -161,6 +169,7 @@ function FormEditar({
         <Field
           label="Usuário"
           htmlFor="editar-login"
+          obrigatorio={OBRIGATORIOS_USUARIO.includes('login')}
           erro={erroLogin}
           hint={mudouLogin ? 'Passa a entrar com este; quem já está no sistema continua.' : 'Para entrar no sistema.'}
         >

@@ -48,8 +48,12 @@ describe('Excentricidade "não realizada": só na balança suspensa (gancho), co
     const t = renderToStaticMarkup(createElement(EtapaExcentricidade, contexto(naoFeita(''))))
     expect(t).toContain('Ensaio realizado')
     expect(texto(t)).toContain('O POP (7.10) só dispensa a excentricidade na balança suspensa (gancho).')
-    expect(texto(t)).toContain('Informe o motivo.')
+    // A marca "●" de obrigatório para emitir; o destaque só depois de a pessoa passar pelo campo (ou chegar à revisão)
+    expect(texto(t)).toContain('Por que o ensaio não foi feito (obrigatório) Sai no certificado.')
+    expect(texto(t)).not.toContain('Obrigatório para emitir')
     expect(t).toMatch(/id="ecc-motivo"[^>]*maxLength="200"/i)
+    const visto = renderToStaticMarkup(createElement(EtapaExcentricidade, { ...contexto(naoFeita('')), destacar: () => true }))
+    expect(texto(visto)).toContain('Por que o ensaio não foi feito (obrigatório) Obrigatório para emitir')
   })
 
   it('gancho com o motivo: sem aviso nem erro', () => {

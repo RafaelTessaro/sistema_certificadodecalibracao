@@ -175,7 +175,7 @@ function Definir-ComSenha([string]$Banco, [hashtable]$Entrada) {
 # Lista de usuários da ferramenta (situacao), administradores primeiro.
 function Mostrar-Usuarios($Lista) {
   foreach ($u in @($Lista)) {
-    $nivel = if ($u.nivel -eq 'ADMIN') { 'Administrador' } else { 'Comum' }
+    $nivel = if ($u.nivel -eq 'ADMIN') { 'Administrador' } else { 'Operador' }
     $desativado = if ($u.ativo) { '' } else { ' (desativado)' }
     Write-Host ('  {0,-20} {1} - {2}{3}' -f $u.login, $u.nome, $nivel, $desativado)
   }
@@ -183,7 +183,7 @@ function Mostrar-Usuarios($Lista) {
 
 # Resultado do "definir": usuário, senha temporária e o que acontece no próximo acesso.
 function Mostrar-ContaDefinida($Resultado) {
-  $nivel = if ($Resultado.nivel -eq 'ADMIN') { 'Administrador' } else { 'Comum' }
+  $nivel = if ($Resultado.nivel -eq 'ADMIN') { 'Administrador' } else { 'Operador' }
   $feito = if ($Resultado.criado) { 'Conta criada' } else { 'Senha redefinida' }
   Write-Host ''
   Write-Host "$($feito): $($Resultado.nome) ($nivel)" -ForegroundColor Green

@@ -1,13 +1,14 @@
 // A ferramenta de usuários rodando de verdade (processo separado, como nos scripts do Windows)
 // contra bancos temporários em arquivo.
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { abrirBanco, type Banco } from '../db.ts'
 import { Repositorio } from '../repositorio.ts'
+import { NOME_NIVEL } from '#shared/permissoes.ts'
 import { conferirSenha, PARAMETROS_LEVES } from '../senha.ts'
 import { ServicoUsuarios } from '../usuarios.ts'
 
@@ -437,5 +438,18 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
       expect(r.json.transplantado).toBe(false)
       expect(await contar(restaurado, "SELECT COUNT(*) AS n FROM usuarios WHERE login = 'antigo'")).toBe(1)
     })
+  })
+})
+
+describe('o script do Windows (Redefinir senha do BC Calibração)', () => {
+  it('mostra os níveis com os nomes do sistema ("Operador", nunca "Comum")', () => {
+    const ps1 = readFileSync(fileURLToPath(new URL('../../instalador/ferramentas/redefinir-senha.ps1', import.meta.url)), 'utf8')
+    const niveis = [...ps1.matchAll(/\$nivel = if \(\$\w+\.nivel -eq 'ADMIN'\) \{ '([^']+)' \} else \{ '([^']+)' \}/g)]
+    expect(niveis.length).toBe(2)
+    for (const [, admin, operador] of niveis) {
+      expect(admin).toBe(NOME_NIVEL.ADMIN)
+      expect(operador).toBe(NOME_NIVEL.COMUM)
+    }
+    expect(ps1).not.toMatch(/'Comum'/)
   })
 })

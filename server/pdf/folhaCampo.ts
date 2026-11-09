@@ -73,6 +73,7 @@ import {
   AVISO_ETIQUETA,
   type CargaPlanejada,
   FORMULARIO_FOLHA_CAMPO,
+  MARCA_FOLHA_REGRAS_105,
   METODO_EXCENTRICIDADE_FOLHA,
   padroesPrevistos,
   referenciaDoFormulario,
@@ -1622,7 +1623,8 @@ function linhaChegada(ctx: Contexto): NoObjeto {
  */
 function dataPrevista(ctx: Contexto): string {
   const { d, k } = ctx
-  const impressoIso = d.impressoEm.slice(0, 10)
+  // O dia da impressão no horário de Brasília (impressa às 22h, o dia em UTC já é o seguinte)
+  const impressoIso = dataIsoBrasilia(d.impressoEm)
   const prevista = (k ? k.dataCalibracao : d.dataPrevista) ?? ''
   return prevista > impressoIso ? formatarDataBr(prevista) : ''
 }
@@ -2786,7 +2788,8 @@ function passoExcentricidade(ctx: Contexto, n: number, fim: No[] = []): No[] {
   }
   const classeI = b?.classe === 'I'
   const receptor = b?.receptor ?? 'RETANGULAR'
-  // Em branco o receptor não é conhecido: a posição de cada coluna é escrita no local
+  // Em branco o receptor não é conhecido: as posições 1 a 5 dos desenhos de referência vêm impressas
+  // (`posicoesEmBranco`); as demais (mais de 4 apoios ou tanque) são escritas no local
   const rotulos = b ? (ecc?.posicoes.length ? ecc.posicoes : posicoesExcentricidade(receptor, b.apoios)) : []
   const diagrama = b ? diagramaExcentricidade(receptor, rotulos, -1, b.apoios, { frente: 'FRENTE' }) : null
   // Rodoviária, mais de 4 apoios e tanque: o desenho comprido à esquerda da tabela das posições; prato e plataforma:
@@ -2840,10 +2843,8 @@ function passoExcentricidade(ctx: Contexto, n: number, fim: No[] = []): No[] {
             metodo,
             ...(comCarga ? [] : [' (carga: ', REGRA_CARGA_EXCENTRICIDADE, ')']),
             ', na ordem do desenho',
-            // Em branco, a posição de cada coluna é escrita no local
-            b
-              ? `${comprido ? ' (nº do desenho = linha)' : ''}${frente}`
-              : `; escreva a posição de cada coluna (mais de 4 apoios ou tanque: uma por apoio)${frente}`,
+            // Em branco, as posições 1 a 5 (as dos desenhos) vêm impressas; as demais são escritas no local
+            b ? `${comprido ? ' (nº do desenho = linha)' : ''}${frente}` : `${INSTRUCAO_POSICOES_EM_BRANCO}${frente}`,
           ]
   const desenho: No = diagrama
     ? {
@@ -3040,24 +3041,27 @@ function posicoesNaHorizontal(ctx: Contexto, rotulos: string[], carga: CargaPlan
 /** Posições da excentricidade na folha em branco: 6 (os 5 do prato e até 6 apoios; mais apoios: em Anotações), 3 por faixa. */
 const LINHAS_EXCENTRICIDADE_EM_BRANCO = 6
 const POSICOES_POR_FAIXA = 3
+/**
+ * Posições impressas na folha em branco: as dos dois desenhos de referência (1 = centro; 2 a 5 = cantos ou bordas, no
+ * retangular e no redondo).
+ */
+export const POSICOES_IMPRESSAS_EM_BRANCO = 5
+/** O fim da instrução da excentricidade na folha em branco (sem balança cadastrada), depois de "na ordem do desenho". */
+export const INSTRUCAO_POSICOES_EM_BRANCO = ' (posições 1 a 5); mais de 4 apoios ou tanque: escreva as demais, uma por apoio'
 
 /**
- * Folha em branco: as posições da excentricidade para escrever, em duas faixas (1 a 3 e 4 a 6), como a repetibilidade:
- * o nº de cada posição numa linha miúda em cima e, embaixo, a posição (escrita no local) e a indicação, em linhas de
- * escrever (as caixas ficam livres).
+ * Folha em branco: as posições da excentricidade em duas faixas (1 a 3 e 4 a 6): a posição e, embaixo, a indicação,
+ * como as do prato e da plataforma cadastrados (`posicoesNaHorizontal`). As posições 1 a 5 dos desenhos de referência
+ * vêm impressas (cinza); a 6ª fica para escrever (mais de 4 apoios ou tanque: uma por apoio), da altura das leituras.
  */
 function posicoesEmBranco(ctx: Contexto): NoObjeto {
   const faixas = LINHAS_EXCENTRICIDADE_EM_BRANCO / POSICOES_POR_FAIXA
   const linhas = Array.from({ length: faixas }, (_, f): CelulaTabela[][] => {
     const nos = Array.from({ length: POSICOES_POR_FAIXA }, (_, j) => f * POSICOES_POR_FAIXA + j + 1)
     return [
-      [rotuloMiudo(''), ...nos.map((i) => rotuloMiudo(String(i)))],
       [
-        dica([
-          { text: 'Posição', font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.texto },
-          { text: '  escreva', fontSize: 6.2 },
-        ]),
-        ...nos.map(() => livre()),
+        dica([{ text: 'Posição', font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.texto }]),
+        ...nos.map((i) => (i <= POSICOES_IMPRESSAS_EM_BRANCO ? pre(String(i)) : livre())),
       ],
       [rotuloLinhaPosicao(ctx, 'Indicação'), ...nos.map(() => livre())],
     ]
@@ -3067,9 +3071,8 @@ function posicoesEmBranco(ctx: Contexto): NoObjeto {
     [66, ...Array.from({ length: POSICOES_POR_FAIXA }, () => '*')],
     linhas,
     // Fio mais forte entre as faixas
-    (i) => i > 0 && i % 3 === 0,
-    (i) => (i % 3 === 0 ? 'auto' : altura),
-    (i) => i % 3 === 0,
+    (i) => i > 0 && i % 2 === 0,
+    () => altura,
   )
 }
 
@@ -3471,6 +3474,8 @@ export function definicaoFolhaCampo(d: DadosFolhaCampo, o: { extras?: Extras } =
         FORMULARIO_FOLHA_CAMPO.codigo,
         referenciaDoFormulario(d.procedimento),
         FORMULARIO_FOLHA_CAMPO.referencia,
+        // A folha que voltar da pasta com ela é da 1.0.5 ou depois (ver `folhaImpressaComRegrasDa105`)
+        MARCA_FOLHA_REGRAS_105,
       ]
         .filter(Boolean)
         .join('; '),

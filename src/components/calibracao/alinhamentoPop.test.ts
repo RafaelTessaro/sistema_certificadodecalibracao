@@ -115,7 +115,7 @@ describe('Balança e ajuste: calibração nova', () => {
 
   it('com o ajuste interno: a observação opcional, sem a aba "como encontrado"', () => {
     const f = { ...calibracaoVazia(undefined, 'III'), ajuste: { realizado: 'INTERNO' as const, descricao: '' } }
-    expect(html(EtapaInstrumento, contexto(f))).toContain('Observação (opcional)')
+    expect(html(EtapaInstrumento, contexto(f))).toMatch(/>Observação<\/span><span[^>]*>opcional</)
     // O "como encontrado" vazio que a tela de antes criava não abre a aba
     const comVazio = { ...f, comoEncontrado: { ...ensaio([ponto('a', 0), ponto('b', 10)]), retornoZero: null } }
     expect(html(EtapaIndicacao, contexto(comVazio))).not.toContain('Antes do ajuste')

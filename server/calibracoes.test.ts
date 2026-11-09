@@ -598,6 +598,66 @@ describe('emissão do certificado', () => {
       expect(ok.json().calibracao.emissao).toMatchObject({ assinaturas: 'TECNICO_E_SIGNATARIO', signatario: { id: r.id } })
     })
 
+    it('enquanto aguarda, o técnico não passa a ser quem recebeu o pedido (nem o estado errado aparece para autorizar)', async () => {
+      await exigirRevisor(true)
+      const k = await calibracaoPronta(t.cookieComum)
+      const aguardando: Calibracao = (await pedir(k, t.adminId)).json().calibracao
+      const trocado = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+        cookie: t.cookieComum,
+        payload: { ...aguardando, tecnicoId: t.adminId, versao: aguardando.versao },
+      })
+      expect(trocado.statusCode).toBe(409)
+      expect(trocado.json().erro).toBe(
+        'Admin Teste recebeu o pedido de autorização e não pode ser o técnico desta calibração. Para trocar, volte para rascunho e escolha outro signatário.',
+      )
+      // Nada mudou: o pedido continua para ele, com o técnico de antes
+      expect(t.ctx.repo.obterCalibracao(k.id)).toMatchObject({
+        status: 'REVISAO',
+        tecnicoId: t.comumId,
+        versao: aguardando.versao,
+        autorizacao: { signatarioId: t.adminId },
+      })
+      // Outro técnico pode ser indicado enquanto aguarda (quem recebeu o pedido continua podendo autorizar)
+      const r = await revisor()
+      await t.chamar('PUT', `/api/usuarios/${r.id}`, { cookie: t.cookieAdmin, payload: { tecnico: true } })
+      const outro = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+        cookie: t.cookieComum,
+        payload: { ...aguardando, tecnicoId: r.id, versao: aguardando.versao },
+      })
+      expect(outro.statusCode, outro.body).toBe(200)
+      expect(await paraAutorizar(t.cookieAdmin)).toMatchObject([{ id: k.id }])
+      // Gravado de antes da conferência (técnico = quem recebeu o pedido): não aparece para ele autorizar
+      t.ctx.db.prepare("UPDATE calibracoes SET dados = json_set(dados, '$.tecnicoId', ?) WHERE id = ?").run(t.adminId, k.id)
+      expect(await paraAutorizar(t.cookieAdmin)).toEqual([])
+    })
+
+    it('com a revisão desligada, nada aparece para autorizar e a enviada aparece como enviada para revisão', async () => {
+      await exigirRevisor(true)
+      const k = await calibracaoPronta(t.cookieComum)
+      expect((await pedir(k, t.adminId)).statusCode).toBe(200)
+      // Como a 1.0.4 deixava: enviada para revisão, sem signatário escolhido
+      const antiga = await calibracaoPronta(t.cookieComum)
+      t.ctx.repo.mudarSituacao(antiga.id, 'REVISAO')
+      expect((await paraAutorizar(t.cookieAdmin)).map((x) => x.id).sort()).toEqual([k.id, antiga.id].sort())
+      expect(
+        (await t.chamar('GET', '/api/calibracoes?status=ABERTAS', { cookie: t.cookieAdmin }))
+          .json()
+          .itens.filter((x: CalibracaoResumo) => x.semAutorizacao),
+      ).toEqual([])
+
+      await exigirRevisor(false)
+      // Desligada, ninguém autoriza (qualquer pessoa emite, só com a assinatura do técnico)
+      expect(await paraAutorizar(t.cookieAdmin)).toEqual([])
+      const abertas: CalibracaoResumo[] = (
+        await t.chamar('GET', '/api/calibracoes?status=ABERTAS', { cookie: t.cookieAdmin })
+      ).json().itens
+      for (const id of [k.id, antiga.id]) {
+        const x = abertas.find((a) => a.id === id)
+        expect(x).toMatchObject({ status: 'REVISAO', semAutorizacao: true })
+        expect(x?.aguardando).toBeUndefined()
+      }
+    })
+
     it('quem perdeu a marca de signatário depois do pedido não autoriza', async () => {
       await exigirRevisor(true)
       const r = await revisor()
@@ -1492,13 +1552,36 @@ describe('revisão e cancelamento', () => {
       padroesIds: [pesos.id, barometro!.id],
       substituiId: '',
     })
-    expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
+    // Sem a declaração de conformidade, sem as cargas em que o EMA muda (POP 7.7: 5 kg = 500e e 20 kg = 2000e); 10 kg,
+    // acordada, fica com as peças; com 3 cargas só, entram as sugeridas (~25, 50 e 75 % de Max), automáticas
+    expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual([0, 7.5, 10, 15, 22.5, 30])
+    expect(nova.indicacao.pontos.find((p) => p.carga === 10)).toMatchObject({ pecasManuais: true, pecas: [peca('p10a')] })
+    expect(nova.indicacao.pontos.find((p) => p.carga === 7.5)).toMatchObject({ pecasManuais: false, pecas: [] })
     expect(nova.indicacao.pontos.every((p) => p.crescente === null && p.decrescente === null)).toBe(true)
     expect(nova.repetibilidade.flatMap((r) => r.leituras).every((l) => l === null)).toBe(true)
-    // Uma calibração nova da mesma balança também já vem com os pontos da última emitida
+    // Uma calibração nova da mesma balança também já vem com os pontos da última emitida, pela mesma regra (a folha da
+    // página da balança planeja com este mesmo rascunho, `rascunhoInicial`)
     const { calibracao: outra } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
     expect(outra.clienteId).toBe(cliente.id)
-    expect(outra.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
+    expect(outra.indicacao.pontos.map((p) => p.carga)).toEqual([0, 7.5, 10, 15, 22.5, 30])
+  })
+
+  it('com a declaração de conformidade pedida, a calibração nova copia as cargas em que o EMA muda (POP 7.7)', async () => {
+    const pronta = await calibracaoPronta()
+    const r = await t.chamar('PUT', `/api/calibracoes/${pronta.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...pronta, conformidade: { ...pronta.conformidade, solicitada: true }, versao: pronta.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    const e = await emitir(r.json().calibracao)
+    expect(e.statusCode, e.body).toBe(200)
+    const k: Calibracao = e.json().calibracao
+    expect(k.conformidade.solicitada).toBe(true)
+    const { calibracao: denovo } = (await criar(`/api/calibracoes/${k.id}/recalibrar`, {})) as { calibracao: Calibracao }
+    expect(denovo.conformidade.solicitada).toBe(true)
+    expect(denovo.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
+    const { calibracao: nova } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
+    expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
   })
 })
 
@@ -1555,15 +1638,18 @@ describe('troca da unidade da indicação da balança', () => {
       excentricidade: k.excentricidade.carga,
     })
     const emG = { indicacao: [0, 5000, 10000, 20000, 30000], repetibilidade: [15000], excentricidade: 10000 }
+    // A calibração nova, sem a declaração de conformidade, sem as cargas em que o EMA muda (5 000 g = 500e e 20 000 g =
+    // 2000e) e com as sugeridas, também em g (POP 7.7)
+    const novaEmG = { ...emG, indicacao: [0, 7500, 10000, 15000, 22500, 30000] }
 
     // Nova calibração (aproveita os pontos da última emitida)
     const { calibracao: nova } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
-    expect(cargas(nova)).toEqual(emG)
+    expect(cargas(nova)).toEqual(novaEmG)
     await t.chamar('DELETE', `/api/calibracoes/${nova.id}`, { cookie: t.cookieAdmin })
 
     // Calibrar de novo
     const { calibracao: denovo } = (await criar(`/api/calibracoes/${emitida.id}/recalibrar`, {})) as { calibracao: Calibracao }
-    expect(cargas(denovo)).toEqual(emG)
+    expect(cargas(denovo)).toEqual(novaEmG)
     expect(denovo.indicacao.pontos.every((p) => p.crescente === null)).toBe(true)
     await t.chamar('DELETE', `/api/calibracoes/${denovo.id}`, { cookie: t.cookieAdmin })
 
@@ -2229,7 +2315,8 @@ describe('peças dos pontos e a carga digitada (bloqueiam a emissão)', () => {
     const semPecas = (k: Calibracao) => {
       // Fica o barômetro (ativo)
       expect(k.padroesIds).toEqual([barometro!.id])
-      expect(k.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
+      // Sem a declaração de conformidade, sem as cargas em que o EMA muda (POP 7.7)
+      expect(k.indicacao.pontos.map((p) => p.carga)).toEqual([0, 7.5, 10, 15, 22.5, 30])
       expect(k.indicacao.pontos.every((p) => p.pecas.length === 0 && !p.pecasManuais)).toBe(true)
     }
     const { calibracao: nova } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
