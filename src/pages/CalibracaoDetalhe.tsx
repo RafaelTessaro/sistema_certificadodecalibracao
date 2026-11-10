@@ -29,7 +29,7 @@ import {
 import { useMemo, useState, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { capacidadeTexto, LIMITES, LOCAIS, TIPOS_BALANCA } from '#shared/dominio.ts'
+import { capacidadeTexto, inscricaoEstadualNoCertificado, LIMITES, LOCAIS, TIPOS_BALANCA } from '#shared/dominio.ts'
 import type { Calibracao } from '#shared/tipos.ts'
 import { GraficoErro } from '../components/calibracao/GraficoErro'
 import { casasDe } from '../components/calibracao/util'
@@ -47,6 +47,7 @@ import { useConsulta } from '../lib/consulta'
 import { abrirFolhaCampo, textoReimprimir } from '../lib/folhaCampo'
 import { dataCurta, dataHora } from '../lib/format'
 import { revisaoEmAndamento } from '../lib/revisaoEmAndamento'
+import { textoDaCorrecao } from '../lib/versoes'
 import { usePode } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
@@ -242,7 +243,9 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
         )}
         {k.substituiId && emissao?.mesmoNumero && (
           <Faixa tom="neutro" icone={<History className="h-4 w-4" />}>
-            Editado em {dataHora(emissao.emitidoEm)} por {emissao.emitidoPor}: corrige a{' '}
+            {/* A correção é de quem a abriu (o motivo e os dados alterados), que pode não ser quem emitiu ou autorizou */}
+            {textoDaCorrecao({ emitidoEm: emissao.emitidoEm, emitidoPor: emissao.emitidoPor, corrigidaPor: k.criadoPor }, 'o')}:
+            corrige a{' '}
             <Link to={`/calibracoes/${k.substituiId}`} className="font-semibold underline underline-offset-2">
               versão anterior
             </Link>
@@ -386,6 +389,10 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
                     <p className="text-[13px] text-ink-2">{cliente.razaoSocial}</p>
                   )}
                   <p className="tnum mt-0.5 text-[13px] text-muted">{cliente.documento}</p>
+                  {/* A IE como saiu no certificado (embaixo do CNPJ); o emitido antes da 1.0.5 saiu sem ela */}
+                  {inscricaoEstadualNoCertificado(cliente, k.emissao) && (
+                    <p className="tnum text-[13px] text-muted">IE {inscricaoEstadualNoCertificado(cliente, k.emissao)}</p>
+                  )}
                 </Link>
               ) : (
                 <p className="text-muted">—</p>

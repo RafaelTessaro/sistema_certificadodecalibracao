@@ -6,8 +6,16 @@
  * `preparar` (opcional) roda com a aba já aberta e devolve a URL do PDF, ou null para desistir (a aba
  * fecha). Sem `preparar`, abre direto `url`.
  */
+/** A última URL aberta direto (`abrirFolhaCampo` com a URL) e quando: o clique duplo não abre uma segunda aba. */
+let ultimaAberta: { url: string; em: number } | null = null
+const JANELA_CLIQUE_DUPLO_MS = 2000
+
 export async function abrirFolhaCampo(url: string | (() => Promise<string | null>)): Promise<boolean> {
   if (typeof url === 'string') {
+    // A mesma URL logo em seguida (o clique duplo; na folha avulsa, a mesma chave: `chaveFolhaAvulsa`): já está aberta
+    const agora = Date.now()
+    if (ultimaAberta?.url === url && agora - ultimaAberta.em < JANELA_CLIQUE_DUPLO_MS) return true
+    ultimaAberta = { url, em: agora }
     window.open(url, '_blank', 'noopener')
     return true
   }
@@ -42,6 +50,14 @@ export const textoReimprimir = (f: { numero: string; impressaEm: string }) =>
 
 export const TEXTO_FOLHA_NOVA = 'Imprimir folha nova com os dados atuais'
 
+/**
+ * A calibração pode tirar uma folha nova no lugar da sua (o plano mudou antes da visita): só com a folha impressa para
+ * ela. Não na correção (a folha é a do certificado corrigido, a mesma visita) nem com a avulsa ligada pelo nº (já foi
+ * preenchida no cliente: é o registro dos dados brutos).
+ */
+export const temFolhaNova = (folha: { herdada?: boolean; avulsa?: boolean } | null | undefined) =>
+  !!folha && !folha.herdada && !folha.avulsa
+
 /** "OS 2026/0777": a OS com "OS" na frente quando não o tem ('' sem OS). */
 export const textoOs = (os: string) => {
   const t = os.trim()
@@ -67,6 +83,35 @@ export function textosOsDaFolha(os: { daFolha: string; aplicada: boolean; daCali
  * Ao ligar uma folha impressa antes da 1.0.5 (a pressão era opcional nela) a uma calibração ainda sem a pressão: o
  * barômetro que o rascunho já trazia saiu dos padrões, e a falta da pressão ficou só como aviso.
  */
+/**
+ * A folha da 1.0.5 ligada no lugar de uma de antes (que dizia "Pressão, opcional"): a pressão volta a ser obrigatória e,
+ * sem ela registrada, o barômetro voltou aos padrões (`identificacoes`; vazio = nenhum voltou).
+ */
+export function textoPressaoDeVolta(identificacoes: string[]): { titulo: string; texto: string } {
+  const varios = identificacoes.length > 1
+  const lista = varios ? `${identificacoes.slice(0, -1).join(', ')} e ${identificacoes.at(-1)}` : (identificacoes[0] ?? '')
+  return {
+    titulo: 'A pressão atmosférica volta a ser obrigatória',
+    texto: `A folha ligada é da versão 1.0.5, que pede a pressão (POP 7.5).${
+      identificacoes.length
+        ? ` ${varios ? 'Os barômetros' : 'O barômetro'} ${lista} ${varios ? 'voltaram' : 'voltou'} aos padrões.`
+        : ''
+    } Registre a pressão anotada na folha em Padrões e ambiente.`,
+  }
+}
+
+/** Remove das marcas da calibração as que o servidor tirou (`false`); as outras ficam como estão. */
+export function semMarcasRetiradas<T extends { pressaoComoAviso?: boolean; cargasDoEmaNaFolha?: boolean }>(
+  k: T,
+  retiradas: { pressaoComoAviso?: boolean; cargasDoEmaNaFolha?: boolean } | null | undefined,
+): T {
+  if (!retiradas) return k
+  const novo = { ...k }
+  if (retiradas.pressaoComoAviso === false) delete novo.pressaoComoAviso
+  if (retiradas.cargasDoEmaNaFolha === false) delete novo.cargasDoEmaNaFolha
+  return novo
+}
+
 export function textoBarometrosRetirados(identificacoes: string[]): { titulo: string; texto: string } {
   const varios = identificacoes.length > 1
   const lista = varios ? `${identificacoes.slice(0, -1).join(', ')} e ${identificacoes.at(-1)}` : (identificacoes[0] ?? '')

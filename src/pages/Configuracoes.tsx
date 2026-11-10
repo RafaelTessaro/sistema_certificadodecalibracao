@@ -52,7 +52,7 @@ import {
   TEXTOS_PADRAO,
   UFS,
 } from '#shared/dominio.ts'
-import { OBRIGATORIOS_EMPRESA } from '#shared/obrigatorios.ts'
+import { OBRIGATORIOS_EMPRESA, obrigatoriosEmail } from '#shared/obrigatorios.ts'
 import type { ConfigNumeracao, Configuracoes as Config, DadosEmpresa, OpcoesCalculo, TextosCertificado } from '#shared/tipos.ts'
 import { CartaoPop } from '../components/CartaoPop'
 import { Logo } from '../components/Logo'
@@ -1625,7 +1625,10 @@ const VARIAVEIS_LEMBRETE: Variavel[] = [
 const VARIAVEIS_CERTIFICADO: Variavel[] = [
   { chave: 'numero', ajuda: 'número do certificado' },
   { chave: 'cliente', ajuda: 'nome do cliente' },
-  { chave: 'balanca', ajuda: 'a balança calibrada' },
+  {
+    chave: 'balanca',
+    ajuda: 'a balança calibrada, sem a palavra “balança” na frente (o tipo, a marca, o modelo e o nº de série)',
+  },
   { chave: 'empresa', ajuda: 'o nome da sua empresa' },
 ]
 
@@ -1659,7 +1662,7 @@ function SecaoVencimentos({ config, salvarParte, aoSujo }: PropsSecao) {
   const exemploCertificado = {
     numero: formatarNumeroCertificado(config.numeracao, 124, ano),
     cliente: 'Supermercado Ideal',
-    balanca: 'Balança computadora Toledo Prix 3 — 15 kg × 5 g',
+    balanca: 'computadora (preço) Toledo Prix 3 — 15 kg × 5 g, nº de série 3P-102244',
     empresa,
   }
 
@@ -1896,6 +1899,10 @@ function FormEmail({
         : null,
   }
   const mostrar = (k: keyof typeof erros) => (s.tentou ? erros[k] : null)
+  // Os que impedem salvar (a marca "●"): o servidor e o usuário; a senha sem uma gravada; o remetente, se o usuário não é
+  // um e-mail
+  const obrigatorios = obrigatoriosEmail({ usuario, senhaDefinida: atual.senhaDefinida })
+  const obrigatorio = (c: (typeof obrigatorios)[number]) => obrigatorios.includes(c)
 
   const mudarSeguranca = (seg: Seguranca) =>
     s.mudar((r) => ({
@@ -2018,6 +2025,8 @@ function FormEmail({
             className="sm:col-span-4"
             erro={mostrar('servidor')}
             hint="O provedor informa. Ex.: smtp.gmail.com"
+            obrigatorio={obrigatorio('servidor')}
+            extra={<LegendaObrigatorio para="salvar" />}
           >
             <Input
               id="email-servidor"
@@ -2059,6 +2068,7 @@ function FormEmail({
             className="sm:col-span-3"
             erro={mostrar('usuario')}
             hint="Quase sempre o e-mail completo."
+            obrigatorio={obrigatorio('usuario')}
           >
             <Input
               id="email-usuario"
@@ -2076,6 +2086,7 @@ function FormEmail({
             className="sm:col-span-3"
             erro={mostrar('senha') ?? (erros.senha && atual.senhaDefinida && mudouDestino ? erros.senha : null)}
             hint={atual.senhaDefinida ? 'Em branco, mantém a senha gravada.' : 'No Gmail e no Outlook, use a senha de app.'}
+            obrigatorio={obrigatorio('senha')}
           >
             <CampoSenha
               id="email-senha"
@@ -2105,6 +2116,7 @@ function FormEmail({
             className="sm:col-span-3"
             erro={mostrar('remetenteEmail')}
             hint="Em branco, usa o usuário."
+            obrigatorio={obrigatorio('remetenteEmail')}
           >
             <Input
               id="email-rem-email"

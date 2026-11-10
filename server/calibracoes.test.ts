@@ -96,6 +96,16 @@ async function criar(url: string, payload: unknown, cookie = t.cookieAdmin) {
 
 const peca = (pesoId: string) => ({ padraoId: pesos.id, pesoId, quantidade: 1 })
 
+/**
+ * O certificado como se tivesse sido emitido antes da 1.0.5 (sem `emissao.cargasDoEmaAcordadas`): as sugestões de então
+ * sempre traziam as cargas em que o EMA muda, e o plano copiado dele sai sem elas quando não houve a declaração.
+ */
+function comoEmitidoAntesDa105(k: Calibracao): Calibracao {
+  t.ctx.db.prepare("UPDATE calibracoes SET dados = json_remove(dados, '$.emissao.cargasDoEmaAcordadas') WHERE id = ?").run(k.id)
+  const { cargasDoEmaAcordadas: _acordadas, ...emissao } = k.emissao!
+  return { ...k, emissao }
+}
+
 /** Rascunho preenchido com leituras plausíveis (erros de 0 a 10 g). */
 async function calibracaoPronta(cookie = t.cookieAdmin): Promise<Calibracao> {
   const { calibracao: k } = (await criar(
@@ -1210,6 +1220,7 @@ describe('revisão e cancelamento', () => {
         status: 'EMITIDO',
         emitidoEm: nova.emissao!.emitidoEm,
         emitidoPor: 'Admin Teste',
+        corrigidaPor: 'Admin Teste',
         motivo: 'Correção da identificação da balança',
       },
     ]
@@ -1266,6 +1277,20 @@ describe('revisão e cancelamento', () => {
     // A numeração dos certificados novos não muda
     const outro: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
     expect(outro.numero).toBe(`CC-${ano}-00002`)
+  })
+
+  it('a correção aberta por uma pessoa e emitida (autorizada) por outra: o histórico credita a correção a quem a abriu', async () => {
+    const original: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const { calibracao: rev } = (await criar(
+      `/api/calibracoes/${original.id}/revisar`,
+      { motivo: 'Leitura decrescente de 24 kg digitada errada' },
+      t.cookieComum,
+    )) as { calibracao: Calibracao }
+    const nova: Calibracao = (await emitir(rev)).json().calibracao
+    const versoes = (await t.chamar('GET', `/api/calibracoes/${nova.id}`, { cookie: t.cookieAdmin })).json().versoes
+    expect(versoes[1]).toMatchObject({ versao: 2, emitidoPor: 'Admin Teste', corrigidaPor: 'Comum Teste' })
+    // A primeira emissão não é correção
+    expect(versoes[0]).not.toHaveProperty('corrigidaPor')
   })
 
   it('a correção da correção (3ª versão) também mantém o nº, mesmo com o formato da numeração mudado depois', async () => {
@@ -1543,7 +1568,7 @@ describe('revisão e cancelamento', () => {
   })
 
   it('calibrar de novo aproveita pontos e padrões, sem as leituras', async () => {
-    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const k = comoEmitidoAntesDa105((await emitir(await calibracaoPronta())).json().calibracao)
     const { calibracao: nova } = (await criar(`/api/calibracoes/${k.id}/recalibrar`, {})) as { calibracao: Calibracao }
     expect(nova).toMatchObject({
       status: 'RASCUNHO',
@@ -1552,8 +1577,9 @@ describe('revisão e cancelamento', () => {
       padroesIds: [pesos.id, barometro!.id],
       substituiId: '',
     })
-    // Sem a declaração de conformidade, sem as cargas em que o EMA muda (POP 7.7: 5 kg = 500e e 20 kg = 2000e); 10 kg,
-    // acordada, fica com as peças; com 3 cargas só, entram as sugeridas (~25, 50 e 75 % de Max), automáticas
+    // Do certificado de antes da 1.0.5, sem a declaração de conformidade, sem as cargas em que o EMA muda (POP 7.7: 5 kg =
+    // 500e e 20 kg = 2000e); 10 kg, acordada, fica com as peças; com 3 cargas só, entram as sugeridas (~25, 50 e 75 %
+    // de Max), automáticas
     expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual([0, 7.5, 10, 15, 22.5, 30])
     expect(nova.indicacao.pontos.find((p) => p.carga === 10)).toMatchObject({ pecasManuais: true, pecas: [peca('p10a')] })
     expect(nova.indicacao.pontos.find((p) => p.carga === 7.5)).toMatchObject({ pecasManuais: false, pecas: [] })
@@ -1564,6 +1590,51 @@ describe('revisão e cancelamento', () => {
     const { calibracao: outra } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
     expect(outra.clienteId).toBe(cliente.id)
     expect(outra.indicacao.pontos.map((p) => p.carga)).toEqual([0, 7.5, 10, 15, 22.5, 30])
+  })
+
+  it('do certificado emitido a partir da 1.0.5, a carga em que o EMA muda fica no plano: foi acordada com o cliente', async () => {
+    // A sugestão da 1.0.5 não traz 5 kg (500e) nem 20 kg (2000e) sem a declaração de conformidade: estão entre os pontos
+    // porque foram acrescentadas ("Adicionar ponto"), e o POP 7.7 manda incluir as cargas adicionais acordadas
+    const k: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    expect(k.conformidade.solicitada).toBe(false)
+    expect(k.emissao?.cargasDoEmaAcordadas).toBe(true)
+    expect(k.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
+    const { calibracao: denovo } = (await criar(`/api/calibracoes/${k.id}/recalibrar`, {})) as { calibracao: Calibracao }
+    expect(denovo.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
+    expect(denovo.indicacao.pontos.every((p) => p.crescente === null && p.decrescente === null)).toBe(true)
+    await t.chamar('DELETE', `/api/calibracoes/${denovo.id}`, { cookie: t.cookieAdmin })
+    // Nova calibração da mesma balança (e a folha da página da balança, que planeja com o mesmo rascunho): igual
+    const { calibracao: nova } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
+    expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
+    await t.chamar('DELETE', `/api/calibracoes/${nova.id}`, { cookie: t.cookieAdmin })
+    // A correção emitida a partir dele também: os pontos são os dele
+    const { calibracao: rev } = (await criar(`/api/calibracoes/${k.id}/revisar`, { motivo: 'OS digitada errada' })) as {
+      calibracao: Calibracao
+    }
+    const corrigida = (await emitir(rev)).json().calibracao as Calibracao
+    expect(corrigida.emissao?.cargasDoEmaAcordadas).toBe(true)
+    // A correção de um certificado de antes da 1.0.5 não ganha a marca (os pontos vêm das sugestões de então)
+    const antiga = comoEmitidoAntesDa105((await emitir(await calibracaoPronta())).json().calibracao)
+    const { calibracao: revAntiga } = (await criar(`/api/calibracoes/${antiga.id}/revisar`, {
+      motivo: 'OS digitada errada',
+    })) as {
+      calibracao: Calibracao
+    }
+    const corrigidaAntiga = (await emitir(revAntiga)).json().calibracao as Calibracao
+    expect(corrigidaAntiga.emissao).not.toHaveProperty('cargasDoEmaAcordadas')
+  })
+
+  it('a calibração com a folha impressa antes da 1.0.5 (que trazia as cargas do EMA) não as dá como acordadas', async () => {
+    const pronta = await calibracaoPronta()
+    t.ctx.db
+      .prepare("UPDATE calibracoes SET dados = json_set(dados, '$.cargasDoEmaNaFolha', json('true')) WHERE id = ?")
+      .run(pronta.id)
+    const atual = (await t.chamar('GET', `/api/calibracoes/${pronta.id}`, { cookie: t.cookieAdmin })).json()
+      .calibracao as Calibracao
+    const k = (await emitir(atual)).json().calibracao as Calibracao
+    expect(k.emissao).not.toHaveProperty('cargasDoEmaAcordadas')
+    const { calibracao: denovo } = (await criar(`/api/calibracoes/${k.id}/recalibrar`, {})) as { calibracao: Calibracao }
+    expect(denovo.indicacao.pontos.map((p) => p.carga)).toEqual([0, 7.5, 10, 15, 22.5, 30])
   })
 
   it('com a declaração de conformidade pedida, a calibração nova copia as cargas em que o EMA muda (POP 7.7)', async () => {
@@ -1582,6 +1653,31 @@ describe('revisão e cancelamento', () => {
     expect(denovo.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
     const { calibracao: nova } = (await criar('/api/calibracoes', { balancaId: balanca.id })) as { calibracao: Calibracao }
     expect(nova.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
+  })
+
+  it('com a declaração pedida, a carga em que o EMA muda que faltava na última entra no plano copiado (e na folha)', async () => {
+    const pronta = await calibracaoPronta()
+    const r = await t.chamar('PUT', `/api/calibracoes/${pronta.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...pronta, conformidade: { ...pronta.conformidade, solicitada: true }, versao: pronta.versao },
+    })
+    const k: Calibracao = (await emitir(r.json().calibracao)).json().calibracao
+    // Emitida sem 5 kg (500e): o aviso não impediu
+    t.ctx.db
+      .prepare(
+        `UPDATE calibracoes SET dados = json_set(dados, '$.indicacao.pontos',
+           json((SELECT json_group_array(json(value)) FROM json_each(dados, '$.indicacao.pontos') WHERE json_extract(value, '$.carga') <> 5)))
+         WHERE id = ?`,
+      )
+      .run(k.id)
+    const { calibracao: denovo } = (await criar(`/api/calibracoes/${k.id}/recalibrar`, {})) as { calibracao: Calibracao }
+    expect(denovo.conformidade.solicitada).toBe(true)
+    expect(denovo.indicacao.pontos.map((p) => p.carga)).toEqual([0, 5, 10, 20, 30])
+    expect(denovo.indicacao.pontos.find((p) => p.carga === 5)).toMatchObject({ crescente: null, decrescente: null })
+    // A folha de campo dele sai com a carga (o plano é o do rascunho)
+    const folha = await t.chamar('GET', `/api/calibracoes/${denovo.id}/folha-campo`, { cookie: t.cookieAdmin })
+    expect(folha.statusCode).toBe(200)
+    await t.chamar('DELETE', `/api/calibracoes/${denovo.id}`, { cookie: t.cookieAdmin })
   })
 })
 
@@ -1626,7 +1722,7 @@ describe('troca da unidade da indicação da balança', () => {
   })
 
   it('o que é copiado de um certificado emitido vem na unidade nova (nova calibração, calibrar de novo, revisão)', async () => {
-    const emitida: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const emitida = comoEmitidoAntesDa105((await emitir(await calibracaoPronta())).json().calibracao)
     const r = await t.chamar('PUT', `/api/balancas/${balanca.id}`, {
       cookie: t.cookieAdmin,
       payload: { ...balanca, unidade: 'g', faixas: [{ max: 30000, e: 10, d: 10 }], versao: balanca.versao },
@@ -1638,8 +1734,8 @@ describe('troca da unidade da indicação da balança', () => {
       excentricidade: k.excentricidade.carga,
     })
     const emG = { indicacao: [0, 5000, 10000, 20000, 30000], repetibilidade: [15000], excentricidade: 10000 }
-    // A calibração nova, sem a declaração de conformidade, sem as cargas em que o EMA muda (5 000 g = 500e e 20 000 g =
-    // 2000e) e com as sugeridas, também em g (POP 7.7)
+    // A calibração nova do certificado de antes da 1.0.5, sem a declaração de conformidade, sem as cargas em que o EMA
+    // muda (5 000 g = 500e e 20 000 g = 2000e) e com as sugeridas, também em g (POP 7.7)
     const novaEmG = { ...emG, indicacao: [0, 7500, 10000, 15000, 22500, 30000] }
 
     // Nova calibração (aproveita os pontos da última emitida)
@@ -2303,7 +2399,7 @@ describe('peças dos pontos e a carga digitada (bloqueiam a emissão)', () => {
   })
 
   it('rascunho novo e "calibrar de novo" depois de desativar o jogo: os pontos voltam sem as peças dele, automáticos', async () => {
-    const emitida: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const emitida = comoEmitidoAntesDa105((await emitir(await calibracaoPronta())).json().calibracao)
     const atual = (await t.chamar('GET', `/api/padroes`, { cookie: t.cookieAdmin }))
       .json()
       .padroes.find((p: Padrao) => p.id === pesos.id) as Padrao
@@ -2315,7 +2411,7 @@ describe('peças dos pontos e a carga digitada (bloqueiam a emissão)', () => {
     const semPecas = (k: Calibracao) => {
       // Fica o barômetro (ativo)
       expect(k.padroesIds).toEqual([barometro!.id])
-      // Sem a declaração de conformidade, sem as cargas em que o EMA muda (POP 7.7)
+      // Do certificado de antes da 1.0.5, sem a declaração de conformidade, sem as cargas em que o EMA muda (POP 7.7)
       expect(k.indicacao.pontos.map((p) => p.carga)).toEqual([0, 7.5, 10, 15, 22.5, 30])
       expect(k.indicacao.pontos.every((p) => p.pecas.length === 0 && !p.pecasManuais)).toBe(true)
     }

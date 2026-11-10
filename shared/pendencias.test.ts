@@ -109,6 +109,9 @@ describe('pendências da emissão', () => {
         expect(pendenciasEmissao(k(marca), contexto(classe)), classe).toEqual([])
         expect(avisosEmissao(k(marca), contexto(classe)), classe).toEqual([AVISO_SEM_PRESSAO])
       }
+    // O aviso não diz que a calibração "foi medida" (a folha de antes pode ainda nem ter ido a campo): diz de onde vem
+    expect(AVISO_SEM_PRESSAO).not.toMatch(/foi medida quando/)
+    expect(AVISO_SEM_PRESSAO).toContain('a folha de campo dela dizia que a pressão era opcional, ou ela já tinha sido medida')
     // Como até a 1.0.4: o barômetro sem a pressão, ou a pressão sem ele, continuam pendências (sem o aviso)
     const antes = k({ pressaoComoAviso: true })
     expect(pendenciasEmissao(antes, contexto('III', [pesos, th, br]))).toEqual([

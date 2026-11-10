@@ -29,17 +29,27 @@ export const SEM_PERMISSAO: Record<Permissao, string> = {
   excluirCliente: 'Só o administrador exclui clientes. Para tirar da lista, desative o cliente.',
   excluirBalanca: 'Só o administrador exclui balanças. Para tirar da lista, desative a balança.',
   excluirPadrao: 'Só o administrador exclui padrões. Para tirar de uso, desative o padrão.',
-  cancelarCertificado: 'Só o administrador cancela certificados emitidos.',
+  cancelarCertificado:
+    'Só o administrador cancela certificados emitidos e registra o nº de uma folha que não vai ser usada (Números não utilizados).',
   configuracoes: 'Só o administrador altera as configurações.',
   dadosEBackup: 'Só o administrador cuida das cópias de segurança e dos dados.',
   usuarios: 'Só o administrador cuida dos usuários.',
 }
 
+/**
+ * O aviso de quem chega a uma página só do administrador (por um link antigo ou digitado) e volta ao Painel (título e
+ * descrição; `RotaPermitida` nas telas).
+ */
+export const avisoSemPermissao = (permissao: Permissao): [string, string] => [
+  'Esta página é só do administrador',
+  `${SEM_PERMISSAO[permissao]} Peça a ele, se precisar.`,
+]
+
 export const ROTULO_PERMISSAO: Record<Permissao, string> = {
   excluirCliente: 'Excluir clientes',
   excluirBalanca: 'Excluir balanças',
   excluirPadrao: 'Excluir padrões',
-  cancelarCertificado: 'Cancelar certificados emitidos',
+  cancelarCertificado: 'Cancelar certificados emitidos e marcar a folha que não vai ser usada (Números não utilizados)',
   configuracoes: 'Configurações da empresa, do certificado e do e-mail',
   dadosEBackup: 'Cópias de segurança',
   usuarios: 'Usuários (técnicos e signatários) e registro de atividades',
@@ -48,7 +58,7 @@ export const ROTULO_PERMISSAO: Record<Permissao, string> = {
 export const NOME_NIVEL: Record<NivelUsuario, string> = { ADMIN: 'Administrador', COMUM: 'Operador' }
 export const RESUMO_NIVEL: Record<NivelUsuario, string> = {
   ADMIN:
-    'Tudo o que o operador faz e mais: configurações, usuários, cópias de segurança, cancelar certificados e excluir cadastros.',
+    'Tudo o que o operador faz e mais: configurações, usuários, cópias de segurança, cancelar certificados, marcar a folha que não vai ser usada e excluir cadastros.',
   COMUM: 'O dia a dia: clientes, balanças, padrões, calibrações e a emissão, a impressão e o envio dos certificados.',
 }
 

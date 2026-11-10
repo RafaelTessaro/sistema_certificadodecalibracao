@@ -4,6 +4,7 @@ import type { VersaoCertificado } from '#shared/tipos.ts'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { dataHora } from '../lib/format'
+import { textoDaCorrecao } from '../lib/versoes'
 import { Card, CardHeader } from './ui/Card'
 
 /**
@@ -52,8 +53,14 @@ export function HistoricoVersoes({ versoes, atualId }: { versoes: VersaoCertific
                 </a>
               </div>
               <p className="text-muted">
-                {v.versao === 1 ? 'Emitida' : 'Corrigida'} em {dataHora(v.emitidoEm)}
-                {v.emitidoPor && <> por {v.emitidoPor}</>}
+                {v.versao === 1 ? (
+                  <>
+                    Emitida em {dataHora(v.emitidoEm)}
+                    {v.emitidoPor && <> por {v.emitidoPor}</>}
+                  </>
+                ) : (
+                  textoDaCorrecao(v)
+                )}
               </p>
               {v.motivo && <p className="mt-0.5 break-words text-ink-2">Motivo: {v.motivo}</p>}
               {v.id !== atualId && (

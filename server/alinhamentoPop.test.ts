@@ -55,6 +55,10 @@ describe('calibração nova conforme o POP', () => {
     expect(r.statusCode, r.body).toBe(200)
     const emitida: Calibracao = r.json().calibracao
     expect([emitida.excentricidade.metodo, emitida.opcoes.divisaoTeste]).toEqual([2, 0.001])
+    // Emitido antes da 1.0.5 (sem a marca das cargas do EMA acordadas): as sugestões de então sempre as traziam
+    t.ctx.db
+      .prepare("UPDATE calibracoes SET dados = json_remove(dados, '$.emissao.cargasDoEmaAcordadas') WHERE id = ?")
+      .run(emitida.id)
 
     const { calibracao: nova } = (await c.criar('/api/calibracoes', { balancaId: c.balanca.id })) as { calibracao: Calibracao }
     expect(nova.excentricidade.metodo).toBe(1)

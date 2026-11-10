@@ -617,7 +617,7 @@ export function notaEmpuxoConveccao(ctx: Pick<Contexto, 'd' | 'k' | 'e'>): strin
 
 function secaoDadosCalibracao(ctx: Contexto, n: number): No[] {
   const { k, e } = ctx
-  const local = [LOCAIS[k.local], k.localEndereco.trim()].filter(Boolean).join(' — ')
+  const local = cepJunto(e, [LOCAIS[k.local], k.localEndereco.trim()].filter(Boolean).join(' — '))
   // O código do POP em negrito e a descrição curta; sem POP registrado, só a descrição
   const descricaoMetodo = (e.textos.procedimentoDescricao ?? '').trim()
   const metodo: NoObjeto[] = [
@@ -672,6 +672,21 @@ const nomeComparavel = (s: string) =>
     .replace(/\s+/g, ' ')
     .trim()
 
+/**
+ * Emitido a partir da 1.0.5 (`EmissaoCertificado.semFinalidadeEDimensoes`, congelada na emissão): as quebras de linha
+ * em pontos ruins de ler ficam de fora — o e-mail do cliente inteiro numa linha (não partido no hífen, o que parece
+ * hifenização), "CEP" junto do número e, na declaração de conformidade, o número junto da unidade e o selo numa linha.
+ * Os emitidos antes saem como saíram (o PDF refeito dos dados congelados é o mesmo).
+ */
+const quebrasCuidadas = (e: Pick<EmissaoCertificado, 'semFinalidadeEDimensoes'>) => e.semFinalidadeEDimensoes === true
+
+/** E-mail até este tamanho fica inteiro numa linha (maior, quebra onde precisar, para não passar da coluna). */
+const EMAIL_INTEIRO = 48
+
+/** "… – CEP 13506-555": o "CEP" junto do número (espaço sem quebra), no emitido a partir da 1.0.5. */
+const cepJunto = (e: Pick<EmissaoCertificado, 'semFinalidadeEDimensoes'>, endereco: string) =>
+  quebrasCuidadas(e) ? endereco.replace(/\bCEP (?=\d)/g, 'CEP\u00a0') : endereco
+
 function secaoCliente(ctx: Contexto, n: number): No[] {
   const c = ctx.e.cliente
   const pj = c.tipo === 'PJ'
@@ -679,7 +694,19 @@ function secaoCliente(ctx: Contexto, n: number): No[] {
   // O nome fantasia ao lado da razão social só quando diz outra coisa (não a mesma razão social sem o "Ltda.")
   const fantasia =
     pj && !vazio(c.nome) && !vazio(c.razaoSocial) && nomeComparavel(c.nome) !== nomeComparavel(c.razaoSocial) ? c.nome.trim() : ''
-  const contato = [c.contato, c.telefone || c.celular, c.email].filter((x) => !vazio(x)).join(' · ')
+  const partesContato = [c.contato, c.telefone || c.celular, c.email].filter((x) => !vazio(x))
+  // A partir da 1.0.5, o e-mail inteiro numa linha: partido no hífen ("gerencia@bompreco-" / "rc.com.br"), parece
+  // hifenização e esconde o endereço verdadeiro
+  const email = vazio(c.email) ? '' : c.email.trim()
+  const contato: No =
+    quebrasCuidadas(ctx.e) && email && email.length <= EMAIL_INTEIRO
+      ? {
+          text: [
+            ...(partesContato.length > 1 ? [{ text: `${partesContato.slice(0, -1).join(' · ')} · ` }] : []),
+            { text: email, noWrap: true },
+          ],
+        }
+      : partesContato.join(' · ')
   const nomeValor: No = fantasia
     ? [
         { text: ou(nome), bold: true },
@@ -688,7 +715,8 @@ function secaoCliente(ctx: Contexto, n: number): No[] {
     : { text: ou(nome), bold: true }
   // A inscrição estadual embaixo do CNPJ, quando o cliente tem (sem ela, nada); só no emitido a partir da 1.0.5
   const ie = ctx.e.inscricaoEstadualDoCliente === true && !vazio(c.inscricaoEstadual) ? c.inscricaoEstadual.trim() : ''
-  const documento: No = ie ? { text: [ou(c.documento), `\nIE ${ie}`] } : { text: ou(c.documento) }
+  // "IE" junto do número (espaço sem quebra): a IE longa (até 30 letras) quebra no número, nunca entre "IE" e ele
+  const documento: No = ie ? { text: [ou(c.documento), `\nIE\u00a0${ie}`] } : { text: ou(c.documento) }
   return [
     inteiro([
       ...secao(ctx.r, n, 'Cliente'),
@@ -698,7 +726,7 @@ function secaoCliente(ctx: Contexto, n: number): No[] {
           { rotulo: pj ? 'CNPJ' : 'CPF', valor: documento },
         ],
         [
-          { rotulo: 'Endereço', valor: enderecoCliente(c), span: contato ? 2 : 4 },
+          { rotulo: 'Endereço', valor: cepJunto(ctx.e, enderecoCliente(c)), span: contato ? 2 : 4 },
           ...(contato ? [{ rotulo: 'Contato', valor: contato, span: 2 }] : []),
         ],
       ]),
@@ -1560,7 +1588,10 @@ function secaoConformidade(ctx: Contexto, n: number): No[] {
     situacao === 'CONFORME'
       ? 'conforme em todos os pontos calibrados'
       : situacao === 'NAO_CONFORME'
-        ? `não conforme no(s) ponto(s) de ${naoConformes.map((p) => `${p.texto.referencia || p.texto.carga} ${u}`).join('; ')}`
+        ? `não conforme no(s) ponto(s) de ${naoConformes
+            // A partir da 1.0.5, o número junto da unidade ("5000" / "kg." não)
+            .map((p) => `${p.texto.referencia || p.texto.carga}${quebrasCuidadas(ctx.e) ? '\u00a0' : ' '}${u}`)
+            .join('; ')}`
         : 'não foi possível avaliar: não há erro máximo admissível para comparar'
   const selo = situacao === 'CONFORME' ? 'CONFORME' : situacao === 'NAO_CONFORME' ? 'NÃO CONFORME' : 'NÃO AVALIADA'
   const corSelo = situacao === 'NAO_CONFORME' ? COR.alerta : COR.marcaTexto
@@ -1595,6 +1626,8 @@ function secaoConformidade(ctx: Contexto, n: number): No[] {
                 characterSpacing: 0.5,
                 color: corSelo,
                 margin: [3, 0.5, 10, 0],
+                // A partir da 1.0.5, o selo numa linha: com o resultado comprido, a coluna se espremia em "NÃO" / "CONFORME"
+                ...(quebrasCuidadas(ctx.e) ? { noWrap: true } : {}),
               },
               {
                 text: [{ text: 'Resultado: ', bold: true }, `${resultadoTexto}.`],

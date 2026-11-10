@@ -311,11 +311,12 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     const padroesIds = padroesDoHistorico(anterior.padroesIds, ativos)
     const entrada = naUnidadeAtual(anterior)
     // Só com as peças dos padrões que continuam (o jogo desativado depois do certificado sai dos pontos) e, sem a
-    // declaração de conformidade, sem as cargas em que o EMA muda (POP 7.7)
+    // declaração de conformidade, sem as cargas em que o EMA muda que as sugestões até a 1.0.4 traziam (POP 7.7)
     const plano = planoDoHistorico(
       entrada,
       balanca,
       ativos.filter((p) => padroesIds.includes(p.id)),
+      anterior.emissao,
     )
     const k = repo.criarCalibracao(
       {

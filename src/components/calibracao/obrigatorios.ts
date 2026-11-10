@@ -1,6 +1,7 @@
 // As marcas "●" das etapas da calibração e o caminho de cada pendência até o campo, a partir dos campos obrigatórios
 // para emitir (`camposObrigatoriosEmissao`, as mesmas regras de `pendenciasEmissao`). Sem DOM: testado à parte.
 
+import { PENDENCIA_POP } from '#shared/arquivos.ts'
 import {
   camposObrigatoriosEmissao,
   PENDENCIA_TECNICO_EXCLUIDO,
@@ -20,7 +21,10 @@ type ContextoMarcas = Pick<ContextoEtapa, 'f' | 'selecionados' | 'balanca' | 'ob
 
 /** Os campos obrigatórios desta calibração: os do editor ou, sem eles (ex.: nos testes), calculados agora. */
 export function camposDaEtapa(ctx: Pick<ContextoMarcas, 'f' | 'selecionados' | 'balanca' | 'obrigatorios'>): CampoObrigatorio[] {
-  return ctx.obrigatorios ?? camposObrigatoriosEmissao(ctx.f, { padroes: ctx.selecionados ?? [], classe: ctx.balanca.classe })
+  return (
+    ctx.obrigatorios ??
+    camposObrigatoriosEmissao(ctx.f, { padroes: ctx.selecionados ?? [], classe: ctx.balanca.classe, balanca: ctx.balanca })
+  )
 }
 
 /**
@@ -77,6 +81,8 @@ const PELO_TEXTO: Array<[RegExp, IdEtapa, string?]> = [
   [/^Aclimatação dos pesos: diferença/, 'padroes', 'amb-acl-dt'],
   [/^Aclimatação dos pesos: tempo/, 'padroes', 'amb-acl-min'],
   [/^(Empuxo|Convecção|Balança classe I|O padrão |Pressão|Barômetro|Registre a pressão)/, 'padroes', 'k-pesos'],
+  // O jogo sem a classe (sem o EMA da R111) ou sem a incerteza: o cadastro do padrão, a partir dos padrões escolhidos
+  [/^Pesos sem (EMA|incerteza) conhecid/, 'padroes', 'k-pesos'],
   [/^A data da calibração/, 'identificacao', 'k-data'],
   [/^O recebimento do item/, 'identificacao', 'k-receb'],
   [/^A próxima calibração/, 'conclusao', 'k-prox'],
@@ -92,4 +98,13 @@ export function destinoDaPendencia(p: string, campos: CampoObrigatorio[]): Desti
   if (p === PENDENCIA_TECNICO_EXCLUIDO) return { etapa: 'identificacao', alvo: 'k-tec' }
   const regra = PELO_TEXTO.find(([padrao]) => padrao.test(p))
   return regra ? { etapa: regra[1], ...(regra[2] ? { alvo: regra[2] } : {}) } : null
+}
+
+/**
+ * A pendência que se resolve fora da calibração: o POP sem registro, em Configurações → Certificado. Só o administrador
+ * abre Configurações: para ele, o caminho até lá; para o operador, nenhum (o texto já diz que é com o administrador).
+ */
+export function destinoForaDaCalibracao(p: string, podeConfigurar: boolean): { titulo: string; para: string } | null {
+  if (p === PENDENCIA_POP && podeConfigurar) return { titulo: 'Configurações', para: '/configuracoes?secao=certificado' }
+  return null
 }

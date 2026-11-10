@@ -1,4 +1,5 @@
 import {
+  ArrowDown,
   ArrowLeft,
   ArrowRight,
   Building2,
@@ -49,6 +50,7 @@ import { DevolverModal } from '../components/calibracao/DevolverModal'
 import {
   balancaMudaRascunho,
   estadoDoServidor,
+  etapaAoAbrir,
   etapaCompleta,
   padroesDoEditor,
   pendenciasDaTela,
@@ -62,7 +64,7 @@ import { EtapaInstrumento } from '../components/calibracao/EtapaInstrumento'
 import { EtapaPadroes } from '../components/calibracao/EtapaPadroes'
 import { EtapaRepetibilidade } from '../components/calibracao/EtapaRepetibilidade'
 import { EtapaRevisao } from '../components/calibracao/EtapaRevisao'
-import { destinoDaPendencia, etapaTemMarcas } from '../components/calibracao/obrigatorios'
+import { destinoDaPendencia, destinoForaDaCalibracao, etapaTemMarcas } from '../components/calibracao/obrigatorios'
 import { PainelResultados } from '../components/calibracao/PainelResultados'
 import { comMetodoDaClasse } from '../components/calibracao/util'
 import { ClienteFormModal } from '../components/ClienteFormModal'
@@ -81,9 +83,19 @@ import { api, ErroApi, type MembroEquipe } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
 import { criarFilaGravacao } from '../lib/filaGravacao'
-import { abrirFolhaCampo, TEXTO_FOLHA_NOVA, textoBarometrosRetirados, textoReimprimir, textosOsDaFolha } from '../lib/folhaCampo'
+import {
+  abrirFolhaCampo,
+  TEXTO_FOLHA_NOVA,
+  semMarcasRetiradas,
+  temFolhaNova,
+  textoBarometrosRetirados,
+  textoPressaoDeVolta,
+  textoReimprimir,
+  textosOsDaFolha,
+} from '../lib/folhaCampo'
 import { dataCurta, hojeISO } from '../lib/format'
 import { avisoNumeroDaFolha } from '../lib/numeros'
+import { usePode } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
 
@@ -128,6 +140,13 @@ function NovaCalibracao() {
       'Folha de campo aberta em outra aba',
       'Depois da visita, cadastre a balança, comece a calibração e informe o nº da folha (no alto dela).',
     )
+  }
+
+  /** Do passo 2 para a OS (passo 3), onde a folha do cliente com a balança em branco sai com a OS e a data. */
+  const irParaOs = () => {
+    const campo = document.getElementById('nova-os')
+    campo?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    campo?.focus({ preventScroll: true })
   }
 
   /** Cria o rascunho; com `folha`, já abre a folha de campo dele numa aba nova (para levar à visita). */
@@ -248,16 +267,18 @@ function NovaCalibracao() {
               </button>
             ))}
           </div>
-          {clienteId && (
+          {/* Leva ao passo 3, onde a folha sai com a OS e a data: imprimir daqui saía sem a OS, e imprimir de novo para pô-la
+              gastava outro par de nºs (folha e certificado) */}
+          {clienteId && !balancaId && (
             <div className="flex flex-col gap-2 border-t border-line px-5 py-3 text-[13px] text-muted sm:flex-row sm:items-center sm:justify-between">
               <span>A balança ainda não está cadastrada?</span>
               <button
                 type="button"
-                onClick={imprimirFolhaDoCliente}
+                onClick={irParaOs}
                 className="inline-flex cursor-pointer items-center gap-1.5 self-start font-medium text-brand-ink hover:underline sm:self-auto"
               >
-                <Printer className="h-3.5 w-3.5" />
-                Folha de campo com o cliente e a balança em branco
+                Informe a OS e imprima a folha com a balança em branco
+                <ArrowDown className="h-3.5 w-3.5" />
               </button>
             </div>
           )}
@@ -385,6 +406,7 @@ interface Carregado {
 
 function EditorCalibracao({ id }: { id: string }) {
   const navegar = useNavigate()
+  const podeConfigurar = usePode('configuracoes')
   const [dados, setDados] = useState<Carregado | null>(null)
   const [erro, setErro] = useState('')
   const [f, setF] = useState<CalibracaoInput | null>(null)
@@ -444,9 +466,9 @@ function EditorCalibracao({ id }: { id: string }) {
         setNumeroReservado(inicial.numeroReservado)
         setPendenciasServidor(inicial.pendencias)
         setAvisosServidor(inicial.avisos)
-        // Retoma na primeira etapa ainda sem dados
-        if (k.indicacao.pontos.some((x) => x.crescente !== null)) setEtapa('revisao')
-        else if (k.repetibilidade.length) setEtapa('excentricidade')
+        // Retoma na primeira etapa ainda sem leituras (o plano copiado da última calibração não conta)
+        const retomar = etapaAoAbrir(k)
+        if (retomar) setEtapa(retomar)
       })
       .catch((e: unknown) => ativo && setErro(e instanceof Error ? e.message : 'Erro inesperado.'))
     return () => {
@@ -464,6 +486,17 @@ function EditorCalibracao({ id }: { id: string }) {
         .then((d) => {
           setFolha(d.folhaCampo)
           setNumeroReservado(d.numeroReservado ?? null)
+          // A folha nova (da 1.0.5) no lugar da de antes tirou a dispensa da pressão (marca do servidor, que a tela não
+          // grava; a versão não sobe): a tela fica sem ela
+          const k = d.calibracao
+          setF((atual) =>
+            atual && (atual.pressaoComoAviso !== k.pressaoComoAviso || atual.cargasDoEmaNaFolha !== k.cargasDoEmaNaFolha)
+              ? semMarcasRetiradas(atual, {
+                  ...(k.pressaoComoAviso !== true ? { pressaoComoAviso: false } : {}),
+                  ...(k.cargasDoEmaNaFolha !== true ? { cargasDoEmaNaFolha: false } : {}),
+                })
+              : atual,
+          )
           // A folha impressa agora pode ter saído com outra revisão do POP que a da data da calibração
           setAvisosServidor(d.avisos ?? [])
         })
@@ -601,7 +634,7 @@ function EditorCalibracao({ id }: { id: string }) {
 
   // Os campos obrigatórios para emitir (as marcas "●" das etapas), pelas mesmas regras das pendências
   const obrigatorios = useMemo<CampoObrigatorio[]>(
-    () => (f && balanca ? camposObrigatoriosEmissao(f, { padroes: selecionados, classe: balanca.classe }) : []),
+    () => (f && balanca ? camposObrigatoriosEmissao(f, { padroes: selecionados, classe: balanca.classe, balanca }) : []),
     [f, balanca, selecionados],
   )
   // Chegou à revisão com pendências: o que falta fica em destaque em todas as etapas
@@ -646,6 +679,14 @@ function EditorCalibracao({ id }: { id: string }) {
         versao.current = r.versao
         setF((atual) => (atual ? { ...atual, padroesIds: semBarometro.padroesIds } : atual))
       }
+      // Da 1.0.5 no lugar da folha de antes: a dispensa sai (a versão não sobe) e, sem a pressão, o barômetro volta (subiu)
+      const retiradas = r.marcasRetiradas
+      if (retiradas) setF((atual) => (atual ? semMarcasRetiradas(atual, retiradas) : atual))
+      const devolvidos = r.barometrosDevolvidos
+      if (devolvidos && r.versao !== undefined) {
+        versao.current = r.versao
+        setF((atual) => (atual ? { ...atual, padroesIds: devolvidos.padroesIds } : atual))
+      }
       const daFolha = r.numeroDaFolha
       const textosOs = textosOsDaFolha(os)
       if (daFolha && !daFolha.usado)
@@ -662,6 +703,10 @@ function EditorCalibracao({ id }: { id: string }) {
       if (textosOs.diferente) toast.aviso('A OS da folha é outra', textosOs.diferente)
       if (semBarometro) {
         const t = textoBarometrosRetirados(semBarometro.identificacoes)
+        toast.aviso(t.titulo, t.texto)
+      }
+      if (retiradas?.pressaoComoAviso === false) {
+        const t = textoPressaoDeVolta(devolvidos?.identificacoes ?? [])
         toast.aviso(t.titulo, t.texto)
       }
       return true
@@ -748,6 +793,9 @@ function EditorCalibracao({ id }: { id: string }) {
 
   // Da pendência da revisão para a etapa dela e, quando há, para o campo (depois da troca de etapa animada)
   const destinoDe = (p: string) => {
+    // O POP sem registro: em Configurações, só do administrador (para o operador, o texto diz para chamá-lo)
+    const fora = destinoForaDaCalibracao(p, podeConfigurar)
+    if (fora) return { titulo: fora.titulo, ir: () => navegar(fora.para) }
     const d = destinoDaPendencia(p, obrigatorios)
     if (!d) return null
     return {
@@ -920,14 +968,17 @@ function EditorCalibracao({ id }: { id: string }) {
             {!(dados.calibracao.substituiId && !folha) && (
               <Button
                 icone={<Printer className="h-4 w-4" />}
-                // Correção com a folha do certificado corrigido: só reimprime (é a mesma visita)
-                onClick={() => (folha && !folha.herdada ? setEscolhaFolha('reimprimir') : void imprimirFolha())}
+                // Correção com a folha do certificado corrigido, ou a avulsa ligada (já preenchida no cliente): só
+                // reimprime
+                onClick={() => (temFolhaNova(folha) ? setEscolhaFolha('reimprimir') : void imprimirFolha())}
                 title={
                   !folha
                     ? 'O checklist para levar ao cliente e preencher à mão, com os pontos, as cargas e os padrões desta calibração'
                     : folha.herdada
                       ? `${textoReimprimir(folha)}, do certificado corrigido`
-                      : `${textoReimprimir(folha)} ou ${TEXTO_FOLHA_NOVA.toLowerCase()}`
+                      : folha.avulsa
+                        ? `${textoReimprimir(folha)}, a preenchida no cliente`
+                        : `${textoReimprimir(folha)} ou ${TEXTO_FOLHA_NOVA.toLowerCase()}`
                 }
               >
                 Imprimir folha de campo
@@ -1072,7 +1123,7 @@ function EditorCalibracao({ id }: { id: string }) {
       </div>
 
       <FolhaCampoModal
-        folha={escolhaFolha && folha && !folha.herdada ? folha : null}
+        folha={escolhaFolha && temFolhaNova(folha) ? folha : null}
         foco={escolhaFolha ?? undefined}
         aoFechar={() => setEscolhaFolha(null)}
         aoEscolher={(e) => {

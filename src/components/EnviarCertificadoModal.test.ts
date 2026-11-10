@@ -4,8 +4,10 @@
 
 import { createElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { CLIENTE_VAZIO } from '#shared/dominio.ts'
+import { avisoSemPermissao } from '#shared/permissoes.ts'
 import type { Calibracao, Cliente } from '#shared/tipos.ts'
 
 // Sem DOM: a janela (portal no document.body) sai como o conteúdo dela, no lugar
@@ -18,7 +20,7 @@ vi.mock('../lib/consulta', () => ({
   useConsulta: () => ({ dados: undefined, carregando: true, erro: '', atualizando: false, recarregar: () => {} }),
 }))
 
-const { EnviarCertificadoModal } = await import('./EnviarCertificadoModal')
+const { AvisoEmailNaoConfigurado, EnviarCertificadoModal } = await import('./EnviarCertificadoModal')
 
 const calibracao = { id: 'k1', numero: 'CC-2026-00001', dataCalibracao: '2026-10-20', ordemServico: '' } as Calibracao
 /** O cliente como ficou congelado na emissão: sem e-mail. */
@@ -47,5 +49,32 @@ describe('enviar certificado: destinatário', () => {
   it('sem e-mail no cadastro atual: avisa; sem os e-mails atuais (resposta antiga), vale a cópia da emissão', () => {
     expect(janela({ email: '', emailCertificados: '' })).toContain('O cliente não tem e-mail cadastrado.')
     expect(janela(undefined)).toContain('O cliente não tem e-mail cadastrado.')
+  })
+})
+
+// O operador não abre Configurações: sem o e-mail configurado, o aviso do envio (e quem chega a uma página do
+// administrador) diz para chamar o administrador, em vez de um link que o devolvia ao Painel sem explicação
+describe('e-mail ainda não configurado', () => {
+  const aviso = (podeConfigurar: boolean) =>
+    renderToStaticMarkup(createElement(MemoryRouter, null, createElement(AvisoEmailNaoConfigurado, { podeConfigurar })))
+
+  it('o administrador vai direto para Configurações → E-mail', () => {
+    const html = aviso(true)
+    expect(html).toContain('href="/configuracoes?secao=email"')
+    expect(html).toContain('Configurar agora')
+  })
+
+  it('o operador é avisado para pedir ao administrador (sem link para uma página que ele não abre)', () => {
+    const html = aviso(false)
+    expect(html).not.toContain('/configuracoes')
+    expect(html).not.toContain('Configurar agora')
+    expect(html).toContain('Peça ao administrador para configurar o e-mail da empresa em Configurações → E-mail.')
+  })
+
+  it('quem chega a uma página só do administrador volta ao Painel com o porquê', () => {
+    expect(avisoSemPermissao('configuracoes')).toEqual([
+      'Esta página é só do administrador',
+      'Só o administrador altera as configurações. Peça a ele, se precisar.',
+    ])
   })
 })

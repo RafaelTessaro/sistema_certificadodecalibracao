@@ -7,6 +7,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import type { CalibracaoResumo, VersaoCertificado } from '#shared/tipos.ts'
+import { dataHora } from '../lib/format'
+import { textoDaCorrecao } from '../lib/versoes'
 import { CertificadosTabela } from './CertificadosTabela'
 import { HistoricoVersoes } from './HistoricoVersoes'
 
@@ -112,5 +114,48 @@ describe('certificado corrigido com o mesmo nº, na tela', () => {
     expect(h).toContain('href="/api/calibracoes/k2/pdf"')
     expect(h).toContain('href="/calibracoes/k1"')
     expect(h).not.toContain('href="/calibracoes/k2"')
+  })
+})
+
+// A correção é de quem a abriu ("Corrigir certificado", com o motivo), que pode não ser quem a emitiu ou autorizou: a
+// faixa da página do certificado e o histórico creditam cada um no seu papel
+describe('certificado corrigido: quem corrigiu e quem emitiu', () => {
+  const em = '2026-11-09T22:43:00.000Z'
+
+  it('aberta por uma pessoa e autorizada por outra: as duas, cada uma no seu papel', () => {
+    expect(textoDaCorrecao({ emitidoEm: em, emitidoPor: 'Fábio Andrade', corrigidaPor: 'Lizi Martins' }, 'o')).toBe(
+      `Corrigido por Lizi Martins; emitido em ${dataHora(em)} por Fábio Andrade`,
+    )
+    expect(textoDaCorrecao({ emitidoEm: em, emitidoPor: 'Fábio Andrade', corrigidaPor: 'Lizi Martins' })).toBe(
+      `Corrigida por Lizi Martins; emitida em ${dataHora(em)} por Fábio Andrade`,
+    )
+  })
+
+  it('a mesma pessoa (ou sem o registro de quem abriu): uma vez só', () => {
+    expect(textoDaCorrecao({ emitidoEm: em, emitidoPor: 'Lizi Martins', corrigidaPor: 'Lizi Martins' })).toBe(
+      `Corrigida em ${dataHora(em)} por Lizi Martins`,
+    )
+    expect(textoDaCorrecao({ emitidoEm: em, emitidoPor: 'Lizi Martins' }, 'o')).toBe(
+      `Corrigido em ${dataHora(em)} por Lizi Martins`,
+    )
+  })
+
+  it('no histórico: a primeira "Emitida", a correção com quem a abriu', () => {
+    const versoes: VersaoCertificado[] = [
+      { id: 'k1', versao: 1, status: 'SUBSTITUIDO', emitidoEm: em, emitidoPor: 'Fábio Andrade', motivo: '' },
+      {
+        id: 'k2',
+        versao: 2,
+        status: 'EMITIDO',
+        emitidoEm: em,
+        emitidoPor: 'Fábio Andrade',
+        corrigidaPor: 'Lizi Martins',
+        motivo: 'Leitura decrescente de 24 kg digitada errada',
+      },
+    ]
+    const t = texto(html(createElement(HistoricoVersoes, { versoes, atualId: 'k2' })))
+    expect(t).toContain(`Corrigida por Lizi Martins; emitida em ${dataHora(em)} por Fábio Andrade`)
+    expect(t).toContain(`Emitida em ${dataHora(em)} por Fábio Andrade`)
+    expect(t).not.toContain('Corrigida em')
   })
 })

@@ -78,16 +78,29 @@ import type {
  * repetibilidade sem o zero depois de retirar a carga e, sem carga prevista, só a carga aplicada (sem os pesos); na
  * folha em branco, uma linha da repetibilidade por faixa do passo 3 (POP 7.9: um ensaio em cada intervalo ou faixa); a
  * excentricidade sem carga prevista só com a carga usada; os padrões cadastrados sem linha em branco no fim (o que não
- * está na lista vai em Anotações).
+ * está na lista vai em Anotações). Rev. 05 (1.0.5): a pressão com a marca ● em toda classe (sem "opcional" e sem
+ * "obrigatória na classe II"); a marca ● no retorno ao zero e na carga da repetibilidade e da excentricidade escritas no
+ * local; sem as dimensões do prato; a inscrição estadual do cliente, quando houver; na folha em branco, as posições 1 a 5
+ * da excentricidade impressas e as cargas do EMA só com a declaração de conformidade. A folha impressa antes continua
+ * igual na reimpressão (o PDF guardado), com a rev. 04.
  * O procedimento de referência é o POP configurado no sistema (sai no rodapé, ver `referenciaDoFormulario`);
  * `referencia` é o guia técnico (metadados do PDF).
  */
 export const FORMULARIO_FOLHA_CAMPO = {
   codigo: 'FOR-CAL-01',
-  revisao: '04',
+  revisao: '05',
   titulo: 'Folha de campo de calibração de balança',
   referencia: 'EURAMET cg-18 v4.0',
 } as const
+
+/**
+ * "FC-2026-00042", "fc 2026 42", "2026-42" → "FC-2026-00042"; '' se não for um nº de folha. Como o técnico digita o nº
+ * impresso no alto da folha: "Ligar à calibração", a reimpressão e a busca da aba "Folhas de campo".
+ */
+export function numeroDaFolha(v: unknown): string {
+  const m = typeof v === 'string' ? /^\s*(?:FC[\s-]*)?(\d{4})[\s-]+(\d{1,5})\s*$/i.exec(v) : null
+  return m ? `FC-${m[1]}-${m[2].padStart(5, '0')}` : ''
+}
 
 /**
  * Nas palavras-chave do PDF de toda folha impressa desde a 1.0.5: as regras dela (a pressão obrigatória em toda classe;

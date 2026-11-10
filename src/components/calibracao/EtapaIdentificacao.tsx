@@ -1,14 +1,14 @@
 import { Building2, ExternalLink, FilePlus2, Link2, Loader2, MapPin } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { enderecoCliente, enderecoEmpresa, LOCAIS } from '#shared/dominio.ts'
+import { enderecoCliente, enderecoEmpresa, inscricaoEstadualNoCertificado, LOCAIS } from '#shared/dominio.ts'
 import { tecnicosParaEscolher } from '#shared/permissoes.ts'
 import type { FolhaCampoImpressa, LocalCalibracao } from '#shared/tipos.ts'
 import { TEXTO_FOLHA_NOVA } from '../../lib/folhaCampo'
 import { dataHora } from '../../lib/format'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
-import { Field, Input, Select, Textarea } from '../ui/Form'
+import { Field, Input, MarcaObrigatorio, Select, Textarea } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
 import type { ContextoEtapa } from './contexto'
 import { dicaDoTecnico } from './equipe'
@@ -57,6 +57,12 @@ export function EtapaIdentificacao(ctx: ContextoEtapa) {
         <div className="grid grid-cols-1 gap-x-6 gap-y-3 px-5 pb-5 text-sm sm:grid-cols-2">
           <Info rotulo={cliente.tipo === 'PJ' ? 'Razão social' : 'Nome'}>{cliente.razaoSocial || cliente.nome}</Info>
           <Info rotulo={cliente.tipo === 'PJ' ? 'CNPJ' : 'CPF'}>{cliente.documento}</Info>
+          {/* A IE sai no certificado embaixo do CNPJ, quando o cliente tem: quem confere antes de emitir a vê aqui */}
+          {inscricaoEstadualNoCertificado(cliente) && (
+            <Info rotulo="Inscrição estadual">
+              <span className="tnum">{inscricaoEstadualNoCertificado(cliente)}</span>
+            </Info>
+          )}
           <Info rotulo="Endereço" className="sm:col-span-2">
             {enderecoCliente(cliente)}
           </Info>
@@ -185,7 +191,8 @@ export function EtapaIdentificacao(ctx: ContextoEtapa) {
  * Nº da folha de campo: a impressa pela calibração ou a avulsa (em branco, do cliente ou da balança)
  * preenchida no cliente, ligada aqui pelo nº do alto do papel; a reimpressão passa a usar esse nº. Com
  * folha própria, "Folha nova (novo nº)" tira outra, com os dados atuais (o plano mudou antes da visita): a
- * de antes fica registrada como não usada. Numa revisão, a folha é a do certificado revisado.
+ * de antes fica registrada como não usada, e o nº do certificado continua o mesmo. A avulsa ligada já foi
+ * preenchida no cliente: sem folha nova. Numa revisão, a folha é a do certificado revisado.
  */
 function CampoFolhaCampo({
   folha,
@@ -225,7 +232,9 @@ function CampoFolhaCampo({
             ? 'Foi preenchida no cliente uma folha avulsa (em branco, do cliente ou da balança)? Informe o nº do alto dela: a calibração fica com essa folha e com o nº de certificado impresso nela.'
             : folha.herdada
               ? `Do certificado corrigido (a mesma visita), ${impressa}.`
-              : `${impressa.charAt(0).toUpperCase()}${impressa.slice(1)}.${naoUsadas} Se no cliente foi preenchida outra folha (em branco ou da balança), informe o nº dela: a calibração passa a usar o nº de certificado impresso nela.`
+              : folha.avulsa
+                ? `Folha preenchida no cliente, ${impressa}: é o registro desta calibração.${naoUsadas} Se o nº ligado está errado, informe o certo.`
+                : `${impressa.charAt(0).toUpperCase()}${impressa.slice(1)}.${naoUsadas} Se no cliente foi preenchida outra folha (em branco ou da balança), informe o nº dela: a calibração passa a usar o nº de certificado impresso nela.`
       }
     >
       <div className="flex flex-col gap-2 sm:flex-row">
@@ -247,12 +256,12 @@ function CampoFolhaCampo({
         >
           Ligar à calibração
         </Button>
-        {folha && !folha.herdada && (
+        {folha && !folha.herdada && !folha.avulsa && (
           <Button
             variante="ghost"
             icone={<FilePlus2 className="h-4 w-4" />}
             onClick={nova}
-            title={`${TEXTO_FOLHA_NOVA}: para quando o plano mudou e a ${folha.numero} ainda não foi a campo`}
+            title={`${TEXTO_FOLHA_NOVA}: para quando o plano mudou e a ${folha.numero} ainda não foi a campo (o nº do certificado continua o mesmo)`}
           >
             Folha nova (novo nº)
           </Button>
@@ -262,10 +271,24 @@ function CampoFolhaCampo({
   )
 }
 
-export function Info({ rotulo, children, className }: { rotulo: string; children: React.ReactNode; className?: string }) {
+export function Info({
+  rotulo,
+  children,
+  className,
+  obrigatorio,
+}: {
+  rotulo: string
+  children: React.ReactNode
+  className?: string
+  /** A marca "●" (obrigatório para emitir) ao lado do rótulo. */
+  obrigatorio?: boolean
+}) {
   return (
     <div className={className}>
-      <p className="text-xs font-medium text-muted">{rotulo}</p>
+      <p className="inline-flex items-center gap-1.5 text-xs font-medium text-muted">
+        {rotulo}
+        {obrigatorio && <MarcaObrigatorio />}
+      </p>
       <p className="mt-0.5 break-words text-ink-2">{children || <span className="text-muted">—</span>}</p>
     </div>
   )

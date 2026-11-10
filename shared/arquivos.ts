@@ -214,8 +214,12 @@ export function normalizarArquivoAnexo(v: unknown): ArquivoAnexo | null {
   return { sha256, nome: nomeArquivoSeguro(r.nome, 'certificado'), tamanho, tipo, enviadoEm }
 }
 
-/** Pendência de emissão sem POP registrado (o código e a revisão saem em toda página do certificado). */
-export const PENDENCIA_POP = 'Cadastre o POP em Configurações → Certificado (código e revisão).'
+/**
+ * Pendência de emissão sem POP registrado (o código e a revisão saem em toda página do certificado). Quem registra é o
+ * administrador (Configurações): o texto serve para os dois níveis, e a tela leva o administrador até lá.
+ */
+export const PENDENCIA_POP =
+  'O POP não está registrado: o administrador registra o código e a revisão em Configurações → Certificado.'
 
 /** Revisão do POP com dois algarismos: "0" → "00", "3" → "03"; '' quando não é um número de 0 a 999. */
 export function revisaoPop(v: unknown): string {

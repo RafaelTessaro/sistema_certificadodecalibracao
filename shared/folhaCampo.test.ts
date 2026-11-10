@@ -796,9 +796,10 @@ describe('referência do formulário', () => {
     expect(referenciaDoFormulario('POPULAR-01 rev. 0')).toBe('POP POPULAR-01 rev. 0')
     for (const vazio of ['', '   ', null, undefined]) expect(referenciaDoFormulario(vazio)).toBe('')
     expect(JSON.stringify(FORMULARIO_FOLHA_CAMPO)).not.toContain('PT-CAL-01')
-    // Layout novo (rev. 04: o método numa linha fixa, os ensaios sem hora, a repetibilidade sem o zero depois de
-    // retirar a carga): revisão nova do formulário controlado (a rev. 03 da 1.0.3 tinha esses campos)
-    expect(FORMULARIO_FOLHA_CAMPO.revisao).toBe('04')
+    // Layout novo a cada versão que muda a folha (rev. 04 da 1.0.4: o método numa linha fixa, os ensaios sem hora; rev. 05
+    // da 1.0.5: a pressão ● em toda classe, as posições 1 a 5 impressas, a IE, sem as dimensões do prato, as cargas ●):
+    // revisão nova do formulário controlado, para a folha de antes e a de agora não terem a mesma identificação
+    expect(FORMULARIO_FOLHA_CAMPO.revisao).toBe('05')
   })
 })
 

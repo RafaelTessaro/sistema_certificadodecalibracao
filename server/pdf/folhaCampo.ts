@@ -62,8 +62,10 @@ import {
   formatarDataBr,
   METODOS_CARREGAMENTO,
   metodoIndicacaoPadrao,
+  minimosDoPopComoAviso,
   numeroBr,
   RECEPTORES,
+  regrasDoPopComoAviso,
   ROTULO_CLASSE,
   ROTULO_METODO_INDICACAO,
   TIPOS_BALANCA,
@@ -1285,6 +1287,13 @@ const e2 = (a: string, b: string) => `${a} · ${b}`
 /** Marca de campo obrigatório para emitir. */
 const OBRIG = ' ●'
 
+/**
+ * A marca da carga da repetibilidade e da excentricidade escrita no local (sem a carga impressa): obrigatória para emitir
+ * (a tela marca "Carga aplicada" e "Carga usada"; POP 7.9 e 7.10) e, em branco no papel, sem como recuperar. Na correção
+ * de um certificado de antes das regras do POP, a falta dela era aviso (`regrasDoPopComoAviso`): sem a marca.
+ */
+const marcaDaCarga = (ctx: Pick<Contexto, 'k'>) => (!ctx.k || !regrasDoPopComoAviso(ctx.k) ? OBRIG : '')
+
 /** Números dos passos da folha (as instruções citam uns aos outros). */
 const N = {
   padroes: 1,
@@ -1800,11 +1809,18 @@ function passoIdentificacao(ctx: Contexto, n: number, nBalanca: number): No[] {
         // Onde ficam as Anotações (no fim da folha), a regra do alto da página 1 diz: aqui, só o nº dos passos
         ` (o mostrador). Diferente? Anote o certo em ${TITULO_ANOTACOES} (passo ${n} ou ${nBalanca}) e avise o cliente.`,
       ]
-    : [
-        'Preencha o cliente como sai no certificado e copie a plaqueta do ',
-        { text: 'indicador', bold: true },
-        ' (sem série: a TAG); cadastre a balança antes de digitar.',
-      ]
+    : ctx.d.cliente
+      ? // Só do cliente: o cliente e o endereço já saem impressos (POP 7.3: conferir e anotar o que estiver diferente)
+        [
+          `Confira o cliente e o endereço (diferente? anote o certo em ${TITULO_ANOTACOES}, passo ${n}) e copie a plaqueta do `,
+          { text: 'indicador', bold: true },
+          ' (sem série: a TAG); cadastre a balança antes de digitar.',
+        ]
+      : [
+          'Preencha o cliente como sai no certificado e copie a plaqueta do ',
+          { text: 'indicador', bold: true },
+          ' (sem série: a TAG); cadastre a balança antes de digitar.',
+        ]
   const cliente = [...gradesCliente(ctx), linhaChegada(ctx)]
   if (b)
     return passo(
@@ -2159,12 +2175,21 @@ function tabelaPontos(ctx: Contexto, reserva: number): TabelaPontos {
     cel.push(...paraLer(zeroEmBranco))
     linhas.push(cel)
   }
-  // No fim, o rótulo à esquerda (nas colunas da carga e dos pesos) e a escrita à direita, nas leituras
+  // No fim, o rótulo à esquerda (nas colunas da carga e dos pesos) e a escrita à direita, nas leituras. Obrigatório
+  // para emitir (POP 7.7; a tela também o marca): lido uma vez só, no fim, e em branco no papel não há como recuperar.
+  // Na calibração já medida antes das regras do POP, era opcional (`minimosDoPopComoAviso`)
   const antesDasLeituras = 3 + (comSub ? 1 : 0)
+  const retornoObrigatorio = !ctx.k || !minimosDoPopComoAviso(ctx.k)
   linhas.push([
     dica(
       [
-        { text: 'RETORNO AO ZERO', font: 'InterMedio', fontSize: 6.6, characterSpacing: 0.3, color: T.texto },
+        {
+          text: `RETORNO AO ZERO${retornoObrigatorio ? OBRIG : ''}`,
+          font: 'InterMedio',
+          fontSize: 6.6,
+          characterSpacing: 0.3,
+          color: T.texto,
+        },
         { text: '  sem carga', fontSize: 6.2 },
       ],
       antesDasLeituras,
@@ -2468,7 +2493,10 @@ function cargaDoEnsaio(ctx: Contexto, c: CargaPlanejada | null, rotuloCarga: str
   if (!c || !(c.carga > 0))
     return {
       columns: [
-        { width: LARGURA_CARGA_USADA, stack: [grade([[campo(`${rotuloCarga} (${unidadeColuna(ctx)})`)]], ['*'])] },
+        {
+          width: LARGURA_CARGA_USADA,
+          stack: [grade([[campo(`${rotuloCarga}${marcaDaCarga(ctx)} (${unidadeColuna(ctx)})`)]], ['*'])],
+        },
         { width: '*', text: '' },
       ],
     }
@@ -2560,7 +2588,7 @@ function faixasRepetibilidade(ctx: Contexto, total: number, previstas: number, c
     return [
       {
         ...dica([
-          { text: 'Carga aplicada', font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.rotulo },
+          { text: `Carga aplicada${marcaDaCarga(ctx)}`, font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.rotulo },
           { text: ` (${uc})`, fontSize: FONTE_DICA, color: T.suave },
         ]),
         linhas: nLinhas,
@@ -2629,7 +2657,7 @@ function tabelaRepetibilidadeEmBranco(ctx: Contexto): NoObjeto {
   const cabecalho: CelulaTabela[] = [
     rotuloMiudo('Faixa'),
     dica([
-      { text: 'Carga aplicada', font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.rotulo },
+      { text: `Carga aplicada${marcaDaCarga(ctx)}`, font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.rotulo },
       { text: ` (${uc})`, fontSize: FONTE_DICA, color: T.suave },
     ]),
     ...Array.from({ length: LEITURAS_EM_BRANCO }, (_, j) => rotuloMiudo(`${j + 1}ª${quando(j + 1)}`)),
@@ -2678,7 +2706,12 @@ function tabelaRepetibilidades(ctx: Contexto, lista: PlanoFolha['repetibilidade'
   const linhas = lista.map((r, i): CelulaTabela[] => [
     semCarga(r)
       ? dica([
-          { text: `${i + 1} · Carga aplicada`, font: 'InterMedio', fontSize: FONTE_ROTULO, color: T.rotulo },
+          {
+            text: `${i + 1} · Carga aplicada${marcaDaCarga(ctx)}`,
+            font: 'InterMedio',
+            fontSize: FONTE_ROTULO,
+            color: T.rotulo,
+          },
           { text: ` (${uc})`, fontSize: FONTE_DICA, color: T.suave },
         ])
       : pre(celulaCarga(ctx, r, `${i + 1} · Carga`, comoRepetir(ctx, r.leituras, r))),
@@ -2891,7 +2924,7 @@ function passoExcentricidade(ctx: Contexto, n: number, fim: No[] = []): No[] {
             {
               width: '*',
               stack: [
-                grade([[campo(`Carga usada (${unidadeColuna(ctx)})`)]], ['*']),
+                grade([[campo(`Carga usada${marcaDaCarga(ctx)} (${unidadeColuna(ctx)})`)]], ['*']),
                 { ...posicoesEmBranco(ctx), margin: [0, ENTRE_GRADES, 0, 0] },
               ],
               margin: [8, 3, 0, 0],

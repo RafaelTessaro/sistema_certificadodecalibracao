@@ -17,7 +17,10 @@ export function PainelResultados({ calc, balanca, f }: Pick<ContextoEtapa, 'calc
     const e = Math.max(Math.abs(p.media?.erro ?? 0), Math.abs(p.crescente?.erro ?? 0), Math.abs(p.decrescente?.erro ?? 0))
     return Math.max(m, e)
   }, 0)
-  const rep = r?.repetibilidade[0]
+  // Só o que foi medido: o 1º ensaio de repetibilidade com 2 leituras ou mais, e a excentricidade com alguma posição
+  // além da referência (sem leituras, "—", e não 0,0000, que pareceria um resultado perfeito)
+  const rep = r?.repetibilidade.find((x) => x.n >= 2)
+  const eccMedida = !!r?.excentricidade.desvios.some((d, i) => i > 0 && d !== null)
   const avisos = [
     ...(r?.avisos ?? []),
     ...(calc?.comoEncontrado?.avisos.map((a) => ({ ...a, mensagem: `Antes do ajuste: ${a.mensagem}` })) ?? []),
@@ -46,7 +49,7 @@ export function PainelResultados({ calc, balanca, f }: Pick<ContextoEtapa, 'calc
         <Item
           rotulo="Excentricidade"
           valor={
-            r?.excentricidade.aplicavel
+            r?.excentricidade.aplicavel && eccMedida
               ? `${formatarNumero(r.excentricidade.maiorDesvio, casas)} ${u}`
               : f.excentricidade.aplicavel
                 ? '—'

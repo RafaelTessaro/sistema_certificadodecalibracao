@@ -332,8 +332,10 @@ function FormLembrete({
               Você mudou a mensagem: a lista de balanças no texto não acompanha a seleção acima. Use “Voltar ao modelo” para
               refazer.
             </span>
-          ) : (
+          ) : podeConfigurar ? (
             'O modelo desta mensagem fica em Configurações → Vencimentos e lembretes.'
+          ) : (
+            'O modelo desta mensagem é do administrador (Configurações → Vencimentos e lembretes).'
           )
         }
       >

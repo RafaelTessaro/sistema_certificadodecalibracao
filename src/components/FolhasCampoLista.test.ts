@@ -85,6 +85,31 @@ describe('aba "Folhas de campo"', () => {
     expect(t).toContain('não utilizado')
   })
 
+  it('a folha impressa sem a balança, ligada: a balança da calibração, dizendo que a folha saiu sem ela', () => {
+    const t = texto(
+      tabela([
+        folha({
+          situacao: 'ligada',
+          numeroCertificado: 'CC-2026-00002',
+          situacaoNumero: 'emitido',
+          calibracao: {
+            id: 'k3',
+            status: 'EMITIDO',
+            numero: 'CC-2026-00002',
+            clienteNome: 'Mercado Bom Preço',
+            balancaDescricao: 'Balança computadora (preço) Toledo Prix 4 Uno — 6/15/32 kg × 2/5/10 g',
+            balancaSerie: '4U-778812',
+          },
+        }),
+      ]),
+    )
+    expect(t).toContain('Computadora (preço) Toledo Prix 4 Uno — 6/15/32 kg × 2/5/10 g Série 4U-778812 · Impressa sem a balança')
+    expect(t).not.toContain('Em branco')
+    // O certificado ligado é o que vale (a correção, com o mesmo nº): sem "(substituído)"
+    expect(t).toContain('Ligada CC-2026-00002')
+    expect(t).not.toContain('substituído')
+  })
+
   it('a primeira impressão que não terminou: diz o que fazer e não oferece "Reimprimir"', () => {
     const h = tabela([folha({ impressaoInterrompida: true })])
     expect(texto(h)).toContain('Não ligada A impressão não terminou')

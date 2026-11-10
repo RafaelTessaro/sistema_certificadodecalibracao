@@ -22,15 +22,20 @@ import type { Balanca, CalibracaoInput, Cliente } from '#shared/tipos.ts'
 import calibracaoForm from '../../pages/CalibracaoForm.tsx?raw'
 import configuracoes from '../../pages/Configuracoes.tsx?raw'
 import formBalanca from '../BalancaFormModal.tsx?raw'
+import cartaoPop from '../CartaoPop.tsx?raw'
 import formCliente from '../ClienteFormModal.tsx?raw'
 import formPadrao from '../PadraoFormModal.tsx?raw'
 import { Field, LegendaObrigatorio } from '../ui/Form'
 import editarUsuario from '../usuarios/EditarUsuarioModal.tsx?raw'
 import novoUsuario from '../usuarios/NovoUsuarioModal.tsx?raw'
 import type { ContextoEtapa } from './contexto'
+import { EtapaExcentricidade } from './EtapaExcentricidade'
 import { EtapaIdentificacao } from './EtapaIdentificacao'
+import { EtapaInstrumento } from './EtapaInstrumento'
 import { EtapaPadroes } from './EtapaPadroes'
-import { destinoDaPendencia, etapaTemMarcas } from './obrigatorios'
+import { EtapaRepetibilidade } from './EtapaRepetibilidade'
+import { PENDENCIA_POP } from '#shared/arquivos.ts'
+import { destinoDaPendencia, destinoForaDaCalibracao, etapaTemMarcas } from './obrigatorios'
 
 vi.mock('../../store/sessao', () => ({
   useSessao: (seletor: (s: { usuario: { id: string; nome: string; signatario: boolean } }) => unknown) =>
@@ -142,6 +147,26 @@ describe('etapas da calibração: as marcas seguem as regras da emissão', () =>
     expect(texto(desenhar(EtapaIdentificacao, contexto(reparo)))).toContain('Nº da ordem de serviço (obrigatório)')
   })
 
+  it('Cliente e OS: a inscrição estadual do cliente, quando tem (sai no certificado embaixo do CNPJ)', () => {
+    const comIe = {
+      ...CLIENTE_VAZIO,
+      id: 'c1',
+      tipo: 'PJ',
+      razaoSocial: 'Mercado Bom Preço Ltda',
+      documento: '24.414.402/0001-09',
+    }
+    const t = texto(
+      desenhar(
+        EtapaIdentificacao,
+        contexto(nova(), balancaIII, { cliente: { ...comIe, inscricaoEstadual: '587229409110' } as Cliente }),
+      ),
+    )
+    expect(t).toContain('CNPJ 24.414.402/0001-09 Inscrição estadual 587229409110')
+    expect(texto(desenhar(EtapaIdentificacao, contexto(nova(), balancaIII, { cliente: comIe as Cliente })))).not.toContain(
+      'Inscrição estadual',
+    )
+  })
+
   it('o destaque do obrigatório em branco só depois de a pessoa passar por ele (ou chegar à revisão)', () => {
     const f = { ...nova(), tecnicoId: '' }
     expect(desenhar(EtapaIdentificacao, contexto(f))).not.toContain('data-pendente')
@@ -169,6 +194,58 @@ describe('etapas da calibração: as marcas seguem as regras da emissão', () =>
     const t = texto(desenhar(EtapaPadroes, contexto({ ...nova('III'), pressaoComoAviso: true })))
     expect(t).not.toContain('Pressão (obrigatório)')
     expect(t).toContain('Leitura opcional')
+  })
+
+  it('Excentricidade: a carga usada com a marca, como a "Carga aplicada" da repetibilidade; com as leituras e sem ela, o erro', () => {
+    const feita = (carga: number, leitura: number | null): CalibracaoInput => ({
+      ...nova('III'),
+      excentricidade: {
+        aplicavel: true,
+        motivo: '',
+        carga,
+        metodo: 1,
+        posicoes: ['Centro', 'Frente', 'Direita', 'Atrás', 'Esquerda'].map((rotulo) => ({ rotulo, leitura, referencia: null })),
+      },
+    })
+    const vazia = texto(desenhar(EtapaExcentricidade, contexto(feita(10, null))))
+    expect(vazia).toContain('Carga usada (obrigatório)')
+    expect(vazia).not.toContain('Informe a carga usada no ensaio.')
+    const semCarga = desenhar(EtapaExcentricidade, contexto(feita(0, 10)))
+    expect(texto(semCarga)).toContain('Carga usada (obrigatório)')
+    expect(texto(semCarga)).toContain('Informe a carga usada no ensaio.')
+    // No registro de antes das regras do POP, a falta dela é aviso (sem a marca)
+    expect(texto(desenhar(EtapaExcentricidade, contexto({ ...feita(0, 10), substituiId: 'orig' })))).not.toContain(
+      'Carga usada (obrigatório)',
+    )
+  })
+
+  it('Repetibilidade: a marca no título também sem nenhum ensaio (como "Erro de indicação ●"); o nº de cada leitura à vista', () => {
+    const vazia = texto(desenhar(EtapaRepetibilidade, contexto(nova('III'))))
+    expect(vazia).toContain('Repetibilidade (obrigatório)')
+    const comEnsaio = { ...nova('III'), repetibilidade: [{ id: 'r1', carga: 15, leituras: [null, null, null, null, null] }] }
+    const html = desenhar(EtapaRepetibilidade, contexto(comEnsaio))
+    expect(texto(html)).toContain('Repetibilidade (obrigatório)')
+    expect(texto(html)).toContain('Carga aplicada (obrigatório)')
+    // O nº da leitura vem depois do campo (por cima dele) e acima dele na pilha: o fundo do campo não o cobre
+    expect(html).toMatch(/aria-label="Leitura 1"[\s\S]*?<span[^>]*class="[^"]*z-10[^"]*"[^>]*>1<\/span>/)
+  })
+
+  it('Balança e ajuste: sem nº de série nem TAG, os dois com a marca e o aviso de como resolver (e a legenda da etapa)', () => {
+    const semId = { ...balancaIII, numeroSerie: '', identificacao: '' }
+    const t = texto(desenhar(EtapaInstrumento, contexto(nova('III'), semId)))
+    expect(t).toContain('Nº de série (indicador) (obrigatório)')
+    expect(t).toContain('Identificação / TAG (obrigatório)')
+    expect(t).toContain('Sem nº de série nem TAG, o certificado não pode ser emitido')
+    expect(t).toContain('Corrigir cadastro')
+    const campos = camposObrigatoriosEmissao(nova('III'), { padroes: [], classe: 'III', balanca: semId })
+    expect(etapaTemMarcas(campos, 'instrumento')).toBe(true)
+    // Com a série (basta uma das duas), sem marca nem aviso
+    const ok = texto(desenhar(EtapaInstrumento, contexto(nova('III'))))
+    expect(ok).not.toContain('(obrigatório)')
+    expect(ok).not.toContain('Sem nº de série nem TAG')
+    expect(
+      etapaTemMarcas(camposObrigatoriosEmissao(nova('III'), { padroes: [], classe: 'III', balanca: balancaIII }), 'instrumento'),
+    ).toBe(false)
   })
 
   it('a legenda "● obrigatório para emitir" só nas etapas com marca', () => {
@@ -223,7 +300,31 @@ describe('revisão: cada pendência leva à etapa e ao campo dela', () => {
       etapa: 'conclusao',
       alvo: 'k-prox',
     })
+    // O jogo sem a classe (sem o EMA da R111): o cadastro do padrão, pela etapa Padrões e ambiente
+    expect(
+      destinoDaPendencia(
+        'Pesos sem EMA conhecido (OIML R 111): o jogo P-02 está sem a classe. O EMA entra na incerteza dos pesos (deriva, empuxo ou valor nominal); confira a classe no cadastro do padrão.',
+        campos,
+      ),
+    ).toEqual({ etapa: 'padroes', alvo: 'k-pesos' })
+    expect(destinoDaPendencia('Pesos sem incerteza conhecida (classe ou U do certificado) em 10 kg.', campos)?.etapa).toBe(
+      'padroes',
+    )
+    expect(destinoDaPendencia('Excentricidade: informe a carga usada no ensaio (POP 7.10).', campos)?.etapa).toBe(
+      'excentricidade',
+    )
     expect(destinoDaPendencia('Registre o POP em Configurações.', campos)).toBeNull()
+  })
+
+  it('o POP sem registro: o texto diz que é com o administrador; só ele tem o caminho até Configurações', () => {
+    expect(PENDENCIA_POP).toContain('o administrador registra')
+    expect(destinoForaDaCalibracao(PENDENCIA_POP, true)).toEqual({
+      titulo: 'Configurações',
+      para: '/configuracoes?secao=certificado',
+    })
+    expect(destinoForaDaCalibracao(PENDENCIA_POP, false)).toBeNull()
+    expect(destinoForaDaCalibracao('Informe o técnico que executou a calibração.', true)).toBeNull()
+    expect(destinoDaPendencia(PENDENCIA_POP, [])).toBeNull()
   })
 
   it('na etapa Revisão e emissão, a pendência com destino é um botão com o nome da etapa', () => {
@@ -257,12 +358,21 @@ describe('cadastros: a legenda "● obrigatório para salvar" e as marcas das re
     expect(formPadrao).toContain('<LegendaObrigatorio para="salvar" vazada />')
     expect(formPadrao).toMatch(/obrigatoriosPadrao\(f\)\.includes\('identificacao'\)/)
     for (const c of ['certificado', 'acreditacao', 'validade']) expect(formPadrao).toContain(`paraEmitir('${c}')`)
+    // A classe do jogo de pesos (○), pela regra do cálculo (`classeDosPesosParaEmitir`, conferida em shared)
+    expect(formPadrao).toMatch(/classeDosPesosParaEmitir\(f\.uso, config\?\.opcoesPadrao \?\? OPCOES_CALCULO_PADRAO\)/)
+    expect(formPadrao).toMatch(/label="Classe \(OIML R111\)"[\s\S]{0,120}obrigatorio=\{classeParaEmitir\}\s+vazada/)
     for (const u of [novoUsuario, editarUsuario]) {
       expect(u).toContain('<LegendaObrigatorio para="salvar"')
       expect(u).toContain("OBRIGATORIOS_USUARIO.includes('nome')")
       expect(u).toContain("OBRIGATORIOS_USUARIO.includes('login')")
     }
     expect(configuracoes).toContain("OBRIGATORIOS_EMPRESA.includes('razaoSocial')")
+    // Configurações → E-mail e Registrar o POP: os que impedem salvar também com a marca e a legenda
+    expect(configuracoes).toContain('obrigatoriosEmail({ usuario, senhaDefinida: atual.senhaDefinida })')
+    for (const c of ['servidor', 'usuario', 'senha', 'remetenteEmail'])
+      expect(configuracoes).toContain(`obrigatorio={obrigatorio('${c}')}`)
+    expect(cartaoPop).toContain('<LegendaObrigatorio para="salvar" />')
+    for (const c of ['codigo', 'revisao', 'data']) expect(cartaoPop).toContain(`obrigatorio={OBRIGATORIOS_POP.includes('${c}')}`)
     expect(calibracaoForm).toContain('<LegendaObrigatorio para="começar"')
   })
 })

@@ -4,7 +4,7 @@ import { formatarNumero, leituraImplausivel, repetibilidadesSugeridas } from '#s
 import type { EnsaioRepetibilidade } from '#shared/tipos.ts'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
-import { Field, TEXTO_PENDENTE } from '../ui/Form'
+import { Field, MarcaObrigatorio, TEXTO_PENDENTE } from '../ui/Form'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
 import { marcasDaEtapa } from './obrigatorios'
@@ -35,7 +35,13 @@ export function EtapaRepetibilidade(ctx: ContextoEtapa) {
       <Card id="k-repetibilidade">
         <CardHeader
           icone={<Repeat className="h-4 w-4" />}
-          titulo="Repetibilidade"
+          // A marca também sem nenhum ensaio: o ensaio impede a emissão (como "Erro de indicação ●")
+          titulo={
+            <span className="inline-flex items-center gap-1.5">
+              Repetibilidade
+              {m.obrigatorio && <MarcaObrigatorio />}
+            </span>
+          }
           descricao="A mesma carga, várias vezes (POP 7.9). Zere antes de cada vez, coloque a carga no centro e registre a indicação."
           acoes={
             <Button tamanho="sm" icone={<Plus className="h-3.5 w-3.5" />} onClick={novo}>
@@ -113,10 +119,8 @@ export function EtapaRepetibilidade(ctx: ContextoEtapa) {
                   {/* Quantas colunas couberem, cada uma larga o bastante para "160,05 kg" */}
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-2">
                     {ens.leituras.map((v, i) => (
+                      // O nº da leitura depois do campo e acima dele (z-10): antes, o fundo do campo o cobria
                       <div key={i} className="relative">
-                        <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[11px] font-medium text-muted">
-                          {i + 1}
-                        </span>
                         <CampoNumero
                           id={`rep-${ens.id}-${i + 1}`}
                           valor={v}
@@ -129,6 +133,12 @@ export function EtapaRepetibilidade(ctx: ContextoEtapa) {
                           tom={ens.carga > 0 && leituraImplausivel(v, ens.carga, balanca) ? 'erro' : 'normal'}
                           unidade={u}
                         />
+                        <span
+                          aria-hidden
+                          className="pointer-events-none absolute top-1/2 left-3 z-10 -translate-y-1/2 text-[11px] font-medium text-muted"
+                        >
+                          {i + 1}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -155,11 +165,17 @@ export function EtapaRepetibilidade(ctx: ContextoEtapa) {
                 </div>
               </div>
             </div>
+            {/* Sem leituras, nada foi medido: "—", e não 0,0000 (que pareceria um resultado perfeito); o desvio-padrão e
+                a amplitude, com 2 leituras ou mais */}
             <div className="grid grid-cols-2 gap-px overflow-hidden rounded-b-2xl border-t border-line bg-line sm:grid-cols-4">
               <Resultado rotulo="Leituras" valor={r ? String(r.n) : '—'} />
-              <Resultado rotulo="Média" valor={r ? `${formatarNumero(r.media, casas + 1)} ${u}` : '—'} />
-              <Resultado rotulo="Desvio-padrão (s)" valor={r ? `${formatarNumero(r.s, casas + 1)} ${u}` : '—'} destaque />
-              <Resultado rotulo="Maior − menor" valor={r ? `${formatarNumero(r.amplitude, casas)} ${u}` : '—'} />
+              <Resultado rotulo="Média" valor={r && r.n >= 1 ? `${formatarNumero(r.media, casas + 1)} ${u}` : '—'} />
+              <Resultado
+                rotulo="Desvio-padrão (s)"
+                valor={r && r.n >= 2 ? `${formatarNumero(r.s, casas + 1)} ${u}` : '—'}
+                destaque={!!r && r.n >= 2}
+              />
+              <Resultado rotulo="Maior − menor" valor={r && r.n >= 2 ? `${formatarNumero(r.amplitude, casas)} ${u}` : '—'} />
             </div>
           </Card>
         )

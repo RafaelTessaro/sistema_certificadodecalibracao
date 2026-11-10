@@ -1,12 +1,13 @@
-import { leiturasDoMetodo, pontosEmOrdemDeCarga } from '#shared/calibracao.ts'
+import { comCargasDoEmaIncluidas, leiturasDoMetodo, pontosEmOrdemDeCarga } from '#shared/calibracao.ts'
 import {
   comMetodoIndicacaoDaClasse,
   METODOS_CARREGAMENTO,
   metodoIndicacaoForaDoPop,
   metodoIndicacaoPadrao,
+  numeroBr,
   temLeiturasDeCarga,
 } from '#shared/dominio.ts'
-import type { CalibracaoInput, ClasseExatidao, EnsaioIndicacao, MetodoCarregamento } from '#shared/tipos.ts'
+import type { Balanca, CalibracaoInput, ClasseExatidao, EnsaioIndicacao, MetodoCarregamento, Padrao } from '#shared/tipos.ts'
 
 /** Abas do erro de indicação: "antes do ajuste" (como encontrado) e "depois do ajuste" (o ensaio final). */
 export type AbaIndicacao = 'antes' | 'depois'
@@ -287,4 +288,46 @@ export async function voltarParaMetodoMedido(
   const n = leiturasEscondidasPelaTroca(e, medido)
   if (n > 0 && !(await confirmarEsconder(textoVoltarMetodo(n, medido)))) return null
   return { ...semMetodoMedido(e), metodo: medido }
+}
+
+/**
+ * Marca ou desmarca "O cliente pediu" (a declaração de conformidade). Ao marcar com o plano ainda sem nenhuma carga lida,
+ * as cargas em que o EMA muda que faltam entram no erro de indicação, sem leituras (POP 7.7; `comCargasDoEmaIncluidas`):
+ * na recalibração, o plano copiado da última calibração não as tem, e a folha impressa depois do pedido precisa delas.
+ * Com leituras, nada entra sozinho (o aviso diz quais faltam e oferece incluí-las). Desmarcar não tira nada. `incluidas`:
+ * as cargas que entraram, para a tela avisar.
+ */
+export function pedirConformidade(
+  f: CalibracaoInput,
+  solicitada: boolean,
+  balanca: Balanca,
+  padroes: Padrao[],
+): { f: CalibracaoInput; incluidas: number[] } {
+  const marcada = { ...f, conformidade: { ...f.conformidade, solicitada } }
+  if (!solicitada || f.conformidade.solicitada) return { f: marcada, incluidas: [] }
+  const r = comCargasDoEmaIncluidas(marcada, balanca, padroes, { soPlano: true })
+  return { f: r.calibracao, incluidas: r.incluidas }
+}
+
+/**
+ * O aviso de que as cargas em que o EMA muda entraram no erro de indicação (título e descrição do toast): ao marcar "O
+ * cliente pediu" ou pelo botão do aviso.
+ */
+export function textoCargasIncluidas(
+  cargas: number[],
+  unidade: string,
+  /** A folha de campo já impressa para esta calibração (o papel não tem as cargas): o nº, para dizer qual trocar. */
+  folhaImpressa?: string,
+): [string, string] {
+  const l = cargas.map((c) => `${numeroBr(c)} ${unidade}`)
+  const lista = l.length > 1 ? `${l.slice(0, -1).join(', ')} e ${l.at(-1)}` : (l[0] ?? '')
+  const uma = cargas.length === 1
+  return [
+    uma ? `Carga ${lista} incluída no erro de indicação` : `Cargas ${lista} incluídas no erro de indicação`,
+    `Com a declaração de conformidade, o POP (7.7) pede também ${uma ? 'a carga' : 'as cargas'} em que o EMA muda. ${
+      folhaImpressa
+        ? `A folha ${folhaImpressa}, já impressa, não ${uma ? 'a' : 'as'} tem: se ela ainda não foi a campo, imprima a “Folha nova (novo nº)” (etapa Cliente e OS).`
+        : 'Confira o plano antes de imprimir a folha de campo.'
+    }`,
+  ]
 }

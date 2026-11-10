@@ -15,7 +15,7 @@ import { abrirBanco, type Banco } from './db.ts'
 import { dataDaImpressaoNoPdf, folhaImpressaComRegrasDa105, numeroCertificadoNoPdf, Repositorio } from './repositorio.ts'
 import { PARAMETROS_LEVES } from './senha.ts'
 import { transplantarFolhasCampo } from './usuarios.ts'
-import { nomeArquivoDaFolha, numeroDaFolha } from './rotas/folhaCampo.ts'
+import { comBarometrosAtivos, nomeArquivoDaFolha, numeroDaFolha } from './rotas/folhaCampo.ts'
 
 let t: AppComLogin
 let cliente: Cliente
@@ -375,9 +375,11 @@ describe('folha avulsa ligada à calibração digitada', { timeout: 30_000 }, ()
     // Como o técnico digitaria: minúsculas, espaços e sem os zeros à esquerda
     const r = await ligar(k.id, `fc ${ano} 1`)
     expect(r.statusCode, r.body).toBe(200)
-    expect(r.json().folhaCampo).toMatchObject({ numero })
+    // Ligada pelo nº do papel (já preenchido no cliente): a tela não oferece folha nova para ela, só reimprimir
+    expect(r.json().folhaCampo).toMatchObject({ numero, avulsa: true })
     expect((await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().folhaCampo).toMatchObject({
       numero,
+      avulsa: true,
     })
     // Imprimir pela calibração reimprime com o nº que está no papel, sem reservar outro
     const pelaCalibracao = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
@@ -395,7 +397,15 @@ describe('folha avulsa ligada à calibração digitada', { timeout: 30_000 }, ()
       'x-folha-campo'
     ] as string
     expect(daBalanca).not.toBe(doAssistente)
+    // A impressa para a calibração pode dar lugar a uma folha nova; a da balança, ligada depois, não
+    expect((await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().folhaCampo).not.toHaveProperty(
+      'avulsa',
+    )
     expect((await ligar(k.id, daBalanca)).statusCode).toBe(200)
+    expect((await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().folhaCampo).toMatchObject({
+      numero: daBalanca,
+      avulsa: true,
+    })
     expect((await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json().folhaCampo.numero).toBe(
       daBalanca,
     )
@@ -1794,6 +1804,105 @@ describe('1.0.5: reimpressão pelo nº e folha do cliente com a OS', { timeout: 
     const r2 = await ligar(k2.id, emBranco.numero)
     expect(r2.statusCode, r2.body).toBe(200)
     expect(r2.json().marcas).toEqual({ pressaoComoAviso: true, cargasDoEmaNaFolha: true })
+  })
+
+  it('a folha da 1.0.5 ligada no lugar da de antes (engano no nº): a dispensa da pressão e das cargas do EMA sai e o barômetro volta', async () => {
+    const velha = await avulsa()
+    t.ctx.db.prepare('UPDATE folhas_campo SET antes_105 = 1 WHERE numero = ?').run(velha.numero)
+    const certa = await avulsa()
+    const k = await rascunho('')
+    const barometro = (await t.chamar('GET', '/api/padroes', { cookie: t.cookieAdmin }))
+      .json()
+      .padroes.find((x: { tipo: string }) => x.tipo === 'BAROMETRO')
+    // Ligada por engano a de antes: a dispensa e o barômetro fora
+    const r1 = await ligar(k.id, velha.numero)
+    expect(r1.json()).toMatchObject({ marcas: { pressaoComoAviso: true, cargasDoEmaNaFolha: true }, marcasRetiradas: null })
+    // A certa, da 1.0.5 (pede a pressão ●): as marcas saem, o barômetro volta (a versão sobe) e a pressão é pendência
+    const r2 = await ligar(k.id, certa.numero)
+    expect(r2.statusCode, r2.body).toBe(200)
+    expect(r2.json()).toMatchObject({
+      marcas: null,
+      marcasRetiradas: { pressaoComoAviso: false, cargasDoEmaNaFolha: false },
+      barometrosDevolvidos: { identificacoes: ['BR-90'] },
+      versao: r1.json().versao + 1,
+    })
+    expect(r2.json().barometrosDevolvidos.padroesIds).toContain(barometro.id)
+    expect(r2.json().folhaCampo).not.toHaveProperty('marcasRetiradas')
+    const d = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json()
+    expect(d.calibracao.pressaoComoAviso).toBeUndefined()
+    expect(d.calibracao.cargasDoEmaNaFolha).toBeUndefined()
+    expect(d.calibracao.padroesIds).toContain(barometro.id)
+    expect(d.pendencias.join(' ')).toMatch(/pressão atmosférica/)
+    expect(d.avisos.join(' ')).not.toMatch(/Sem a pressão atmosférica/)
+    const registro = registrosDaFolha()
+      .filter(([, alvo, x]) => alvo === k.id && x.startsWith('PUT'))
+      .at(-1)
+    expect(registro?.[2]).toContain('a folha é da 1.0.5: a pressão volta a ser obrigatória')
+    // A de antes, que ficou livre, ligada a outro rascunho (o papel dizia "opcional" e foi a campo com ele): a dispensa
+    // vale para ele
+    const outro = await rascunho('')
+    expect((await ligar(outro.id, velha.numero)).json()).toMatchObject({ marcas: { pressaoComoAviso: true } })
+  })
+
+  it('a folha nova (da 1.0.5) no lugar da de antes: a pressão volta a ser obrigatória; as cargas do EMA ficam, como saem nela', async () => {
+    const k = await rascunho('')
+    const primeira = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
+    // Como a migração 19/20 deixa o rascunho com a folha impressa pela 1.0.4
+    t.ctx.db.prepare('UPDATE folhas_campo SET antes_105 = 1 WHERE numero = ?').run(primeira.headers['x-folha-campo'] as string)
+    t.ctx.db
+      .prepare(
+        "UPDATE calibracoes SET dados = json_set(dados, '$.pressaoComoAviso', json('true'), '$.cargasDoEmaNaFolha', json('true')) WHERE id = ?",
+      )
+      .run(k.id)
+    const antes = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json()
+    expect(antes.calibracao).toMatchObject({ pressaoComoAviso: true, cargasDoEmaNaFolha: true })
+    const nova = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo?nova=a1b2c3d4-0000-4000-8000-000000000105`, {
+      cookie: t.cookieAdmin,
+    })
+    expect(nova.statusCode, nova.body).toBe(200)
+    const depois = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json()
+    expect(depois.calibracao.pressaoComoAviso).toBeUndefined()
+    expect(depois.calibracao.cargasDoEmaNaFolha).toBe(true)
+    // A versão não sobe (a tela aberta continua gravando): só a marca, que a tela não grava
+    expect(depois.calibracao.versao).toBe(antes.calibracao.versao)
+    if (temPdftotext) expect(textoDoPdf(nova.rawPayload)).toMatch(/Pressão ● \(hPa\)/)
+    // Com leituras medidas (a visita pode ter sido feita com a folha de antes), nada muda
+    const k2 = await rascunho('')
+    await t.chamar('GET', `/api/calibracoes/${k2.id}/folha-campo`, { cookie: t.cookieAdmin })
+    const lido = { ...k2, repetibilidade: [{ id: 'r', carga: 15, leituras: [15, 15, 15, 15, 15] }] }
+    expect((await t.chamar('PUT', `/api/calibracoes/${k2.id}`, { cookie: t.cookieAdmin, payload: lido })).statusCode).toBe(200)
+    t.ctx.db.prepare("UPDATE calibracoes SET dados = json_set(dados, '$.pressaoComoAviso', json('true')) WHERE id = ?").run(k2.id)
+    await t.chamar('GET', `/api/calibracoes/${k2.id}/folha-campo?nova=a1b2c3d4-0000-4000-8000-000000000106`, {
+      cookie: t.cookieAdmin,
+    })
+    expect(
+      (await t.chamar('GET', `/api/calibracoes/${k2.id}`, { cookie: t.cookieAdmin })).json().calibracao.pressaoComoAviso,
+    ).toBe(true)
+  })
+
+  it('rascunho sem barômetro nos padrões (classe III, de antes da 1.0.5): a folha lista o barômetro ativo para levar e não manda cadastrá-lo', async () => {
+    const k = await rascunho('')
+    const barometro = (await t.chamar('GET', '/api/padroes', { cookie: t.cookieAdmin }))
+      .json()
+      .padroes.find((x: Padrao) => x.tipo === 'BAROMETRO') as Padrao
+    // Como a 1.0.4 deixava o rascunho das classes III e IIII: sem o barômetro (a pressão era opcional)
+    const sem = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...k, padroesIds: k.padroesIds.filter((id) => id !== barometro.id) },
+    })
+    expect(sem.statusCode, sem.body).toBe(200)
+    expect(sem.json().calibracao.padroesIds).not.toContain(barometro.id)
+    const r = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
+    expect(r.statusCode, r.body).toBe(200)
+    if (temPdftotext) {
+      const texto = textoDoPdf(r.rawPayload)
+      expect(texto).toContain(barometro.identificacao)
+      expect(texto).not.toContain('Nenhum barômetro ativo cadastrado')
+    }
+    // A lista que vai para a folha: os da calibração e o barômetro ativo; o desativado, não; sem repetir
+    const desativado = { ...barometro, id: 'br-velho', identificacao: 'BR-01', ativo: false }
+    expect(comBarometrosAtivos([], [barometro, desativado]).map((p) => p.id)).toEqual([barometro.id])
+    expect(comBarometrosAtivos([barometro], [barometro]).map((p) => p.id)).toEqual([barometro.id])
   })
 
   it('a folha de antes da 1.0.5 de uma balança da classe II: só as cargas (a pressão já era obrigatória)', async () => {

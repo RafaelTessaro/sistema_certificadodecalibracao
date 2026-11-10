@@ -766,9 +766,14 @@ export interface VersaoCertificado {
   /** 1 = a primeira emissão do nº; 2 = a primeira correção… */
   versao: number
   status: StatusCalibracao
-  /** Quando e por quem esta versão foi emitida. */
+  /** Quando e por quem esta versão foi emitida (com a revisão ligada, quem autorizou). */
   emitidoEm: string
   emitidoPor: string
+  /**
+   * A correção: quem a abriu ("Corrigir certificado"), escreveu o motivo e alterou os dados (pode não ser quem emitiu
+   * ou autorizou). Ausente na primeira versão.
+   */
+  corrigidaPor?: string
   /** O motivo da correção que gerou esta versão (só no sistema); '' na primeira. */
   motivo: string
 }
@@ -880,6 +885,14 @@ export interface EmissaoCertificado {
    * Ausente = emitido antes, só com o CNPJ: o PDF refeito dos dados congelados sai igual ao emitido.
    */
   inscricaoEstadualDoCliente?: boolean
+  /**
+   * Emitido a partir da 1.0.5, quando a sugestão só traz as cargas em que o EMA muda com a declaração de conformidade
+   * pedida (POP 7.7): sem ela, a que está entre os pontos foi acordada com o cliente ("Adicionar ponto"), e a calibração
+   * seguinte da balança a mantém no plano copiado (`planoDoHistorico` em server/rascunhos.ts). Não vale para a calibração
+   * com a folha impressa antes da 1.0.5 (`Calibracao.cargasDoEmaNaFolha`) nem para a correção de um certificado de antes.
+   * Ausente = emitido antes (as sugestões sempre as traziam): o plano copiado sai sem elas.
+   */
+  cargasDoEmaAcordadas?: boolean
 }
 
 export interface Signatario {
@@ -1010,6 +1023,12 @@ export interface FolhaCampoImpressa {
   ultimaEm: string
   /** Numa revisão de certificado: a folha é a do certificado revisado (a mesma visita); não há folha nova. */
   herdada?: boolean
+  /**
+   * A folha não foi impressa para esta calibração: a avulsa (em branco, do cliente ou da balança), ou a de outra
+   * calibração, ligada pelo nº do papel preenchido no cliente. É o registro dos dados brutos: a tela não oferece folha
+   * nova para ela (só reimprimir; se o nº ligado estiver errado, ligue o certo).
+   */
+  avulsa?: boolean
   /** Folhas impressas antes para a calibração e substituídas por esta (não usadas), da mais antiga para a mais nova. */
   substituidas?: string[]
   /**
@@ -1055,13 +1074,19 @@ export interface FolhaCampoListada {
    */
   impressaoInterrompida?: boolean
   situacao: SituacaoFolhaCampo
-  /** Ligada ou substituída: a calibração (o cliente dela, para a folha em branco). */
+  /**
+   * Ligada ou substituída: a calibração (o cliente e a balança dela, para a folha em branco). Ligada a um certificado
+   * corrigido depois: a versão que vale (a correção, com o mesmo nº), não a substituída.
+   */
   calibracao?: {
     id: ID
     status: StatusCalibracao
     numero: string
     numeroReservado?: string
     clienteNome: string
+    /** Na folha impressa sem a balança (em branco ou só do cliente): a balança da calibração. */
+    balancaDescricao?: string
+    balancaSerie?: string
     /** Em REVISAO com a revisão por outra pessoa desligada (`CalibracaoResumo.semAutorizacao`). */
     semAutorizacao?: boolean
   }

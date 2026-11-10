@@ -3,6 +3,7 @@
 
 import { PENDENCIA_POP } from '#shared/arquivos.ts'
 import {
+  balancaIdentificada,
   minimosDoPopComoAviso,
   padroesDaCalibracao,
   PENDENCIAS_SO_DO_SERVIDOR,
@@ -45,6 +46,18 @@ export function estadoDoServidor(d: DetalheCalibracao) {
     // Para conferir, sem impedir a emissão (ausentes numa resposta de antes desta versão)
     avisos: d.avisos ?? [],
   }
+}
+
+/**
+ * A etapa em que o editor abre: a primeira ainda sem leituras digitadas. Com leituras no erro de indicação, a revisão;
+ * com alguma leitura da repetibilidade, a excentricidade; senão (null), a etapa 1 (Cliente e OS), onde ficam o técnico,
+ * a OS e o nº da folha de campo. O plano copiado da última calibração (os ensaios com a carga e as leituras em branco)
+ * não conta: a recalibração abre na etapa 1, como a primeira calibração da balança.
+ */
+export function etapaAoAbrir(k: Pick<CalibracaoInput, 'indicacao' | 'repetibilidade'>): IdEtapa | null {
+  if (k.indicacao.pontos.some((x) => x.crescente !== null)) return 'revisao'
+  if (k.repetibilidade.some((r) => r.leituras.some((l) => l !== null))) return 'excentricidade'
+  return null
 }
 
 /**
@@ -130,7 +143,8 @@ export function etapaCompleta(
     case 'identificacao':
       return !!f.dataCalibracao && !!f.tecnicoId && (f.local !== 'CLIENTE' || !!f.localEndereco.trim())
     case 'instrumento':
-      return f.ajuste.realizado !== 'EXTERNO' || !!f.ajuste.descricao.trim()
+      // A balança identificável (a série, a TAG ou a série da plataforma; POP 7.3), que a emissão pede
+      return (f.ajuste.realizado !== 'EXTERNO' || !!f.ajuste.descricao.trim()) && (!balanca || balancaIdentificada(balanca))
     case 'padroes': {
       const a = f.ambiente
       // Empuxo pela densidade do ar medida (classe I): a umidade e a pressão também; convecção: o ΔT pesos − ar

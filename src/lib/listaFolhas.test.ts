@@ -141,6 +141,10 @@ describe('lista das folhas de campo', () => {
       titulo:
         'A primeira impressão não terminou (o sistema foi interrompido), então a folha não saiu no papel. Marque-a como “Não vai ser usada” (em Números não utilizados) e imprima uma folha nova.',
     })
+    // O operador não tem o botão “Não vai ser usada” (só o administrador registra o nº como não utilizado)
+    expect(situacaoDaFolha(folha({ impressaoInterrompida: true }), { podeDescartar: false }).titulo).toBe(
+      'A primeira impressão não terminou (o sistema foi interrompido), então a folha não saiu no papel. Peça ao administrador para marcá-la como “Não vai ser usada” (em Números não utilizados) e imprima uma folha nova.',
+    )
     expect(
       situacaoDaFolha(
         folha({

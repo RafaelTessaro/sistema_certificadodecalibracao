@@ -1,4 +1,4 @@
-import { History, Pencil, Scale, SlidersHorizontal } from 'lucide-react'
+import { History, Pencil, Scale, SlidersHorizontal, TriangleAlert } from 'lucide-react'
 import { Fragment, type ReactNode } from 'react'
 import {
   AJUSTES,
@@ -28,6 +28,8 @@ import { pedeAjusteInterno } from './util'
 export function EtapaInstrumento(ctx: ContextoEtapa) {
   const { f, alterar, balanca, editarBalanca } = ctx
   const { marca } = marcasDaEtapa(ctx)
+  // Sem nº de série nem TAG (nem a série da plataforma), não emite (POP 7.3): a marca nos dois e o aviso de como resolver
+  const semIdentificacao = marca('identificacaoBalanca').obrigatorio
   // Ajuste externo, "como encontrado", reparo e verificação preliminar "não": só nos registros de antes do POP
   const anterior = registroAnterior(f)
   const ajusteAnterior = !!anterior && (anterior.ajusteExterno || anterior.comoEncontrado)
@@ -65,10 +67,15 @@ export function EtapaInstrumento(ctx: ContextoEtapa) {
           <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm @xl:grid-cols-3 @2xl:grid-cols-4">
             <Info rotulo="Tipo">{TIPOS_BALANCA[balanca.tipo]}</Info>
             <Info rotulo="Fabricante / modelo">{[balanca.fabricante, balanca.modelo].filter(Boolean).join(' ')}</Info>
-            <Info rotulo={separada?.rotulo === 'Indicador' ? 'Nº de série' : 'Nº de série (indicador)'}>
+            <Info
+              rotulo={separada?.rotulo === 'Indicador' ? 'Nº de série' : 'Nº de série (indicador)'}
+              obrigatorio={semIdentificacao}
+            >
               {balanca.numeroSerie}
             </Info>
-            <Info rotulo="Identificação / TAG">{balanca.identificacao}</Info>
+            <Info rotulo="Identificação / TAG" obrigatorio={semIdentificacao}>
+              {balanca.identificacao}
+            </Info>
             <Info rotulo="Capacidade × divisão">
               <SemQuebrarUnidade texto={capacidadeTexto(balanca)} />
             </Info>
@@ -89,6 +96,15 @@ export function EtapaInstrumento(ctx: ContextoEtapa) {
               {balanca.localInstalacao}
             </Info>
           </div>
+          {semIdentificacao && (
+            <p className="mt-4 flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                Sem nº de série nem TAG, o certificado não pode ser emitido: ele precisa identificar a balança (POP 7.3). Clique
+                em “Corrigir cadastro” e informe o nº de série da plaqueta ou a identificação no cliente (TAG, patrimônio).
+              </span>
+            </p>
+          )}
         </div>
       </Card>
 

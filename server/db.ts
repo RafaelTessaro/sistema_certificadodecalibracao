@@ -694,7 +694,9 @@ function temLeitura(k: Partial<Pick<Calibracao, 'indicacao' | 'comoEncontrado' |
  * ou a descida de um ponto com carga, ou uma etapa de substituição, como `temLeiturasDeCarga`), da repetibilidade ou da
  * excentricidade. O zero do erro de indicação não conta: "Sugerir os pontos" e "Refazer pontos" já o preenchem com 0.
  */
-function temLeituraMedida(k: Partial<Pick<Calibracao, 'indicacao' | 'comoEncontrado' | 'repetibilidade' | 'excentricidade'>>) {
+export function temLeituraMedida(
+  k: Partial<Pick<Calibracao, 'indicacao' | 'comoEncontrado' | 'repetibilidade' | 'excentricidade'>>,
+) {
   const lido = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
   const ensaios = [k.indicacao, k.comoEncontrado]
   return (

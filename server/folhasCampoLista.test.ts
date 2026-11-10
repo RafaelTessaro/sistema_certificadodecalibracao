@@ -127,6 +127,25 @@ describe('aba "Folhas de campo": a lista das folhas impressas', { timeout: 60_00
     })
     // O nº impresso na branca passou para o rascunho (o nº segue o papel)
     expect(da(s.branca).calibracao?.numeroReservado).toBe(da(s.branca).numeroCertificado)
+    // A balança da folha em branco é a da calibração ligada (a busca pela série a acha por ela)
+    expect(da(s.branca).calibracao?.balancaDescricao).toContain('Toledo 9094')
+    expect(da(s.branca).calibracao?.balancaSerie).toBe('TL-2231')
+    // A folha que já saiu com a balança não repete a da calibração
+    expect(da(s.nova).calibracao).not.toHaveProperty('balancaDescricao')
+  })
+
+  it('a folha de um certificado corrigido depois: ligada à correção que vale (o mesmo nº), não à versão substituída', async () => {
+    const s = await cenario()
+    const r = await t.chamar('POST', `/api/calibracoes/${s.k1.id}/revisar`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'OS digitada errada' },
+    })
+    expect(r.statusCode, r.body).toBe(201)
+    const correcao = (await c.emitir(r.json().calibracao)).json().calibracao as Calibracao
+    expect(correcao.numero).toBe(s.k1.numero)
+    const folha = (await listar(`?busca=${s.nova}`)).itens[0]
+    expect(folha.situacao).toBe('ligada')
+    expect(folha.calibracao).toMatchObject({ id: correcao.id, status: 'EMITIDO', numero: s.k1.numero })
   })
 
   it('filtros: não ligadas, ligadas e as que não vão ser usadas (substituídas e perdidas)', async () => {
@@ -153,6 +172,13 @@ describe('aba "Folhas de campo": a lista das folhas impressas', { timeout: 60_00
     expect(await numeros(`?busca=${s.doCliente.slice(-5)}`)).toEqual([s.doCliente])
     expect(await numeros(`?busca=${s.reservaDaBalanca.toLowerCase()}`)).toEqual([s.daBalanca])
     expect(await numeros('?busca=0777')).toEqual([s.doCliente])
+    // O nº curto, como "Ligar à calibração" aceita ("FC-2026-2", "fc 2026 2"): o da folha e o do certificado impresso nela
+    const curto = (n: string) => n.replace(/-0+(\d)/, '-$1')
+    expect(curto(s.doCliente)).not.toBe(s.doCliente)
+    expect(await numeros(`?busca=${curto(s.doCliente)}`)).toEqual([s.doCliente])
+    expect(await numeros(`?busca=${curto(s.doCliente).toLowerCase()}`)).toEqual([s.doCliente])
+    expect(await numeros(`?busca=${encodeURIComponent(curto(s.doCliente).replace(/-/g, ' '))}`)).toEqual([s.doCliente])
+    expect(await numeros(`?busca=${curto(s.reservaDaBalanca).toLowerCase()}`)).toEqual([s.daBalanca])
     expect(await numeros(`?busca=${encodeURIComponent('os 55')}`)).toEqual([s.branca])
     // O cliente com ou sem acento; a em branco aparece pela calibração a que foi ligada
     expect(await numeros(`?busca=${encodeURIComponent('bom preco')}`)).toEqual([

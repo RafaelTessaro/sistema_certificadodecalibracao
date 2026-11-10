@@ -285,21 +285,63 @@ export function avisoDaFolhaCargasDaConformidade(
 }
 
 /**
+ * As cargas em que o EMA muda (POP 7.7 e Tabela 2) que faltam entre os pontos do erro de indicação, incluídas como
+ * pontos sem leituras, com os pesos montados pela classe (`montarCarga`; sem os pesos, as peças ficam para o editor e a
+ * folha montarem) e na ordem das cargas (`pontosEmOrdemDeCarga`). É o plano da declaração de conformidade pedida: o
+ * editor, ao marcar "O cliente pediu" (`soPlano`: só enquanto nenhuma carga foi lida; o zero não conta) ou pelo botão do
+ * aviso, e o rascunho que nasce com o pedido copiado da última calibração. Assim a folha impressa depois do pedido já sai
+ * com elas. `incluidas`: as cargas que entraram, em ordem; [] = nada mudou (o mesmo objeto): sem classe, sem os pontos
+ * (a sugestão já as traz), já com todas ou, com `soPlano`, com alguma carga lida.
+ */
+export function comCargasDoEmaIncluidas<T extends Pick<CalibracaoInput, 'indicacao'>>(
+  k: T,
+  balanca: Balanca | null | undefined,
+  padroes: Padrao[],
+  o: { soPlano?: boolean } = {},
+): { calibracao: T; incluidas: number[] } {
+  const pontos = k.indicacao.pontos
+  const nada = { calibracao: k, incluidas: [] }
+  if (!balanca || !pontos.length) return nada
+  if (o.soPlano && pontos.some((p) => p.carga > 0 && (p.crescente !== null || p.decrescente !== null))) return nada
+  const faltam = cargasDeMudancaDoEmaQueFaltam(
+    balanca,
+    pontos.map((p) => p.carga),
+  )
+  if (!faltam.length) return nada
+  const pesos = padroes.filter((p) => p.tipo === 'PESOS')
+  const novos: PontoIndicacao[] = faltam.map((carga) => ({
+    id: novoId(),
+    carga,
+    pecas: pesos.length ? montarCarga(carga, balanca.unidade, pesos, balanca).pecas : [],
+    pecasManuais: false,
+    crescente: null,
+    decrescente: null,
+    nivelSubstituicao: 0,
+  }))
+  return {
+    calibracao: { ...k, indicacao: { ...k.indicacao, pontos: pontosEmOrdemDeCarga([...pontos, ...novos]) } },
+    incluidas: faltam,
+  }
+}
+
+/**
  * O plano do erro de indicação copiado da última calibração emitida para a nova da mesma balança ("Nova calibração",
- * "Calibrar de novo" e a folha da balança), sem a declaração de conformidade pedida (`conformidade`): saem as cargas em
- * que o EMA muda (`cargasDeMudancaDoEma`; POP 7.7), que as sugestões até a 1.0.4 sempre traziam. Fica a que também é
- * uma das sugeridas (o mínimo do cg-18: 0, Min, ~25, 50 e 75 % de Max e Max; `pontosSugeridos`), a acordada com o
- * cliente e a montada sobre as etapas de substituição (rodoviária: é da sequência delas). Sobrando menos de 5 cargas
- * (contando o zero; o mínimo do POP), entram as sugeridas que faltam, sem leituras e com os pesos automáticos. Nada a
- * tirar (com o pedido, sem classe, sem elas): o mesmo plano.
+ * "Calibrar de novo" e a folha da balança), sem a declaração de conformidade pedida: saem as cargas em que o EMA muda
+ * (`cargasDeMudancaDoEma`; POP 7.7), que as sugestões até a 1.0.4 sempre traziam. Fica a que também é uma das sugeridas
+ * (o mínimo do cg-18: 0, Min, ~25, 50 e 75 % de Max e Max; `pontosSugeridos`), a acordada com o cliente e a montada
+ * sobre as etapas de substituição (rodoviária: é da sequência delas). Sobrando menos de 5 cargas (contando o zero; o
+ * mínimo do POP), entram as sugeridas que faltam, sem leituras e com os pesos automáticos. `manter`: o plano fica como
+ * veio — com a declaração pedida, ou copiado de um certificado emitido a partir da 1.0.5, em que a carga do EMA entre os
+ * pontos foi acordada (a sugestão já não a trazia; `EmissaoCertificado.cargasDoEmaAcordadas`). Nada a tirar (sem classe,
+ * sem elas): o mesmo plano.
  */
 export function planoDoHistoricoSemConformidade<T extends Pick<CalibracaoInput, 'indicacao'>>(
   k: T,
   balanca: Balanca | null | undefined,
   padroes: Padrao[],
-  conformidade: boolean,
+  manter: boolean,
 ): T {
-  if (!balanca || conformidade) return k
+  if (!balanca || manter) return k
   const ema = cargasDeMudancaDoEma(balanca)
   if (!ema.length) return k
   const sugeridas = pontosSugeridos(

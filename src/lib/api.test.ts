@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, conectarTempoReal, consultaAuditoria, definirAoErroSessao, ErroApi, type Ola } from './api'
+import { api, conectarTempoReal, consultaAuditoria, definirAoErroSessao, ErroApi, JANELA_FOLHA_AVULSA_MS, type Ola } from './api'
 
 /** `fetch` simulado: responde `status` com o corpo em JSON e guarda os pedidos. */
 function simularFetch(status: number, corpo: unknown = {}) {
@@ -122,11 +122,19 @@ describe('rotas de sessão e usuários', () => {
 describe('calibrações', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('folha de campo: da calibração e avulsa (balança, cliente ou em branco), com uma chave nova a cada vez', () => {
+  it('folha de campo: da calibração e avulsa (balança, cliente ou em branco), com uma chave nova a cada pedido', () => {
     expect(api.urlFolhaCampo('k/1')).toBe('/api/calibracoes/k%2F1/folha-campo')
-    const branco = api.urlFolhaCampoAvulsa()
-    expect(branco).toMatch(/^\/api\/folha-campo\?chave=[0-9a-f-]{36}$/)
-    expect(api.urlFolhaCampoAvulsa()).not.toBe(branco)
+    vi.useFakeTimers()
+    try {
+      const branco = api.urlFolhaCampoAvulsa()
+      expect(branco).toMatch(/^\/api\/folha-campo\?chave=[0-9a-f-]{36}$/)
+      // O clique duplo (o mesmo pedido logo em seguida) é a mesma folha; passados alguns segundos, outra
+      expect(api.urlFolhaCampoAvulsa()).toBe(branco)
+      vi.advanceTimersByTime(JANELA_FOLHA_AVULSA_MS + 1)
+      expect(api.urlFolhaCampoAvulsa()).not.toBe(branco)
+    } finally {
+      vi.useRealTimers()
+    }
     expect(api.urlFolhaCampoAvulsa({ balancaId: 'b 1' })).toMatch(/^\/api\/folha-campo\?balancaId=b\+1&chave=[0-9a-f-]{36}$/)
     expect(api.urlFolhaCampoAvulsa({ clienteId: 'c1' })).toMatch(/^\/api\/folha-campo\?clienteId=c1&chave=/)
     // Do cliente com a OS e a data prevista; sem OS (ou só espaços), sem o parâmetro

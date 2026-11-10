@@ -26,6 +26,7 @@ import type { ContextoEtapa } from './contexto'
 import {
   balancaMudaRascunho,
   estadoDoServidor,
+  etapaAoAbrir,
   etapaCompleta,
   padroesDoEditor,
   pendenciasDaTela,
@@ -189,6 +190,50 @@ describe('etapa Padrões e ambiente na lista de etapas', () => {
         balanca: { ...balanca, classe: 'II' },
       }),
     ).toBe(false)
+  })
+})
+
+describe('a etapa em que o editor abre', () => {
+  const ponto = (carga: number, crescente: number | null): PontoIndicacao => ({
+    id: `p${carga}`,
+    carga,
+    pecas: [],
+    pecasManuais: false,
+    crescente,
+    decrescente: null,
+    nivelSubstituicao: 0,
+  })
+  const plano = (leituraRep: number | null, crescente: number | null): CalibracaoInput => {
+    const k = calibracaoVazia()
+    return {
+      ...k,
+      repetibilidade: [{ id: 'r', carga: 4.8, leituras: [leituraRep, null, null, null, null] }],
+      indicacao: { ...k.indicacao, pontos: [ponto(0, null), ponto(8, crescente), ponto(16, null)] },
+    }
+  }
+
+  it('a recalibração (o plano copiado da última, sem leituras) abre na etapa 1, como a primeira calibração', () => {
+    expect(etapaAoAbrir(plano(null, null))).toBeNull()
+    expect(etapaAoAbrir(calibracaoVazia())).toBeNull()
+  })
+
+  it('retoma na primeira etapa ainda sem leituras: depois da repetibilidade, a excentricidade; com o erro de indicação, a revisão', () => {
+    expect(etapaAoAbrir(plano(4.8, null))).toBe('excentricidade')
+    expect(etapaAoAbrir(plano(null, 8.005))).toBe('revisao')
+    expect(etapaAoAbrir(plano(4.8, 8.005))).toBe('revisao')
+  })
+})
+
+describe('etapa Balança e ajuste na lista de etapas', () => {
+  it('sem nº de série nem TAG, a etapa fica sem o ✓ (a emissão pede a identificação, POP 7.3)', () => {
+    const f = calibracaoVazia()
+    const de = (b: Partial<Balanca>) =>
+      etapaCompleta('instrumento', { f, calc: null, selecionados: [], balanca: { ...BALANCA_VAZIA, ...b } as Balanca })
+    expect(de({ numeroSerie: '', identificacao: '' })).toBe(false)
+    expect(de({ numeroSerie: 'SN-1', identificacao: '' })).toBe(true)
+    expect(de({ numeroSerie: '', identificacao: 'BAL-04' })).toBe(true)
+    // Sem a balança no contexto (ainda carregando), só o ajuste conta
+    expect(etapaCompleta('instrumento', { f, calc: null, selecionados: [] })).toBe(true)
   })
 })
 

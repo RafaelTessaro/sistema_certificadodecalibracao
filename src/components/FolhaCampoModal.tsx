@@ -10,8 +10,10 @@ export type EscolhaFolha = 'reimprimir' | 'nova'
 
 /**
  * A calibração já tem folha de campo: reimprimir a mesma (o mesmo nº é sempre o mesmo papel, igual à primeira
- * impressão) ou imprimir uma folha nova, com nº novo e os dados atuais (a de antes fica registrada como não
- * usada). Aberta com `folha`; `foco` é a opção que já vem selecionada (a do botão que abriu).
+ * impressão) ou imprimir uma folha nova, com nº de folha novo, o mesmo nº de certificado e os dados atuais (a de
+ * antes fica registrada como não usada). Só para a folha impressa para a calibração (`temFolhaNova`): a avulsa
+ * ligada e a da correção só se reimprimem. Aberta com `folha`; `foco` é a opção que já vem selecionada (a do botão
+ * que abriu).
  */
 export function FolhaCampoModal({
   folha,
@@ -59,7 +61,8 @@ export function FolhaCampoModal({
           titulo="Folha nova (novo nº)"
           texto={
             <>
-              {TEXTO_FOLHA_NOVA}. A {numeroFc} fica registrada como não usada: só se ela ainda não foi a campo.
+              {TEXTO_FOLHA_NOVA}: nº de folha novo, o mesmo nº de certificado. A {numeroFc} fica registrada como não usada: só se
+              ela ainda não foi a campo.
             </>
           }
           autoFocus={foco === 'nova'}

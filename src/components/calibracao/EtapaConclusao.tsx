@@ -1,6 +1,6 @@
-import { BellRing, ChevronDown, FileText, Info, Scale3d, Settings2, TriangleAlert } from 'lucide-react'
+import { BellRing, ChevronDown, FileText, Info, ListPlus, Scale3d, Settings2, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
-import { avisoCargasDaConformidade } from '#shared/calibracao.ts'
+import { avisoCargasDaConformidade, comCargasDoEmaIncluidas } from '#shared/calibracao.ts'
 import {
   calculoLegado,
   CRITERIOS_EMA,
@@ -13,16 +13,21 @@ import {
 } from '#shared/dominio.ts'
 import type { ClasseExatidao, CriterioEma, OpcoesCalculo, RegraDecisao, Unidade } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
+import { temFolhaNova } from '../../lib/folhaCampo'
+import { toast } from '../../store/ui'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Field, Input, Select, Textarea } from '../ui/Form'
 import { CampoNumero } from './CampoNumero'
 import type { ContextoEtapa } from './contexto'
+import { pedirConformidade, textoCargasIncluidas } from './indicacao'
 import { marcasDaEtapa } from './obrigatorios'
 import { diaSeguinte } from './util'
 
 export function EtapaConclusao(ctx: ContextoEtapa) {
-  const { f, alterar, balanca, config } = ctx
+  const { f, alterar, balanca, config, selecionados, folhaCampo } = ctx
+  // A folha já impressa para esta calibração (dá para trocar pela folha nova): o papel não tem as cargas incluídas agora
+  const folhaImpressa = temFolhaNova(folhaCampo) ? folhaCampo!.numero : undefined
   // Obrigatórios para emitir: a tolerância do cliente (na conformidade pela tolerância dele) e a próxima calibração
   // (quando o cliente pediu a data no certificado)
   const { marca } = marcasDaEtapa(ctx)
@@ -31,8 +36,21 @@ export function EtapaConclusao(ctx: ContextoEtapa) {
     alterar((s) => ({ ...s, conformidade: { ...s.conformidade, [k]: v } }))
   const avisosObs = termosSensiveis(`${f.observacoes}\n${f.opinioes}`)
   const semClasse = !balanca.classe && conf.criterio !== 'CLIENTE'
-  // Pedida depois de a folha sair sem as cargas em que o EMA muda (POP 7.7): o aviso, que não impede emitir
+  // Pedida depois de a folha sair sem as cargas em que o EMA muda (POP 7.7): o aviso, que não impede emitir, e o botão
+  // que as inclui (sem leituras) quando não estão entre os pontos
   const semCargasDoEma = avisoCargasDaConformidade(f, balanca)
+  const paraIncluir = semCargasDoEma ? comCargasDoEmaIncluidas(f, balanca, selecionados).incluidas : []
+  // Marcar com o plano ainda sem leituras (o copiado da última calibração não as tem): as cargas em que o EMA muda entram
+  // no erro de indicação, e a folha impressa depois já sai com elas
+  const marcarPedido = (solicitada: boolean) => {
+    const { incluidas } = pedirConformidade(f, solicitada, balanca, selecionados)
+    alterar((s) => pedirConformidade(s, solicitada, balanca, selecionados).f)
+    if (incluidas.length) toast.info(...textoCargasIncluidas(incluidas, balanca.unidade, folhaImpressa))
+  }
+  const incluirCargas = () => {
+    alterar((s) => comCargasDoEmaIncluidas(s, balanca, selecionados).calibracao)
+    toast.info(...textoCargasIncluidas(paraIncluir, balanca.unidade, folhaImpressa))
+  }
   return (
     <div className="flex flex-col gap-6">
       <Card>
@@ -45,7 +63,7 @@ export function EtapaConclusao(ctx: ContextoEtapa) {
               <input
                 type="checkbox"
                 checked={conf.solicitada}
-                onChange={(e) => setConf('solicitada', e.target.checked)}
+                onChange={(e) => marcarPedido(e.target.checked)}
                 className="h-4 w-4 accent-[var(--brand)]"
               />
               O cliente pediu
@@ -94,10 +112,17 @@ export function EtapaConclusao(ctx: ContextoEtapa) {
               </Select>
             </Field>
             {semCargasDoEma && (
-              <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning sm:col-span-2">
+              <div className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning sm:col-span-2">
                 <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-                {semCargasDoEma}
-              </p>
+                <div className="min-w-0 flex-1">
+                  <p>{semCargasDoEma}</p>
+                  {paraIncluir.length > 0 && (
+                    <Button tamanho="sm" className="mt-2" icone={<ListPlus className="h-3.5 w-3.5" />} onClick={incluirCargas}>
+                      Incluir no erro de indicação
+                    </Button>
+                  )}
+                </div>
+              </div>
             )}
             {semClasse && (
               <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning sm:col-span-2">

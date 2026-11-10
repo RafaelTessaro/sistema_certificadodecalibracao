@@ -12,6 +12,7 @@ import { useConsulta } from '../lib/consulta'
 import { abrirFolhaCampo, textoReimprimir } from '../lib/folhaCampo'
 import { balancaNaLista, numero as formatarNumero } from '../lib/format'
 import {
+  balancaDaFolha,
   FILTROS_FOLHAS,
   type FiltroFolhas,
   paraQuemEaFolha,
@@ -20,6 +21,7 @@ import {
   situacaoDaFolha,
 } from '../lib/listaFolhas'
 import { cn } from '../lib/cn'
+import { usePode } from '../store/sessao'
 import { EsqueletoTabela } from '../pages/Clientes'
 import { rotaCalibracao } from './CertificadosTabela'
 import { Badge } from './ui/Badge'
@@ -170,9 +172,12 @@ export function TabelaFolhas({ itens }: { itens: FolhaCampoListada[] }) {
 }
 
 function LinhaFolha({ f, indice }: { f: FolhaCampoListada; indice: number }) {
+  // Só o administrador marca a folha como “Não vai ser usada”: a dica da folha cuja impressão não terminou depende disso
+  const podeDescartar = usePode('cancelarCertificado')
   // A primeira impressão não terminou: não há PDF para reimprimir (a situação diz o que fazer)
   const semPdf = !!f.impressaoInterrompida
   const para = paraQuemEaFolha(f)
+  const balanca = balancaDaFolha(f)
   const pre = preNumeroDaFolha(f)
   const impressa = quandoFoiImpressa(f)
   return (
@@ -207,12 +212,16 @@ function LinhaFolha({ f, indice }: { f: FolhaCampoListada; indice: number }) {
         )}
       </Td>
       <Td className="max-w-0 min-w-40 max-md:hidden">
-        {f.balancaDescricao ? (
+        {balanca.descricao ? (
           <>
-            <p className="truncate text-ink-2" title={f.balancaDescricao}>
-              {balancaNaLista(f.balancaDescricao)}
+            <p className="truncate text-ink-2" title={balanca.descricao}>
+              {balancaNaLista(balanca.descricao)}
             </p>
-            {f.balancaSerie && <p className="tnum truncate text-xs text-muted">Série {f.balancaSerie}</p>}
+            {(balanca.serie || balanca.detalhe) && (
+              <p className="tnum truncate text-xs text-muted">
+                {[balanca.serie && `Série ${balanca.serie}`, balanca.detalhe].filter(Boolean).join(' · ')}
+              </p>
+            )}
           </>
         ) : (
           <span className="text-muted">{f.origem === 'recuperada' ? '—' : 'Em branco'}</span>
@@ -238,7 +247,7 @@ function LinhaFolha({ f, indice }: { f: FolhaCampoListada; indice: number }) {
           tamanho="sm"
           variante="ghost"
           icone={<Printer className="h-3.5 w-3.5" />}
-          title={semPdf ? situacaoDaFolha(f).titulo : textoReimprimir(f)}
+          title={semPdf ? situacaoDaFolha(f, { podeDescartar }).titulo : textoReimprimir(f)}
           aria-label={`Reimprimir a folha ${f.numero}`}
           disabled={semPdf}
           onClick={() => void abrirFolhaCampo(api.urlReimprimirFolha(f.numero))}
@@ -256,7 +265,7 @@ function LinhaFolha({ f, indice }: { f: FolhaCampoListada; indice: number }) {
  * celular) a folha que ficou no lugar dela ou o motivo de não ser usada.
  */
 function SituacaoFolha({ f, compacta, className }: { f: FolhaCampoListada; compacta?: boolean; className?: string }) {
-  const s = situacaoDaFolha(f)
+  const s = situacaoDaFolha(f, { podeDescartar: usePode('cancelarCertificado') })
   const Icone = ICONE_SITUACAO[f.situacao]
   return (
     <span className={cn('flex flex-col items-start gap-1', className)}>

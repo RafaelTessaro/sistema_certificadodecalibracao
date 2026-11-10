@@ -87,7 +87,9 @@ describe('revisão por outra pessoa desligada: qualquer pessoa emite', () => {
     expect(t).not.toContain('Enviar para autorização')
     expect(t).not.toContain('Autorizar e emitir')
     expect(t).toContain('Executado por Ana Signatária')
-    expect(t).toContain('Emitido por Bia Técnica')
+    // Antes de emitir, no presente: quem vai emitir (não "Emitido por", que pareceria já emitido)
+    expect(t).toContain('Quem emite Bia Técnica')
+    expect(t).not.toContain('Emitido por')
     expect(t).not.toContain('Autorizado por')
     expect(t).toContain('O certificado sai só com a assinatura de quem executou.')
   })
@@ -161,7 +163,9 @@ describe('revisão por outra pessoa ligada: a enviada para autorização', () =>
     expect(t).toContain('Autorizar e emitir')
     expect(t).toContain('Devolver')
     expect(t).toContain('Bia Técnica pediu a sua autorização')
-    expect(t).toContain('Autorizado por Ana Signatária')
+    // Ainda não autorizou: "Quem autoriza", não "Autorizado por"
+    expect(t).toContain('Quem autoriza Ana Signatária')
+    expect(t).not.toContain('Autorizado por Ana')
     expect(t).not.toContain('Voltar para rascunho')
   })
 
@@ -173,7 +177,8 @@ describe('revisão por outra pessoa ligada: a enviada para autorização', () =>
       expect(t).toContain('Voltar para rascunho')
       expect(t).not.toContain('Autorizar e emitir')
       expect(t).not.toContain('Devolver')
-      expect(t).toContain('Autorizado por Ana Signatária')
+      expect(t).toContain('Quem autoriza Ana Signatária')
+      expect(t).not.toContain('Autorizado por Ana')
     }
   })
 
@@ -208,8 +213,11 @@ describe('o número na prévia da emissão', () => {
     expect(t).toContain(
       'A correção sai com o mesmo número e a data de emissão nova; a versão anterior e o motivo ficam só no sistema.',
     )
-    // Sem correção: o exemplo do nº que a emissão dá, sem sufixo
-    expect(etapa({ exigirRevisor: false })).toMatch(/Gerado na emissão \(ex\.: CC-\d{4}-00001\)/)
+    // Sem correção: o nº sai na emissão, o próximo da sequência do ano (sem um exemplo com a sequência 1, que pareceria
+    // o nº que ele vai receber mesmo com o CC-…-00001 já emitido)
+    const semNumero = etapa({ exigirRevisor: false })
+    expect(semNumero).toMatch(/Número Gerado na emissão: o próximo da sequência de \d{4}/)
+    expect(semNumero).not.toMatch(/CC-\d{4}-00001/)
   })
 })
 

@@ -48,7 +48,7 @@ import {
   type FinalidadeArquivo,
 } from '#shared/arquivos.ts'
 import { somenteDigitos, normalizarCnpj } from '#shared/documentos.ts'
-import { MARCA_FOLHA_REGRAS_105 } from '#shared/folhaCampo.ts'
+import { MARCA_FOLHA_REGRAS_105, numeroDaFolha } from '#shared/folhaCampo.ts'
 import { novoId } from '#shared/id.ts'
 import { impedimentoDaTrocaDoTecnico } from '#shared/permissoes.ts'
 import type {
@@ -77,7 +77,7 @@ import type {
   VersaoPop,
 } from '#shared/tipos.ts'
 import { cargasDeMudancaDoEma, folhaDeAntesComCargasDoEma } from '#shared/metrologia/sugestoes.ts'
-import { type Banco, gravarMeta, lerMeta, transacao } from './db.ts'
+import { type Banco, gravarMeta, lerMeta, temLeituraMedida, transacao } from './db.ts'
 import { ErroApi } from './erros.ts'
 
 /** A folha foi impressa para esta calibração (a dela, ou uma folha nova dela), e não avulsa e ligada depois. */
@@ -1584,6 +1584,8 @@ export class Repositorio {
       status: v.status,
       emitidoEm: v.emissao?.emitidoEm ?? '',
       emitidoPor: v.emissao?.emitidoPor ?? '',
+      // Quem abriu a correção (pode não ser quem a emitiu ou autorizou)
+      ...(i > 0 ? { corrigidaPor: v.criadoPor ?? '' } : {}),
       motivo: i > 0 ? v.motivoRevisao : '',
     }))
   }
@@ -1718,6 +1720,8 @@ export class Repositorio {
     liberadas: string[]
     numeroCertificado: string
     eventos: EventoNumero[]
+    /** Folha nova (da 1.0.5) no lugar da folha de antes: as marcas dela que saíram (`semMarcasDaFolhaDeAntes`). */
+    marcasRetiradas?: MarcasDaFolha | null
   } {
     return transacao(this.db, () => {
       const agora = this.agora().toISOString()
@@ -1796,6 +1800,8 @@ export class Repositorio {
       const troca = e.nova && e.calibracaoId ? this.substituirFolhas(e.calibracaoId, numero, agora) : semTroca()
       // Depois da troca: o nº que a calibração tinha recebido de uma avulsa trocada agora voltou para ela
       const cert = this.numeroParaFolha(numero, e)
+      // A folha nova (da 1.0.5, que pede a pressão) no lugar da de antes: a dispensa dela sai
+      const marcasRetiradas = e.nova && e.calibracaoId ? this.semMarcasDaFolhaDeAntes(e.calibracaoId) : null
       // A tela da calibração passa a mostrar o nº da folha (a lista dos nºs reservados, o da avulsa)
       if (e.calibracaoId) this.mudou('calibracao', e.calibracaoId)
       else if (cert.eventos.length) this.mudou('calibracao')
@@ -1807,6 +1813,7 @@ export class Repositorio {
         liberadas: troca.liberadas,
         numeroCertificado: cert.numero,
         eventos: [...troca.eventos, ...cert.eventos],
+        marcasRetiradas,
       }
     })
   }
@@ -2635,7 +2642,14 @@ export class Repositorio {
       substituidas.push(...linhas.filter((l) => l.substituida_por).map((l) => l.numero))
       const vigente = linhas.filter((l) => !l.substituida_por).at(-1)
       const folha = vigente && this.folhaCampo(vigente.numero)
-      if (folha) return { ...folha, herdada: id !== calibracaoId, substituidas }
+      if (folha) {
+        // Ligada pelo nº do papel (não impressa para esta calibração): o registro dos dados brutos, sem folha nova
+        const { chave } = this.db.prepare('SELECT chave FROM folhas_campo WHERE numero = ?').get(folha.numero) as {
+          chave: string
+        }
+        const avulsa = id === calibracaoId && !impressaPara(chave, calibracaoId)
+        return { ...folha, herdada: id !== calibracaoId, ...(avulsa ? { avulsa: true } : {}), substituidas }
+      }
       const passou = this.db
         .prepare(
           `SELECT p.numero, f.calibracao_id AS dono FROM folhas_campo_passagens p JOIN folhas_campo f ON f.numero = p.numero
@@ -2737,6 +2751,9 @@ export class Repositorio {
     ordemServico: OsDaFolha | null
     marcas: MarcasDaFolha | null
     barometrosRetirados: BarometrosRetirados | null
+    /** A folha da 1.0.5 ligada no lugar da de antes: as marcas que saíram e o barômetro que voltou aos padrões. */
+    marcasRetiradas: MarcasDaFolha | null
+    barometrosDevolvidos: BarometrosRetirados | null
   } {
     // Sem registro, mas com o PDF na pasta: o banco voltou de uma cópia anterior à impressão dela, que volta
     // ao registro (fica lá mesmo que a ligação abaixo seja recusada ou peça confirmação)
@@ -2773,6 +2790,7 @@ export class Repositorio {
             ? this.numeroAoLigar(numero, k.id, o.por ?? '')
             : { eventos: [], numeroDaFolha: null }
         if (troca.substituidas.length) this.mudou('calibracao', k.id)
+        const devolucao = troca.substituidas.length ? this.devolverDaFolhaDeAntes(k.id, notas) : null
         return {
           ...this.folhaCampoDaCalibracao(k.id)!,
           substituiu: troca.substituidas,
@@ -2783,6 +2801,8 @@ export class Repositorio {
           ordemServico: null,
           marcas: null,
           barometrosRetirados: null,
+          marcasRetiradas: devolucao?.marcas ?? null,
+          barometrosDevolvidos: devolucao?.barometros ?? null,
         }
       }
       // Já é a folha da calibração. Se ela tem outra vigente (uma cópia antiga do banco voltou com a folha
@@ -2885,6 +2905,8 @@ export class Repositorio {
           `${ids.length > 1 ? 'os barômetros' : 'o barômetro'} ${ids.join(', ')} ${ids.length > 1 ? 'saíram' : 'saiu'} dos padrões (a pressão era opcional na folha)`,
         )
       }
+      // Da 1.0.5 (pede a pressão) no lugar da folha de antes: a dispensa que veio dela sai, e o barômetro volta
+      const devolucao = Number(linha.antes_105) === 1 ? null : this.devolverDaFolhaDeAntes(k.id, notas)
       if (outra) this.mudou('calibracao', outra.id)
       this.mudou('calibracao', k.id)
       return {
@@ -2897,6 +2919,8 @@ export class Repositorio {
         ordemServico,
         marcas,
         barometrosRetirados,
+        marcasRetiradas: devolucao?.marcas ?? null,
+        barometrosDevolvidos: devolucao?.barometros ?? null,
       }
     })
   }
@@ -2930,6 +2954,62 @@ export class Repositorio {
     if (!Object.keys(marcas).length) return null
     this.gravarCalibracao({ ...k, ...marcas }, false)
     return marcas
+  }
+
+  /**
+   * A folha que vai (ou foi) a campo agora é da 1.0.5 — a folha nova da calibração, ou uma da 1.0.5 ligada no lugar da de
+   * antes —, e ela pede a pressão (●): a dispensa que vinha da folha de antes (`pressaoComoAviso`, da migração 19 ou de
+   * `marcarFolhaDeAntes`) sai. As cargas em que o EMA muda (`cargasDoEmaNaFolha`) saem com a folha ligada que não foi
+   * impressa para a calibração (a da 1.0.5 só as traz com a declaração de conformidade); a folha nova da calibração sai
+   * com elas (`comCargasDoEma`) e a marca fica, como o papel. Nada muda na revisão de um certificado (a visita já
+   * aconteceu), na calibração com leituras medidas (pode ter sido medida com a folha de antes) e com a folha vigente
+   * impressa antes da 1.0.5. Não sobe a versão (a tela não grava as marcas). Devolve as que saíram (null: nenhuma).
+   */
+  private semMarcasDaFolhaDeAntes(calibracaoId: string): MarcasDaFolha | null {
+    const k = this.obterCalibracao(calibracaoId)
+    if (!k || k.substituiId || (k.pressaoComoAviso !== true && k.cargasDoEmaNaFolha !== true) || temLeituraMedida(k)) return null
+    const folha = this.folhaCampoDaCalibracao(k.id)
+    if (!folha || folha.herdada) return null
+    const l = this.db.prepare('SELECT chave, antes_105 FROM folhas_campo WHERE numero = ?').get(folha.numero) as
+      { chave: string; antes_105: number } | undefined
+    if (!l || Number(l.antes_105) === 1) return null
+    const saem: MarcasDaFolha = {}
+    if (k.pressaoComoAviso === true) saem.pressaoComoAviso = false
+    if (k.cargasDoEmaNaFolha === true && !impressaPara(l.chave, k.id)) saem.cargasDoEmaNaFolha = false
+    if (!Object.keys(saem).length) return null
+    const novo: Calibracao = { ...k }
+    if (saem.pressaoComoAviso === false) delete novo.pressaoComoAviso
+    if (saem.cargasDoEmaNaFolha === false) delete novo.cargasDoEmaNaFolha
+    this.gravarCalibracao(novo, false)
+    return saem
+  }
+
+  /**
+   * A folha da 1.0.5 ligada no lugar da de antes (`semMarcasDaFolhaDeAntes`): sem a dispensa da pressão e ainda sem ela
+   * registrada, os barômetros ativos voltam aos padrões, como no rascunho novo (a pressão é medida com ele; POP 7.5). A
+   * versão sobe (a tela fica com os padrões novos). `notas`: o que vai para o registro de atividades.
+   */
+  private devolverDaFolhaDeAntes(
+    calibracaoId: string,
+    notas: string[],
+  ): { marcas: MarcasDaFolha; barometros: BarometrosRetirados | null } | null {
+    const marcas = this.semMarcasDaFolhaDeAntes(calibracaoId)
+    if (!marcas) return null
+    if (marcas.pressaoComoAviso === false) notas.push('a folha é da 1.0.5: a pressão volta a ser obrigatória')
+    if (marcas.cargasDoEmaNaFolha === false)
+      notas.push('a folha é da 1.0.5: as cargas em que o EMA muda, só com a declaração de conformidade')
+    const k = marcas.pressaoComoAviso === false ? this.obterCalibracao(calibracaoId) : undefined
+    if (!k || k.ambiente.pressao !== null) return { marcas, barometros: null }
+    const comBarometro = k.padroesIds.some((id) => this.obterPadrao(id)?.tipo === 'BAROMETRO')
+    const ativos = this.listarPadroes().filter((p) => p.tipo === 'BAROMETRO' && p.ativo)
+    if (comBarometro || !ativos.length) return { marcas, barometros: null }
+    const padroesIds = [...k.padroesIds, ...ativos.map((p) => p.id)]
+    this.gravarCalibracao({ ...k, padroesIds, versao: k.versao + 1, atualizadoEm: this.agora().toISOString() }, false)
+    const identificacoes = ativos.map((p) => p.identificacao)
+    notas.push(
+      `${identificacoes.length > 1 ? 'os barômetros' : 'o barômetro'} ${identificacoes.join(', ')} ${identificacoes.length > 1 ? 'voltaram' : 'voltou'} aos padrões`,
+    )
+    return { marcas, barometros: { identificacoes, padroesIds } }
   }
 
   /**
@@ -3045,21 +3125,46 @@ export class Repositorio {
       condicoes.push('x.impressa_em < ?')
       params.push(inicioDoDia(seguinte.toISOString().slice(0, 10)))
     }
-    for (const t of textoBusca(filtro.busca ?? '')
-      .split(' ')
-      .filter(Boolean)) {
-      const campos = [
-        'lower(x.numero)',
-        'lower(x.numero_certificado)',
-        'lower(x.ordem_servico)',
-        "lower(COALESCE(x.k_os, ''))",
-        "lower(COALESCE(x.k_reservado, ''))",
-        "COALESCE(x.cliente_busca, '')",
-        "COALESCE(x.balanca_busca, '')",
-        "COALESCE(x.k_busca, '')",
-      ]
-      condicoes.push(`(${campos.map((c) => `${c} LIKE ? ESCAPE '\\'`).join(' OR ')})`)
-      params.push(...campos.map(() => `%${t.replace(/[\\%_]/g, '\\$&')}%`))
+    // Cada palavra em algum dos campos; ou, a busca inteira sendo um nº curto ("FC-2026-2", "fc 2026 2", "CC-2026-2"),
+    // como "Ligar à calibração" aceita, a folha com esse nº ou com esse nº de certificado (impresso nela ou da calibração)
+    const busca = (filtro.busca ?? '').trim()
+    const ou: Array<{ sql: string; params: string[] }> = []
+    const folhaCurta = numeroDaFolha(busca)
+    // Com o "FC" na frente, é o nº da folha e nada mais (as palavras "fc", "2026" e "2" achariam quase todas); sem ele
+    // ("2026-2"), pode ser parte de uma OS: as duas buscas
+    const soAFolha = !!folhaCurta && /^FC/i.test(busca)
+    const palavras = soAFolha ? [] : textoBusca(busca).split(' ').filter(Boolean)
+    const campos = [
+      'lower(x.numero)',
+      'lower(x.numero_certificado)',
+      'lower(x.ordem_servico)',
+      "lower(COALESCE(x.k_os, ''))",
+      "lower(COALESCE(x.k_reservado, ''))",
+      "COALESCE(x.cliente_busca, '')",
+      "COALESCE(x.balanca_busca, '')",
+      "COALESCE(x.k_busca, '')",
+    ]
+    if (palavras.length)
+      ou.push({
+        sql: palavras.map(() => `(${campos.map((c) => `${c} LIKE ? ESCAPE '\\'`).join(' OR ')})`).join(' AND '),
+        params: palavras.flatMap((t) => campos.map(() => `%${t.replace(/[\\%_]/g, '\\$&')}%`)),
+      })
+    if (folhaCurta) ou.push({ sql: 'x.numero = ?', params: [folhaCurta] })
+    const { numeracao } = this.obterConfig()
+    const anoAtual = Number(this.hoje().slice(0, 4))
+    const lido = busca
+      ? (lerNumeroCertificado(numeracao, busca, anoAtual) ?? lerNumeroCertificado(numeracao, busca.toUpperCase(), anoAtual))
+      : null
+    if (lido) {
+      const numero = formatarNumeroCertificado(numeracao, lido.sequencia, lido.ano).toLowerCase()
+      ou.push({
+        sql: "lower(x.numero_certificado) = ? OR lower(COALESCE(x.k_numero, '')) = ? OR lower(COALESCE(x.k_reservado, '')) = ?",
+        params: [numero, numero, numero],
+      })
+    }
+    if (ou.length) {
+      condicoes.push(`(${ou.map((x) => `(${x.sql})`).join(' OR ')})`)
+      params.push(...ou.flatMap((x) => x.params))
     }
     // Uma linha por folha: a calibração dona (se ainda existe), o cliente e a balança da impressão e o registro do nº de
     // certificado impresso nela (o do papel, se o texto do nº se repetiu noutro ano: ver `linhaDoNumero`)
@@ -3078,7 +3183,7 @@ export class Repositorio {
                f.impressoes, f.substituida_por, f.numero_certificado, (f.pdf_arquivo = '' AND f.pdf IS NULL) AS sem_pdf,
                c.nome AS cliente_nome, c.busca AS cliente_busca, b.dados AS balanca_dados, b.busca AS balanca_busca,
                k.id AS k_id, k.status AS k_status, k.numero AS k_numero, k.ordem_servico AS k_os, k.busca AS k_busca,
-               kc.nome AS k_cliente_nome,
+               kc.nome AS k_cliente_nome, kb.dados AS k_balanca_dados,
                (SELECT r.numero FROM numeros_reservados r WHERE r.calibracao_id = k.id AND r.situacao = 'reservado') AS k_reservado,
                n.situacao AS n_situacao, n.motivo AS n_motivo, n.situacao_em AS n_situacao_em, n.situacao_por AS n_situacao_por,
                CASE
@@ -3093,6 +3198,7 @@ export class Repositorio {
           LEFT JOIN balancas b ON f.balanca_id <> '' AND b.id = f.balanca_id
           LEFT JOIN calibracoes k ON f.calibracao_id <> '' AND k.id = f.calibracao_id
           LEFT JOIN clientes kc ON kc.id = k.cliente_id
+          LEFT JOIN balancas kb ON kb.id = k.balanca_id
           LEFT JOIN nr ON nr.folha = f.numero AND nr.ordem = 1
           LEFT JOIN numeros_reservados n ON n.id = nr.id
       )`
@@ -3109,8 +3215,12 @@ export class Repositorio {
       total,
       itens: linhas.map((l): FolhaCampoListada => {
         const balanca = l.balanca_dados ? (JSON.parse(String(l.balanca_dados)) as Balanca) : null
+        // A folha em branco ou só do cliente, ligada: a balança da calibração (a busca também a acha)
+        const daCalibracao = l.k_balanca_dados ? (JSON.parse(String(l.k_balanca_dados)) as Balanca) : null
         const situacao = texto(l.situacao_folha) as FolhaCampoListada['situacao']
         const chave = texto(l.chave)
+        // Ligada a um certificado corrigido depois: a versão que vale hoje (a correção, com o mesmo nº), não a substituída
+        const vigente = l.k_status === 'SUBSTITUIDO' ? this.versaoVigente(texto(l.k_id)) : undefined
         return {
           numero: texto(l.numero),
           origem: chave.startsWith(CHAVE_RECUPERADA) ? 'recuperada' : chave.startsWith('calibracao:') ? 'calibracao' : 'avulsa',
@@ -3130,11 +3240,14 @@ export class Repositorio {
           ...(l.k_id
             ? {
                 calibracao: {
-                  id: texto(l.k_id),
-                  status: texto(l.k_status) as StatusCalibracao,
-                  numero: texto(l.k_numero),
+                  id: vigente?.id ?? texto(l.k_id),
+                  status: vigente?.status ?? (texto(l.k_status) as StatusCalibracao),
+                  numero: vigente?.numero ?? texto(l.k_numero),
                   ...(l.k_reservado ? { numeroReservado: texto(l.k_reservado) } : {}),
                   clienteNome: texto(l.k_cliente_nome),
+                  ...(!balanca && daCalibracao
+                    ? { balancaDescricao: descricaoBalanca(daCalibracao), balancaSerie: daCalibracao.numeroSerie ?? '' }
+                    : {}),
                   ...(l.k_status === 'REVISAO' && !exigirRevisor ? { semAutorizacao: true } : {}),
                 },
               }
@@ -3205,6 +3318,28 @@ export class Repositorio {
         )
       this.mudou('calibracao', e.calibracaoId || undefined)
     })
+  }
+
+  /**
+   * A versão que vale hoje de um certificado substituído: seguindo as correções emitidas até a última (a emitida, ou a
+   * cancelada, que deixou de valer). Sem correção emitida (não deveria acontecer), undefined.
+   */
+  private versaoVigente(id: string): { id: string; numero: string; status: StatusCalibracao } | undefined {
+    let atual: { id: string; numero: string; status: StatusCalibracao } | undefined
+    const vistos = new Set([id])
+    for (let de = id; ;) {
+      const seguinte = this.db
+        .prepare(
+          `SELECT id, numero, status FROM calibracoes WHERE substitui_id = ? AND status IN ('EMITIDO', 'SUBSTITUIDO', 'CANCELADO')
+            ORDER BY revisao DESC, criado_em DESC LIMIT 1`,
+        )
+        .get(de) as { id: string; numero: string; status: StatusCalibracao } | undefined
+      if (!seguinte || vistos.has(seguinte.id)) return atual
+      vistos.add(seguinte.id)
+      atual = seguinte
+      if (seguinte.status !== 'SUBSTITUIDO') return atual
+      de = seguinte.id
+    }
   }
 
   /** Revisões feitas a partir de um certificado: a emitida que o substituiu e a que está em andamento. */

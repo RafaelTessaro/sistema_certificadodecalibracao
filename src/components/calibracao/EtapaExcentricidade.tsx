@@ -28,10 +28,12 @@ import { casasDe, dicaDoMetodoExcentricidade, maxDe } from './util'
 
 export function EtapaExcentricidade(ctx: ContextoEtapa) {
   const { f, alterar, balanca, calc } = ctx
-  // Obrigatórios para emitir: as leituras das posições ou, dispensado o ensaio, o motivo (sai no certificado)
+  // Obrigatórios para emitir: as leituras das posições e a carga usada ou, dispensado o ensaio, o motivo (sai no
+  // certificado)
   const { marca } = marcasDaEtapa(ctx)
   const mMotivo = marca('excentricidadeMotivo')
   const mLeituras = marca('excentricidadeLeituras')
+  const mCarga = marca('excentricidadeCarga')
   const admin = useSessao((x) => x.usuario?.nivel === 'ADMIN')
   const ecc = f.excentricidade
   const u = balanca.unidade
@@ -54,6 +56,8 @@ export function EtapaExcentricidade(ctx: ContextoEtapa) {
         })),
     }))
   const usaReferencia = ecc.metodo === 3 || ecc.metodo === 4
+  // Leituras sem a carga (o campo apagado grava 0): não dá para conferi-las, e a emissão fica pendente (POP 7.10)
+  const semCarga = mCarga.obrigatorio && !(ecc.carga > 0) && ecc.posicoes.some((p) => p.leitura !== null)
 
   // Balança de gancho: a carga se centra sozinha (o ensaio não se aplica)
   const gancho = balanca.receptor === 'GANCHO' && ecc.aplicavel && !ecc.posicoes.length
@@ -121,6 +125,8 @@ export function EtapaExcentricidade(ctx: ContextoEtapa) {
             <Field
               label="Carga usada"
               htmlFor="ecc-carga"
+              obrigatorio={mCarga.obrigatorio}
+              erro={semCarga ? 'Informe a carga usada no ensaio.' : undefined}
               hint={
                 classeI
                   ? `Sugerida: ${formatarNumero(sugerida, casas)} ${u} (classe I: uma peça só, de no mínimo 1/3 de Max, a meio raio)`
@@ -131,6 +137,7 @@ export function EtapaExcentricidade(ctx: ContextoEtapa) {
                 id="ecc-carga"
                 valor={ecc.carga || null}
                 aoMudar={(v) => set((x) => ({ ...x, carga: v ?? 0 }))}
+                tom={semCarga ? 'erro' : 'normal'}
                 unidade={u}
               />
             </Field>

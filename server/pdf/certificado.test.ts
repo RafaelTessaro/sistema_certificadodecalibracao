@@ -2529,7 +2529,8 @@ describe('sem a finalidade de uso e as dimensões, com a inscrição estadual do
   it('a inscrição estadual do cliente sai embaixo do CNPJ, quando ele tem; sem ela, nada (nem o rótulo, nem traço)', () => {
     const d = exemploPlataforma300kg()
     expect([d.emissao.inscricaoEstadualDoCliente, d.emissao.cliente.inscricaoEstadual]).toEqual([true, '587.114.226.118'])
-    const celula = JSON.stringify({ text: [d.emissao.cliente.documento, '\nIE 587.114.226.118'] })
+    // "IE" junto do número (espaço sem quebra): a IE longa quebra no número, nunca entre "IE" e ele
+    const celula = JSON.stringify({ text: [d.emissao.cliente.documento, '\nIE\u00a0587.114.226.118'] })
     expect(texto(d)).toContain(celula)
     // Sem a IE no cadastro: só o CNPJ, como antes
     const sem: DadosCertificadoPdf = {
@@ -2548,6 +2549,61 @@ describe('sem a finalidade de uso e as dimensões, com a inscrição estadual do
     expect(corrido(t)).not.toMatch(/FINALIDADE DE USO|100 × 100 cm/)
     expect(corrido(t)).toContain('LOCAL DE INSTALAÇÃO (*) Expedição — doca 2')
   })
+
+  /** A plataforma de um cliente com o e-mail com hífen e a IE longa (30 letras, o máximo), e a conformidade não atendida. */
+  const quebrasRuins = (): DadosCertificadoPdf => {
+    const d = exemploPlataforma300kg()
+    d.emissao = {
+      ...d.emissao,
+      cliente: {
+        ...d.emissao.cliente,
+        email: 'gerencia@bompreco-rc.com.br',
+        inscricaoEstadual: '1234567890123456789012345678AB',
+      },
+    }
+    // Todos os pontos lidos não conformes: o resultado lista as cargas, e a caixa fica comprida
+    d.resultado = {
+      ...d.resultado,
+      conformidade: 'NAO_CONFORME',
+      pontos: d.resultado.pontos.map((p) => ({ ...p, conformidade: 'NAO_CONFORME' as const })),
+    }
+    return d
+  }
+
+  it('emitido a partir da 1.0.5: sem quebras ruins de ler — o e-mail inteiro, "CEP" e "IE" junto do número, a carga junto da unidade e o selo numa linha', () => {
+    const d = quebrasRuins()
+    expect(d.calibracao.conformidade.solicitada).toBe(true)
+    const t = texto(d)
+    // O e-mail num pedaço só, sem quebra (no hífen, parecia hifenização)
+    expect(t).toContain(JSON.stringify({ text: 'gerencia@bompreco-rc.com.br', noWrap: true }))
+    expect(t).toContain(`CEP\u00a0${d.emissao.cliente.cep}`)
+    expect(t).toContain('\\nIE\u00a01234567890123456789012345678AB')
+    // O selo numa linha e o número junto da unidade
+    expect(t).toMatch(/"text":"NÃO CONFORME"[^}]*"noWrap":true/)
+    expect(t).toMatch(/não conforme no\(s\) ponto\(s\) de [\d,]+\u00a0kg; /)
+    // Emitido antes da 1.0.5 (sem a marca): como saía
+    const antes = texto(de104(d))
+    expect(antes).not.toContain('"noWrap":true')
+    expect(antes).not.toContain('\u00a0kg')
+    expect(antes).toContain(`CEP ${d.emissao.cliente.cep}`)
+  })
+
+  it.runIf(temPdftotext)(
+    'no PDF: o e-mail, "CEP" com o número, "IE" com o número e "NÃO CONFORME" ficam na mesma linha',
+    async () => {
+      const d = quebrasRuins()
+      const t = textoDoPdf(await gerarCertificadoPdf(d))
+      const linhas = t.split('\n')
+      expect(linhas.some((l) => l.includes('gerencia@bompreco-rc.com.br'))).toBe(true)
+      expect(linhas.some((l) => /CEP\s*$/.test(l))).toBe(false)
+      expect(linhas.some((l) => /\bIE\s*$/.test(l))).toBe(false)
+      expect(linhas.some((l) => /IE 1234567890/.test(l))).toBe(true)
+      expect(linhas.some((l) => /NÃO CONFORME/.test(l))).toBe(true)
+      expect(linhas.some((l) => /^\s*(NÃO|CONFORME)\s*$/.test(l))).toBe(false)
+      // Nenhuma linha começa com a unidade separada do número ("5000" / "kg.")
+      expect(linhas.some((l) => /^\s*kg[.;]/.test(l))).toBe(false)
+    },
+  )
 
   it('emitido pela 1.0.4 (sem as marcas): o PDF refeito dos dados congelados é o mesmo documento, byte a byte', () => {
     // A definição do documento como a 1.0.4 a montava (com a finalidade, as dimensões e sem a IE do cliente, que a

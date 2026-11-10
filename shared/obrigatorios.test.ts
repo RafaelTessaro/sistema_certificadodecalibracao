@@ -4,6 +4,8 @@
 // conferidas com as regras de gravar (`normalizar*`).
 
 import { describe, expect, it } from 'vitest'
+import { normalizarConfigEmail } from '../server/email.ts'
+import { normalizarPop } from './arquivos.ts'
 import { calcularCalibracao } from './calibracao.ts'
 import {
   AMBIENTE_VAZIO,
@@ -26,16 +28,20 @@ import {
 } from './dominio.ts'
 import {
   PENDENCIA_AR_MEDIDO,
+  PENDENCIA_CARGA_EXCENTRICIDADE,
   PENDENCIA_CONVECCAO,
   PENDENCIA_LEITURAS_EXCENTRICIDADE,
   PENDENCIA_RETORNO_ZERO,
   PENDENCIA_SEM_LEITURAS_INDICACAO,
 } from './metrologia/calculo.ts'
 import {
+  classeDosPesosParaEmitir,
   OBRIGATORIOS_BALANCA,
   OBRIGATORIOS_EMPRESA,
+  OBRIGATORIOS_POP,
   OBRIGATORIOS_USUARIO,
   obrigatoriosCliente,
+  obrigatoriosEmail,
   obrigatoriosPadrao,
   PADRAO_PARA_EMITIR,
 } from './obrigatorios.ts'
@@ -167,6 +173,19 @@ const VARIACOES: Array<[string, (k: CalibracaoInput) => CalibracaoInput, Padrao[
   ['motivo da excentricidade', (k) => ({ ...k, excentricidade: { ...k.excentricidade, motivo: '' } })],
   ['leituras da excentricidade', (k) => ({ ...k, excentricidade: { ...k.excentricidade, aplicavel: true, posicoes: [] } })],
   [
+    'carga da excentricidade (com as leituras)',
+    (k) => ({
+      ...k,
+      excentricidade: {
+        ...k.excentricidade,
+        aplicavel: true,
+        carga: 0,
+        metodo: 3,
+        posicoes: ['Centro', 'Frente', 'Direita', 'Atrás', 'Esquerda'].map((rotulo) => ({ rotulo, leitura: 100, referencia: 0 })),
+      },
+    }),
+  ],
+  [
     'leituras do erro de indicação',
     (k) => ({ ...k, indicacao: { ...k.indicacao, pontos: k.indicacao.pontos.map((p) => ({ ...p, crescente: null })) } }),
   ],
@@ -214,6 +233,17 @@ describe('camposObrigatoriosEmissao: as marcas "●" são as pendências da emis
     expect(falta((k) => ({ ...k, proximaNoCertificado: true, proximaCalibracao: '' }))).toEqual([
       'conclusao:proximaCalibracao#k-prox',
     ])
+    expect(
+      falta((k) => ({
+        ...k,
+        excentricidade: {
+          ...k.excentricidade,
+          aplicavel: true,
+          carga: 0,
+          posicoes: [{ rotulo: 'Centro', leitura: 100, referencia: 0 }],
+        },
+      })),
+    ).toEqual(['excentricidade:excentricidadeCarga#ecc-carga'])
   })
 
   it('os textos do cálculo são os mesmos do motor', () => {
@@ -226,6 +256,17 @@ describe('camposObrigatoriosEmissao: as marcas "●" são as pendências da emis
     expect(textos((k) => ({ ...k, excentricidade: { ...k.excentricidade, aplicavel: true, posicoes: [] } }))).toEqual([
       PENDENCIA_LEITURAS_EXCENTRICIDADE,
     ])
+    expect(
+      textos((k) => ({
+        ...k,
+        excentricidade: {
+          ...k.excentricidade,
+          aplicavel: true,
+          carga: 0,
+          posicoes: [{ rotulo: 'Centro', leitura: 100, referencia: 0 }],
+        },
+      })),
+    ).toEqual([PENDENCIA_CARGA_EXCENTRICIDADE])
     expect(
       textos((k) => ({
         ...k,
@@ -256,10 +297,39 @@ describe('camposObrigatoriosEmissao: as marcas "●" são as pendências da emis
     expect(nomes({ ...k, local: 'LABORATORIO' })).not.toContain('localEndereco')
     expect(nomes(k)).not.toContain('ordemServico')
     expect(nomes(k)).toContain('excentricidadeMotivo')
+    // Com o ensaio feito, as leituras e a carga usada (sem a carga, as leituras não são conferidas; POP 7.10)
     expect(nomes({ ...k, excentricidade: { ...k.excentricidade, aplicavel: true } })).toEqual(
-      expect.arrayContaining(['excentricidadeLeituras']),
+      expect.arrayContaining(['excentricidadeLeituras', 'excentricidadeCarga']),
     )
+    expect(nomes(k)).not.toContain('excentricidadeCarga')
     expect(nomes({ ...k, excentricidade: { ...k.excentricidade, aplicavel: true } })).not.toContain('excentricidadeMotivo')
+  })
+
+  it('a balança sem nº de série nem TAG: a etapa 2 marca a identificação, com a mesma pendência (uma vez só)', () => {
+    const k = completa()
+    const contexto = { padroes: PADROES, hoje: '2026-11-09', temPesos: true, classe: 'I' as const }
+    const semIdentificacao = { ...ANALITICA, numeroSerie: '', identificacao: '' }
+    const texto = 'Balança sem nº de série nem identificação (TAG): identifique a balança no cadastro antes de emitir (POP 7.3).'
+    const campos = camposObrigatoriosEmissao(k, { ...contexto, balanca: semIdentificacao })
+    expect(campo(campos, 'identificacaoBalanca')).toEqual({
+      campo: 'identificacaoBalanca',
+      etapa: 'instrumento',
+      regra: 'obrigatorio',
+      falta: true,
+      pendencias: [texto],
+    })
+    expect(pendenciasEmissao(k, { ...contexto, balanca: semIdentificacao }).filter((p) => p === texto)).toHaveLength(1)
+    // Com a série, a TAG ou a série da plataforma (basta uma), nada a marcar (a marca nos dois diria que os dois são pedidos)
+    for (const b of [
+      ANALITICA,
+      { ...semIdentificacao, identificacao: 'BAL-04' },
+      { ...semIdentificacao, plataformaSerie: 'P-9' },
+    ]) {
+      expect(campo(camposObrigatoriosEmissao(k, { ...contexto, balanca: b }), 'identificacaoBalanca')).toBeUndefined()
+      expect(pendenciasEmissao(k, { ...contexto, balanca: b })).not.toContain(texto)
+    }
+    // Sem a balança no contexto, não é conferida
+    expect(campo(camposObrigatoriosEmissao(k, contexto), 'identificacaoBalanca')).toBeUndefined()
   })
 
   it('a calibração medida quando a pressão era opcional: só aviso, sem a marca de obrigatório (e sem pendência)', () => {
@@ -353,6 +423,21 @@ describe('cadastros: a marca "●" é o que impede gravar', () => {
     }
   })
 
+  it('jogo de pesos: a classe (○) impede emitir quando o EMA dela entra na incerteza, como diz o cálculo', () => {
+    const semClasse = (uso: Padrao['uso']) => ({ ...JOGO, classe: '' as const, uso })
+    for (const uso of ['CERTIFICADO', 'NOMINAL'] as const)
+      for (const deriva of ['EMA', 'KD'] as const)
+        for (const empuxo of ['MEDIDO', 'NENHUM', 'AJUSTADO', 'DELTA_T'] as const) {
+          const k = completa()
+          const opcoes = { ...k.opcoes, deriva, kD: 1, empuxo }
+          const { todas } = tudo({ ...k, opcoes }, [semClasse(uso), TH, BR, TERMOMETRO])
+          const pendente = todas.some((p) => p.startsWith('Pesos sem EMA conhecido'))
+          expect(classeDosPesosParaEmitir(uso, opcoes), `${uso} ${deriva} ${empuxo}`).toBe(pendente)
+        }
+    // Com as opções padrão (deriva pelo EMA), sempre
+    expect(classeDosPesosParaEmitir('CERTIFICADO', OPCOES_CALCULO_PADRAO)).toBe(true)
+  })
+
   it('usuário: o nome e o usuário (login); a senha em branco é gerada', () => {
     expect([...OBRIGATORIOS_USUARIO]).toEqual(['nome', 'login'])
     const ok = { nome: 'Maria Souza', login: 'maria.souza', nivel: 'COMUM', senha: '' }
@@ -371,5 +456,32 @@ describe('cadastros: a marca "●" é o que impede gravar', () => {
     expect(
       normalizarConfig({ ...CONFIG_PADRAO, empresa: { ...empresa, cnpj: '', endereco: '', telefone: '', site: '' } }).erros,
     ).toEqual([])
+  })
+
+  it('POP (Configurações → Certificado): o código, a revisão e a data; o arquivo não impede registrar', () => {
+    expect([...OBRIGATORIOS_POP]).toEqual(['codigo', 'revisao', 'data'])
+    const ok = { codigo: 'POP-CAL-01', revisao: '00', data: '2026-10-28', arquivo: '', observacao: '' }
+    expect(normalizarPop(ok, '2026-11-09').erros).toEqual([])
+    for (const c of OBRIGATORIOS_POP) expect(normalizarPop({ ...ok, [c]: '' }, '2026-11-09').erros.length, c).toBe(1)
+  })
+
+  it('e-mail (Configurações → E-mail): o servidor e o usuário; a senha, sem uma gravada; o remetente, se o usuário não é e-mail', () => {
+    const vazia = {
+      servidor: '',
+      porta: 587,
+      seguranca: 'STARTTLS' as const,
+      usuario: '',
+      senha: '',
+      remetenteNome: '',
+      remetenteEmail: '',
+    }
+    const ok = { ...vazia, servidor: 'smtp.gmail.com', usuario: 'certificados@balancas.com', senha: 'x' }
+    expect(() => normalizarConfigEmail(ok, vazia)).not.toThrow()
+    expect(obrigatoriosEmail({ usuario: ok.usuario, senhaDefinida: false })).toEqual(['servidor', 'usuario', 'senha'])
+    // O servidor recusa sem o servidor e sem o usuário
+    for (const c of ['servidor', 'usuario'] as const) expect(() => normalizarConfigEmail({ ...ok, [c]: '' }, vazia), c).toThrow()
+    // Com a senha gravada, em branco a mantém; o usuário que não é e-mail pede o remetente (o servidor também)
+    expect(obrigatoriosEmail({ usuario: 'certificados', senhaDefinida: true })).toEqual(['servidor', 'usuario', 'remetenteEmail'])
+    expect(() => normalizarConfigEmail({ ...ok, usuario: 'certificados' }, vazia)).toThrow('remetente')
   })
 })

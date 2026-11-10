@@ -28,8 +28,9 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { textoPop } from '#shared/arquivos.ts'
 import { hojeLocalIso } from '#shared/dominio.ts'
+import { numeroDaFolha } from '#shared/folhaCampo.ts'
 import { pode } from '#shared/permissoes.ts'
-import type { Balanca, Calibracao, CalibracaoInput, Cliente } from '#shared/tipos.ts'
+import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
 import { padroesDa, popDaCalibracao } from '../certificados.ts'
 import type { Contexto } from '../contexto.ts'
 import { ErroApi } from '../erros.ts'
@@ -43,11 +44,8 @@ export function nomeArquivoDaFolha(os: string, numero: string): string {
   return nomeArquivoFolhaCampo(t ? (/^OS\b/i.test(t) ? t : `OS-${t}`) : numero)
 }
 
-/** "FC-2026-00042", "fc 2026 42", "2026-42" → "FC-2026-00042"; '' se não for um nº de folha. */
-export function numeroDaFolha(v: unknown): string {
-  const m = typeof v === 'string' ? /^\s*(?:FC[\s-]*)?(\d{4})[\s-]+(\d{1,5})\s*$/i.exec(v) : null
-  return m ? `FC-${m[1]}-${m[2].padStart(5, '0')}` : ''
-}
+// O nº da folha como o técnico digita (também na busca da aba "Folhas de campo"): em shared/folhaCampo.ts
+export { numeroDaFolha }
 
 /**
  * A OS e a data prevista da folha avulsa (`?os=…&data=AAAA-MM-DD`): a OS como o rascunho a grava (até 40 letras) e a
@@ -91,6 +89,16 @@ export function detalheDaTroca(numero: string, notas: string[], substituiu: stri
     `${numero}${notas.length ? ` (${notas.join('; ')})` : ''}`,
     ...(trocadas.length ? [`no lugar da ${trocadas.join(', ')}`] : []),
   ].join(' ')
+}
+
+/**
+ * Os padrões da calibração com os barômetros ativos do cadastro que não estão entre eles. A folha só os usa quando a
+ * calibração não prevê barômetro nenhum: lista o ativo para levar, e não manda cadastrar um que já existe
+ * (`planoDaFolha`, em shared/folhaCampo.ts).
+ */
+export function comBarometrosAtivos(daCalibracao: Padrao[], cadastro: Padrao[]): Padrao[] {
+  const fora = cadastro.filter((p) => p.ativo && p.tipo === 'BAROMETRO' && !daCalibracao.some((x) => x.id === p.id))
+  return [...daCalibracao, ...fora]
 }
 
 /** Correção de um certificado feito sem folha de campo impressa pelo sistema (a 1.0.1 não tinha folha). */
@@ -141,12 +149,22 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     // Reimpressão: o arquivo da primeira impressão
     if (folha.pdf) return { pdf: folha.pdf, numero: folha.numero }
     const config = repo.obterConfig()
+    // A folha nova (da 1.0.5) no lugar da de antes: sem as marcas que saíram (`marcasRetiradas`)
+    const retiradas = folha.marcasRetiradas
+    const calibracao =
+      e.calibracao && retiradas
+        ? {
+            ...e.calibracao,
+            ...(retiradas.pressaoComoAviso === false ? { pressaoComoAviso: undefined } : {}),
+            ...(retiradas.cargasDoEmaNaFolha === false ? { cargasDoEmaNaFolha: undefined } : {}),
+          }
+        : e.calibracao
     const dados: DadosFolhaCampo & { numeroCertificado?: string } = {
       numero: folha.numero,
       empresa: config.empresa,
       cliente: e.cliente,
       balanca: e.balanca,
-      calibracao: e.calibracao,
+      calibracao,
       padroes: e.padroes,
       tecnico: e.tecnico,
       // Código e revisão do POP (sai no rodapé de toda página da folha); '' sem POP registrado
@@ -183,10 +201,12 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
         'Esta calibração foi concluída sem folha de campo impressa pelo sistema: não há folha para reimprimir.',
       )
     if (semFolha && k.substituiId) throw new ErroApi(409, REVISAO_SEM_FOLHA)
-    // Emitida: os cadastros como estavam na emissão (os mesmos do certificado)
+    // Emitida: os cadastros como estavam na emissão (os mesmos do certificado). Em andamento: os da calibração e os
+    // barômetros ativos, que a folha lista para levar quando ela não tem nenhum (o rascunho das classes III e IIII ou sem
+    // classe criado antes da 1.0.5; `planoDaFolha`): a pressão é obrigatória em toda calibração (POP 7.5)
     const cliente = k.emissao?.cliente ?? repo.obterCliente(k.clienteId) ?? null
     const balanca = k.emissao?.balanca ?? repo.obterBalanca(k.balancaId) ?? null
-    const padroes = k.emissao?.padroes ?? padroesDa(ctx, k)
+    const padroes = k.emissao?.padroes ?? comBarometrosAtivos(padroesDa(ctx, k), repo.listarPadroes())
     // O técnico previsto, só se tiver a marca de técnico (quem criou sem a marca não é sugerido)
     const previsto = ctx.usuarios.obter(k.tecnicoId)
     const tecnico = k.emissao?.tecnico.nome ?? (previsto?.tecnico ? previsto.nome : '')
@@ -235,6 +255,8 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       ordemServico,
       marcas,
       barometrosRetirados,
+      marcasRetiradas,
+      barometrosDevolvidos,
       ...folhaCampo
     } = repo.vincularFolhaCampo(numero, k, {
       confirmar: corpo.confirmar === true,
@@ -249,7 +271,9 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     // impressa na avulsa, que passou para a calibração sem OS (`aplicada`; a `versao` dela subiu) ou não (a calibração
     // tem outra: a tela avisa). `marcas`: a folha impressa antes da 1.0.5 deixou a falta da pressão como aviso e as
     // cargas em que o EMA muda na sugestão (a tela fica com elas; a versão não sobe). `barometrosRetirados`: com a
-    // pressão como aviso e ainda não registrada, o barômetro que o rascunho trazia saiu dos padrões (a versão subiu)
+    // pressão como aviso e ainda não registrada, o barômetro que o rascunho trazia saiu dos padrões (a versão subiu).
+    // `marcasRetiradas`: a folha da 1.0.5 no lugar da de antes tirou a dispensa (false = saiu; a tela fica sem ela; a
+    // versão não sobe); `barometrosDevolvidos`: sem a pressão registrada, o barômetro voltou aos padrões (a versão subiu)
     return {
       folhaCampo,
       numeroReservado: repo.numeroReservadoDa(k.id),
@@ -257,6 +281,8 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       ordemServico,
       marcas,
       barometrosRetirados,
+      marcasRetiradas,
+      barometrosDevolvidos,
       versao: repo.obterCalibracao(k.id)?.versao ?? k.versao,
     }
   })

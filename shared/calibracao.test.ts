@@ -6,6 +6,7 @@ import {
   avisoDaFolhaCargasDaConformidade,
   calcularCalibracao,
   comCargasDoEma,
+  comCargasDoEmaIncluidas,
   cargaDasPecas,
   entradaDoCalculo,
   leiturasOriginais,
@@ -1280,5 +1281,47 @@ describe('cargas em que o EMA muda: o plano copiado e a folha impressa antes da 
     expect(avisoCargasDaConformidade(plano, b32)).toBeNull()
     // A folha (antes de sair) olha o plano: as linhas em branco vão ser medidas
     expect(avisoDaFolhaCargasDaConformidade(k, b32)).toBeNull()
+  })
+
+  it('declaração pedida com o plano copiado sem as cargas em que o EMA muda: elas entram, sem leituras e na ordem das cargas', () => {
+    // Toledo 32 kg × 5 g, classe III, recalibrada: o plano copiado (0, 8, 16, 24, 32) sem 2,5 kg (500e) e 10 kg (2000e)
+    const b32: Balanca = { ...b30, id: 'b32', faixas: [{ max: 32, e: 0.005, d: 0.005 }], min: 0 }
+    const pedida = { ...calibracaoVazia().conformidade, solicitada: true }
+    const k = {
+      ...calibracaoVazia(),
+      conformidade: pedida,
+      indicacao: { ...calibracaoVazia().indicacao, pontos: pontos([0, 8, 16, 24, 32]) },
+    }
+    const r = comCargasDoEmaIncluidas(k, b32, [])
+    expect(r.incluidas).toEqual([2.5, 10])
+    expect(cargas(r.calibracao)).toEqual([0, 2.5, 8, 10, 16, 24, 32])
+    expect(r.calibracao.indicacao.pontos.find((p) => p.carga === 10)).toMatchObject({
+      pecasManuais: false,
+      crescente: null,
+      decrescente: null,
+      nivelSubstituicao: 0,
+    })
+    // Os pontos que já estavam são os mesmos; os novos têm id próprio
+    expect(r.calibracao.indicacao.pontos[2]).toBe(k.indicacao.pontos[1])
+    expect(new Set(r.calibracao.indicacao.pontos.map((p) => p.id)).size).toBe(7)
+    // Com o aviso da folha resolvido
+    expect(avisoDaFolhaCargasDaConformidade(r.calibracao, b32)).toBeNull()
+    // Já com elas, sem classe ou sem os pontos (a sugestão já as traz): nada muda
+    expect(comCargasDoEmaIncluidas(r.calibracao, b32, [])).toEqual({ calibracao: r.calibracao, incluidas: [] })
+    expect(comCargasDoEmaIncluidas(k, { ...b32, classe: '' }, []).calibracao).toBe(k)
+    const vazio = { ...k, indicacao: { ...k.indicacao, pontos: [] } }
+    expect(comCargasDoEmaIncluidas(vazio, b32, []).calibracao).toBe(vazio)
+    // `soPlano`: só enquanto nenhuma carga foi lida (o zero lido não conta); depois, a pessoa decide (o botão do aviso)
+    const zeroLido = {
+      ...k,
+      indicacao: { ...k.indicacao, pontos: k.indicacao.pontos.map((p) => (p.carga ? p : { ...p, crescente: 0 })) },
+    }
+    expect(comCargasDoEmaIncluidas(zeroLido, b32, [], { soPlano: true }).incluidas).toEqual([2.5, 10])
+    const lido = {
+      ...k,
+      indicacao: { ...k.indicacao, pontos: k.indicacao.pontos.map((p) => (p.carga === 8 ? { ...p, crescente: 8 } : p)) },
+    }
+    expect(comCargasDoEmaIncluidas(lido, b32, [], { soPlano: true }).calibracao).toBe(lido)
+    expect(comCargasDoEmaIncluidas(lido, b32, []).incluidas).toEqual([2.5, 10])
   })
 })

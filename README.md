@@ -48,7 +48,7 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
 - **Envio por e-mail** do PDF ao cliente junto com os certificados dos padrões usados (o arquivo do certificado de cada padrão com o nº que saiu no certificado; até 20 anexos e 18 MB), com histórico de envios e dos anexos, e **lembretes** de calibração para as balanças que vão vencer.
 - **Usuários**, em dois níveis:
   - **operador**: o dia a dia (clientes, balanças, padrões, calibrações) e a emissão, a impressão e o envio dos certificados;
-  - **administrador**: além disso, configurações, usuários, cópias de segurança, cancelar certificados e excluir cadastros.
+  - **administrador**: além disso, configurações, usuários, cópias de segurança, cancelar certificados, marcar a folha que não vai ser usada e excluir cadastros.
 
   À parte do nível, o administrador marca em cada usuário:
   - **técnico**: executa as calibrações (só quem tem a marca aparece em "Técnico que executou" e na folha de campo; na atualização para a 1.0.5, todos ganharam a marca);

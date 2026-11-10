@@ -14,7 +14,7 @@ import { useConsulta } from '../lib/consulta'
 import { balancaNaLista, dataCurta, dataExtensa, hojeISO, mesCurto, numero } from '../lib/format'
 import { textoNumeroReservado } from '../lib/numeros'
 import { useCores } from '../lib/useCores'
-import { useSessao } from '../store/sessao'
+import { usePode, useSessao } from '../store/sessao'
 
 function saudacao() {
   const h = new Date().getHours()
@@ -370,11 +370,15 @@ function GraficoMensal({ dados }: { dados: Array<{ mes: string; quantidade: numb
 /** Banco vazio: os passos para começar. */
 function PrimeirosPassos() {
   const navegar = useNavigate()
+  // Configurações é só do administrador: o operador vê o passo, sem o link (que o levaria de volta ao Painel)
+  const podeConfigurar = usePode('configuracoes')
   const passos = [
     {
       titulo: 'Confira a empresa e o POP',
-      texto: 'Razão social, CNPJ, endereço e o código do POP saem no certificado.',
-      to: '/configuracoes',
+      texto: podeConfigurar
+        ? 'Razão social, CNPJ, endereço e o código do POP saem no certificado.'
+        : 'O administrador confere em Configurações a razão social, o CNPJ, o endereço e o POP, que saem no certificado.',
+      to: podeConfigurar ? '/configuracoes' : '',
     },
     {
       titulo: 'Cadastre os pesos padrão',
@@ -393,11 +397,12 @@ function PrimeirosPassos() {
       />
       <ol className="grid grid-cols-1 gap-3 px-5 pb-5 sm:grid-cols-2 xl:grid-cols-4">
         {passos.map((p, i) => (
-          <li key={p.to}>
+          <li key={p.titulo}>
             <button
               type="button"
-              onClick={() => navegar(p.to)}
-              className="h-full w-full cursor-pointer rounded-xl border border-line bg-surface-2/50 p-4 text-left transition-colors hover:border-line-strong hover:bg-surface-2"
+              onClick={() => p.to && navegar(p.to)}
+              disabled={!p.to}
+              className="h-full w-full cursor-pointer rounded-xl border border-line bg-surface-2/50 p-4 text-left transition-colors enabled:hover:border-line-strong enabled:hover:bg-surface-2 disabled:cursor-default"
             >
               <span className="tnum flex h-7 w-7 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand-ink">
                 {i + 1}

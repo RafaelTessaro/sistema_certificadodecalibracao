@@ -12,7 +12,6 @@ import {
   Undo2,
 } from 'lucide-react'
 import { useState } from 'react'
-import { formatarNumeroCertificado } from '#shared/dominio.ts'
 import type { Calibracao, NumeroReservado } from '#shared/tipos.ts'
 import { dataHora, hojeISO } from '../../lib/format'
 import { useSessao } from '../../store/sessao'
@@ -75,12 +74,13 @@ export function EtapaRevisao({
   const escolhido = signatarios.find((u) => u.id === signatarioId)
   const tecnico = equipe.find((u) => u.id === f.tecnicoId)
   const [emitindo, setEmitindo] = useState(false)
-  // A numeração segue o ano da emissão (hoje)
-  const exemplo = formatarNumeroCertificado(config.numeracao, 1, Number(hojeISO().slice(0, 4)))
+  // A numeração segue o ano da emissão (hoje). Sem exemplo: com a sequência 1, parecia o nº que o certificado vai receber
+  const anoEmissao = hojeISO().slice(0, 4)
   const avisos = [...(r?.avisos ?? []), ...(calc?.comoEncontrado?.avisos ?? [])].filter((a) => a.nivel !== 'info')
   const pronto = pendencias.length === 0
   const bloqueado = !pronto || salvando || emitindo
-  // Quem assina como "Autorizado por" (ligada) ou quem emite (desligada: fica só registrado)
+  // Quem vai assinar como "Autorizado por" (ligada) ou quem emite (desligada: fica só registrado). Antes da emissão, o
+  // rótulo fica no presente ("Quem autoriza", "Quem emite"): "Autorizado por" pareceria já autorizado
   const quemAutoriza =
     modo === 'emitir' || modo === 'autorizar'
       ? (usuario?.nome ?? '—')
@@ -255,7 +255,7 @@ export function EtapaRevisao({
               </label>
             ) : (
               <div className="rounded-xl bg-surface-2/60 px-4 py-3">
-                <p className="text-xs text-muted">{exigir ? 'Autorizado por' : 'Emitido por'}</p>
+                <p className="text-xs text-muted">{exigir ? 'Quem autoriza' : 'Quem emite'}</p>
                 <p className="mt-0.5 font-medium text-ink">{quemAutoriza}</p>
               </div>
             )}
@@ -277,7 +277,9 @@ export function EtapaRevisao({
                 // Correção sem o nº previsto: o certificado corrigido não está mais emitido (a pendência diz a saída)
                 <p className="mt-0.5 font-medium text-ink">Não sai: o certificado corrigido não está mais emitido</p>
               ) : (
-                <p className="tnum mt-0.5 font-medium text-ink">Gerado na emissão (ex.: {exemplo})</p>
+                <p className="mt-0.5 font-medium text-ink">
+                  Gerado na emissão: <span className="font-normal text-muted">o próximo da sequência de {anoEmissao}</span>
+                </p>
               )}
             </div>
           </div>

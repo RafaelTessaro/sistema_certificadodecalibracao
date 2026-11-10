@@ -8,6 +8,7 @@ import { BookOpenText, Download, ExternalLink, FileText, History, Loader2, Plus,
 import { useState, type FormEvent } from 'react'
 import { normalizarPop, ordemDoPop, revisaoPop, ROTULO_TIPO_ARQUIVO, textoPop, tipoDoMime } from '#shared/arquivos.ts'
 import { formatarDataBr } from '#shared/dominio.ts'
+import { OBRIGATORIOS_POP } from '#shared/obrigatorios.ts'
 import type { VersaoPop } from '#shared/tipos.ts'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
@@ -20,7 +21,7 @@ import { BotaoAnexarArquivo, CampoArquivo } from './CampoArquivo'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { confirmar } from './ui/Feedback'
-import { Field, Input } from './ui/Form'
+import { Field, Input, LegendaObrigatorio } from './ui/Form'
 import { Modal } from './ui/Modal'
 
 /** Próxima revisão sugerida: "00" → "01". */
@@ -318,6 +319,7 @@ export function RegistrarPopModal({
       }
     >
       <form id="form-pop" onSubmit={(e) => void registrar(e)} className="flex flex-col gap-4" noValidate>
+        <LegendaObrigatorio para="salvar" />
         {atual && !atual.arquivo && (
           <p role="note" className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
@@ -330,7 +332,13 @@ export function RegistrarPopModal({
           </p>
         )}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_112px]">
-          <Field label="Código do POP" htmlFor="pop-codigo" erro={erroCodigo} hint="Como está no documento.">
+          <Field
+            label="Código do POP"
+            htmlFor="pop-codigo"
+            erro={erroCodigo}
+            hint="Como está no documento."
+            obrigatorio={OBRIGATORIOS_POP.includes('codigo')}
+          >
             <Input
               id="pop-codigo"
               value={f.codigo}
@@ -343,7 +351,13 @@ export function RegistrarPopModal({
               className={cn('tnum', erroCodigo && 'border-danger!')}
             />
           </Field>
-          <Field label="Revisão" htmlFor="pop-revisao" erro={erroRevisao} hint="00, 01, 02…">
+          <Field
+            label="Revisão"
+            htmlFor="pop-revisao"
+            erro={erroRevisao}
+            hint="00, 01, 02…"
+            obrigatorio={OBRIGATORIOS_POP.includes('revisao')}
+          >
             <Input
               id="pop-revisao"
               value={f.revisao}
@@ -357,7 +371,13 @@ export function RegistrarPopModal({
             />
           </Field>
         </div>
-        <Field label="Data da revisão" htmlFor="pop-data" erro={erroData} className="sm:max-w-[220px]">
+        <Field
+          label="Data da revisão"
+          htmlFor="pop-data"
+          erro={erroData}
+          className="sm:max-w-[220px]"
+          obrigatorio={OBRIGATORIOS_POP.includes('data')}
+        >
           <Input
             id="pop-data"
             type="date"
@@ -369,7 +389,7 @@ export function RegistrarPopModal({
             className={cn('tnum', erroData && 'border-danger!')}
           />
         </Field>
-        <Field label="Arquivo do POP (opcional)">
+        <Field label="Arquivo do POP" opcional>
           <CampoArquivo finalidade="pop" rotulo="Anexar o arquivo do POP" valor={arquivo} aoMudar={setArquivo} />
         </Field>
         {!arquivo && (

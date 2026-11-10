@@ -57,6 +57,7 @@ export const PENDENCIA_RETORNO_ZERO =
   'Erro de indicação: registre o retorno ao zero, a indicação sem carga depois de retirar toda a carga (POP 7.7).'
 export const PENDENCIA_LEITURAS_EXCENTRICIDADE =
   'Excentricidade: registre as leituras das posições (ou marque o ensaio como não aplicável).'
+export const PENDENCIA_CARGA_EXCENTRICIDADE = 'Excentricidade: informe a carga usada no ensaio (POP 7.10).'
 export const PENDENCIA_AR_MEDIDO =
   'Empuxo pela densidade do ar medida: registre a temperatura, a umidade relativa e a pressão atmosférica (etapa Padrões e ambiente).'
 export const PENDENCIA_CONVECCAO =
@@ -1263,7 +1264,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
     const lEcc = entrada.excentricidade.carga
     const sugerida = cargaExcentricidade(max, unidade, instrumento.classe)
     const comLeitura = entrada.excentricidade.posicoes.some((p) => lida(p.leitura) !== null)
-    if (comLeitura && !(lEcc > 0)) excentricidadeIncompleta.push('Excentricidade: informe a carga usada no ensaio (POP 7.10).')
+    if (comLeitura && !(lEcc > 0)) excentricidadeIncompleta.push(PENDENCIA_CARGA_EXCENTRICIDADE)
     if (lEcc > max * (1 + TOL)) {
       if (legado) avisos.push({ nivel: 'atencao', mensagem: `Carga de excentricidade (${rotulo(lEcc)}) maior que Max.` })
       else cargasAcimaDeMax.push({ ensaio: 'excentricidade', carga: lEcc })

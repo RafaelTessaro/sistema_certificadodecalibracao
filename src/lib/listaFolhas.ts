@@ -87,6 +87,26 @@ export function paraQuemEaFolha(
   return { cliente: 'Em branco', vazio: true, detalhe: os }
 }
 
+/**
+ * A balança da folha: a impressa nela ou, na folha impressa sem a balança (em branco ou só do cliente) e já ligada, a
+ * da calibração, com a linha de baixo dizendo isso. `descricao` '' = em branco (ou, na de volta da pasta, não se sabe).
+ */
+export function balancaDaFolha(f: Pick<FolhaCampoListada, 'balancaDescricao' | 'balancaSerie' | 'origem' | 'calibracao'>): {
+  descricao: string
+  serie: string
+  detalhe: string
+} {
+  if (f.balancaDescricao) return { descricao: f.balancaDescricao, serie: f.balancaSerie, detalhe: '' }
+  const k = f.calibracao
+  if (k?.balancaDescricao)
+    return {
+      descricao: k.balancaDescricao,
+      serie: k.balancaSerie ?? '',
+      detalhe: f.origem === 'recuperada' ? 'A da calibração ligada' : 'Impressa sem a balança',
+    }
+  return { descricao: '', serie: '', detalhe: '' }
+}
+
 /** O nº de certificado impresso na folha, com a situação dele ("reservado", "emitido", "não utilizado"). */
 export function preNumeroDaFolha(f: Pick<FolhaCampoListada, 'numeroCertificado' | 'situacaoNumero'>): {
   numero: string
@@ -102,7 +122,11 @@ export function preNumeroDaFolha(f: Pick<FolhaCampoListada, 'numeroCertificado' 
  * A situação da folha na lista: a pílula (`rotulo`, `tom`) e a linha de baixo — a calibração a que ela está ligada
  * (`calibracao`: o texto do link), a folha nova que ficou no lugar dela, ou o motivo de não ser usada.
  */
-export function situacaoDaFolha(f: FolhaCampoListada): {
+export function situacaoDaFolha(
+  f: FolhaCampoListada,
+  /** `podeDescartar`: tem o botão “Não vai ser usada” (o administrador); sem ele, a dica manda pedir a quem tem. */
+  o: { podeDescartar?: boolean } = {},
+): {
   rotulo: string
   tom: Tone
   calibracao?: string
@@ -153,8 +177,7 @@ export function situacaoDaFolha(f: FolhaCampoListada): {
           rotulo: 'Não ligada',
           tom: 'warning',
           ...interrompida,
-          titulo:
-            'A primeira impressão não terminou (o sistema foi interrompido), então a folha não saiu no papel. Marque-a como “Não vai ser usada” (em Números não utilizados) e imprima uma folha nova.',
+          titulo: `A primeira impressão não terminou (o sistema foi interrompido), então a folha não saiu no papel. ${o.podeDescartar === false ? 'Peça ao administrador para marcá-la' : 'Marque-a'} como “Não vai ser usada” (em Números não utilizados) e imprima uma folha nova.`,
         }
       return {
         rotulo: 'Não ligada',

@@ -3,7 +3,7 @@
 // criar a calibração (POST /api/calibracoes) e na folha de campo de uma balança sem rascunho, que assim
 // sai com o mesmo plano que o rascunho teria.
 
-import { pecasSemPadrao, planoDoHistoricoSemConformidade } from '#shared/calibracao.ts'
+import { comCargasDoEmaIncluidas, pecasSemPadrao, planoDoHistoricoSemConformidade } from '#shared/calibracao.ts'
 import {
   calibracaoEmOutraUnidade,
   calibracaoVazia,
@@ -16,7 +16,15 @@ import {
   padroesSemHistorico,
   somarMeses,
 } from '#shared/dominio.ts'
-import type { Balanca, Calibracao, CalibracaoInput, ClasseExatidao, EnsaioIndicacao, Padrao } from '#shared/tipos.ts'
+import type {
+  Balanca,
+  Calibracao,
+  CalibracaoInput,
+  ClasseExatidao,
+  EmissaoCertificado,
+  EnsaioIndicacao,
+  Padrao,
+} from '#shared/tipos.ts'
 import type { Contexto } from './contexto.ts'
 
 /** Só os dados de entrada (o que a tela edita) de uma calibração gravada. */
@@ -101,20 +109,26 @@ export function planoConformeAoPop<
  * O plano de uma calibração nova copiado de uma emitida da mesma balança (`anterior`, na unidade atual; "Nova
  * calibração", "Calibrar de novo" e a folha da balança): sem as leituras (`semLeituras`), conforme o POP para a classe
  * de hoje (`planoConformeAoPop`), só com as peças dos `padroes` que entram (os ativos da lista do rascunho novo;
- * `comPecasDosPadroes`) e, sem a declaração de conformidade pedida, sem as cargas em que o EMA muda
- * (`planoDoHistoricoSemConformidade`; POP 7.7).
+ * `comPecasDosPadroes`) e, sem a declaração de conformidade pedida, sem as cargas em que o EMA muda que as sugestões
+ * até a 1.0.4 sempre traziam (`planoDoHistoricoSemConformidade`; POP 7.7). Na emitida a partir da 1.0.5
+ * (`emissao.cargasDoEmaAcordadas`), elas ficam: a sugestão já não as trazia, então a que está entre os pontos foi
+ * acordada com o cliente. Com a declaração pedida, as que faltavam na última entram (`comCargasDoEmaIncluidas`).
  */
 export function planoDoHistorico(
   anterior: CalibracaoInput,
   balanca: Balanca | null | undefined,
   padroes: Padrao[],
+  emissao: Pick<EmissaoCertificado, 'cargasDoEmaAcordadas'> | null | undefined,
 ): Pick<CalibracaoInput, 'repetibilidade' | 'excentricidade' | 'indicacao' | 'opcoes'> {
-  return planoDoHistoricoSemConformidade(
+  const plano = planoDoHistoricoSemConformidade(
     comPecasDosPadroes(planoConformeAoPop({ ...semLeituras(anterior), opcoes: anterior.opcoes }, balanca?.classe), padroes),
     balanca,
     padroes,
-    anterior.conformidade.solicitada,
+    anterior.conformidade.solicitada || emissao?.cargasDoEmaAcordadas === true,
   )
+  // Com a declaração pedida (que a calibração nova copia), as cargas em que o EMA muda que faltavam na última entram
+  // no plano, sem leituras (POP 7.7): a folha impressa dele já sai com elas
+  return anterior.conformidade.solicitada ? comCargasDoEmaIncluidas(plano, balanca, padroes).calibracao : plano
 }
 
 /**
@@ -171,12 +185,13 @@ export function rascunhoInicial(ctx: Contexto, pedido: Record<string, unknown>, 
     : padroesSemHistorico(ativos, balanca ?? null).map((p) => p.id)
   // Da última calibração, o plano (sem as leituras), com o método da excentricidade da classe e sem o modo de serviço,
   // e só com as peças dos padrões que continuam; sem a declaração de conformidade, sem as cargas em que o EMA muda
-  // (POP 7.7), que as sugestões até a 1.0.4 sempre traziam
+  // (POP 7.7) que as sugestões até a 1.0.4 sempre traziam (a emitida a partir da 1.0.5 fica com as acordadas)
   const historico = ultima
     ? planoDoHistorico(
         ultima,
         balanca,
         ativos.filter((p) => padroesIds.includes(p.id)),
+        emitida?.emissao,
       )
     : undefined
   return {

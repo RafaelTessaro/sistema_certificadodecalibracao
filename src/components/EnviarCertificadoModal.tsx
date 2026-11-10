@@ -2,18 +2,41 @@ import { CircleAlert, FileImage, FileText, Loader2, Lock, Mail, Paperclip, Send,
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { LIMITE_EMAIL_BYTES, problemaDosAnexos } from '#shared/arquivos.ts'
-import { descricaoBalanca, emailValido, formatarDataBr, listaEmails, paraSugerido, preencherModelo } from '#shared/dominio.ts'
+import { balancaNoEmail, emailValido, formatarDataBr, listaEmails, paraSugerido, preencherModelo } from '#shared/dominio.ts'
 import type { AnexoEmailDisponivel, Balanca, Calibracao, Cliente } from '#shared/tipos.ts'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
 import { mostrarEnvio } from '../lib/envioEmail'
 import { tamanhoArquivo } from '../lib/format'
+import { usePode } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
 import { Button } from './ui/Button'
 import { Field, Input, Textarea } from './ui/Form'
 import { Modal } from './ui/Modal'
+
+/**
+ * O envio de e-mail ainda não foi configurado: quem pode abrir as Configurações (o administrador) vai direto para a seção
+ * E-mail; o operador, que não abre Configurações, é avisado para pedir ao administrador (como no lembrete).
+ */
+export function AvisoEmailNaoConfigurado({ podeConfigurar, aoFechar }: { podeConfigurar: boolean; aoFechar?: () => void }) {
+  return (
+    <div className="flex items-start gap-2.5 rounded-xl bg-warning-soft px-3.5 py-3 text-[13px] text-warning">
+      <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+      <p>
+        O envio de e-mail ainda não foi configurado.{' '}
+        {podeConfigurar ? (
+          <Link to="/configuracoes?secao=email" className="font-semibold underline underline-offset-2" onClick={aoFechar}>
+            Configurar agora
+          </Link>
+        ) : (
+          'Peça ao administrador para configurar o e-mail da empresa em Configurações → E-mail.'
+        )}
+      </p>
+    </div>
+  )
+}
 
 /** "padrão JP-01" / "padrões JP-01 e JP-02" */
 function dosPadroes(ids: string[]) {
@@ -43,6 +66,7 @@ export function EnviarCertificadoModal({
   balanca: Balanca | undefined
 }) {
   const contatos = emailsCliente ?? cliente
+  const podeConfigurar = usePode('configuracoes')
   const sugerido = paraSugerido(contatos)
   const { dados: config } = useConsulta(aberto ? 'config' : null, () => api.config().then((r) => r.config), ['config'])
   const { dados: email } = useConsulta(aberto ? 'config:email' : null, () => api.configEmail(), ['config'])
@@ -66,9 +90,8 @@ export function EnviarCertificadoModal({
       numero: calibracao.numero,
       empresa: config.empresa.nomeFantasia || config.empresa.razaoSocial,
       cliente: cliente?.nome ?? '',
-      balanca: balanca
-        ? [descricaoBalanca(balanca), balanca.numeroSerie && `nº de série ${balanca.numeroSerie}`].filter(Boolean).join(', ')
-        : '',
+      // Sem o "Balança" da frente: o texto já diz "referente à balança …"
+      balanca: balanca ? balancaNoEmail(balanca) : '',
       data: formatarDataBr(calibracao.dataCalibracao),
       os: calibracao.ordemServico,
     }
@@ -154,17 +177,7 @@ export function EnviarCertificadoModal({
       }
     >
       <div className="flex flex-col gap-4">
-        {semEmail && (
-          <div className="flex items-start gap-2.5 rounded-xl bg-warning-soft px-3.5 py-3 text-[13px] text-warning">
-            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-            <p>
-              O envio de e-mail ainda não foi configurado.{' '}
-              <Link to="/configuracoes?secao=email" className="font-semibold underline underline-offset-2" onClick={aoFechar}>
-                Configurar agora
-              </Link>
-            </p>
-          </div>
-        )}
+        {semEmail && <AvisoEmailNaoConfigurado podeConfigurar={podeConfigurar} aoFechar={aoFechar} />}
         <Field
           label="Para"
           erro={erroPara}

@@ -1,4 +1,17 @@
-import { CircleCheck, CircleX, Hand, History, Layers, Plus, Trash2, TriangleAlert, Truck, Wand2, Weight } from 'lucide-react'
+import {
+  CircleCheck,
+  CircleX,
+  Hand,
+  History,
+  Layers,
+  ListPlus,
+  Plus,
+  Trash2,
+  TriangleAlert,
+  Truck,
+  Wand2,
+  Weight,
+} from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
@@ -6,6 +19,7 @@ import {
   cargaDasPecas,
   cargaDaEtapa,
   comCargasDoEma,
+  comCargasDoEmaIncluidas,
   descreverPecas,
   diferencaDoPonto,
   leiturasDoMetodo,
@@ -27,6 +41,8 @@ import { cargaDaDescida, formatarNumero } from '#shared/metrologia/index.ts'
 import type { ResultadoCalculo, ResultadoPonto } from '#shared/metrologia/tipos.ts'
 import type { ClasseExatidao, EnsaioIndicacao, MetodoCarregamento, Padrao, PecaCarga, PontoIndicacao } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
+import { temFolhaNova } from '../../lib/folhaCampo'
+import { toast } from '../../store/ui'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { confirmar } from '../ui/Feedback'
@@ -48,6 +64,7 @@ import {
   textoMetodoDaClasse,
   textoMetodoForaDoPop,
   textoMetodoTrocado,
+  textoCargasIncluidas,
   textoRefazerPontos,
   trocarParaMetodoDoPop,
   voltarParaMetodoMedido,
@@ -248,6 +265,12 @@ function TabelaPontos({
     { conformidade: f.conformidade, cargasDoEmaNaFolha: f.cargasDoEmaNaFolha, indicacao: ensaio },
     balanca,
   )
+  // As que faltam entre os pontos: o botão do aviso as inclui, sem leituras (a linha que já está e não foi lida, não)
+  const paraIncluir = avisoConformidade ? comCargasDoEmaIncluidas({ indicacao: ensaio }, balanca, pesos).incluidas : []
+  const incluirCargas = () => {
+    setEnsaio((e) => comCargasDoEmaIncluidas({ indicacao: e }, balanca, pesos).calibracao.indicacao)
+    toast.info(...textoCargasIncluidas(paraIncluir, u, temFolhaNova(ctx.folhaCampo) ? ctx.folhaCampo!.numero : undefined))
+  }
   const substituicao = ensaio.substituicao.ativa
   // Múltiplas faixas com a descida sem descarregar: a faixa das leituras decrescentes (a mesma conta do cálculo)
   const cargaDescida = cargaDaDescida(
@@ -356,10 +379,17 @@ function TabelaPontos({
       )}
       {/* Conformidade pedida depois de a folha sair sem as cargas em que o EMA muda: só o aviso (não impede emitir) */}
       {!antes && avisoConformidade && (
-        <p className="mx-5 mb-4 flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
+        <div className="mx-5 mb-4 flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-          {avisoConformidade}
-        </p>
+          <div className="min-w-0 flex-1">
+            <p>{avisoConformidade}</p>
+            {paraIncluir.length > 0 && (
+              <Button tamanho="sm" className="mt-2" icone={<ListPlus className="h-3.5 w-3.5" />} onClick={incluirCargas}>
+                Incluir no erro de indicação
+              </Button>
+            )}
+          </div>
+        </div>
       )}
 
       {ensaio.pontos.length === 0 ? (
@@ -374,19 +404,19 @@ function TabelaPontos({
         </div>
       ) : (
         <div className="scroll-fino overflow-x-auto border-t border-line">
-          <table className="w-full min-w-[760px] text-sm">
+          <table className="w-full min-w-[680px] text-sm">
             <thead>
               <tr className="bg-surface-2/70 text-left text-xs font-medium whitespace-nowrap text-muted">
-                <th className="w-10 px-3 py-2.5 pl-5">#</th>
-                <th className="px-3 py-2.5">Carga ({u})</th>
-                <th className="px-3 py-2.5">Pesos padrão</th>
-                {substituicao && <th className="px-3 py-2.5">Substituições</th>}
-                {!soDecrescente && <th className="px-3 py-2.5 text-right">Indicação ↑</th>}
-                {(decrescente || soDecrescente) && <th className="px-3 py-2.5 text-right">Indicação ↓</th>}
-                <th className="px-3 py-2.5 text-right">Erro</th>
-                <th className="px-3 py-2.5 text-right">U</th>
-                {comConformidade && <th className="px-3 py-2.5 text-center">EMA</th>}
-                <th className="w-10 pr-5" />
+                <th className="w-10 px-2 py-2.5 pl-5">#</th>
+                <th className="px-2 py-2.5">Carga ({u})</th>
+                <th className="px-2 py-2.5">Pesos padrão</th>
+                {substituicao && <th className="px-2 py-2.5">Substituições</th>}
+                {!soDecrescente && <th className="px-2 py-2.5 text-right">Indicação ↑</th>}
+                {(decrescente || soDecrescente) && <th className="px-2 py-2.5 text-right">Indicação ↓</th>}
+                <th className="px-2 py-2.5 text-right">Erro</th>
+                <th className="px-2 py-2.5 text-right">U</th>
+                {comConformidade && <th className="px-2 py-2.5 text-center">EMA</th>}
+                <th className="w-10 pr-4" />
               </tr>
             </thead>
             <tbody>
@@ -404,11 +434,11 @@ function TabelaPontos({
                 return (
                   <tr key={p.id} className="border-t border-line align-top">
                     {/* Linha alinhada pelo topo: textos com leading-9 ficam no meio dos campos (36 px) */}
-                    <td className="tnum px-3 py-2 pl-5 leading-9 text-muted">{i + 1}</td>
-                    <td className="px-3 py-2">
+                    <td className="tnum px-2 py-2 pl-5 leading-9 text-muted">{i + 1}</td>
+                    <td className="px-2 py-2">
                       <CampoNumero
                         compacto
-                        className="w-24"
+                        className="w-20"
                         valor={p.carga}
                         aoMudar={(v) => mudarCarga(p, v)}
                         onBlur={ordenarPorCarga}
@@ -416,35 +446,35 @@ function TabelaPontos({
                         grade={{ grupo: `${grupo}-carga`, lin: i, col: 0 }}
                       />
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-2 py-2">
                       <button
                         type="button"
                         onClick={() => setEditandoPecas(p)}
                         disabled={!pesos.length || p.carga === 0}
                         className={cn(
-                          'flex min-h-9 max-w-[190px] cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-left text-xs transition-colors hover:bg-surface-2 disabled:cursor-default disabled:hover:bg-transparent',
+                          'flex min-h-9 max-w-[160px] cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-left text-xs transition-colors hover:bg-surface-2 disabled:cursor-default disabled:hover:bg-transparent',
                           falta ? 'text-warning' : 'text-ink-2',
                         )}
                         title={`Ver ou trocar os pesos usados nesta carga${p.pecasManuais ? ' (escolhidos à mão)' : ''}`}
                       >
                         <Layers className="h-3.5 w-3.5 shrink-0 text-muted" />
                         <span className="line-clamp-2">
-                          {/* Cada grupo de peças ("3 × 20 kg") inteiro numa linha: quebra só entre os grupos */}
-                          {(p.carga === 0
+                          {/* Cada grupo de peças ("3 × 20 kg") inteiro numa linha: quebra só entre os grupos. "Sem carga
+                              (zero)" quebra entre as palavras: não alarga a coluna (a tabela cabe no cartão a 1366 px) */}
+                          {p.carga === 0
                             ? 'Sem carga (zero)'
                             : p.pecas.length
                               ? descreverPecas(p.pecas, pesos)
+                                  .split(' + ')
+                                  .map((grupo, k) => (
+                                    <Fragment key={k}>
+                                      {k > 0 && ' + '}
+                                      <span className="whitespace-nowrap">{grupo}</span>
+                                    </Fragment>
+                                  ))
                               : pesos.length
                                 ? 'Nenhum peso'
-                                : '—'
-                          )
-                            .split(' + ')
-                            .map((grupo, k) => (
-                              <Fragment key={k}>
-                                {k > 0 && ' + '}
-                                <span className="whitespace-nowrap">{grupo}</span>
-                              </Fragment>
-                            ))}
+                                : '—'}
                           {foraDosPadroes
                             ? ' · pesos fora dos padrões escolhidos'
                             : falta &&
@@ -463,7 +493,7 @@ function TabelaPontos({
                       </button>
                     </td>
                     {substituicao && (
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-2">
                         <Select
                           className="h-9 w-28 text-[13px]"
                           value={p.nivelSubstituicao}
@@ -479,10 +509,10 @@ function TabelaPontos({
                       </td>
                     )}
                     {!soDecrescente && (
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-2">
                         <CampoNumero
                           compacto
-                          className="ml-auto w-32"
+                          className="ml-auto w-28"
                           valor={p.crescente}
                           aoMudar={(v) => setPonto(p.id, (x) => ({ ...x, crescente: v }))}
                           aria-label={`Indicação crescente do ponto ${i + 1}`}
@@ -493,10 +523,10 @@ function TabelaPontos({
                       </td>
                     )}
                     {(decrescente || soDecrescente) && (
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-2">
                         <CampoNumero
                           compacto
-                          className="ml-auto w-32"
+                          className="ml-auto w-28"
                           valor={p.decrescente}
                           aoMudar={(v) => setPonto(p.id, (x) => ({ ...x, decrescente: v }))}
                           aria-label={`Indicação decrescente do ponto ${i + 1}`}
@@ -507,10 +537,10 @@ function TabelaPontos({
                         />
                       </td>
                     )}
-                    <td className="tnum px-3 py-2 text-right whitespace-nowrap text-ink">
+                    <td className="tnum px-2 py-2 text-right whitespace-nowrap text-ink">
                       {r ? <ErroPonto r={r} metodo={ensaio.metodo} histerese={f.opcoes.histerese} /> : '—'}
                     </td>
-                    <td className="tnum px-3 py-2 text-right whitespace-nowrap text-ink-2">
+                    <td className="tnum px-2 py-2 text-right whitespace-nowrap text-ink-2">
                       {r?.texto.U ? (
                         <div className="flex flex-col items-end leading-tight">
                           <span className="pt-0.5">{r.texto.U}</span>
@@ -521,7 +551,7 @@ function TabelaPontos({
                       )}
                     </td>
                     {comConformidade && (
-                      <td className="px-3 py-2 text-center leading-9">
+                      <td className="px-2 py-2 text-center leading-9">
                         {r?.conformidade ? (
                           <span
                             className={cn(
@@ -543,7 +573,7 @@ function TabelaPontos({
                         )}
                       </td>
                     )}
-                    <td className="py-2 pr-5">
+                    <td className="py-2 pr-4">
                       {/* mt-0.5: no centro dos campos da linha (36 px), que ficam no topo da célula */}
                       <Button
                         variante="ghost"

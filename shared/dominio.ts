@@ -7,6 +7,7 @@ import { novoId } from './id.ts'
 import { DENSIDADE_PESOS_KG_M3, densidadePesosPlausivel } from './metrologia/ar.ts'
 import {
   PENDENCIA_AR_MEDIDO,
+  PENDENCIA_CARGA_EXCENTRICIDADE,
   PENDENCIA_CONVECCAO,
   PENDENCIA_LEITURAS_EXCENTRICIDADE,
   PENDENCIA_RETORNO_ZERO,
@@ -771,6 +772,18 @@ export function descricaoBalanca(b: Pick<Balanca, 'tipo' | 'fabricante' | 'model
   return `Balança ${tipo}${nome ? ` ${nome}` : ''}${cap ? ` — ${cap}` : ''}`
 }
 
+/**
+ * A balança no e-mail do certificado (a marca {balanca}): a descrição sem o "Balança" da frente, que o texto padrão já
+ * diz ("referente à balança computadora (preço) Toledo Prix 4 Uno — 6/15/32 kg × 2/5/10 g"), e o nº de série.
+ */
+export function balancaNoEmail(
+  b: Pick<Balanca, 'tipo' | 'fabricante' | 'modelo' | 'faixas' | 'unidade' | 'numeroSerie'>,
+): string {
+  return [descricaoBalanca(b).replace(/^Balança /, ''), b.numeroSerie && `nº de série ${b.numeroSerie}`]
+    .filter(Boolean)
+    .join(', ')
+}
+
 /** Aparelho com plaqueta própria além do principal, para mostrar ao lado da identificação da balança. */
 export interface ParteSeparada {
   /** "Plataforma"; nas cópias congeladas dos certificados antigos, "Indicador" (ver `IndicadorLegado`). */
@@ -864,6 +877,19 @@ export function textoBuscaCalibracao(
     balanca && parteSeparada(balanca)?.serie,
     balanca?.identificacao,
   )
+}
+
+/**
+ * A inscrição estadual do cliente como sai no certificado ('' = não sai): a do cadastro, na calibração em andamento (a
+ * emissão a imprime, se houver); no emitido, a da cópia congelada, só se ele saiu com ela (a partir da 1.0.5,
+ * `inscricaoEstadualDoCliente`). As telas mostram esta, para quem confere ver o que o PDF traz.
+ */
+export function inscricaoEstadualNoCertificado(
+  cliente: Pick<ClienteInput, 'inscricaoEstadual'> | null | undefined,
+  emissao?: { inscricaoEstadualDoCliente?: boolean } | null,
+): string {
+  if (!cliente || (emissao && emissao.inscricaoEstadualDoCliente !== true)) return ''
+  return (cliente.inscricaoEstadual ?? '').trim()
 }
 
 /** Endereço do cliente numa linha. */
@@ -2025,9 +2051,13 @@ export function pressaoComoAviso(
   return !classeFina(classe) && (k.pressaoComoAviso === true || minimosDoPopComoAviso(k))
 }
 
-/** O aviso da calibração que sai sem a pressão atmosférica onde a falta dela é só aviso (`pressaoComoAviso`). */
+/**
+ * O aviso da calibração que sai sem a pressão atmosférica onde a falta dela é só aviso (`pressaoComoAviso`): já medida
+ * antes da 1.0.5, ou com a folha de campo impressa antes dela, que dizia "opcional" (a visita pode ainda não ter
+ * acontecido), ou a correção de um certificado emitido sem ela.
+ */
 export const AVISO_SEM_PRESSAO =
-  'Sem a pressão atmosférica: esta calibração foi medida quando ela ainda era opcional e sai sem ela. Nas novas, ela é obrigatória (POP 7.5).'
+  'Sem a pressão atmosférica: esta calibração é de antes da versão 1.0.5 (a folha de campo dela dizia que a pressão era opcional, ou ela já tinha sido medida) e sai sem a pressão. Se a pressão foi anotada, registre-a. Nas novas, ela é obrigatória (POP 7.5).'
 
 /**
  * Classe I com o ΔT pesos − ar medido: ele sai no certificado com o termômetro de duas entradas, cadastrado como padrão
@@ -2267,6 +2297,7 @@ export type CampoEmissao =
   | 'localEndereco'
   | 'ordemServico'
   | 'ajusteDescricao'
+  | 'identificacaoBalanca'
   | 'pesos'
   | 'temperaturaInicial'
   | 'temperaturaFinal'
@@ -2277,6 +2308,7 @@ export type CampoEmissao =
   | 'repetibilidade'
   | 'excentricidadeMotivo'
   | 'excentricidadeLeituras'
+  | 'excentricidadeCarga'
   | 'indicacaoLeituras'
   | 'retornoZero'
   | 'toleranciaCliente'
@@ -2310,6 +2342,8 @@ const TEXTO_CAMPO = {
   ordemServico: 'Houve reparo: informe o número da ordem de serviço.',
   toleranciaCliente: 'Informe a tolerância do cliente para a declaração de conformidade.',
   proximaCalibracao: 'Informe a data da próxima calibração pedida pelo cliente.',
+  identificacaoBalanca:
+    'Balança sem nº de série nem identificação (TAG): identifique a balança no cadastro antes de emitir (POP 7.3).',
 } as const
 
 /**
@@ -2328,6 +2362,8 @@ export function camposObrigatoriosEmissao(
     classe?: ClasseExatidao
     /** Há jogo de pesos entre os padrões (sem isto, pelos padrões). */
     temPesos?: boolean
+    /** A balança (o cadastro de hoje): sem ela, a identificação não é conferida. */
+    balanca?: Parameters<typeof balancaIdentificada>[0]
   },
 ): CampoObrigatorio[] {
   const lista: CampoObrigatorio[] = []
@@ -2352,6 +2388,11 @@ export function camposObrigatoriosEmissao(
   // Balança e ajuste (o ajuste externo, só no registro de antes do POP)
   if (c.ajuste.realizado === 'EXTERNO')
     campo('ajusteDescricao', 'instrumento', !c.ajuste.descricao.trim(), [TEXTO_CAMPO.ajusteDescricao], 'k-ajuste-anterior')
+  // Item não identificável não é calibrado (POP 7.3; ISO/IEC 17025, 7.8.2.1): basta a série, a TAG ou a série da
+  // plataforma (sai na linha da plataforma separada). Só quando falta: a marca nos campos diria que todos são pedidos.
+  // Vale também na revisão: a emissão usa o cadastro de hoje, e a TAG vai nele
+  if (contexto.balanca && !balancaIdentificada(contexto.balanca))
+    campo('identificacaoBalanca', 'instrumento', true, [TEXTO_CAMPO.identificacaoBalanca])
 
   // Padrões e ambiente
   const temPesos = contexto.temPesos ?? contexto.padroes.some((x) => x.tipo === 'PESOS')
@@ -2429,14 +2470,19 @@ export function camposObrigatoriosEmissao(
         [TEXTO_CAMPO.excentricidadeMotivo],
         'ecc-motivo',
       )
-  } else
-    campo(
-      'excentricidadeLeituras',
-      'excentricidade',
-      !c.excentricidade.posicoes.some((x) => x.leitura !== null),
-      [PENDENCIA_LEITURAS_EXCENTRICIDADE],
-      'k-excentricidade',
-    )
+  } else {
+    const comLeitura = c.excentricidade.posicoes.some((x) => x.leitura !== null)
+    campo('excentricidadeLeituras', 'excentricidade', !comLeitura, [PENDENCIA_LEITURAS_EXCENTRICIDADE], 'k-excentricidade')
+    // A carga usada: sem ela, as leituras não são conferidas (POP 7.10); no registro de antes das regras, é aviso
+    if (regrasDoPop)
+      campo(
+        'excentricidadeCarga',
+        'excentricidade',
+        comLeitura && !(c.excentricidade.carga > 0),
+        [PENDENCIA_CARGA_EXCENTRICIDADE],
+        'ecc-carga',
+      )
+  }
   campo(
     'indicacaoLeituras',
     'indicacao',
@@ -2546,11 +2592,9 @@ export function pendenciasEmissao(
   }
   // A densidade e u(ρ) dos jogos (empuxo pela densidade do ar medida) quem confere é o cálculo, peça a peça, em
   // todo ensaio que a usa: no final e no "como encontrado" da classe I ajustada logo antes (`opcoesComoEncontrado`)
-  // Item não identificável não é calibrado (POP 7.3; ISO/IEC 17025, 7.8.2.1): a série, a TAG ou a série da plataforma
-  // (sai na linha da plataforma separada). Vale também na revisão: a emissão usa o cadastro de hoje, e a TAG vai nele
+  // A balança sem identificação (POP 7.3): a mesma regra da marca da etapa 2 (`camposObrigatoriosEmissao`)
   const b = contexto.balanca
-  if (b && !balancaIdentificada(b))
-    p.push('Balança sem nº de série nem identificação (TAG): identifique a balança no cadastro antes de emitir (POP 7.3).')
+  p.push(...falta('identificacaoBalanca'))
   // Excentricidade dispensada: o POP (7.10, Tabela 6) só a dispensa na balança suspensa (gancho), com o motivo, que
   // sai no certificado. Sem o ensaio, a parcela dele some da incerteza. Na calibração já medida antes das regras, a
   // dispensa fica como na época (o ensaio não pode ser feito agora); o motivo, não

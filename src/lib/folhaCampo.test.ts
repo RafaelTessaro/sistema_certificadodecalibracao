@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest'
-import { dataDaFolha, TEXTO_FOLHA_NOVA, textoBarometrosRetirados, textoReimprimir, textosOsDaFolha } from './folhaCampo'
+import { describe, expect, it, vi } from 'vitest'
+import { api, chaveFolhaAvulsa, JANELA_FOLHA_AVULSA_MS } from './api'
+import {
+  abrirFolhaCampo,
+  dataDaFolha,
+  TEXTO_FOLHA_NOVA,
+  textoBarometrosRetirados,
+  textoReimprimir,
+  textosOsDaFolha,
+} from './folhaCampo'
 
 describe('textos da folha de campo', () => {
   it('reimprimir diz o nº e o dia da primeira impressão (o mesmo nº é o mesmo papel)', () => {
@@ -50,5 +58,38 @@ describe('a folha de antes da 1.0.5 tirou o barômetro dos padrões', () => {
     })
     expect(textoBarometrosRetirados(['BR-01', 'BR-02']).titulo).toBe('Os barômetros saíram dos padrões')
     expect(textoBarometrosRetirados(['BR-01', 'BR-02']).texto).toContain('os BR-01 e BR-02 saíram dos padrões')
+  })
+})
+
+describe('folha avulsa: o clique duplo não reserva dois nºs (nem abre duas abas)', () => {
+  it('o mesmo pedido em poucos segundos usa a mesma chave (o servidor devolve a mesma folha); outro pedido, outra', () => {
+    const a = chaveFolhaAvulsa('cliente=c1&os=4550', 1_000)
+    expect(chaveFolhaAvulsa('cliente=c1&os=4550', 1_400)).toBe(a)
+    expect(chaveFolhaAvulsa('cliente=c1&os=4550', 1_000 + JANELA_FOLHA_AVULSA_MS - 1)).toBe(a)
+    // Passada a janela, é outra folha (outro nº), como pedir de novo
+    const b = chaveFolhaAvulsa('cliente=c1&os=4550', 1_000 + JANELA_FOLHA_AVULSA_MS + 1)
+    expect(b).not.toBe(a)
+    // Outros dados (a OS mudou, outro cliente), outra folha
+    expect(chaveFolhaAvulsa('cliente=c1&os=4551', 1_000 + JANELA_FOLHA_AVULSA_MS + 2)).not.toBe(b)
+  })
+
+  it('pela URL: dois cliques seguidos geram a mesma URL da folha', () => {
+    const u1 = api.urlFolhaCampoAvulsa({ clienteId: 'c9', ordemServico: '4550', data: '2026-11-09' })
+    const u2 = api.urlFolhaCampoAvulsa({ clienteId: 'c9', ordemServico: '4550', data: '2026-11-09' })
+    expect(u2).toBe(u1)
+    expect(api.urlFolhaCampoAvulsa({ clienteId: 'c9', ordemServico: '4551', data: '2026-11-09' })).not.toBe(u1)
+  })
+
+  it('a mesma URL aberta de novo logo em seguida não abre outra aba', async () => {
+    const abertas: string[] = []
+    vi.stubGlobal('window', { open: (url: string) => (abertas.push(url), null) })
+    try {
+      await abrirFolhaCampo('/api/folha-campo?chave=k1')
+      await abrirFolhaCampo('/api/folha-campo?chave=k1')
+      await abrirFolhaCampo('/api/folha-campo?chave=k2')
+      expect(abertas).toEqual(['/api/folha-campo?chave=k1', '/api/folha-campo?chave=k2'])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

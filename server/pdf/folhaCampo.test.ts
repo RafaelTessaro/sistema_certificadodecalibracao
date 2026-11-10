@@ -377,7 +377,9 @@ describe('gerarFolhaCampoPdf', { timeout: 30_000 }, () => {
   it('rodapé: o código e a revisão do formulário e o POP configurado (sem POP, nada no lugar); sem rubrica nem data', () => {
     const rodape = (d: DadosFolhaCampo) => JSON.stringify((definicaoFolhaCampo(d) as { footer: () => unknown }).footer())
     const comPop = rodape({ ...folhaPlataforma(), procedimento: 'BALANÇAS-POP-123 rev. 00' })
-    expect(FORMULARIO_FOLHA_CAMPO.revisao).toBe('04')
+    // Rev. 05 (1.0.5): o layout mudou (pressão ● em toda classe, posições 1 a 5 impressas, IE, sem as dimensões, cargas ●)
+    expect(FORMULARIO_FOLHA_CAMPO.revisao).toBe('05')
+    expect(comPop).toContain('FOR-CAL-01 rev. 05')
     expect(comPop).toContain(`${FORMULARIO_FOLHA_CAMPO.codigo} rev. ${FORMULARIO_FOLHA_CAMPO.revisao}`)
     expect(comPop).toContain('"POP BALANÇAS-POP-123 rev. 00"')
     expect(comPop).not.toContain('PT-CAL-01')
@@ -1236,14 +1238,15 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toMatch(/Receptor de carga retangular \/ quadrado prato redondo mais de 4 apoios gancho tanque \/ silo/)
     // Nenhuma dica da classe I (ela não usa a folha em branco)
     expect(t).not.toMatch(/classe I\b(?!I)|uma peça só/)
-    // Na repetibilidade, só a carga aplicada para escrever (sem os pesos nem a hora: o sistema guarda só a carga)
-    expect(t).toContain('Carga aplicada (unid.)')
+    // Na repetibilidade, só a carga aplicada para escrever (sem os pesos nem a hora: o sistema guarda só a carga), com a
+    // marca ● (obrigatória para emitir, como na tela)
+    expect(t).toContain('Carga aplicada ● (unid.)')
     expect(t).not.toMatch(/Pesos \(não precisa ser padrão\)|Hora ____/)
     // Repetibilidade: uma linha por faixa (1, 2 e 3), com 10 leituras (5 bastam; 3 com 100 kg ou mais; com 10, k = 2;
     // quantas vezes nos nº em cima das caixas), 9 pontos e 6 posições de excentricidade em duas faixas de 3 (mais, no
     // espaço livre): as 1 a 5 dos desenhos impressas, a 6ª escrita no local
     expect(t).toMatch(
-      /Faixa Carga aplicada \(unid\.\) 1ª 2ª 3ª 4ª 5ª 6ª 7ª 8ª 9ª 10ª < 100 kg < 100 kg opcional( opcional){4} 1 2 3 7 EXCENTRICIDADE/,
+      /Faixa Carga aplicada ● \(unid\.\) 1ª 2ª 3ª 4ª 5ª 6ª 7ª 8ª 9ª 10ª < 100 kg < 100 kg opcional( opcional){4} 1 2 3 7 EXCENTRICIDADE/,
     )
     expect(t).not.toContain('11ª')
     expect(t).toMatch(/\b9\b RETORNO AO ZERO/)
@@ -1271,6 +1274,15 @@ describe.runIf(temPdftotext)('conteúdo da folha (pdftotext)', { timeout: 30_000
     expect(t).toContain('FRIGORÍFICO VALE DO CORUMBATAÍ LTDA')
     expect(t).toMatch(/Nº da OS OS-2026-0618 Técnico que executou/)
     expect(t).toContain('cadastre a balança antes')
+    // O cliente e o endereço já saem impressos: a instrução manda conferir (POP 7.3), não preencher
+    expect(t).toContain(
+      'Confira o cliente e o endereço (diferente? anote o certo em Anotações, passo 2) e copie a plaqueta do indicador',
+    )
+    expect(t).not.toContain('Preencha o cliente como sai no certificado')
+    // A em branco continua mandando preencher
+    expect(corrido(textoDoPdf(await gerarFolhaCampoPdf(folhaEmBranco())))).toContain(
+      'Preencha o cliente como sai no certificado e copie a plaqueta do indicador',
+    )
     // A data prevista é a dica da data da calibração, no passo das assinaturas
     expect(t).toMatch(/Data da calibração . .{0,80}prevista: 12\/11\/2026/)
     // Na definição, a OS vai na célula do impresso (cinza), como a do rascunho
@@ -1512,8 +1524,8 @@ describe.runIf(temPdftotext)(
       )
       // Sem carga prevista, só a carga usada (o sistema guarda só a carga; os padrões usados se marcam no passo 1), sem a
       // hora
-      expect(t).toContain('Carga usada (unid.)')
-      expect(t).not.toMatch(/Pesos ou carga usada|Carga usada (\(unid\.\) )?Hora/)
+      expect(t).toContain('Carga usada ● (unid.)')
+      expect(t).not.toMatch(/Pesos ou carga usada|Carga usada (● )?(\(unid\.\) )?Hora/)
       expect(t).not.toContain('cerca de Max/2')
     })
   },
@@ -1782,8 +1794,40 @@ describe.runIf(temPdftotext)('correções da 3ª revisão: método, tabela intei
     const t = colunas({ ...d, calibracao: decrescente })
     expect(t).toContain('Indicação ↓')
     expect(t).not.toContain('Indicação ↑')
-    // O retorno ao zero numa linha, com uma caixa para escrever
-    expect(b).toMatch(/RETORNO AO ZERO sem carga/)
+    // O retorno ao zero numa linha, com uma caixa para escrever, obrigatório para emitir (●, como na tela)
+    expect(b).toMatch(/RETORNO AO ZERO ● sem carga/)
+  })
+
+  it('o retorno ao zero leva a marca ● (obrigatório para emitir), como a tela; na calibração medida antes das regras do POP, não', async () => {
+    const marcado = (dados: DadosFolhaCampo) => /RETORNO AO ZERO\s●/.test(JSON.stringify(definicaoFolhaCampo(dados)))
+    const d = folhaPlataforma()
+    expect(marcado(d)).toBe(true)
+    // A folha em branco e a do cliente (a calibração nova)
+    expect(marcado(folhaEmBranco())).toBe(true)
+    // A calibração já medida antes das regras do POP: o retorno ao zero era opcional (`minimosDoPopComoAviso`)
+    expect(marcado({ ...d, calibracao: { ...d.calibracao!, minimosComoAviso: true } })).toBe(false)
+    // No PDF, a marca junto do rótulo
+    expect(corrido(textoDoPdf(await gerarFolhaCampoPdf(d)))).toMatch(/RETORNO AO ZERO ● sem carga/)
+  })
+
+  it('sem a carga impressa, "Carga aplicada" (repetibilidade) e "Carga usada" (excentricidade) com a marca ●, como a tela', async () => {
+    // Obrigatórias para emitir: escritas no local, em branco no papel não há como recuperar (como o retorno ao zero)
+    const b = corrido(textoDoPdf(await gerarFolhaCampoPdf(folhaEmBranco())))
+    expect(b).toContain('Carga aplicada ● (unid.)')
+    expect(b).toContain('Carga usada ● (unid.)')
+    // O rascunho com o campo da carga apagado (a carga não sai impressa): a mesma marca
+    const d = folhaPlataforma()
+    const semCargas = structuredClone(d.calibracao!)
+    semCargas.repetibilidade = semCargas.repetibilidade.map((r) => ({ ...r, carga: 0 }))
+    semCargas.excentricidade = { ...semCargas.excentricidade, carga: 0 }
+    const t = corrido(textoDoPdf(await gerarFolhaCampoPdf({ ...d, calibracao: semCargas })))
+    expect(t).toMatch(/Carga aplicada ● \(kg\)/)
+    // A excentricidade sem a carga no rascunho: a folha a planeja (a mínima da Tabela 5), impressa
+    // A carga impressa (prevista) não leva a marca: não há o que escrever
+    expect(corrido(textoDoPdf(await gerarFolhaCampoPdf(d)))).not.toMatch(/Carga (aplicada|usada) ●/)
+    // A correção de um certificado de antes das regras do POP: a falta da carga era aviso, sem a marca
+    const antes = { ...d, calibracao: { ...semCargas, substituiId: 'orig' } }
+    expect(JSON.stringify(definicaoFolhaCampo(antes))).not.toMatch(/Carga (aplicada|usada) ●/)
   })
 
   it('rodoviária sem histórico (só registros de antes): o método da classe também com substituição, sem "só crescente"', async () => {
@@ -2164,7 +2208,7 @@ describe.runIf(temPdftotext)('correções da 4ª revisão: páginas sem grandes 
       expect(blocos[0].id).toBe('passo-7')
       expect(JSON.stringify(blocos[0])).toMatch(/"EXCENTRICIDADE"/)
       expect(JSON.stringify(blocos[0])).toMatch(/"Indicação"/)
-      expect(JSON.stringify(blocos[0])).toMatch(/"Carga( usada)?( \([\w.]+\))?"/)
+      expect(JSON.stringify(blocos[0])).toMatch(/"Carga( usada)?(\s●)?( \([\w.]+\))?"/)
       expect(doc.content.some((x) => /^parte-7-/.test(x.id ?? ''))).toBe(false)
       const m = await montar(e.dados())
       expect(m.paginas).toBeLessThanOrEqual(e.maxPaginas)
@@ -2865,8 +2909,8 @@ describe.runIf(temPdftotext)(
       expect(JSON.stringify(plataforma)).toMatch(/"Centro".*"Frente esquerda".*"Frente direita"/)
       // A repetibilidade em branco: o cabeçalho (a faixa, a carga aplicada e o nº de cada leitura) numa linha própria e,
       // em cada faixa, a carga e as leituras em caixas vazias
-      const [repetibilidade] = tabelas(folhaEmBranco(), 'Carga aplicada')
-      expect(JSON.stringify(repetibilidade[0])).toMatch(/"Faixa".*"Carga aplicada".*"1ª".*"2ª".*"3ª"/)
+      const [repetibilidade] = tabelas(folhaEmBranco(), 'Carga aplicada\u2002●')
+      expect(JSON.stringify(repetibilidade[0])).toMatch(/"Faixa".*"Carga aplicada\s●".*"1ª".*"2ª".*"3ª"/)
       for (const linha of repetibilidade.slice(1)) for (const c of linha.slice(1)) expect(vazia(c)).toBe(true)
     })
 
@@ -2999,7 +3043,7 @@ describe.runIf(temPdftotext)(
         expect(frente).toContain(AVISO_CONTINUA)
         expect(frente.indexOf('Fim após o passo 7')).toBeLessThan(frente.indexOf(AVISO_CONTINUA))
         // A última coisa da página (depois dela, só o rodapé) e uma vez só na folha
-        expect(frente.slice(frente.indexOf(AVISO_CONTINUA) + AVISO_CONTINUA.length).trim()).toMatch(/^FOR-CAL-01 rev\. 04/)
+        expect(frente.slice(frente.indexOf(AVISO_CONTINUA) + AVISO_CONTINUA.length).trim()).toMatch(/^FOR-CAL-01 rev\. 05/)
         expect(paginas.join(' ').match(/Continua na próxima página/g)).toHaveLength(1)
       },
     )
@@ -3024,7 +3068,7 @@ describe.runIf(temPdftotext)(
       // Na definição: o cabeçalho (a faixa, a carga aplicada e o nº das 10 leituras) e uma linha por faixa (1, 2 e 3),
       // com a carga e as leituras para escrever
       const [definicao] = nosQue((definicaoFolhaCampo(folhaEmBranco()) as { content: unknown }).content, (x) =>
-        JSON.stringify(x.table ?? '').includes('"Carga aplicada"'),
+        JSON.stringify(x.table ?? '').includes('"Carga aplicada\u2002●"'),
       ).map((x) => x.table as { body: Array<Array<Record<string, unknown>>>; heights: (i: number) => number | string })
       const tabela = definicao.body
       expect(tabela).toHaveLength(4)
@@ -3032,7 +3076,7 @@ describe.runIf(temPdftotext)(
       expect(tabela.slice(1).map((l) => JSON.stringify(l[0]))).toEqual(
         ['1', '2', '3'].map((n) => expect.stringContaining(`"text":"${n}"`)),
       )
-      expect(JSON.stringify(tabela[0])).toContain('"Carga aplicada"')
+      expect(JSON.stringify(tabela[0])).toContain('"Carga aplicada\u2002●"')
       expect(JSON.stringify(tabela[0])).toContain('10ª')
       // A carga e as leituras de cada faixa com a altura das linhas de leitura (≈ 6,5 mm para escrever)
       for (const i of [1, 2, 3]) expect(definicao.heights(i)).toBeGreaterThanOrEqual(15.5)
@@ -3045,13 +3089,13 @@ describe.runIf(temPdftotext)(
       expect(m.faltando).toEqual([])
       const t = corrido(textoDoPdf(m.pdf))
       const rep = t.slice(t.indexOf('6 REPETIBILIDADE'), t.indexOf('7 EXCENTRICIDADE'))
-      expect(rep).toContain('Carga aplicada (kg)')
+      expect(rep).toContain('Carga aplicada ● (kg)')
       expect(rep).toMatch(/1ª 2ª 3ª 4ª 5ª 6ª · opcional/)
       expect(rep.match(/Indicação \(kg\)/g)).toHaveLength(1)
       expect(rep).not.toMatch(/Pesos ou carga usada|\bHora\b|Com a carga|Zero após retirar/)
       // A caixa da carga ocupa as duas linhas (a dos nº e a das leituras)
       const [tabela] = nosQue((definicaoFolhaCampo(d) as { content: unknown }).content, (x) =>
-        JSON.stringify(x.table ?? '').includes('"Carga aplicada"'),
+        JSON.stringify(x.table ?? '').includes('"Carga aplicada\u2002●"'),
       ).map((x) => (x.table as { body: Array<Array<Record<string, unknown>>> }).body)
       expect(tabela).toHaveLength(2)
       expect(tabela[0][0].rowSpan).toBe(2)
@@ -3074,7 +3118,7 @@ describe.runIf(temPdftotext)(
       const t = corrido(textoDoPdf(m.pdf))
       const rep = t.slice(t.indexOf('6 REPETIBILIDADE'), t.indexOf('7 EXCENTRICIDADE'))
       // O 2º ensaio: só a carga aplicada, sem a carga 0,000, sem pesos e sem "no centro, 5 vezes" (nada impresso de guia)
-      expect(rep).toContain('2 · Carga aplicada (kg)')
+      expect(rep).toContain('2 · Carga aplicada ● (kg)')
       expect(rep).not.toMatch(/0,000|2 · Carga \(kg\)/)
       expect(rep.match(/no centro, 5 vezes/g)).toHaveLength(2)
       for (const x of ['1 · Carga (kg)', '2,500', '3 · Carga (kg)', '16,50']) expect(rep).toContain(x)

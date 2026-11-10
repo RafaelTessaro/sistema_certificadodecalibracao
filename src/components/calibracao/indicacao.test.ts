@@ -2,10 +2,12 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
-import { CONFIG_PADRAO } from '#shared/dominio.ts'
-import type { CalibracaoInput, EnsaioIndicacao, PontoIndicacao } from '#shared/tipos.ts'
+import { BALANCA_VAZIA, calibracaoVazia, CONFIG_PADRAO, PADRAO_VAZIO } from '#shared/dominio.ts'
+import { planoDaFolha } from '#shared/folhaCampo.ts'
+import type { Balanca, CalibracaoInput, EnsaioIndicacao, Padrao, PontoIndicacao } from '#shared/tipos.ts'
 import { exemploRodoviaria } from '../../../server/pdf/exemplosCertificado.ts'
 import type { ContextoEtapa } from './contexto'
+import { EtapaConclusao } from './EtapaConclusao'
 import { PainelDaAba } from './EtapaIndicacao'
 import {
   type AbaIndicacao,
@@ -16,7 +18,9 @@ import {
   metodoNaEtapa,
   mudarEnsaioDaAba,
   noMetodoDaClasse,
+  pedirConformidade,
   podeRefazerPontos,
+  textoCargasIncluidas,
   textoMetodoDaClasse,
   textoMetodoForaDoPop,
   textoMetodoTrocado,
@@ -124,6 +128,44 @@ describe('etapa "Erro de indicação": retorno ao zero nas duas abas', () => {
     expect(campo(depois, 'Indicação no retorno ao zero antes do ajuste')).toBeNull()
     // Sem o "como encontrado", a aba mostra o ensaio final
     expect(campo(desenhar({ ...k, comoEncontrado: null }, 'antes', d), 'Indicação no retorno ao zero')).toBe('-20')
+  })
+})
+
+describe('etapa "Erro de indicação": a tabela dos pontos cabe no cartão (notebook de 1366 px com a barra lateral)', () => {
+  it('"Sem carga (zero)" quebra entre as palavras (não alarga a coluna); os grupos de peças ficam inteiros', () => {
+    const { d } = comAjuste()
+    const { balanca, padroes, cliente } = d.emissao
+    const k = d.calibracao
+    const html = renderToStaticMarkup(
+      createElement(PainelDaAba, {
+        aba: 'depois',
+        ctx: {
+          f: k,
+          alterar: () => {},
+          balanca,
+          cliente,
+          padroes,
+          selecionados: padroes,
+          calc: calcularCalibracao(k, balanca, padroes),
+          config: CONFIG_PADRAO,
+          equipe: [],
+          status: 'RASCUNHO',
+          editarBalanca: () => {},
+          folhaCampo: null,
+          vincularFolha: async () => false,
+          novaFolha: () => {},
+        },
+      }),
+    )
+    expect(html).toContain('Sem carga (zero)')
+    expect(html).not.toContain('<span class="whitespace-nowrap">Sem carga (zero)</span>')
+    expect(html).toMatch(
+      /<span class="whitespace-nowrap">\d+ × [\d,]+ (kg|t)<\/span>|<span class="whitespace-nowrap">[\d,]+ (kg|t)<\/span>/,
+    )
+    // Medido no navegador a 1366 px com a barra lateral aberta (cartão de 800 px): os campos e o espaçamento menores
+    // fazem caber a lixeira, também com a coluna EMA (declaração de conformidade)
+    expect(html).toContain('min-w-[680px]')
+    expect(html).not.toMatch(/ml-auto w-32/)
   })
 })
 
@@ -468,5 +510,124 @@ describe('método do erro de indicação fixo pela classe', () => {
     // A marca sem leituras de carga não aparece na etapa
     const semLeituras = { ...trocado, pontos: trocado.pontos.map((p) => ({ ...p, crescente: p.carga ? null : 0 })) }
     expect(metodoNaEtapa(semLeituras, 'III').voltarPara).toBeNull()
+  })
+})
+
+describe('"O cliente pediu" (declaração de conformidade) na recalibração: as cargas em que o EMA muda entram no plano', () => {
+  // Toledo 8217 32 kg × 5 g, classe III, com o plano copiado da última emitida sem conformidade: 0, 8, 16, 24 e 32 kg
+  const toledo: Balanca = {
+    ...BALANCA_VAZIA,
+    id: 'b8217',
+    versao: 1,
+    clienteId: 'c1',
+    classe: 'III',
+    numeroSerie: '8217',
+    faixas: [{ max: 32, e: 0.005, d: 0.005 }],
+    criadoEm: '',
+    atualizadoEm: '',
+  }
+  const jogo: Padrao = {
+    ...PADRAO_VAZIO,
+    id: 'm1',
+    versao: 1,
+    ativo: true,
+    identificacao: 'M1-01',
+    tipo: 'PESOS',
+    classe: 'M1',
+    validade: '2099-01-01',
+    pesos: [
+      { id: 'w10', marca: '10', nominal: 10, correcao: 0, incerteza: 0.5, k: 2 },
+      { id: 'w10b', marca: '10*', nominal: 10, correcao: 0, incerteza: 0.5, k: 2 },
+      { id: 'w5', marca: '5', nominal: 5, correcao: 0, incerteza: 0.3, k: 2 },
+      { id: 'w2', marca: '2', nominal: 2, correcao: 0, incerteza: 0.2, k: 2 },
+      { id: 'w2b', marca: '2*', nominal: 2, correcao: 0, incerteza: 0.2, k: 2 },
+      { id: 'w1', marca: '1', nominal: 1, correcao: 0, incerteza: 0.1, k: 2 },
+      { id: 'w05', marca: '0,5', nominal: 0.5, correcao: 0, incerteza: 0.05, k: 2 },
+    ],
+    criadoEm: '',
+    atualizadoEm: '',
+  } as Padrao
+  const ponto = (carga: number, lido = false): PontoIndicacao => ({
+    id: `p${carga}`,
+    carga,
+    pecas: [],
+    pecasManuais: false,
+    crescente: lido || carga === 0 ? carga : null,
+    decrescente: lido || carga === 0 ? carga : null,
+    nivelSubstituicao: 0,
+  })
+  const copiado = (lidos = false): CalibracaoInput => ({
+    ...calibracaoVazia(undefined, 'III'),
+    padroesIds: ['m1'],
+    indicacao: { ...calibracaoVazia(undefined, 'III').indicacao, pontos: [0, 8, 16, 24, 32].map((c) => ponto(c, lidos)) },
+  })
+  const cargas = (f: CalibracaoInput) => f.indicacao.pontos.map((p) => p.carga)
+
+  it('marcado antes de imprimir: 2,5 kg (500e) e 10 kg (2000e) entram, e a folha sai com elas', () => {
+    const r = pedirConformidade(copiado(), true, toledo, [jogo])
+    expect(r.f.conformidade.solicitada).toBe(true)
+    expect(r.incluidas).toEqual([2.5, 10])
+    expect(cargas(r.f)).toEqual([0, 2.5, 8, 10, 16, 24, 32])
+    // Com as peças montadas, sem leituras
+    expect(r.f.indicacao.pontos.find((p) => p.carga === 10)).toMatchObject({ crescente: null, decrescente: null })
+    expect(r.f.indicacao.pontos.find((p) => p.carga === 10)?.pecas.length).toBeGreaterThan(0)
+    const plano = planoDaFolha(r.f, toledo, [jogo], '2026-11-09')
+    expect(plano.pontos.map((p) => p.carga)).toEqual([0, 2.5, 8, 10, 16, 24, 32])
+    expect(plano.avisos.join(' ')).not.toContain('em que o EMA muda')
+    // Antes da correção, a folha saía só com os pontos copiados (e o aviso miúdo "Resolva antes de sair")
+    const semIncluir = { ...copiado(), conformidade: { ...copiado().conformidade, solicitada: true } }
+    expect(planoDaFolha(semIncluir, toledo, [jogo], '2026-11-09').pontos.map((p) => p.carga)).toEqual([0, 8, 16, 24, 32])
+  })
+
+  it('o aviso das cargas incluídas: com a folha já impressa, diz que o papel não as tem e como trocá-lo', () => {
+    expect(textoCargasIncluidas([2.5, 10], 'kg')).toEqual([
+      'Cargas 2,5 kg e 10 kg incluídas no erro de indicação',
+      'Com a declaração de conformidade, o POP (7.7) pede também as cargas em que o EMA muda. Confira o plano antes de imprimir a folha de campo.',
+    ])
+    expect(textoCargasIncluidas([10], 'kg', 'FC-2026-00006')[1]).toBe(
+      'Com a declaração de conformidade, o POP (7.7) pede também a carga em que o EMA muda. A folha FC-2026-00006, já impressa, não a tem: se ela ainda não foi a campo, imprima a “Folha nova (novo nº)” (etapa Cliente e OS).',
+    )
+  })
+
+  it('com cargas já lidas, nada entra sozinho; desmarcar não tira nada', () => {
+    const lido = pedirConformidade(copiado(true), true, toledo, [jogo])
+    expect(lido.incluidas).toEqual([])
+    expect(cargas(lido.f)).toEqual([0, 8, 16, 24, 32])
+    expect(lido.f.conformidade.solicitada).toBe(true)
+    const marcado = pedirConformidade(copiado(), true, toledo, [jogo]).f
+    const desmarcado = pedirConformidade(marcado, false, toledo, [jogo])
+    expect(desmarcado.f.conformidade.solicitada).toBe(false)
+    expect(cargas(desmarcado.f)).toEqual([0, 2.5, 8, 10, 16, 24, 32])
+    // Marcar de novo o que já estava marcado não mexe no plano
+    expect(pedirConformidade(marcado, true, toledo, [jogo]).incluidas).toEqual([])
+  })
+
+  it('o aviso da Conclusão diz como resolver: o botão inclui as cargas que faltam (com leituras, as linhas ficam em branco)', () => {
+    const ctx = (f: CalibracaoInput) =>
+      ({
+        f,
+        alterar: () => {},
+        balanca: toledo,
+        selecionados: [jogo],
+        config: CONFIG_PADRAO,
+        equipe: [],
+        status: 'RASCUNHO',
+      }) as unknown as ContextoEtapa
+    const pedida = (f: CalibracaoInput) => ({ ...f, conformidade: { ...f.conformidade, solicitada: true } })
+    const t = renderToStaticMarkup(createElement(EtapaConclusao, ctx(pedida(copiado(true))))).replace(/<[^>]+>/g, ' ')
+    expect(t).toContain('faltam 2,5 kg e 10 kg no erro de indicação')
+    expect(t).toContain('Incluir no erro de indicação')
+    // Com elas no plano (mesmo sem leitura), o aviso continua (não foram medidas), sem o botão
+    const comElas = pedirConformidade(copiado(), true, toledo, [jogo]).f
+    const lidas = {
+      ...comElas,
+      indicacao: {
+        ...comElas.indicacao,
+        pontos: comElas.indicacao.pontos.map((p) => (p.carga === 8 ? { ...p, crescente: 8, decrescente: 8 } : p)),
+      },
+    }
+    const t2 = renderToStaticMarkup(createElement(EtapaConclusao, ctx(lidas))).replace(/<[^>]+>/g, ' ')
+    expect(t2).toContain('faltam 2,5 kg e 10 kg no erro de indicação')
+    expect(t2).not.toContain('Incluir no erro de indicação')
   })
 })

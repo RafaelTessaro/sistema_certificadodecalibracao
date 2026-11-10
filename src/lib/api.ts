@@ -159,6 +159,13 @@ export interface FolhaLigada {
    * (`identificacoes`), e a calibração ficou com `padroesIds` (a `versao` dela subiu). null = nada saiu.
    */
   barometrosRetirados?: { identificacoes: string[]; padroesIds: string[] } | null
+  /**
+   * A folha ligada é da 1.0.5 e ficou no lugar de uma de antes: a dispensa que vinha dela saiu (false = saiu; a versão não
+   * sobe). null = nada saiu.
+   */
+  marcasRetiradas?: { pressaoComoAviso?: boolean; cargasDoEmaNaFolha?: boolean } | null
+  /** Sem a dispensa e sem a pressão registrada: o barômetro voltou aos padrões (a `versao` subiu). null = nada voltou. */
+  barometrosDevolvidos?: { identificacoes: string[]; padroesIds: string[] } | null
   /** A versão da calibração depois da ligação (a tela grava com ela). */
   versao?: number
 }
@@ -296,6 +303,21 @@ const consulta = (f: object) => {
   return t ? `?${t}` : ''
 }
 
+/** Quanto tempo o mesmo pedido de folha avulsa repetido conta como o mesmo clique (o clique duplo do Windows). */
+export const JANELA_FOLHA_AVULSA_MS = 4000
+let ultimaAvulsa: { assinatura: string; chave: string; em: number } | null = null
+
+/**
+ * A chave da folha avulsa (`/api/folha-campo?chave=…`): cada chave nova reserva um nº de folha e um de certificado. O
+ * mesmo pedido (os mesmos dados) repetido em menos de `JANELA_FOLHA_AVULSA_MS` usa a mesma chave, e o servidor devolve a
+ * mesma folha: o clique duplo não queima um nº de certificado (que só o administrador marca como não utilizado).
+ */
+export function chaveFolhaAvulsa(assinatura: string, agora = Date.now()): string {
+  if (ultimaAvulsa?.assinatura === assinatura && agora - ultimaAvulsa.em < JANELA_FOLHA_AVULSA_MS) return ultimaAvulsa.chave
+  ultimaAvulsa = { assinatura, chave: novoId(), em: agora }
+  return ultimaAvulsa.chave
+}
+
 export const api = {
   // ---- Clientes ----
   clientes: (f: { busca?: string; inativos?: boolean } = {}) =>
@@ -383,18 +405,16 @@ export const api = {
     }),
   /**
    * Folha de campo sem calibração: da balança (com o plano da última calibração dela), só do cliente ou,
-   * sem nada, em branco. A chave nova a cada chamada reserva um nº; se o navegador pedir o PDF de novo, o nº é o mesmo.
-   * `ordemServico` e `data` (AAAA-MM-DD): a OS e a data prevista da visita, impressas na folha (a OS passa para a
-   * calibração sem OS a que a folha for ligada).
+   * sem nada, em branco. A chave nova a cada chamada reserva um nº (o mesmo pedido logo em seguida, o clique duplo, usa a
+   * mesma: `chaveFolhaAvulsa`); se o navegador pedir o PDF de novo, o nº é o mesmo. `ordemServico` e `data`
+   * (AAAA-MM-DD): a OS e a data prevista da visita, impressas na folha (a OS passa para a calibração sem OS a que a folha
+   * for ligada).
    */
-  urlFolhaCampoAvulsa: (f: { balancaId?: string; clienteId?: string; ordemServico?: string; data?: string } = {}) =>
-    `/api/folha-campo${consulta({
-      balancaId: f.balancaId,
-      clienteId: f.clienteId,
-      os: f.ordemServico?.trim(),
-      data: f.data,
-      chave: novoId(),
-    })}`,
+  urlFolhaCampoAvulsa: (f: { balancaId?: string; clienteId?: string; ordemServico?: string; data?: string } = {}) => {
+    const dados = consulta({ balancaId: f.balancaId, clienteId: f.clienteId, os: f.ordemServico?.trim(), data: f.data })
+    const chave = chaveFolhaAvulsa(dados)
+    return `/api/folha-campo${dados ? `${dados}&` : '?'}chave=${enc(chave)}`
+  },
   /** Reimpressão de uma folha já impressa, pelo nº: o PDF da primeira impressão (o mesmo nº de folha e de certificado). */
   urlReimprimirFolha: (numero: string) => `/api/folha-campo/${enc(numero)}`,
   /**

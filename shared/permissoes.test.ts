@@ -56,6 +56,14 @@ describe('permissões', () => {
     for (const texto of [...Object.values(NOME_NIVEL), ...Object.values(RESUMO_NIVEL)]) expect(texto).not.toMatch(/comum/i)
     expect(Object.values(PERMISSOES).every((niveis) => niveis.includes('ADMIN'))).toBe(true)
   })
+
+  it('o nº de folha que não vai ser usada (Números não utilizados) também é do administrador, e as listas dizem isso', () => {
+    // A rota "Não vai ser usada" pede a mesma permissão de cancelar (server/acesso.ts)
+    expect(ROTULO_PERMISSAO.cancelarCertificado).toMatch(/Cancelar certificados emitidos/)
+    expect(ROTULO_PERMISSAO.cancelarCertificado).toMatch(/não vai ser usad/i)
+    expect(RESUMO_NIVEL.ADMIN).toMatch(/não vai ser usad/i)
+    expect(SEM_PERMISSAO.cancelarCertificado).toMatch(/não vai ser usad/i)
+  })
 })
 
 describe('emitir e autorizar (Configurações → "Exigir revisão por outra pessoa")', () => {

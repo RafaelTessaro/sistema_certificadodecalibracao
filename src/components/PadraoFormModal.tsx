@@ -13,6 +13,7 @@ import {
   normalizarPadrao,
   numero,
   numeroBr,
+  OPCOES_CALCULO_PADRAO,
   PADRAO_VAZIO,
   proximaAlemDoPop,
   somarMeses,
@@ -20,10 +21,11 @@ import {
 } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
 import { linhaTabelaE1 } from '#shared/metrologia/index.ts'
-import { obrigatoriosPadrao, PADRAO_PARA_EMITIR } from '#shared/obrigatorios.ts'
+import { classeDosPesosParaEmitir, obrigatoriosPadrao, PADRAO_PARA_EMITIR } from '#shared/obrigatorios.ts'
 import type { ClassePeso, Padrao, PadraoInput, PesoPadrao, TipoPadrao, UsoPesos } from '#shared/tipos.ts'
 import { api, ErroApi } from '../lib/api'
 import { cn } from '../lib/cn'
+import { useConsulta } from '../lib/consulta'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
 import { CampoNumerico, LinhaInterruptor, SecaoFormulario } from './BalancaFormModal'
@@ -333,6 +335,10 @@ function FormularioPadrao({
 
   const set = <K extends keyof FormPadrao>(k: K, v: FormPadrao[K]) => setF((s) => ({ ...s, [k]: v }))
   const ehPesos = f.tipo === 'PESOS'
+  // A classe do jogo (○): sem ela, a calibração com ele fica pendente quando o EMA entra na incerteza (as opções das
+  // calibrações novas; com as padrão, a deriva pelo EMA, sempre)
+  const { dados: config } = useConsulta('config', () => api.config().then((r) => r.config), ['config'])
+  const classeParaEmitir = ehPesos && classeDosPesosParaEmitir(f.uso, config?.opcoesPadrao ?? OPCOES_CALCULO_PADRAO)
 
   // ---- Derivados ----
   // A densidade gravada antes da conferência da unidade não impede gravar o resto (o servidor faz igual)
@@ -659,12 +665,16 @@ function FormularioPadrao({
               label="Classe (OIML R111)"
               htmlFor={`${ids}-classe`}
               className="sm:col-span-2"
+              obrigatorio={classeParaEmitir}
+              vazada
               hint={
                 f.classe ? (
                   'M1 é a comum para balanças comerciais; F1 ou F2 para as de precisão.'
                 ) : (
                   <span className="text-warning">
-                    Sem a classe, o sistema não tem o EMA dos pesos: a calibração com este jogo fica com pendência.
+                    {classeParaEmitir
+                      ? 'Sem a classe, o sistema não tem o EMA dos pesos: a calibração com este jogo não é emitida.'
+                      : 'Sem a classe, o sistema não tem o EMA dos pesos.'}
                   </span>
                 )
               }
