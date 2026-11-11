@@ -195,7 +195,9 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     if (!repo.obterConfig().exigirRevisor)
       throw new ErroApi(409, 'A revisão por outra pessoa está desligada (Configurações): emita o certificado direto.')
     const k = obter(req.params.id)
-    const pendencias = pendenciasDa(ctx, k)
+    // O certificado digital da empresa que não pode assinar só impede a emissão (recusada em `emitirCertificado`, antes
+    // de gastar o nº): quem envia continua trabalhando, e quem autoriza emite depois que o administrador resolver
+    const pendencias = pendenciasDa(ctx, k, { certificadoDigital: false })
     if (pendencias.length) throw new ErroApi(409, `Antes de enviar para autorização: ${pendencias[0]}`, { pendencias })
     const signatarioId = texto(c.signatarioId, 100)
     if (!signatarioId) throw new ErroApi(400, 'Escolha o signatário que vai autorizar.')

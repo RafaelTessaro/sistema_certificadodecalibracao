@@ -258,6 +258,48 @@ describe('emissão com o certificado digital instalado', () => {
     expect([r.statusCode, r.json().codigo]).toEqual([409, 'CERTIFICADO_DIGITAL'])
   })
 
+  it('o certificado que não pode assinar não impede o envio para autorização: só a emissão (409 antes de gastar o nº)', async () => {
+    const config = t.ctx.repo.obterConfig()
+    t.ctx.repo.salvarConfig({ ...config, exigirRevisor: true })
+    const VENCIDO =
+      'O certificado digital da empresa venceu: a emissão fica bloqueada até o administrador resolver em Configurações → Certificado digital.'
+    const pedir = (k: Calibracao) =>
+      t.chamar('POST', `/api/calibracoes/${k.id}/autorizacao`, {
+        cookie: t.cookieComum,
+        payload: { signatarioId: t.adminId, versao: obter(k.id).versao },
+      })
+    // O operador digita a calibração e envia para o administrador (signatário) autorizar
+    const k = await c.calibracaoPronta([], t.cookieComum)
+    cert.instalar(a1Teste('vencido'))
+    const pedido = await pedir(k)
+    expect(pedido.statusCode, pedido.body).toBe(200)
+    expect(pedido.json().calibracao).toMatchObject({ status: 'REVISAO', autorizacao: { signatarioId: t.adminId } })
+    // A pendência continua na tela (é de quem emite) e a emissão continua recusada, sem gastar o nº
+    const detalhe = (await t.chamar('GET', `/api/calibracoes/${k.id}`, { cookie: t.cookieAdmin })).json()
+    expect(detalhe.pendencias).toEqual([VENCIDO])
+    const antes = sequencia()
+    const r = await emitir(obter(k.id))
+    expect([r.statusCode, r.json().codigo]).toEqual([409, 'CERTIFICADO_DIGITAL'])
+    expect(sequencia()).toEqual(antes)
+    expect(obter(k.id)).toMatchObject({ status: 'REVISAO', numero: '' })
+    // O que falta na calibração continua impedindo o envio (só o certificado digital fica para a emissão)
+    const { calibracao: vazia } = (
+      await t.chamar('POST', '/api/calibracoes', {
+        cookie: t.cookieComum,
+        payload: { clienteId: c.cliente.id, balancaId: c.balanca.id },
+      })
+    ).json()
+    const incompleta = await pedir(vazia)
+    expect(incompleta.statusCode).toBe(409)
+    expect(incompleta.json().erro).toMatch(/^Antes de enviar para autorização: /)
+    expect(incompleta.json().pendencias).not.toContain(VENCIDO)
+    // Resolvido pelo administrador, quem autoriza emite (assinado)
+    cert.instalar(a1Teste('ecnpj-aes'))
+    const ok = await emitir(obter(k.id))
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json().calibracao.emissao.assinatura).toBeTruthy()
+  })
+
   it('prévia: nunca assinada; com o certificado instalado, diz que a emissão sairá assinada', async () => {
     const k = await c.calibracaoPronta()
     const r = await t.chamar('POST', `/api/calibracoes/${k.id}/previa`, { cookie: t.cookieAdmin, payload: k })
