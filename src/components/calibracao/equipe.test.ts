@@ -191,6 +191,21 @@ describe('o alto de "Revisão e emissão"', () => {
       'Resolva os itens abaixo para poder enviar para autorização. Clique num item para ir até ele.',
     )
   })
+
+  it('só pendências que o administrador resolve, para quem não abre Configurações: não manda resolver nem clicar', () => {
+    const doAdmin = { ...base, pronto: false, irParaItens: false, soDoAdministrador: true }
+    expect(cabecalhoDaRevisao({ ...doAdmin, modo: 'emitir' })).toEqual({
+      titulo: 'Depende do administrador',
+      descricao: 'Quem resolve o item abaixo é o administrador. Até lá, não dá para emitir o certificado.',
+      aguardando: false,
+    })
+    expect(cabecalhoDaRevisao({ ...doAdmin, modo: 'escolher', itens: 2 }).descricao).toBe(
+      'Quem resolve os itens abaixo é o administrador. Até lá, não dá para enviar para autorização.',
+    )
+    expect(cabecalhoDaRevisao({ ...doAdmin, modo: 'aguardando', aguardandoDe: 'Rafael' }).descricao).toBe(
+      'Quem resolve o item abaixo é o administrador. Até lá, o certificado não pode ser emitido.',
+    )
+  })
 })
 
 describe('o aviso do Painel das calibrações para autorizar', () => {

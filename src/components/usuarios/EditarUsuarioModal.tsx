@@ -9,6 +9,7 @@ import { avisarErro } from '../../store/ui'
 import { Button } from '../ui/Button'
 import { Field, Input, LegendaObrigatorio } from '../ui/Form'
 import { Modal } from '../ui/Modal'
+import { useAssinadosDigitalmente } from '../certificadoDigital/useAssinadosDigitalmente'
 import { DadosCertificado, type DadosNoCertificado } from './DadosCertificado'
 import { EscolhaNivel } from './EscolhaNivel'
 
@@ -93,6 +94,7 @@ function FormEditar({
   aoDesatualizado: () => void
   setSalvando: (v: boolean) => void
 }) {
+  const assinadosDigitalmente = useAssinadosDigitalmente()
   const [nome, setNome] = useState(usuario.nome)
   const [login, setLogin] = useState(usuario.login)
   /** Login que o servidor recusou por já existir (outra pessoa pode ter acabado de cadastrá-lo). */
@@ -200,6 +202,7 @@ function FormEditar({
         nome={nome}
         valor={certificado}
         aoMudar={(v) => setCertificado((c) => ({ ...c, ...v }))}
+        assinadosDigitalmente={assinadosDigitalmente}
       />
     </form>
   )

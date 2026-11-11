@@ -174,6 +174,8 @@ longo="$(cd "$payload" && find . -type f | awk 'length($0) - 2 + 31 > 240 { prin
 [ -z "$longo" ] || falhar "caminho longo demais para o Windows depois de instalado: $longo"
 
 cp "$raiz"/instalador/ferramentas/* "$payload/ferramentas/"
+# O DPAPI do cofre do certificado digital (server/assinatura/cofre.ts chama ferramentas\protecao-windows.ps1)
+[ -f "$payload/ferramentas/protecao-windows.ps1" ] || falhar "falta instalador/ferramentas/protecao-windows.ps1."
 cp "$raiz/instalador/bc-calibracao.ico" "$payload/"
 # Estação: o script que acha o servidor (o BC Calibracao.exe é compilado no passo 6)
 cp "$raiz/instalador/estacao/descobrir-servidor.ps1" "$payload/estacao/"

@@ -9,7 +9,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { calcularCalibracao } from '#shared/calibracao.ts'
 import { BALANCA_VAZIA, CLIENTE_VAZIO, PADRAO_VAZIO, PENDENCIA_REVISADO_CANCELADO } from '#shared/dominio.ts'
 import { QUEM_ESCOLHEU_NAO_AUTORIZA, SEM_PERMISSAO_EMITIR, TECNICO_NAO_AUTORIZA } from '#shared/permissoes.ts'
-import type { Balanca, Calibracao, CalibracaoInput, CalibracaoResumo, Cliente, Padrao } from '#shared/tipos.ts'
+import type {
+  Balanca,
+  Calibracao,
+  CalibracaoInput,
+  CalibracaoResumo,
+  Cliente,
+  Padrao,
+  PartesAssinaturaPdf,
+} from '#shared/tipos.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
 import { anexosDoCertificado, gerarPdf, montarEmissao } from './certificados.ts'
 import { ASSINATURA_EXEMPLO_1, ASSINATURA_EXEMPLO_2 } from './pdf/assinaturasExemplo.ts'
@@ -309,6 +317,37 @@ describe('emissão do certificado', () => {
     )
     expect((await t.app.inject({ method: 'GET', url: '/api/verificar/AAAA-BBBB' })).statusCode).toBe(404)
     expect((await t.app.inject({ method: 'GET', url: '/api/verificar/qualquer-coisa' })).statusCode).toBe(404)
+  })
+
+  it('verificação pública do certificado assinado digitalmente: o titular e o CNPJ do certificado ICP-Brasil, nada mais dele', async () => {
+    const emitida: Calibracao = (await emitir(await calibracaoPronta())).json().calibracao
+    const codigo = emitida.emissao!.codigo
+    const verificar = async () => (await t.app.inject({ method: 'GET', url: `/api/verificar/${codigo}` })).json()
+    // Sem a assinatura digital (sem certificado instalado), nada a mais
+    expect(await verificar()).not.toHaveProperty('assinaturaDigital')
+    // Emitida com o certificado da empresa (a marca congelada na emissão), ainda aguardando a assinatura: nada a mais
+    const digital = { titular: 'FABIO DE GODOY LIMA LTDA', cnpj: '12403843000118', certificado: 'ab'.repeat(32) }
+    const aguardando = { ...emitida, emissao: { ...emitida.emissao!, hashPdf: '', assinaturaDigital: digital } }
+    t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(aguardando), emitida.id)
+    expect(await verificar()).not.toHaveProperty('assinaturaDigital')
+    // Já assinada (as partes da assinatura e o hash do PDF assinado gravados)
+    const partes: PartesAssinaturaPdf = {
+      formato: 1,
+      m: '2026-11-11T14:30:15.000Z',
+      reservado: 32_768,
+      nome: digital.titular,
+      local: 'Rio Claro/SP',
+      motivo: 'Emissão',
+      docmdp: 2,
+      valor: 'AA==',
+      certificado: 'ab'.repeat(32),
+      hashBase: 'cd'.repeat(32),
+    }
+    const assinada = { ...emitida, emissao: { ...emitida.emissao!, assinaturaDigital: digital, assinatura: partes } }
+    t.ctx.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(assinada), emitida.id)
+    const r = await verificar()
+    expect(r.assinaturaDigital).toEqual({ titular: 'FABIO DE GODOY LIMA LTDA', cnpj: '12403843000118' })
+    expect(JSON.stringify(r)).not.toContain('ab'.repeat(32))
   })
 
   it('desligada a revisão por outra pessoa: o operador que não é signatário emite direto (quem emitiu fica registrado)', async () => {

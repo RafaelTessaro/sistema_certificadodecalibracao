@@ -35,7 +35,7 @@ import { EtapaInstrumento } from './EtapaInstrumento'
 import { EtapaPadroes } from './EtapaPadroes'
 import { EtapaRepetibilidade } from './EtapaRepetibilidade'
 import { PENDENCIA_POP } from '#shared/arquivos.ts'
-import { destinoDaPendencia, destinoForaDaCalibracao, etapaTemMarcas } from './obrigatorios'
+import { destinoDaPendencia, destinoForaDaCalibracao, etapaTemMarcas, pendenciaDoAdministrador } from './obrigatorios'
 
 vi.mock('../../store/sessao', () => ({
   useSessao: (seletor: (s: { usuario: { id: string; nome: string; signatario: boolean } }) => unknown) =>
@@ -326,6 +326,30 @@ describe('revisão: cada pendência leva à etapa e ao campo dela', () => {
     expect(destinoForaDaCalibracao(PENDENCIA_POP, false)).toBeNull()
     expect(destinoForaDaCalibracao('Informe o técnico que executou a calibração.', true)).toBeNull()
     expect(destinoDaPendencia(PENDENCIA_POP, [])).toBeNull()
+  })
+
+  it('o certificado digital da empresa que não pode assinar: o caminho até Configurações → Certificado digital (administrador)', () => {
+    const vencido =
+      'O certificado digital da empresa venceu: a emissão fica bloqueada até o administrador resolver em Configurações → Certificado digital.'
+    expect(destinoForaDaCalibracao(vencido, true)).toEqual({
+      titulo: 'Configurações',
+      para: '/configuracoes?secao=certificado-digital',
+    })
+    expect(destinoForaDaCalibracao(vencido, false)).toBeNull()
+    expect(destinoDaPendencia(vencido, [])).toBeNull()
+    // É do administrador (o alto da etapa não manda o operador resolver)
+    expect(pendenciaDoAdministrador(vencido)).toBe(true)
+    expect(pendenciaDoAdministrador(PENDENCIA_POP)).toBe(true)
+    expect(pendenciaDoAdministrador('Informe o técnico que executou a calibração.')).toBe(false)
+    // O CNPJ da empresa em branco: resolve em Configurações → Empresa
+    const semCnpj =
+      'O CNPJ da empresa não está preenchido em Configurações → Empresa, e ele é conferido com o do certificado digital: a emissão fica bloqueada até o administrador preencher.'
+    expect(destinoForaDaCalibracao(semCnpj, true)).toEqual({ titulo: 'Configurações', para: '/configuracoes?secao=empresa' })
+    expect(destinoForaDaCalibracao(semCnpj, false)).toBeNull()
+    // O CNPJ diferente: o cartão do certificado digital mostra os dois CNPJs
+    const outroCnpj =
+      'O certificado digital da empresa é de um CNPJ diferente do que está em Configurações → Empresa: a emissão fica bloqueada até o administrador corrigir o CNPJ da empresa ou instalar o certificado digital certo em Configurações → Certificado digital.'
+    expect(destinoForaDaCalibracao(outroCnpj, true)?.para).toBe('/configuracoes?secao=certificado-digital')
   })
 
   it('na etapa Revisão e emissão, a pendência com destino é um botão com o nome da etapa', () => {

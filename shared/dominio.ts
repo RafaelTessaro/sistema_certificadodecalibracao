@@ -18,6 +18,7 @@ import { classeMinimaPesos, montarCarga as montarCargaNominal } from './metrolog
 import type {
   AjusteRealizado,
   ArquivoAnexo,
+  AssinaturaDigitalEmissao,
   Balanca,
   BalancaInput,
   CalibracaoInput,
@@ -595,7 +596,7 @@ export const CONFIG_PADRAO: Configuracoes = {
   emailAssunto: 'Certificado de calibração {numero} — {empresa}',
   emailMensagem:
     'Olá,\n\nSegue em anexo o certificado de calibração nº {numero}, referente à balança {balanca}.\n\n' +
-    'Qualquer dúvida, estamos à disposição.\n\nAtenciosamente,\n{empresa}',
+    '{assinaturaDigital}\n\nQualquer dúvida, estamos à disposição.\n\nAtenciosamente,\n{empresa}',
   lembreteAssunto: 'Calibração das balanças — {empresa}',
   lembreteMensagem:
     'Olá,\n\nA calibração das balanças abaixo está prevista para {data}:\n\n{balancas}\n\n' +
@@ -607,9 +608,118 @@ export function textoComEmpresa(t: string, empresa: DadosEmpresa) {
   return t.replaceAll('{empresa}', empresa.razaoSocial || empresa.nomeFantasia)
 }
 
-/** Troca as marcas {chave} de um modelo de texto (e-mail, lembrete) pelos valores; marcas desconhecidas ficam. */
+/**
+ * A mensagem padrão do e-mail do certificado até a 1.0.6, sem a marca {assinaturaDigital}. A configuração gravada com
+ * ela, sem mudança, passa a ter a nova (migração 23 em server/db.ts); um texto mudado pela empresa fica como está, e a
+ * tela do modelo sugere incluir a marca.
+ */
+export const EMAIL_MENSAGEM_ANTIGA =
+  'Olá,\n\nSegue em anexo o certificado de calibração nº {numero}, referente à balança {balanca}.\n\n' +
+  'Qualquer dúvida, estamos à disposição.\n\nAtenciosamente,\n{empresa}'
+
+/**
+ * As marcas que, vazias, somem com a linha: só a {assinaturaDigital} (1.0.7, vazia no certificado sem assinatura digital).
+ * As outras saem como sempre (o texto de um modelo feito pela empresa continua o da 1.0.6, byte a byte).
+ */
+const MARCAS_QUE_SOMEM = new Set(['assinaturaDigital'])
+
+/**
+ * Troca as marcas {chave} de um modelo de texto (e-mail, lembrete) pelos valores; marcas desconhecidas ficam. A
+ * {assinaturaDigital} vazia sozinha na linha some com a linha e com uma das linhas em branco em volta: o texto fica sem
+ * buraco; no meio de uma frase, só a marca sai (sem o espaço que sobraria no fim da linha). As outras marcas, vazias ou
+ * não, só são trocadas pelo valor (como até a 1.0.6).
+ */
 export function preencherModelo(t: string, valores: Record<string, string>) {
-  return t.replace(/\{(\w+)\}/g, (marca, chave: string) => (chave in valores ? valores[chave] : marca))
+  const trocar = (s: string) => s.replace(/\{(\w+)\}/g, (marca, chave: string) => (chave in valores ? valores[chave] : marca))
+  const vazia = (chave: string) => MARCAS_QUE_SOMEM.has(chave) && chave in valores && !valores[chave].trim()
+  const linhas = t.split('\n')
+  const saida: string[] = []
+  for (let i = 0; i < linhas.length; i++) {
+    const linha = linhas[i]
+    const marcas = [...linha.matchAll(/\{(\w+)\}/g)].map((m) => m[1])
+    if (!marcas.length) {
+      saida.push(linha)
+      continue
+    }
+    if (!linha.replace(/\{\w+\}/g, '').trim() && marcas.every(vazia)) {
+      const anteriorEmBranco = !saida.length || !saida[saida.length - 1].trim()
+      if (anteriorEmBranco && i + 1 < linhas.length && !linhas[i + 1].trim()) i++
+      else if (anteriorEmBranco && i + 1 === linhas.length && saida.length) saida.pop()
+      continue
+    }
+    const trocada = trocar(linha)
+    saida.push(marcas.some(vazia) ? trocada.replace(/[ \t]+$/, '') : trocada)
+  }
+  return saida.join('\n')
+}
+
+// ---- Assinatura digital (certificado ICP-Brasil da empresa, 1.0.7) ------------------------------------
+
+/** Onde conferir a assinatura digital: o validador oficial do ITI. */
+export const VALIDADOR_ASSINATURA = 'validar.iti.gov.br'
+
+/** O CNPJ do titular com a máscara (numérico ou alfanumérico); vazio = sem CNPJ. */
+const cnpjDoTitular = (a: Pick<AssinaturaDigitalEmissao, 'cnpj'>) => (normalizarCnpj(a.cnpj ?? '') ? mascaraCnpj(a.cnpj) : '')
+
+/**
+ * O quadro da assinatura digital no certificado em PDF (server/pdf/certificado.ts, `blocoFinal`), em partes: o titular
+ * em negrito; as partes `inteira` não se partem no fim da linha (o CNPJ, "ICP-Brasil (MP 2.200-2/2001)" e o endereço do
+ * validador). `previa`: o aviso da prévia (que nunca é assinada) de que a emissão sairá assinada.
+ *
+ * CONGELADO: o texto do PDF assinado não pode mudar nem uma letra. O PDF assinado que sumir é remontado a partir dos dados
+ * da emissão e só vale se o PDF de base sair idêntico (`PartesAssinaturaPdf.hashBase`). Um texto novo entra com uma marca
+ * nova congelada na emissão, como as outras mudanças de layout.
+ */
+export function textoAssinaturaDigital(
+  a: Pick<AssinaturaDigitalEmissao, 'titular' | 'cnpj'>,
+  previa = false,
+): Array<{ texto: string; negrito?: true; inteira?: true }> {
+  const cnpj = cnpjDoTitular(a)
+  const titular = [
+    { texto: a.titular.trim(), negrito: true as const },
+    ...(cnpj ? [{ texto: ', ' }, { texto: `CNPJ ${cnpj}`, inteira: true as const }] : []),
+    { texto: ', com certificado digital ' },
+  ]
+  return previa
+    ? [
+        { texto: 'Na emissão, este certificado será assinado digitalmente por ' },
+        ...titular,
+        { texto: 'ICP-Brasil', inteira: true },
+        { texto: '.' },
+      ]
+    : [
+        { texto: 'Documento assinado digitalmente por ' },
+        ...titular,
+        { texto: 'ICP-Brasil (MP 2.200-2/2001)', inteira: true },
+        { texto: '. Para conferir a assinatura, envie este PDF em ' },
+        { texto: VALIDADOR_ASSINATURA, inteira: true },
+        { texto: '.' },
+      ]
+}
+
+/** O parágrafo da marca {assinaturaDigital} no e-mail do certificado assinado (o titular é a razão social da empresa). */
+export function textoAssinaturaDigitalEmail(a: Pick<AssinaturaDigitalEmissao, 'titular'>): string {
+  return (
+    `O certificado está assinado digitalmente por ${a.titular.trim()} com certificado ICP-Brasil. Para conferir a ` +
+    `assinatura, envie o PDF original (sem imprimir nem converter) em https://${VALIDADOR_ASSINATURA}. Se o Adobe Reader ` +
+    // Os textos do Adobe Reader em português: a faixa amarela no alto e o painel de assinaturas
+    'mostrar "Pelo menos uma assinatura apresenta problemas" ou "A validade da assinatura é DESCONHECIDA", isso não ' +
+    'indica alteração: ele não traz por padrão a raiz ICP-Brasil para este tipo de certificado.'
+  )
+}
+
+/**
+ * O quadro da cópia de um certificado emitido para ser assinado digitalmente e cancelado ou substituído antes da assinatura
+ * (o PDF assinado nunca existiu): a cópia não diz que foi assinada.
+ */
+export function textoNaoAssinadoDigitalmente(situacao: 'cancelado' | 'substituído'): string {
+  return `Este certificado foi ${situacao} antes de ser assinado digitalmente: esta cópia não tem assinatura digital.`
+}
+
+/** A linha da verificação pública (GET /api/verificar/:codigo) de um certificado assinado digitalmente. */
+export function textoAssinaturaDigitalVerificacao(a: Pick<AssinaturaDigitalEmissao, 'titular' | 'cnpj'>): string {
+  const cnpj = cnpjDoTitular(a)
+  return `Assinado digitalmente por ${a.titular.trim()}${cnpj ? ` (CNPJ ${cnpj})` : ''}, certificado ICP-Brasil`
 }
 
 /**

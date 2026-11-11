@@ -1,5 +1,5 @@
 // Configurações (só o administrador): dados da empresa, certificado, cálculo da incerteza, vencimentos e
-// lembretes, e-mail, cópias de segurança, aparência e sobre.
+// lembretes, e-mail, certificado digital, cópias de segurança, aparência e sobre.
 // Cada seção tem o seu "Salvar" e grava só a sua parte; as alterações de uma seção continuam guardadas
 // ao trocar de seção (o menu marca as que não foram salvas).
 
@@ -12,6 +12,7 @@ import {
   Download,
   ExternalLink,
   FileBadge2,
+  FileKey2,
   FolderOpen,
   HardDrive,
   Info,
@@ -39,7 +40,7 @@ import {
 import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { cnpjValido, mascaraCep, mascaraDocumento, mascaraTelefone } from '#shared/documentos.ts'
+import { cnpjValido, mascaraCep, mascaraDocumento, mascaraTelefone, normalizarCnpj } from '#shared/documentos.ts'
 import {
   CONFIG_PADRAO,
   diasEntre,
@@ -48,12 +49,16 @@ import {
   formatarNumeroCertificado,
   preencherModelo,
   termosSensiveis,
+  textoAssinaturaDigitalEmail,
   TEXTOS_PADRAO,
   UFS,
 } from '#shared/dominio.ts'
 import { OBRIGATORIOS_EMPRESA, obrigatoriosEmail } from '#shared/obrigatorios.ts'
 import type { ConfigNumeracao, Configuracoes as Config, DadosEmpresa, OpcoesCalculo, TextosCertificado } from '#shared/tipos.ts'
 import { CartaoPop } from '../components/CartaoPop'
+import { SecaoCertificadoDigital } from '../components/certificadoDigital/SecaoCertificadoDigital'
+import { efeitoDoCnpjDaEmpresa, revisaoAntesDaEmissao } from '../components/certificadoDigital/textos'
+import { useAssinadosDigitalmente } from '../components/certificadoDigital/useAssinadosDigitalmente'
 import { Logo } from '../components/Logo'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
@@ -72,7 +77,8 @@ import { avisarErro, toast, useUI, type Tema } from '../store/ui'
 
 // ---- Seções ----------------------------------------------------------------------------
 
-type IdSecao = 'empresa' | 'certificado' | 'calculo' | 'vencimentos' | 'email' | 'backup' | 'aparencia' | 'sobre'
+type IdSecao =
+  'empresa' | 'certificado' | 'calculo' | 'vencimentos' | 'email' | 'certificado-digital' | 'backup' | 'aparencia' | 'sobre'
 
 interface InfoSecao {
   id: IdSecao
@@ -99,6 +105,7 @@ const GRUPOS: Array<{ grupo: string; secoes: InfoSecao[] }> = [
   {
     grupo: 'Sistema',
     secoes: [
+      { id: 'certificado-digital', label: 'Certificado digital', icone: FileKey2 },
       { id: 'backup', label: 'Cópias de segurança', icone: DatabaseBackup },
       { id: 'aparencia', label: 'Aparência', icone: Palette },
       { id: 'sobre', label: 'Sobre', icone: Info },
@@ -217,6 +224,8 @@ export function Configuracoes() {
         return <SecaoVencimentos {...props} />
       case 'email':
         return <SecaoEmail aoSujo={aoSujo} />
+      case 'certificado-digital':
+        return <SecaoCertificadoDigital />
       case 'backup':
         return <SecaoBackup />
       case 'aparencia':
@@ -909,12 +918,27 @@ function SecaoEmpresa({ config, salvarParte, aoSujo }: PropsSecao) {
     email: e.email.trim() && !emailValido(e.email.trim()) ? 'E-mail inválido.' : null,
   }
   const mostrar = (k: keyof typeof erros) => (s.tentou || (k !== 'razaoSocial' && e[k].length >= 14) ? erros[k] : null)
+  // Com o certificado digital instalado, o CNPJ é conferido com o dele: o que bloquearia a emissão (em branco, ou de outra
+  // empresa) avisa já no campo e pede confirmação ao salvar (um erro de digitação pararia a emissão para todos)
+  const { dados: digital } = useConsulta('certificado-digital', () => api.certificadoDigital(), ['config'])
+  const cnpjMudou = normalizarCnpj(e.cnpj) !== normalizarCnpj(config.empresa.cnpj)
+  const bloqueiaEmissao = cnpjMudou ? efeitoDoCnpjDaEmpresa(e.cnpj, digital?.certificado) : null
 
-  const enviar = (ev: FormEvent) => {
+  const enviar = async (ev: FormEvent) => {
     ev.preventDefault()
     s.setTentou(true)
     if (Object.values(erros).some(Boolean))
       return toast.erro('Confira os dados da empresa', Object.values(erros).find(Boolean) ?? '')
+    if (
+      bloqueiaEmissao &&
+      !(await confirmar({
+        titulo: 'Salvar este CNPJ?',
+        descricao: bloqueiaEmissao,
+        confirmar: 'Salvar mesmo assim',
+        perigo: true,
+      }))
+    )
+      return
     void s.gravar(async () => (await salvarParte({ empresa: e }, 'Dados da empresa')).empresa)
   }
 
@@ -929,7 +953,7 @@ function SecaoEmpresa({ config, salvarParte, aoSujo }: PropsSecao) {
       sujo={s.sujo}
       salvando={s.salvando}
       aoDescartar={s.descartar}
-      aoEnviar={enviar}
+      aoEnviar={(ev) => void enviar(ev)}
     >
       <Nota tom="info" icone={<FileBadge2 />}>
         A <b className="font-semibold">razão social</b> e o <b className="font-semibold">CNPJ</b> identificam quem emite o
@@ -968,6 +992,11 @@ function SecaoEmpresa({ config, salvarParte, aoSujo }: PropsSecao) {
             className={cn('tnum', mostrar('cnpj') && 'border-danger!')}
           />
         </Field>
+        {bloqueiaEmissao && (
+          <Nota tom="perigo" icone={<ShieldAlert />} className="sm:col-span-6">
+            {bloqueiaEmissao}
+          </Nota>
+        )}
         <Field label="Inscrição estadual" htmlFor="emp-ie" className="sm:col-span-3" opcional>
           <Input
             id="emp-ie"
@@ -1134,6 +1163,8 @@ function SecaoCertificado({ config, salvarParte, aoSujo }: PropsSecao) {
   const formatoRef = useRef<HTMLInputElement>(null)
   const ano = Number(hojeISO().slice(0, 4))
   const razao = config.empresa.razaoSocial || config.empresa.nomeFantasia
+  // Com o certificado digital da empresa instalado, o certificado sai com os nomes, sem as imagens das assinaturas
+  const revisao = revisaoAntesDaEmissao(useAssinadosDigitalmente())
 
   const setTexto = (k: keyof TextosCertificado, t: string) => s.mudar((x) => ({ ...x, textos: { ...x.textos, [k]: t } }))
   const setNumeracao = (n: Partial<ConfigNumeracao>) => s.mudar((x) => ({ ...x, numeracao: { ...x.numeracao, ...n } }))
@@ -1303,12 +1334,8 @@ function SecaoCertificado({ config, salvarParte, aoSujo }: PropsSecao) {
           titulo="Exigir revisão por outra pessoa antes de emitir"
           descricao={
             <>
-              <b className="font-medium text-ink">Ligado:</b> quem digita escolhe um signatário (nunca o técnico que executou nem
-              quem escolheu o técnico) e envia para a autorização dele; o signatário confere, autoriza e o certificado é emitido
-              com duas assinaturas, a de quem executou e a de quem autorizou. O signatário que não executou nem escolheu o técnico
-              também pode autorizar direto: ninguém assina por outra pessoa. <b className="font-medium text-ink">Desligado:</b>{' '}
-              qualquer pessoa que entrou no sistema emite, e o certificado sai só com a assinatura de quem executou (quem emitiu
-              fica registrado).
+              <b className="font-medium text-ink">Ligado:</b> {revisao.ligado} <b className="font-medium text-ink">Desligado:</b>{' '}
+              {revisao.desligado}
             </>
           }
         />
@@ -1630,6 +1657,11 @@ const VARIAVEIS_CERTIFICADO: Variavel[] = [
     ajuda: 'a balança calibrada, sem a palavra “balança” na frente (o tipo, a marca, o modelo e o nº de série)',
   },
   { chave: 'empresa', ajuda: 'o nome da sua empresa' },
+  {
+    chave: 'assinaturaDigital',
+    ajuda:
+      'no certificado assinado digitalmente, como o cliente confere a assinatura (num parágrafo próprio; some nos certificados sem assinatura digital)',
+  },
 ]
 
 function SecaoVencimentos({ config, salvarParte, aoSujo }: PropsSecao) {
@@ -1649,6 +1681,9 @@ function SecaoVencimentos({ config, salvarParte, aoSujo }: PropsSecao) {
   const set = <K extends keyof RascunhoVencimentos>(k: K, x: RascunhoVencimentos[K]) => s.mudar((r) => ({ ...r, [k]: x }))
   const ano = Number(hojeISO().slice(0, 4))
   const empresa = config.empresa.nomeFantasia || config.empresa.razaoSocial
+  // O certificado digital instalado: o e-mail do certificado assinado traz o parágrafo da assinatura com o titular dele
+  const { dados: digital } = useConsulta('certificado-digital', () => api.certificadoDigital(), ['config'])
+  const titularDigital = digital?.certificado.situacao !== 'SEM_CERTIFICADO' ? digital?.certificado.titular : undefined
 
   const exemploLembrete = {
     cliente: 'Supermercado Ideal',
@@ -1664,6 +1699,8 @@ function SecaoVencimentos({ config, salvarParte, aoSujo }: PropsSecao) {
     cliente: 'Supermercado Ideal',
     balanca: 'computadora (preço) Toledo Prix 3 — 15 kg × 5 g, nº de série 3P-102244',
     empresa,
+    // Como o cliente recebe: com o certificado digital instalado, o parágrafo com o titular dele; sem, a linha some
+    assinaturaDigital: titularDigital ? textoAssinaturaDigitalEmail({ titular: titularDigital }) : '',
   }
 
   const erros = {
@@ -1793,7 +1830,13 @@ function SecaoVencimentos({ config, salvarParte, aoSujo }: PropsSecao) {
           padrao={CONFIG_PADRAO.emailMensagem}
           variaveis={VARIAVEIS_CERTIFICADO}
           linhas={8}
-          aviso={s.tentou ? erros.emailMensagem : null}
+          aviso={
+            s.tentou && erros.emailMensagem
+              ? erros.emailMensagem
+              : !v.emailMensagem.includes('{assinaturaDigital}')
+                ? 'A mensagem não tem {assinaturaDigital}: nos certificados assinados digitalmente, o cliente não vai ver como conferir a assinatura.'
+                : null
+          }
           exemplo={`${preencherModelo(v.emailAssunto, exemploCertificado)}\n\n${preencherModelo(v.emailMensagem, exemploCertificado)}`}
         />
       </Bloco>

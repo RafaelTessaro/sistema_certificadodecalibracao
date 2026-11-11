@@ -23,7 +23,16 @@ export interface DadosCertificadoPdf {
   marcaDagua: string
   /**
    * Prévia de um rascunho (ainda não emitido nem autorizado): sem as imagens das assinaturas (só as linhas) e,
-   * no fim, "Prévia gerada em …, sem valor" no lugar de "emitido em …".
+   * no fim, "Prévia gerada em …, sem valor" no lugar de "emitido em …". Com o certificado digital da empresa
+   * instalado, a emissão da prévia leva `assinaturaDigital` (o que a emissão vai congelar): o layout do assinado (as
+   * pessoas sem as linhas) e, no quadro, "Na emissão, este certificado será assinado digitalmente por …". A prévia
+   * nunca é assinada.
    */
   previa?: boolean
+  /**
+   * A cópia (com a marca d'água) de uma emissão com `assinaturaDigital` cancelada ou substituída antes de ser assinada: o
+   * PDF assinado nunca existiu. O quadro diz que esta cópia não tem assinatura digital, em vez de "Documento assinado
+   * digitalmente por …" (`textoNaoAssinadoDigitalmente`).
+   */
+  naoAssinado?: 'cancelado' | 'substituído'
 }

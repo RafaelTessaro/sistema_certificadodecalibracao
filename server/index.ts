@@ -7,6 +7,7 @@
 //   HOSTS_PERMITIDOS  nomes extras para acessar o servidor, separados por vírgula
 //                (IPs, localhost, o nome do computador, <nome>.local e <nome>.<domínio do Windows> sempre
 //                funcionam; um nome completo de outro domínio, ex.: servidor.empresa.com.br, vai aqui)
+//   BC_PKI_TESTE, BC_RELOGIO_TESTE  só nos testes de ponta a ponta, com NODE_ENV=test (ver server/assinatura/ambienteTeste.ts)
 //
 // O que o ambiente já define vale mais que o .env. No servidor instalado pelo setup do Windows, o serviço define
 // PORTA, HOST e PASTA_DADOS: os do .env são ignorados, com um aviso no registro de erros.
@@ -14,6 +15,7 @@
 import { existsSync, readFileSync, writeSync } from 'node:fs'
 import { hostname, networkInterfaces } from 'node:os'
 import { criarApp, VERSAO_APP } from './app.ts'
+import { opcoesCertificadoDigitalDeTeste } from './assinatura/ambienteTeste.ts'
 import { avisoVariavelIgnorada, mensagemPortaEmUso, variaveisIgnoradasDoEnv } from './configuracaoEnv.ts'
 import { dominioDoComputador } from './dominioWindows.ts'
 
@@ -39,6 +41,8 @@ const { app, usuarios } = await criarApp({
   tarefasEmSegundoPlano: true,
   porta,
   dominioWindows,
+  // Só nos testes de ponta a ponta (NODE_ENV=test e a pasta __fixtures__ presente): a PKI de teste e o relógio
+  certificadoDigital: await opcoesCertificadoDigitalDeTeste(process.env),
 })
 
 try {

@@ -10,6 +10,12 @@ import type { CertificadoDigitalPublico, PartesAssinaturaPdf } from '#shared/tip
 /** Problema com o certificado digital: mensagem em português, pode ser mostrada ao administrador e nunca traz segredo. */
 export class ErroCertificadoDigital extends Error {}
 
+/**
+ * Não foi possível assinar ou remontar o PDF: estrutura que o sistema não assina (anotações, formulário), assinatura
+ * que não cabe na reserva, ou a assinatura guardada que não confere com o PDF refeito. Mensagem em português, sem segredo.
+ */
+export class ErroAssinaturaPdf extends Error {}
+
 /** Os dados públicos do certificado da empresa (o que a tela mostra e o banco guarda). */
 export interface DadosCertificadoDigital {
   /** SHA-256 (hex, minúsculas) do certificado (DER). */
@@ -37,7 +43,10 @@ export interface A1ParaAssinar {
   cadeiaDer: Buffer[]
 }
 
-/** A parte pública do certificado, para remontar um PDF assinado sem a chave. */
+/**
+ * A parte pública do certificado, para remontar um PDF assinado sem a chave. A cadeia precisa ser a mesma (e na
+ * mesma ordem) que estava em A1ParaAssinar.cadeiaDer quando o PDF foi assinado: ela vai inteira dentro do CMS.
+ */
 export interface PublicoParaRemontar {
   certificadoDer: Buffer
   cadeiaDer: Buffer[]
@@ -54,6 +63,12 @@ export interface OpcoesAssinatura {
   carimbo?: (valorAssinatura: Buffer) => Promise<Buffer>
 }
 
+/** O resultado de assinarPdf: o PDF assinado e as partes variáveis a guardar com a emissão (para remontá-lo). */
+export interface ResultadoAssinatura {
+  pdf: Buffer
+  partes: PartesAssinaturaPdf
+}
+
 /** O serviço do certificado digital (server/certificadoDigital.ts), injetado como ctx.certificadoDigital. */
 export interface ServicoCertificadoDigital {
   /** A abertura do cofre na partida (em segundo plano); sempre resolve. */
@@ -64,7 +79,7 @@ export interface ServicoCertificadoDigital {
   /**
    * O certificado pronto para assinar; null = nenhum instalado. Lança ErroApi(409, mensagem, { codigo:
    * 'CERTIFICADO_DIGITAL' }) quando há um instalado mas ele não pode assinar agora (vencido, ainda não vale, não abre
-   * neste computador, CNPJ diferente do da empresa).
+   * no servidor, CNPJ diferente do da empresa).
    */
   paraAssinar(cnpjEmpresa: string, agora?: Date): A1ParaAssinar | null
   /** A parte pública de qualquer certificado já instalado (também os removidos e os trocados). */

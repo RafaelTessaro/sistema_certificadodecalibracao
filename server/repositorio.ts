@@ -73,6 +73,7 @@ import type {
   MensagemTempoReal,
   NumeroReservado,
   Padrao,
+  PartesAssinaturaPdf,
   ResumoPainel,
   SituacaoNumero,
   StatusCalibracao,
@@ -83,6 +84,40 @@ import type {
 import { cargasDeMudancaDoEma, folhaDeAntesComCargasDoEma } from '#shared/metrologia/sugestoes.ts'
 import { type Banco, gravarMeta, lerMeta, temLeituraMedida, transacao } from './db.ts'
 import { ErroApi } from './erros.ts'
+import type { RegistroCertificadoDigital } from '#shared/tipos.ts'
+import type { DadosCertificadoDigital, PublicoParaRemontar } from './assinatura/contrato.ts'
+
+interface LinhaCertificadoDigital {
+  sha256: string
+  serie: string
+  titular: string
+  cnpj: string
+  tipo: 'A1' | 'SE-S'
+  emissor: string
+  valido_de: string
+  valido_ate: string
+  instalado_em: string
+  instalado_por: string
+  removido_em: string
+  removido_por: string
+  motivo: RegistroCertificadoDigital['motivo']
+}
+
+const registroCertificadoDigital = (l: LinhaCertificadoDigital): RegistroCertificadoDigital => ({
+  sha256: l.sha256,
+  serie: l.serie,
+  titular: l.titular,
+  cnpj: l.cnpj,
+  tipo: l.tipo,
+  emissor: l.emissor,
+  validoDe: l.valido_de,
+  validoAte: l.valido_ate,
+  instaladoEm: l.instalado_em,
+  instaladoPor: l.instalado_por,
+  removidoEm: l.removido_em,
+  removidoPor: l.removido_por,
+  motivo: l.motivo,
+})
 
 /** A folha foi impressa para esta calibração (a dela, ou uma folha nova dela), e não avulsa e ligada depois. */
 export const impressaPara = (chave: string, calibracaoId: string) =>
@@ -373,13 +408,18 @@ const chaveSerie = (serie: string) => serie.replace(/[\s.\-/]+/g, '').toUpperCas
 /** Texto para comparar: sem espaços nas pontas nem repetidos, em maiúsculas. */
 const chaveTexto = (t: string) => t.trim().replace(/\s+/g, ' ').toUpperCase()
 
+/** Os emitidos com a assinatura digital (1.0.7) que ainda não foram assinados (sem o PDF registrado), sobre `k`. */
+const ASSINATURA_PENDENTE = `k.status = 'EMITIDO' AND json_type(k.dados, '$.emissao.assinaturaDigital') = 'object'
+  AND COALESCE(json_extract(k.dados, '$.emissao.hashPdf'), '') = ''`
+
 export interface FiltroCalibracoes {
   /**
    * 'AUTORIZAR': as que `usuario` pode autorizar agora (signatário, nunca o técnico nem quem o escolheu): as enviadas
    * para ele (a enviada na 1.0.5 para quem escolheu o técnico também, para ele devolver) e as enviadas para revisão antes
-   * da 1.0.5; nenhuma com a revisão por outra pessoa desligada (Configurações).
+   * da 1.0.5; nenhuma com a revisão por outra pessoa desligada (Configurações). 'ASSINATURA_PENDENTE': os emitidos com a
+   * assinatura digital (1.0.7) que ainda não foram assinados (o PDF não é entregue até assinar).
    */
-  status?: StatusCalibracao | 'ABERTAS' | 'AUTORIZAR' | ''
+  status?: StatusCalibracao | 'ABERTAS' | 'AUTORIZAR' | 'ASSINATURA_PENDENTE' | ''
   /** Quem está vendo a lista (para 'AUTORIZAR'). */
   usuario?: { id: string; signatario: boolean } | null
   clienteId?: string
@@ -1114,6 +1154,7 @@ export class Repositorio {
     const condicoes: string[] = filtro.status === 'SUBSTITUIDO' ? [] : [`NOT (k.status = 'SUBSTITUIDO' AND ${VERSAO_ANTERIOR})`]
     const params: Array<string | number> = []
     if (filtro.status === 'ABERTAS') condicoes.push("k.status IN ('RASCUNHO','REVISAO')")
+    else if (filtro.status === 'ASSINATURA_PENDENTE') condicoes.push(ASSINATURA_PENDENTE)
     else if (filtro.status === 'AUTORIZAR') {
       // Só com a revisão por outra pessoa ligada (desligada, ninguém autoriza: qualquer pessoa emite) e só signatário:
       // as enviadas para ele (também a enviada na 1.0.5 para quem escolheu o técnico: ele não autoriza, mas devolve,
@@ -1260,6 +1301,8 @@ export class Repositorio {
         ? { aguardando: { id: k.autorizacao.signatarioId, nome: k.autorizacao.signatarioNome } }
         : {}),
       ...(k.status === 'RASCUNHO' && k.devolucao ? { devolvidaPor: k.devolucao.por } : {}),
+      // Emitido para ser assinado e ainda sem o PDF assinado (o mesmo de ASSINATURA_PENDENTE): a lista não o mostra pronto
+      ...(k.status === 'EMITIDO' && k.emissao?.assinaturaDigital && !k.emissao.hashPdf ? { aguardandoAssinatura: true } : {}),
     }
   }
 
@@ -1640,7 +1683,8 @@ export class Repositorio {
 
   /**
    * Grava o hash e o arquivo do PDF gerado (não muda a versão: é complemento da emissão). O hash é o do
-   * documento entregue ao cliente (o da verificação pública): depois de gravado, não muda.
+   * documento entregue ao cliente (o da verificação pública): depois de gravado, não muda. Na 1ª gravação, avisa as
+   * telas: o certificado que aguardava a assinatura digital (assinado em segundo plano) passa a poder ser baixado.
    */
   registrarPdf(id: string, arquivo: string, hashPdf: string) {
     transacao(this.db, () => {
@@ -1653,7 +1697,40 @@ export class Repositorio {
         )
       const atualizado: Calibracao = { ...k, emissao: { ...k.emissao, arquivo, hashPdf } }
       this.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(atualizado), id)
+      if (!k.emissao.hashPdf) this.mudou('calibracao', id)
     })
+  }
+
+  /**
+   * Grava as partes da assinatura digital do PDF da emissão (1.0.7; ver `pdfAssinado` em server/certificados.ts), antes
+   * de o arquivo ser gravado. Como o hash, uma vez só e nunca mudadas: se já houver outras (duas gravações ao mesmo
+   * tempo), ficam as primeiras, e são elas que voltam (o arquivo é o remontado delas). Não muda a versão.
+   */
+  registrarAssinatura(id: string, partes: PartesAssinaturaPdf): PartesAssinaturaPdf {
+    return transacao(this.db, () => {
+      const k = this.obterCalibracao(id)
+      if (!k?.emissao) throw new ErroApi(409, 'Certificado sem dados de emissão.')
+      if (k.emissao.assinatura) return k.emissao.assinatura
+      if (!k.emissao.assinaturaDigital)
+        throw new ErroApi(409, `O certificado ${k.numero} foi emitido sem assinatura digital: o registro da emissão não muda.`)
+      if (k.emissao.hashPdf)
+        throw new ErroApi(409, `O PDF do certificado ${k.numero} já está registrado: o registro da emissão não muda.`)
+      const atualizado: Calibracao = { ...k, emissao: { ...k.emissao, assinatura: partes } }
+      this.db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?').run(JSON.stringify(atualizado), id)
+      return partes
+    })
+  }
+
+  /** Os certificados emitidos (válidos) sem o PDF registrado: a gravação ou a assinatura ficou para depois. */
+  emitidosSemPdf(): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT id FROM calibracoes WHERE status = 'EMITIDO' AND json_type(dados, '$.emissao') = 'object'
+             AND COALESCE(json_extract(dados, '$.emissao.hashPdf'), '') = '' ORDER BY data_emissao, numero`,
+        )
+        .all() as Array<{ id: string }>
+    ).map((l) => l.id)
   }
 
   cancelar(id: string, motivo: string, autor: { nome: string }, versao?: number): Calibracao {
@@ -3484,6 +3561,91 @@ export class Repositorio {
     return c ? `para o cliente ${c.nome || c.razaoSocial}` : 'para um cliente que foi excluído'
   }
 
+  // ---- Certificados digitais da empresa (só os dados públicos; a chave fica no cofre) --------------
+
+  /** Todos os já instalados, do mais novo para o mais antigo (o instalado, se houver, vem primeiro). */
+  certificadosDigitais(): RegistroCertificadoDigital[] {
+    const linhas = this.db
+      .prepare("SELECT * FROM certificados_digitais ORDER BY removido_em = '' DESC, instalado_em DESC, sha256")
+      .all() as unknown as LinhaCertificadoDigital[]
+    return linhas.map(registroCertificadoDigital)
+  }
+
+  /** O instalado segundo o banco (sem `removido_em`), ou null. */
+  certificadoDigitalAtivo(): RegistroCertificadoDigital | null {
+    const l = this.db
+      .prepare("SELECT * FROM certificados_digitais WHERE removido_em = '' ORDER BY instalado_em DESC LIMIT 1")
+      .get() as unknown as LinhaCertificadoDigital | undefined
+    return l ? registroCertificadoDigital(l) : null
+  }
+
+  /** O certificado e a cadeia (DER) de um certificado já instalado (também o trocado e o removido), para remontar PDFs. */
+  certificadoDigitalPublico(sha256: string): PublicoParaRemontar | null {
+    const l = this.db.prepare('SELECT certificado, cadeia FROM certificados_digitais WHERE sha256 = ?').get(sha256) as
+      { certificado: Uint8Array; cadeia: string } | undefined
+    if (!l) return null
+    let cadeia: unknown
+    try {
+      cadeia = JSON.parse(l.cadeia)
+    } catch {
+      return null
+    }
+    if (!Array.isArray(cadeia) || cadeia.some((c) => typeof c !== 'string')) return null
+    return { certificadoDer: Buffer.from(l.certificado), cadeiaDer: (cadeia as string[]).map((c) => Buffer.from(c, 'base64')) }
+  }
+
+  /**
+   * Registra o certificado instalado agora; o que estava instalado (outro) passa a SUBSTITUIDO, na mesma transação. O mesmo
+   * certificado instalado de novo volta a ser o instalado e mantém a cadeia gravada (é a que foi nas assinaturas dele).
+   */
+  registrarCertificadoDigital(r: {
+    dados: DadosCertificadoDigital
+    certificadoDer: Buffer
+    cadeiaDer: Buffer[]
+    instaladoEm: string
+    instaladoPor: string
+  }) {
+    transacao(this.db, () => {
+      this.db
+        .prepare(
+          "UPDATE certificados_digitais SET removido_em = ?, removido_por = ?, motivo = 'SUBSTITUIDO' WHERE removido_em = '' AND sha256 <> ?",
+        )
+        .run(r.instaladoEm, r.instaladoPor, r.dados.sha256)
+      const d = r.dados
+      this.db
+        .prepare(
+          `INSERT INTO certificados_digitais (sha256, serie, titular, cnpj, tipo, emissor, valido_de, valido_ate, certificado,
+             cadeia, instalado_em, instalado_por)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(sha256) DO UPDATE SET instalado_em = excluded.instalado_em, instalado_por = excluded.instalado_por,
+             removido_em = '', removido_por = '', motivo = ''`,
+        )
+        .run(
+          d.sha256,
+          d.serie,
+          d.titular,
+          d.cnpj,
+          d.tipo,
+          d.emissor,
+          d.validoDe,
+          d.validoAte,
+          r.certificadoDer,
+          JSON.stringify(r.cadeiaDer.map((c) => c.toString('base64'))),
+          r.instaladoEm,
+          r.instaladoPor,
+        )
+    })
+  }
+
+  /** Marca o instalado como removido (ou trocado por fora, na conciliação da partida). */
+  marcarCertificadoDigitalRemovido(sha256: string, em: string, por: string, motivo: 'SUBSTITUIDO' | 'REMOVIDO' = 'REMOVIDO') {
+    this.db
+      .prepare(
+        "UPDATE certificados_digitais SET removido_em = ?, removido_por = ?, motivo = ? WHERE sha256 = ? AND removido_em = ''",
+      )
+      .run(em, por, motivo, sha256)
+  }
+
   // ---- Envios por e-mail ------------------------------------------------------------
 
   registrarEnvio(e: Omit<Envio, 'id' | 'em'> & { usuarioId: string }) {
@@ -3660,6 +3822,7 @@ export class Repositorio {
       emAndamento: this.listarCalibracoes({ status: 'ABERTAS', limite: 6 }).itens,
       clientes: contar('SELECT COUNT(*) AS n FROM clientes WHERE ativo = 1'),
       balancas: contar('SELECT COUNT(*) AS n FROM balancas WHERE ativo = 1'),
+      aguardandoAssinatura: contar(`SELECT COUNT(*) AS n FROM calibracoes k WHERE ${ASSINATURA_PENDENTE}`),
     }
   }
 }

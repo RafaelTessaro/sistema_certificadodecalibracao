@@ -25,7 +25,10 @@ export const ARQUIVO_BANCO = 'bc-calibracao.db'
  * Tabelas que a limpeza não toca. `meta` fica, menos os contadores da numeração (`META_DA_NUMERACAO`);
  * `auditoria` ganha o registro da limpeza (os registros antigos que apontam para uma calibração apagada continuam:
  * a tela mostra "Certificado não encontrado"); `arquivos` (certificados dos padrões e POP, pelo SHA-256) fica
- * inteira; `sqlite_sequence` (o SQLite) guarda os ids já usados, que nunca se repetem.
+ * inteira; `sqlite_sequence` (o SQLite) guarda os ids já usados, que nunca se repetem. `certificados_digitais` (os
+ * certificados digitais da empresa, só os dados públicos) fica: é o certificado de verdade da empresa, e o cofre com a chave
+ * (certificado-digital.json, na pasta de dados) também não é tocado. Instale o certificado digital depois de apagar os
+ * testes: os PDFs de teste assinados com ele vão para testes-apagados-<data> como os outros.
  */
 export const TABELAS_MANTIDAS = [
   'clientes',
@@ -38,6 +41,7 @@ export const TABELAS_MANTIDAS = [
   'auditoria',
   'arquivos',
   'pop_versoes',
+  'certificados_digitais',
   'sqlite_sequence',
 ] as const
 

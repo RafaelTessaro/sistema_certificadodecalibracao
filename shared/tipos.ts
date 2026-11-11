@@ -766,6 +766,11 @@ export interface CalibracaoResumo {
   semAutorizacao?: boolean
   /** Rascunho devolvido pelo signatário sem autorizar (até o próximo pedido): quem devolveu. Ausente nos outros casos. */
   devolvidaPor?: string
+  /**
+   * Emitido para ser assinado digitalmente (1.0.7) e ainda não assinado: não pode ser baixado nem enviado. Ausente nos
+   * outros casos.
+   */
+  aguardandoAssinatura?: boolean
 }
 
 /**
@@ -957,14 +962,9 @@ export interface PartesAssinaturaPdf {
   hashBase: string
 }
 
+/** EMPRESA_SEM_CNPJ: o CNPJ da empresa (Configurações → Empresa) está em branco e não há com o que conferir o do certificado. */
 export type SituacaoCertificadoDigital =
-  | 'SEM_CERTIFICADO'
-  | 'OK'
-  | 'VENCENDO'
-  | 'VENCIDO'
-  | 'AINDA_NAO_VALE'
-  | 'NAO_ABRE'
-  | 'CNPJ_DIFERENTE'
+  'SEM_CERTIFICADO' | 'OK' | 'VENCENDO' | 'VENCIDO' | 'AINDA_NAO_VALE' | 'NAO_ABRE' | 'CNPJ_DIFERENTE' | 'EMPRESA_SEM_CNPJ'
 
 /** O que o sistema mostra do certificado digital instalado (nunca a chave, a senha ou o CPF do responsável). */
 export interface CertificadoDigitalPublico {
@@ -981,6 +981,27 @@ export interface CertificadoDigitalPublico {
   instaladoEm?: string
   instaladoPor?: string
   avisos: string[]
+}
+
+/**
+ * Um certificado digital já instalado (tabela `certificados_digitais`, só dados públicos): o histórico da tela e a parte
+ * pública para remontar os PDFs assinados com ele.
+ */
+export interface RegistroCertificadoDigital {
+  sha256: string
+  serie: string
+  titular: string
+  cnpj: string
+  tipo: 'A1' | 'SE-S'
+  emissor: string
+  validoDe: string
+  validoAte: string
+  instaladoEm: string
+  instaladoPor: string
+  /** Quando deixou de ser o instalado ('' = é o instalado). */
+  removidoEm: string
+  removidoPor: string
+  motivo: '' | 'SUBSTITUIDO' | 'REMOVIDO'
 }
 
 export interface Signatario {
@@ -1075,6 +1096,12 @@ export interface ResumoPainel {
   emAndamento: CalibracaoResumo[]
   clientes: number
   balancas: number
+  /**
+   * Certificados emitidos com a assinatura digital (1.0.7) que ainda não foram assinados (o PDF não é entregue até
+   * assinar; o servidor tenta de novo a cada 15 minutos, e logo depois de instalar o certificado digital). O Painel mostra
+   * a todos, com o caminho até a lista deles (Certificados, "Aguardando assinatura").
+   */
+  aguardandoAssinatura?: number
 }
 
 export interface Vencimento {
@@ -1382,6 +1409,7 @@ export type AcaoAuditoria =
   | 'AUTORIZACAO_DEVOLVIDA'
   | 'NUMERO_RESERVADO'
   | 'NUMERO_NAO_UTILIZADO'
+  | 'CERTIFICADO_DIGITAL'
   | 'ALTERACAO'
 
 export type GrupoAuditoria = 'acessos' | 'usuarios' | 'certificados' | 'dados' | 'alteracoes'

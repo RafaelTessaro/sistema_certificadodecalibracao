@@ -438,3 +438,19 @@ describe('o título da revisão diz o que quem está usando pode fazer', () => {
     expect(falta).toContain('Estes itens impedem a emissão. Para corrigir, volte para rascunho.')
   })
 })
+
+describe('o que sai no certificado de quem executou e de quem autorizou', () => {
+  it('sem o certificado digital da empresa: as assinaturas (imagens); com ele: os nomes e a assinatura digital da empresa', async () => {
+    const { textoAssinaturasDaEmissao } = await import('../certificadoDigital/textos')
+    expect(textoAssinaturasDaEmissao(false, false)).toBe('O certificado sai só com a assinatura de quem executou.')
+    expect(textoAssinaturasDaEmissao(true, false)).toBe(
+      'O certificado sai com duas assinaturas: a de quem executou e a de quem autorizou.',
+    )
+    expect(textoAssinaturasDaEmissao(false, true)).toBe(
+      'O certificado sai com o nome de quem executou, sem a imagem da assinatura, e assinado digitalmente pela empresa.',
+    )
+    expect(textoAssinaturasDaEmissao(true, true)).toBe(
+      'O certificado sai com os nomes de quem executou e de quem autorizou, sem as imagens das assinaturas, e assinado digitalmente pela empresa.',
+    )
+  })
+})

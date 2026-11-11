@@ -121,6 +121,18 @@ npm start        # servidor de produção (serve dist/) em http://localhost:4850
 
 As configurações do servidor ficam num arquivo `.env`. Veja o modelo em [`.env.exemplo`](.env.exemplo): porta, pasta de dados e nomes permitidos. O que o ambiente já define vale mais que o `.env`. No servidor instalado pelo setup do Windows, o serviço define a porta, o HOST e a pasta de dados, e o modelo instalado é o [`instalador/env-servidor.exemplo`](instalador/env-servidor.exemplo).
 
+Para conferir a assinatura digital de ponta a ponta com o servidor de verdade (fora do Vitest), há um modo de teste que
+confia só na raiz da PKI de teste (`server/assinatura/__fixtures__/pki`) e, se pedido, adianta o relógio do certificado
+digital:
+
+```bash
+NODE_ENV=test BC_PKI_TESTE=1 BC_RELOGIO_TESTE=2046-12-10T12:00:00Z PORTA=4871 PASTA_DADOS=/tmp/teste/dados node server/iniciar.mjs
+```
+
+Ele só vale com `NODE_ENV=test` (o serviço do instalador define `production`) e com a pasta `__fixtures__`, que o
+empacotador não leva para o instalador; fora disso, as variáveis são ignoradas com um aviso
+([`server/assinatura/ambienteTeste.ts`](server/assinatura/ambienteTeste.ts)).
+
 ### Gerar o instalador
 
 ```bash

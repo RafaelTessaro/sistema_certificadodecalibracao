@@ -1,7 +1,7 @@
 // Textos do registro de atividades ("Atividade recente" da página Usuários). Cada gravação chega
 // como a chave da rota ('PUT /api/clientes/:id'); aqui ela vira uma frase.
 
-import { BLOQUEIO_TROCA_SENHA, GRUPOS_AUDITORIA, ROTULO_ACAO_AUDITORIA } from '#shared/usuarios.ts'
+import { BLOQUEIOS_DA_PROPRIA_SENHA, GRUPOS_AUDITORIA, ROTULO_ACAO_AUDITORIA } from '#shared/usuarios.ts'
 import type { AcaoAuditoria, GrupoAuditoria, RegistroAuditoria } from '#shared/tipos.ts'
 
 type Verbo = readonly [passado: string, infinitivo: string]
@@ -57,6 +57,10 @@ const ROTAS: Record<string, readonly [Verbo, string, TipoLink?]> = {
   'PUT /api/email/config': [ALTERAR, 'a configuração do e-mail'],
   'DELETE /api/email/config': [APAGAR, 'a configuração do e-mail'],
   'POST /api/email/teste': [ENVIAR, 'um e-mail de teste'],
+  'GET /api/certificado-digital/chave': [['Pediu', 'pedir'], 'a chave para enviar o certificado digital'],
+  'POST /api/certificado-digital/conferir': [['Conferiu', 'conferir'], 'um certificado digital'],
+  'POST /api/certificado-digital': [['Instalou', 'instalar'], 'o certificado digital da empresa'],
+  'DELETE /api/certificado-digital': [['Removeu', 'remover'], 'o certificado digital da empresa'],
   'GET /api/backups': [VER, 'as cópias de segurança'],
   'POST /api/backups': [['Fez', 'fazer'], 'uma cópia de segurança agora'],
   'GET /api/backups/:arquivo': [['Baixou', 'baixar'], 'uma cópia de segurança'],
@@ -155,6 +159,11 @@ export function descreverRegistro(r: RegistroAuditoria, nomes?: ReadonlyMap<stri
       ...(r.alvo ? { link: { tipo: 'calibracao' as const, id: r.alvo } } : {}),
     }
   }
+  if (r.acao === 'CERTIFICADO_DIGITAL') {
+    // Pela tela ('POST … | instalado: …'), ou o aviso de vencimento gravado pelo próprio sistema (o texto inteiro)
+    const daRota = /^(POST|DELETE) \/api\//.test(r.detalhe)
+    return { titulo, detalhe: daRota ? extraDoDetalhe(r.detalhe) : r.detalhe }
+  }
   if (ACOES_DO_NUMERO.has(r.acao)) {
     // Gravado pela rota do descarte ('POST … | nº · folha') ou direto (só o nº e de onde)
     const detalhe = r.detalhe.startsWith('POST /api/') ? extraDoDetalhe(r.detalhe) : r.detalhe
@@ -192,8 +201,10 @@ export function autorDoRegistro(r: RegistroAuditoria, nomes: ReadonlyMap<string,
     r.acao === 'TESTES_APAGADOS'
   )
     return { texto: 'No computador do servidor' }
+  // O aviso de vencimento do certificado digital: gravado pelo próprio sistema, sem usuário
+  if (r.acao === 'CERTIFICADO_DIGITAL' && !r.usuarioId) return { texto: 'Aviso automático do sistema' }
   const nome = nomes.get(r.usuarioId)
-  if (r.acao === 'LOGIN_FALHOU' || (r.acao === 'BLOQUEIO' && r.detalhe !== BLOQUEIO_TROCA_SENHA)) {
+  if (r.acao === 'LOGIN_FALHOU' || (r.acao === 'BLOQUEIO' && !BLOQUEIOS_DA_PROPRIA_SENHA.includes(r.detalhe))) {
     if (!r.login) return { texto: 'Usuário inexistente' }
     return nome
       ? { texto: `Tentativa com o usuário ${nome}`, login: r.login, entreParenteses: true }

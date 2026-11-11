@@ -5,6 +5,7 @@
 // classe direto no banco, com o servidor ligado ou não.
 
 import {
+  BLOQUEIO_CONFIRMAR_SENHA,
   BLOQUEIO_TROCA_SENHA,
   GRUPOS_AUDITORIA,
   LOGIN_MAX,
@@ -702,6 +703,39 @@ export class ServicoUsuarios {
     return { usuario: { ...paraSessao(linha), trocarSenha: false }, sessoesEncerradas }
   }
 
+  /**
+   * A própria senha pedida de novo antes de uma ação sensível (instalar ou remover o certificado digital da empresa). Tem o
+   * limite de tentativas da troca da própria senha, num contador separado (errar aqui não trava a troca, nem o contrário;
+   * 429 com a espera), e o bloqueio fica no registro com o que foi (`BLOQUEIO_CONFIRMAR_SENHA`); errada: 400 com o código
+   * SENHA_ATUAL. As mensagens chamam a senha como o campo da tela: "A sua senha do sistema" (o modal também pede a senha do
+   * .pfx, que tem outra mensagem).
+   */
+  async confirmarPropriaSenha(usuarioId: string, senha: unknown, ip: string): Promise<void> {
+    const linha = this.linhaPorId(usuarioId)
+    if (!linha || !linha.ativo) throw new ErroApi(401, MENSAGENS.semSessao, { codigo: 'SEM_SESSAO' })
+    const digitada = typeof senha === 'string' ? senha.slice(0, 500) : ''
+    if (!digitada) throw new ErroApi(400, 'Digite a sua senha do sistema.', { codigo: 'SENHA_ATUAL' })
+    const chaves: ChavesTentativa = { confirmacaoDe: linha.id }
+    const espera = this.limite.espera(chaves, Date.parse(linha.senha_alterada_em))
+    if (espera !== null) throw erroMuitasTentativas(espera)
+    const liberar = this.limite.reservar(chaves)
+    let confere: boolean
+    try {
+      confere = await conferirSenha(digitada, linha.senha_hash)
+    } finally {
+      liberar()
+    }
+    if (!confere) {
+      const { bloqueouAgora } = this.limite.falhou(chaves)
+      if (bloqueouAgora) {
+        this.registrar('BLOQUEIO', { usuario: linha, ip, detalhe: BLOQUEIO_CONFIRMAR_SENHA })
+        this.avisar(`Confirmação de senha bloqueada por muitas tentativas: ${linha.login} a partir de ${ip}.`)
+      }
+      throw new ErroApi(400, 'A sua senha do sistema não confere.', { codigo: 'SENHA_ATUAL' })
+    }
+    this.limite.acertou(chaves)
+  }
+
   // ---- Registro de atividades -------------------------------------------------------
 
   registrar(acao: AcaoAuditoria, d: DadosRegistro): void {
@@ -992,8 +1026,54 @@ export function transplantarRegistros(origem: Banco, destino: Banco): { folhasCa
   transacao(destino, () => {
     certificados = transplantarCertificados(origem, destino).length
     folhasCampo = passarFolhasCampo(origem, destino)
+    passarCertificadosDigitais(origem, destino)
   })
   return { folhasCampo, certificados }
+}
+
+/**
+ * Os certificados digitais da empresa (só os dados públicos; a chave fica no cofre, fora do banco) de `origem` (o banco
+ * atual) passam para `destino` (a cópia que vai voltar), com a situação de cada um como no banco atual (instalado, trocado,
+ * removido): os PDFs assinados com um certificado instalado depois da cópia continuam remontáveis. Dentro da transação.
+ */
+export function passarCertificadosDigitais(origem: Banco, destino: Banco): number {
+  const tem = (db: Banco) =>
+    !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'certificados_digitais'").get()
+  if (!tem(origem) || !tem(destino)) return 0
+  const colunas = [
+    'sha256',
+    'serie',
+    'titular',
+    'cnpj',
+    'tipo',
+    'emissor',
+    'valido_de',
+    'valido_ate',
+    'certificado',
+    'cadeia',
+    'instalado_em',
+    'instalado_por',
+    'removido_em',
+    'removido_por',
+    'motivo',
+  ]
+  const linhas = origem.prepare(`SELECT ${colunas.join(', ')} FROM certificados_digitais`).all() as Array<
+    Record<string, string | Uint8Array>
+  >
+  const existia = destino.prepare('SELECT 1 FROM certificados_digitais WHERE sha256 = ?')
+  const gravar = destino.prepare(
+    `INSERT INTO certificados_digitais (${colunas.join(', ')}) VALUES (${colunas.map(() => '?').join(', ')})
+     ON CONFLICT(sha256) DO UPDATE SET instalado_em = excluded.instalado_em, instalado_por = excluded.instalado_por,
+       removido_em = excluded.removido_em, removido_por = excluded.removido_por, motivo = excluded.motivo`,
+  )
+  let novos = 0
+  transacao(destino, () => {
+    for (const l of linhas) {
+      if (!existia.get(l.sha256)) novos++
+      gravar.run(...colunas.map((c) => l[c]))
+    }
+  })
+  return novos
 }
 
 /**

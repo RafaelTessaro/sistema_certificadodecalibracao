@@ -8,6 +8,7 @@ import { avisarErro, toast } from '../../store/ui'
 import { Button } from '../ui/Button'
 import { Field, Input, LegendaObrigatorio } from '../ui/Form'
 import { Modal } from '../ui/Modal'
+import { useAssinadosDigitalmente } from '../certificadoDigital/useAssinadosDigitalmente'
 import { DadosCertificado, type DadosNoCertificado } from './DadosCertificado'
 import { EscolhaNivel } from './EscolhaNivel'
 import { SenhaInicial, type ModoSenha } from './SenhaInicial'
@@ -60,6 +61,7 @@ function FormNovoUsuario({
   aoCriar: (r: ResultadoSenha) => void
   setSalvando: (v: boolean) => void
 }) {
+  const assinadosDigitalmente = useAssinadosDigitalmente()
   const [nome, setNome] = useState('')
   const [login, setLogin] = useState('')
   const [nivel, setNivel] = useState<NivelUsuario>('COMUM')
@@ -162,7 +164,13 @@ function FormNovoUsuario({
         </Field>
       </div>
       <EscolhaNivel valor={nivel} aoMudar={setNivel} />
-      <DadosCertificado prefixo="novo" nome={nome} valor={certificado} aoMudar={(v) => setCertificado((c) => ({ ...c, ...v }))} />
+      <DadosCertificado
+        prefixo="novo"
+        nome={nome}
+        valor={certificado}
+        aoMudar={(v) => setCertificado((c) => ({ ...c, ...v }))}
+        assinadosDigitalmente={assinadosDigitalmente}
+      />
       <SenhaInicial
         modo={modo}
         aoMudarModo={setModo}

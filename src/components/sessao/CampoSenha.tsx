@@ -5,14 +5,20 @@ import { Input } from '../ui/Form'
 
 /**
  * Campo de senha com o botão de mostrar/ocultar. `autoComplete` diz ao navegador o que guardar:
- * "current-password" ao entrar, "new-password" ao criar (o navegador pode sugerir uma senha forte).
+ * "current-password" ao entrar, "new-password" ao criar (o navegador pode sugerir uma senha forte) e "one-time-code"
+ * numa senha que não é a de entrar no sistema e não deve ir para o gerenciador de senhas (a do arquivo do certificado
+ * digital, e a do administrador pedida de novo na mesma tela): o par current + new seria lido como "trocar a senha".
+ * Com `ignorarGerenciadores`, as marcas que os gerenciadores de senha (LastPass, 1Password, Bitwarden, Dashlane) respeitam.
  * O botão do olho fica fora da ordem do Tab (o Tab vai direto para o campo seguinte); pelo teclado,
  * Alt+F8 no campo mostra e oculta a senha (o mesmo atalho do Edge).
  */
 export const CampoSenha = forwardRef<
   HTMLInputElement,
-  Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & { autoComplete: 'current-password' | 'new-password' }
->(function CampoSenha({ className, onKeyDown, ...props }, ref) {
+  Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & {
+    autoComplete: 'current-password' | 'new-password' | 'one-time-code'
+    ignorarGerenciadores?: boolean
+  }
+>(function CampoSenha({ className, onKeyDown, ignorarGerenciadores, ...props }, ref) {
   const [visivel, setVisivel] = useState(false)
   const rotulo = visivel ? 'Ocultar a senha' : 'Mostrar a senha'
   return (
@@ -25,6 +31,9 @@ export const CampoSenha = forwardRef<
         autoCorrect="off"
         // Sem o olho do próprio Edge, que apareceria ao lado deste
         className={cn('pr-11 [&::-ms-reveal]:hidden', className)}
+        {...(ignorarGerenciadores
+          ? { 'data-lpignore': 'true', 'data-1p-ignore': 'true', 'data-bwignore': 'true', 'data-form-type': 'other' }
+          : {})}
         onKeyDown={(e) => {
           if (e.altKey && e.key === 'F8') {
             e.preventDefault()

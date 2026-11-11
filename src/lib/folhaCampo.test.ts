@@ -146,6 +146,29 @@ describe('a folha do cliente ainda não ligada', () => {
       titulo: 'Autorizar e emitir o certificado?',
       confirmar: 'Autorizar e emitir',
     })
+    // Com o certificado digital da empresa instalado, o PDF sai sem as imagens das assinaturas: o nome, e não a assinatura
+    const digital = confirmacaoDaEmissao({
+      autorizar: true,
+      numeroRevisao: null,
+      numeroReservado: null,
+      semLigar: null,
+      assinadoDigitalmente: true,
+    })
+    expect(digital.descricao).toMatch(
+      /^Você autoriza como signatário: o certificado sai com o seu nome em “Autorizado por”, e assinado digitalmente pela empresa\. /,
+    )
+    expect(digital.descricao).not.toContain('a sua assinatura')
+    expect(
+      confirmacaoDaEmissao({
+        autorizar: true,
+        numeroRevisao: null,
+        numeroReservado: 'CC-2026-00005',
+        semLigar,
+        assinadoDigitalmente: true,
+      }).descricao,
+    ).toMatch(
+      /o certificado sai com o seu nome em “Autorizado por”, e assinado digitalmente pela empresa\. Emitido, ele não pode mais ser alterado\.$/,
+    )
   })
 
   it('a folha da calibração que saiu ao ligar a do cliente: como desfazer, com o nº que volta', () => {

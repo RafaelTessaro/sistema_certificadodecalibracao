@@ -16,7 +16,9 @@
 // pela densidade do ar medida, convecção calculada), uma frase curta embaixo do método diz a densidade do ar e a
 // diferença de temperatura pesos − ar usadas (`notaEmpuxoConveccao`); sem elas, nada muda. Nada some: um bloco
 // inteiro mais alto que a página (o pdfmake o descarta sem erro) é visto na medição e a seção é montada de novo
-// dividida; se ainda assim não couber, erro, sem PDF (`medirCertificado`).
+// dividida; se ainda assim não couber, erro, sem PDF (`medirCertificado`). Emitido com o certificado digital ICP-Brasil
+// da empresa (1.0.7, `EmissaoCertificado.assinaturaDigital`): as pessoas sem as imagens das assinaturas, o espaço e o fio,
+// e o quadro da assinatura digital antes da linha de fim (`blocoFinalAssinado`); sem ela, como antes, byte a byte.
 
 import {
   casasDecimais,
@@ -49,10 +51,13 @@ import {
   ROTULO_CLASSE,
   textoComEmpresa,
   textoPecas,
+  textoAssinaturaDigital,
+  textoNaoAssinadoDigitalmente,
   TIPOS_BALANCA,
   TIPOS_PADRAO,
 } from '#shared/dominio.ts'
 import type {
+  AssinaturaDigitalEmissao,
   Balanca,
   Calibracao,
   EmissaoCertificado,
@@ -1807,11 +1812,27 @@ function imagemAssinatura(dataUrl: string): string | null {
 
 /**
  * Área de uma assinatura, baixa (≈ 20 mm com o nome e o cargo): o rótulo, a imagem da assinatura (até 22 pt de
- * altura, ≈ 8 mm) ou o espaço para assinar à mão, o fio, o nome e o cargo com o registro.
+ * altura, ≈ 8 mm) ou o espaço para assinar à mão, o fio, o nome e o cargo com o registro. No certificado assinado
+ * digitalmente (`digital`), só o rótulo, o nome e o cargo com o registro: sem imagem, sem o espaço e sem o fio, porque
+ * nada ali é assinado à mão (o quadro da assinatura digital vai embaixo, `quadroAssinaturaDigital`).
  */
 const ALTURA_ASSINATURA = 22
+/** No assinado digitalmente: altura do rótulo, com o respiro até o nome (a data e o fim ao lado descem isso). */
+const ROTULO_ASSINATURA = 10
 
-function assinatura(papel: string, s: Signatario, comImagem: boolean): NoObjeto {
+function assinatura(papel: string, s: Signatario, comImagem: boolean, digital = false): NoObjeto {
+  if (digital)
+    return {
+      stack: [
+        { text: papel.toUpperCase(), style: 'rotulo', margin: [0, 0, 0, 1] },
+        { text: ou(s.nome), bold: true, fontSize: 8.2 },
+        {
+          text: [s.cargo, s.registro].filter((x) => !vazio(x)).join(' · ') || ' ',
+          fontSize: 7.2,
+          color: COR.textoSecundario,
+        },
+      ],
+    }
   const imagem = comImagem ? imagemAssinatura(s.assinatura) : null
   return {
     stack: [
@@ -1858,6 +1879,7 @@ export function assinantes(e: Pick<EmissaoCertificado, 'tecnico' | 'signatario' 
 function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
   const { e } = ctx
   const quem = assinantes(e)
+  const digital = e.assinaturaDigital
   const emissao = dataHoraBrasilia(e.emitidoEm)
   const cidade = [e.empresa.cidade, e.empresa.uf].filter((x) => !vazio(x)).join('/')
   // A prévia não foi emitida: diz quando foi gerada e que não tem valor
@@ -1874,6 +1896,7 @@ function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
     fontSize: 7.4,
     characterSpacing: 0.3,
   }
+  if (digital) return blocoFinalAssinado(ctx, quem, emitido, fim, digital)
   if (quem.length === 1)
     return [
       fio(COR.fio, 0.5, [0, ctx.r.assinaturas, 0, 5]),
@@ -1909,6 +1932,107 @@ function blocoFinal(ctx: Contexto, comImagem: boolean): No[] {
       margin: [0, 3.5, 0, 0],
     },
   ]
+}
+
+/**
+ * Fim do certificado assinado digitalmente com o certificado ICP-Brasil da empresa (`EmissaoCertificado.assinaturaDigital`,
+ * 1.0.7): as pessoas sem a imagem, o espaço e o fio (`assinatura`), a data da emissão, o quadro da assinatura digital e,
+ * por último, a linha de fim (ISO/IEC 17025, 7.8.2.1: nada do certificado depois dela). Com uma pessoa, a data vai na
+ * coluna ao lado dela e a linha de fim, sozinha, embaixo do quadro; com duas, a data e a linha de fim numa linha embaixo
+ * do quadro. Ocupa mais ou menos a altura do fim com as imagens: o certificado continua em no máximo 3 páginas.
+ * Congelado pela marca na emissão: os PDFs assinados são remontados byte a byte a partir dos dados dela, então uma
+ * mudança aqui entra com uma marca nova (as emissões sem a marca saem como saíam, com as imagens).
+ */
+function blocoFinalAssinado(
+  ctx: Contexto,
+  quem: ReturnType<typeof assinantes>,
+  emitido: NoObjeto,
+  fim: NoObjeto,
+  digital: AssinaturaDigitalEmissao,
+): No[] {
+  const quadro = quadroAssinaturaDigital(ctx, digital)
+  if (quem.length === 1)
+    return [
+      fio(COR.fio, 0.5, [0, ctx.r.assinaturas, 0, 5]),
+      {
+        columns: [
+          { width: 210, ...assinatura(quem[0].papel, quem[0].s, false, true) },
+          {
+            width: '*',
+            // A data na altura do nome da pessoa
+            stack: [emitido],
+            alignment: 'right',
+            color: COR.textoSecundario,
+            margin: [0, ROTULO_ASSINATURA, 0, 0],
+          },
+        ],
+        columnGap: 24,
+      },
+      quadro,
+      { ...fim, alignment: 'right', color: COR.textoSecundario, margin: [0, 3.5, 0, 0] },
+    ]
+  return [
+    fio(COR.fio, 0.5, [0, ctx.r.assinaturas, 0, 5]),
+    {
+      columns: quem.map((x) => assinatura(x.papel, x.s, false, true)),
+      columnGap: 24,
+    },
+    quadro,
+    {
+      columns: [
+        { width: '*', ...emitido },
+        { width: 'auto', ...fim, alignment: 'right' },
+      ],
+      columnGap: 12,
+      color: COR.textoSecundario,
+      margin: [0, 3.5, 0, 0],
+    },
+  ]
+}
+
+/**
+ * O quadro da assinatura digital (7,2 pt, uma ou duas linhas), com o fio verde à esquerda como as outras caixas de
+ * destaque: "Documento assinado digitalmente por {titular}, CNPJ …, com certificado digital ICP-Brasil (MP 2.200-2/2001).
+ * Para conferir a assinatura, envie este PDF em validar.iti.gov.br." (`textoAssinaturaDigital`, congelado). Na prévia,
+ * que nunca é assinada, o aviso de que a emissão sairá assinada.
+ */
+// A cópia de uma emissão cancelada ou substituída antes de ser assinada (`naoAssinado`) diz que não tem assinatura digital
+function quadroAssinaturaDigital(ctx: Contexto, a: AssinaturaDigitalEmissao): NoObjeto {
+  const folga = Math.max(2, ctx.r.destaque.folga - 1.5)
+  return {
+    table: {
+      widths: ['*'],
+      body: [
+        [
+          {
+            text: (ctx.d.naoAssinado
+              ? [{ texto: textoNaoAssinadoDigitalmente(ctx.d.naoAssinado) }]
+              : textoAssinaturaDigital(a, !!ctx.d.previa)
+            ).map((p: { texto: string; negrito?: true; inteira?: true }) => ({
+              text: p.texto,
+              ...(p.negrito ? { bold: true } : {}),
+              ...(p.inteira ? { noWrap: true } : {}),
+            })),
+            fontSize: 7.2,
+            lineHeight: 1.12,
+            color: COR.texto,
+          },
+        ],
+      ],
+    },
+    layout: {
+      hLineWidth: () => 0,
+      vLineWidth: (i: number) => (i === 0 ? 2.2 : 0),
+      vLineColor: () => COR.marca,
+      fillColor: () => COR.marcaFundo,
+      paddingLeft: () => 8,
+      paddingRight: () => 8,
+      paddingTop: () => folga,
+      paddingBottom: () => folga,
+    },
+    margin: [0, 4, 0, 0],
+    unbreakable: true,
+  }
 }
 
 // ---- Cabeçalho, rodapé, marca d'água ------------------------------------------------------------
@@ -2312,7 +2436,11 @@ export async function gerarCertificadoPdf(d: DadosCertificadoPdf): Promise<Buffe
   try {
     return (await montarCertificado(d)).pdf
   } catch (erro) {
-    const temImagem = !d.previa && [d.emissao.tecnico.assinatura, d.emissao.signatario.assinatura].some((a) => !vazio(a))
+    // O assinado digitalmente não desenha as imagens: sem o que tirar
+    const temImagem =
+      !d.previa &&
+      !d.emissao.assinaturaDigital &&
+      [d.emissao.tecnico.assinatura, d.emissao.signatario.assinatura].some((a) => !vazio(a))
     if (!temImagem || erro instanceof ErroApi) throw erro
     return (await montarCertificado(d, { assinaturas: false })).pdf
   }

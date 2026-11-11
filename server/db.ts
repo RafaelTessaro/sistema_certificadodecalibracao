@@ -4,11 +4,15 @@ import { DatabaseSync } from 'node:sqlite'
 import { POP_DA_ATUALIZACAO, separarProcedimento } from '#shared/arquivos.ts'
 import {
   calculoLegado,
+  CONFIG_PADRAO,
   diaEmBrasilia,
+  EMAIL_MENSAGEM_ANTIGA,
   enderecoCliente,
   formatarDataBr,
   hojeLocalIso,
   minimosDoPopComoAviso,
+  multilinha,
+  obj,
   parteSeparada,
   semIndicadorLegado,
   temCargasSemZero,
@@ -303,7 +307,56 @@ const MIGRACOES: Migracao[] = [
   // visita já aconteceu, ou vai acontecer com a folha sem a linha, e na 1.0.5 ela não era cobrada. As novas seguem a
   // regra. A que já tem os mínimos como avisos não precisa. 1.0.6.
   zerosAntesDaRegra,
+
+  // 23: a mensagem do e-mail do certificado gravada igual à padrão de antes ganha a marca {assinaturaDigital} (como
+  // conferir a assinatura digital, nos certificados assinados; vazia nos outros). Um texto mudado pela empresa fica como
+  // está: a tela do modelo sugere incluir a marca. 1.0.7.
+  emailComAssinaturaDigital,
+
+  // 24: os certificados digitais ICP-Brasil da empresa já instalados, só com os dados públicos (a chave fica cifrada no
+  // cofre, <pasta de dados>/certificado-digital.json, fora do banco e das cópias dele). Servem de histórico e para remontar
+  // um PDF assinado que sumir da pasta: a cadeia é a mesma que foi dentro de cada assinatura feita com ele. O instalado é
+  // o sem `removido_em`; o trocado fica com o motivo SUBSTITUIDO e o removido, REMOVIDO. Repetível. 1.0.7.
+  `
+  CREATE TABLE IF NOT EXISTS certificados_digitais (
+    sha256        TEXT PRIMARY KEY,            -- SHA-256 (hex) do certificado (DER)
+    serie         TEXT NOT NULL,
+    titular       TEXT NOT NULL,
+    cnpj          TEXT NOT NULL,
+    tipo          TEXT NOT NULL,               -- A1 | SE-S
+    emissor       TEXT NOT NULL,               -- a AC que emitiu
+    valido_de     TEXT NOT NULL,
+    valido_ate    TEXT NOT NULL,
+    certificado   BLOB NOT NULL,               -- DER (público)
+    cadeia        TEXT NOT NULL,               -- JSON: DER em base64 das ACs, da mais próxima à raiz
+    instalado_em  TEXT NOT NULL,
+    instalado_por TEXT NOT NULL DEFAULT '',
+    removido_em   TEXT NOT NULL DEFAULT '',   -- '' = é o instalado
+    removido_por  TEXT NOT NULL DEFAULT '',
+    motivo        TEXT NOT NULL DEFAULT ''    -- SUBSTITUIDO | REMOVIDO
+  );
+  `,
 ]
+
+/** Migração 23 (ver acima). Repetível: só troca a mensagem igual à padrão de antes (configuração ilegível fica como está). */
+function emailComAssinaturaDigital(db: Banco) {
+  const linha = db.prepare("SELECT valor FROM config WHERE chave = 'geral'").get() as { valor: string } | undefined
+  if (!linha) return
+  let config: Record<string, unknown>
+  try {
+    config = obj(JSON.parse(linha.valor))
+  } catch {
+    return
+  }
+  if (multilinha(config.emailMensagem, 5000) !== EMAIL_MENSAGEM_ANTIGA) return
+  db.prepare("UPDATE config SET valor = ? WHERE chave = 'geral'").run(
+    JSON.stringify({ ...config, emailMensagem: CONFIG_PADRAO.emailMensagem }),
+  )
+  db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)").run(
+    new Date().toISOString(),
+    'A mensagem padrão do e-mail do certificado ganhou a marca {assinaturaDigital}: nos certificados assinados digitalmente, ela explica ao cliente como conferir a assinatura.',
+  )
+}
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
 function acrescentarColuna(db: Banco, tabela: string, coluna: string, definicao: string) {

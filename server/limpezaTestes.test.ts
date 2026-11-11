@@ -151,6 +151,29 @@ describe('o que a limpeza apaga e o que fica', () => {
   })
 })
 
+describe('o certificado digital da empresa (1.0.7)', () => {
+  it('a limpeza não toca no cofre (certificado-digital.json) nem na tabela certificados_digitais', () => {
+    expect(TABELAS_MANTIDAS).toContain('certificados_digitais')
+    comBanco((db) => {
+      comTestes(db)
+      db.prepare(
+        `INSERT INTO certificados_digitais (sha256, serie, titular, cnpj, tipo, emissor, valido_de, valido_ate, certificado,
+         cadeia, instalado_em) VALUES ('ab', '01', 'EMPRESA LTDA', '12345678000195', 'A1', 'AC', '2026-01-01', '2027-01-01',
+         x'3000', '[]', '2026-11-01T10:00:00Z')`,
+      ).run()
+    })
+    comPdfs()
+    const cofre = join(pasta, 'certificado-digital.json')
+    writeFileSync(cofre, '{"versao":1,"dados":"cifrado"}')
+    aberto((db) => {
+      expect(apagarTestes(db, pasta, { agora: new Date(2026, 10, 4, 10, 30) }).apagou).toBe(true)
+      expect(contar(db, 'certificados_digitais')).toBe(1)
+    })
+    expect(readFileSync(cofre, 'utf8')).toBe('{"versao":1,"dados":"cifrado"}')
+    expect(existsSync(join(pasta, 'testes-apagados-2026-11-04_10-30', 'certificado-digital.json'))).toBe(false)
+  })
+})
+
 describe('as cópias do banco feitas antes da limpeza', () => {
   it('saem da pasta backups (vão para testes-apagados/backups, inteiras); a de agora e as outras ficam', () => {
     comBanco(comTestes)

@@ -211,8 +211,16 @@ export function normalizarAlteracaoUsuario(e: unknown): Resultado<AlteracaoUsuar
 
 // ---- Registro de atividades --------------------------------------------------------
 
-/** Detalhe do BLOQUEIO da troca da própria senha (o único bloqueio que não é de uma entrada). */
+/** Detalhe do BLOQUEIO da troca da própria senha (um bloqueio que não é de uma entrada). */
 export const BLOQUEIO_TROCA_SENHA = 'senha atual errada várias vezes na troca de senha'
+/**
+ * Detalhe do BLOQUEIO da própria senha pedida de novo antes de uma ação sensível (instalar, trocar ou remover o certificado
+ * digital da empresa), com um contador separado do da troca de senha.
+ */
+export const BLOQUEIO_CONFIRMAR_SENHA = 'senha errada várias vezes ao confirmar uma ação no certificado digital'
+
+/** Os bloqueios de quem já entrou (a pessoa errou a própria senha), e não de uma tentativa de entrada. */
+export const BLOQUEIOS_DA_PROPRIA_SENHA: readonly string[] = [BLOQUEIO_TROCA_SENHA, BLOQUEIO_CONFIRMAR_SENHA]
 
 export const GRUPOS_AUDITORIA: Record<GrupoAuditoria, readonly AcaoAuditoria[]> = {
   acessos: ['LOGIN', 'LOGIN_FALHOU', 'BLOQUEIO', 'LOGOUT', 'ACESSO_NEGADO'],
@@ -233,6 +241,7 @@ export const GRUPOS_AUDITORIA: Record<GrupoAuditoria, readonly AcaoAuditoria[]> 
     'AUTORIZACAO_DEVOLVIDA',
     'NUMERO_RESERVADO',
     'NUMERO_NAO_UTILIZADO',
+    'CERTIFICADO_DIGITAL',
   ],
   dados: ['COPIA_RESTAURADA', 'BACKUP_BAIXADO', 'SISTEMA_ATUALIZADO', 'TESTES_APAGADOS'],
   alteracoes: ['ALTERACAO'],
@@ -271,5 +280,6 @@ export const ROTULO_ACAO_AUDITORIA: Record<AcaoAuditoria, string> = {
   AUTORIZACAO_DEVOLVIDA: 'Devolveu uma calibração sem autorizar',
   NUMERO_RESERVADO: 'Reservou um nº de certificado',
   NUMERO_NAO_UTILIZADO: 'Nº de certificado não utilizado',
+  CERTIFICADO_DIGITAL: 'Certificado digital da empresa',
   ALTERACAO: 'Alterou os dados',
 }

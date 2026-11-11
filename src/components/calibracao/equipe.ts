@@ -154,17 +154,20 @@ export function motivoDoEnvioDesativado(o: {
  * e emitir (`autorizar`, ou `escolher` com ele mesmo escolhido: `autorizaVoce`), enviar para a autorização de outro
  * signatário (`escolher`) ou só aguardar a autorização pedida (`aguardando`; `aguardandoDe`: o nome do escolhido). O
  * pedido parado com quem não pode autorizar (`semQuemAutorize`; `pedidoParaVoce`: é quem está usando) diz o que fazer
- * (`parado`).
+ * (`parado`). Com só pendências que o administrador resolve, para quem não abre Configurações (`soDoAdministrador`; `itens`:
+ * quantas), o alto não manda resolver nem clicar: diz que é com ele.
  */
 export function cabecalhoDaRevisao(o: {
   modo: ModoEmissao
   pronto: boolean
   autorizaVoce: boolean
   aguardandoDe: string | null
-  /** As pendências levam à etapa delas (a frase convida a clicar). */
+  /** Alguma pendência leva à etapa dela ou a Configurações (a frase convida a clicar). */
   irParaItens: boolean
   semQuemAutorize?: 'TECNICO' | 'ESCOLHEU' | null
   pedidoParaVoce?: boolean
+  soDoAdministrador?: boolean
+  itens?: number
 }): { titulo: string; descricao: string; aguardando: boolean; parado?: boolean } {
   const acao =
     o.modo === 'aguardando'
@@ -175,6 +178,20 @@ export function cabecalhoDaRevisao(o: {
           ? 'enviar'
           : 'emitir'
   const clique = o.irParaItens ? ' Clique num item para ir até ele.' : ''
+  if (!o.pronto && o.soDoAdministrador)
+    return {
+      titulo: 'Depende do administrador',
+      descricao: `Quem resolve ${(o.itens ?? 1) > 1 ? 'os itens' : 'o item'} abaixo é o administrador. Até lá, ${
+        acao === 'aguardando'
+          ? 'o certificado não pode ser emitido'
+          : acao === 'enviar'
+            ? 'não dá para enviar para autorização'
+            : acao === 'autorizar'
+              ? 'não dá para autorizar e emitir o certificado'
+              : 'não dá para emitir o certificado'
+      }.`,
+      aguardando: false,
+    }
   if (!o.pronto)
     return {
       titulo: 'Falta completar',

@@ -7,6 +7,8 @@ import { hostname } from 'node:os'
 import { join, resolve } from 'node:path'
 import { instalarAcesso, ipDe, nomeCookieSessao } from './acesso.ts'
 import { BackupsAutomaticos } from './backup.ts'
+import { criarServicoCertificadoDigital, type OpcoesCertificadoDigital, rotasCertificadoDigital } from './certificadoDigital.ts'
+import { iniciarTentativaPdfsPendentes, tentarPdfsPendentes } from './certificados.ts'
 import type { Contexto } from './contexto.ts'
 import { abrirBanco } from './db.ts'
 import { dominioDoComputador } from './dominioWindows.ts'
@@ -137,6 +139,12 @@ export interface OpcoesApp {
   porta?: number
   /** Parâmetros do scrypt; abaixo de ln=15 só com process.env.VITEST. */
   parametrosSenha?: ParametrosSenha
+  /**
+   * O certificado digital da empresa: o protetor do cofre, as raízes confiáveis e o relógio (os testes passam a PKI de
+   * teste). Padrão: o DPAPI no Windows e as raízes ICP-Brasil fixadas; nos testes, sem `protetor`, um AES com chave só na
+   * memória.
+   */
+  certificadoDigital?: Omit<OpcoesCertificadoDigital, 'enviarEmail'>
 }
 
 /** Varredura das sessões vencidas e do limite de tentativas. */
@@ -224,7 +232,12 @@ export async function criarApp(opcoes: OpcoesApp) {
     parametrosSenha: opcoes.parametrosSenha,
     avisar: (mensagem) => app.log.warn(mensagem),
   })
-  const ctx: Contexto = { db, repo, usuarios, tempoReal, backups, pastaDados, log: app.log }
+  // O cofre do certificado digital começa a abrir já, em segundo plano (`pronto()`; a emissão espera por ele)
+  const certificadoDigital = criarServicoCertificadoDigital(
+    { db, repo, usuarios, pastaDados, log: app.log },
+    { ...opcoes.certificadoDigital, enviarEmail: (m) => email.enviar(m) },
+  )
+  const ctx: Contexto = { db, repo, usuarios, tempoReal, backups, pastaDados, log: app.log, certificadoDigital }
   const nomeCookie = nomeCookieSessao(opcoes.porta)
   const email = criarModuloEmail(ctx, opcoes.transporteEmail)
 
@@ -348,6 +361,8 @@ export async function criarApp(opcoes: OpcoesApp) {
   await rotasNumeros(app, ctx)
   await rotasConsultas(app, ctx)
   await email.rotas(app)
+  // Instalado ou trocado: os que aguardavam a assinatura são assinados logo (sem esperar os 15 minutos)
+  await rotasCertificadoDigital(app, { repo, usuarios, certificadoDigital, aoInstalar: () => tentarPdfsPendentes(ctx) })
 
   app.all('/api/*', async () => {
     throw new ErroApi(404, 'Rota não encontrada.')
@@ -379,12 +394,25 @@ export async function criarApp(opcoes: OpcoesApp) {
   }
 
   let varredura: ReturnType<typeof setInterval> | null = null
+  let pararPdfsPendentes: (() => void) | null = null
   if (opcoes.tarefasEmSegundoPlano) {
     backups.iniciar()
+    // Os PDFs dos emitidos que ficaram sem ele (a gravação falhou, ou a assinatura digital ficou para depois): a cada 15 min
+    pararPdfsPendentes = iniciarTentativaPdfsPendentes(ctx)
+    // O aviso de vencimento do certificado digital (30, 15, 7 e 1 dia): na partida e depois a cada 6 horas
+    let ultimoAvisoCertificado = 0
+    const avisarVencimento = () => {
+      ultimoAvisoCertificado = Date.now()
+      certificadoDigital
+        .verificarVencimento()
+        .catch((e) => app.log.error(e, 'falha no aviso de vencimento do certificado digital'))
+    }
+    avisarVencimento()
     let ultimaLimpezaAuditoria = 0
     varredura = setInterval(() => {
       try {
         varrerSessoes(usuarios, tempoReal)
+        if (Date.now() - ultimoAvisoCertificado >= 6 * 60 * 60 * 1000) avisarVencimento()
         if (Date.now() - ultimaLimpezaAuditoria >= 24 * 60 * 60 * 1000) {
           ultimaLimpezaAuditoria = Date.now()
           usuarios.limparAuditoriaAntiga()
@@ -403,6 +431,7 @@ export async function criarApp(opcoes: OpcoesApp) {
   })
   app.addHook('onClose', async () => {
     if (varredura) clearInterval(varredura)
+    pararPdfsPendentes?.()
     backups.parar()
     try {
       // Consolida o WAL no arquivo principal para que o banco fique completo sozinho

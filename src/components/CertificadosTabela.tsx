@@ -42,14 +42,19 @@ export function SituacaoDaCalibracao({
   k,
   className,
 }: {
-  k: Pick<CalibracaoResumo, 'status' | 'aguardando' | 'devolvidaPor' | 'semAutorizacao'>
+  k: Pick<CalibracaoResumo, 'status' | 'aguardando' | 'devolvidaPor' | 'semAutorizacao' | 'aguardandoAssinatura'>
   className?: string
 }) {
   const eu = useSessao((s) => s.usuario?.id)
   const detalhe = detalheDaSituacao(k, eu)
   return (
     <span className={cn('inline-flex flex-col items-start gap-1', className)}>
-      <StatusCalibracaoBadge status={k.status} devolvida={!!k.devolvidaPor} semAutorizacao={k.semAutorizacao} />
+      <StatusCalibracaoBadge
+        status={k.status}
+        devolvida={!!k.devolvidaPor}
+        semAutorizacao={k.semAutorizacao}
+        aguardandoAssinatura={k.aguardandoAssinatura}
+      />
       {detalhe && (
         <span className={cn('text-xs', detalhe.destaque ? 'font-semibold text-info' : 'text-muted')}>{detalhe.texto}</span>
       )}

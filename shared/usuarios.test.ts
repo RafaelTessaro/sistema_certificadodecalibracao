@@ -317,8 +317,9 @@ describe('registro de atividades', () => {
 
   it('rótulos para as ações e para os grupos', () => {
     // 19 + o nº de certificado reservado e o não utilizado (folha de campo) + os testes apagados (apagar-testes.mjs) + o
-    // pedido de autorização e a devolução (1.0.5)
-    expect(TODAS).toHaveLength(24)
+    // pedido de autorização e a devolução (1.0.5) + o certificado digital da empresa instalado, trocado, removido ou perto
+    // de vencer (1.0.7)
+    expect(TODAS).toHaveLength(25)
     expect(GRUPOS_AUDITORIA.dados).toEqual(['COPIA_RESTAURADA', 'BACKUP_BAIXADO', 'SISTEMA_ATUALIZADO', 'TESTES_APAGADOS'])
     expect(GRUPOS_AUDITORIA.certificados).toEqual([
       'CERTIFICADO_EMITIDO',
@@ -328,6 +329,7 @@ describe('registro de atividades', () => {
       'AUTORIZACAO_DEVOLVIDA',
       'NUMERO_RESERVADO',
       'NUMERO_NAO_UTILIZADO',
+      'CERTIFICADO_DIGITAL',
     ])
     for (const a of TODAS) expect(ROTULO_ACAO_AUDITORIA[a].length, a).toBeGreaterThan(3)
     expect(Object.keys(ROTULO_GRUPO_AUDITORIA).sort()).toEqual(Object.keys(GRUPOS_AUDITORIA).sort())

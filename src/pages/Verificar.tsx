@@ -1,9 +1,10 @@
 // Conferência pública de autenticidade (QR code do certificado): fica fora do login. Mostra só o
-// essencial que o servidor devolve para o código: número, situação, datas, cliente, instrumento e o
-// hash do PDF emitido.
+// essencial que o servidor devolve para o código: número, situação, datas, cliente, instrumento, o
+// hash do PDF emitido e, no assinado digitalmente, quem assinou (o certificado ICP-Brasil da empresa).
 
 import {
   ArrowRight,
+  BadgeCheck,
   Check,
   CircleAlert,
   Copy,
@@ -21,7 +22,7 @@ import {
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { STATUS_CALIBRACAO } from '#shared/dominio.ts'
+import { STATUS_CALIBRACAO, textoAssinaturaDigitalVerificacao, VALIDADOR_ASSINATURA } from '#shared/dominio.ts'
 import type { StatusCalibracao } from '#shared/tipos.ts'
 import { SeletorTema } from '../components/layout/Sidebar'
 import { Logo } from '../components/Logo'
@@ -376,10 +377,71 @@ export function Resultado({ dados, codigo }: { dados: VerificacaoCertificado; co
         </Dado>
       </dl>
 
+      {dados.assinaturaDigital && <AssinaturaDigital assinatura={dados.assinaturaDigital} status={status} />}
       {dados.hashPdf && <HashPdf hash={dados.hashPdf} />}
     </>
   )
 }
+
+/**
+ * Quem assinou digitalmente o PDF (o certificado ICP-Brasil da empresa) e onde conferir. A cópia marcada CANCELADO ou
+ * SUBSTITUÍDO recebe a marca depois da assinatura: os leitores de PDF a mostram como alterada, e isso é o esperado. A
+ * assinatura não tem carimbo do tempo (PAdES B-B, decisão do dono): depois da validade do certificado que assinou, o
+ * validar.iti.gov.br dá "Indeterminado" ("fora do prazo de validade sem carimbo de tempo"), o que não é alteração.
+ */
+function AssinaturaDigital({
+  assinatura,
+  status,
+}: {
+  assinatura: NonNullable<VerificacaoCertificado['assinaturaDigital']>
+  status: StatusCalibracao
+}) {
+  const marca = status === 'CANCELADO' ? 'CANCELADO' : status === 'SUBSTITUIDO' ? 'SUBSTITUÍDO' : ''
+  const validade = assinatura.validoAte ? new Date(assinatura.validoAte) : null
+  const ate = validade && Number.isFinite(validade.getTime()) ? dataBrasilia(validade) : ''
+  // A hora de quando a página abriu (estável entre as renderizações)
+  const [agora] = useState(() => Date.now())
+  const vencido = !!validade && validade.getTime() < agora
+  return (
+    <section className="flex items-start gap-3 border-t border-line px-6 py-5 sm:px-8">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand-ink">
+        <BadgeCheck className="h-4 w-4" />
+      </span>
+      <div className="min-w-0">
+        <p className="text-sm font-medium break-words text-ink">{textoAssinaturaDigitalVerificacao(assinatura)}</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted">
+          Para conferir a assinatura, envie o arquivo PDF em{' '}
+          <a
+            href={`https://${VALIDADOR_ASSINATURA}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-ink-2 underline underline-offset-2 hover:text-ink"
+          >
+            {VALIDADOR_ASSINATURA}
+          </a>
+          .
+        </p>
+        {ate && (
+          <p className="mt-2 text-xs leading-relaxed text-ink-2">
+            {vencido
+              ? `O certificado digital que assinou venceu em ${ate}: o validar.iti.gov.br pode mostrar a assinatura como “Indeterminada”, porque ela não tem carimbo do tempo.`
+              : `O certificado digital que assinou vale até ${ate}. Depois dessa data, o validar.iti.gov.br pode mostrar a assinatura como “Indeterminada”, porque ela não tem carimbo do tempo.`}{' '}
+            Isso não indica alteração: a impressão digital (SHA-256), logo abaixo, continua servindo para conferir o arquivo.
+          </p>
+        )}
+        {marca && (
+          <p className="mt-2 text-xs leading-relaxed text-ink-2">
+            A cópia marcada {marca} aparece nos leitores como alterada depois da assinatura; isso é esperado.
+          </p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+/** A data como o Brasil lê (dd/mm/aaaa), no horário de Brasília. */
+const dataBrasilia = (d: Date) =>
+  new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' }).format(d)
 
 function Dado({ rotulo, children, className }: { rotulo: string; children: ReactNode; className?: string }) {
   return (

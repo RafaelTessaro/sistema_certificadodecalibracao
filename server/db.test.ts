@@ -18,6 +18,8 @@
 // sem a pressão antes de ela ser obrigatória em toda classe (1.0.5), fica com a falta dela como aviso.
 // Migração 22: a calibração em andamento já medida sem a leitura do zero (ou com a folha impressa sem a linha dele) antes
 // de ela ser obrigatória (1.0.6) fica com a falta dela como aviso.
+// Migração 23: a mensagem padrão do e-mail do certificado, sem mudança, ganha a marca {assinaturaDigital} (1.0.7).
+// Migração 24: a tabela dos certificados digitais da empresa, só com os dados públicos (1.0.7).
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
@@ -28,6 +30,8 @@ import {
   calculoLegado,
   calibracaoVazia,
   comMetodoIndicacaoDaClasse,
+  CONFIG_PADRAO,
+  EMAIL_MENSAGEM_ANTIGA,
   hojeLocalIso,
   metodoIndicacaoDaVisita,
   OPCOES_CALCULO_PADRAO,
@@ -39,7 +43,7 @@ import { detalheTrocaIndicador, lerMeta, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 22
+const ULTIMA = 24
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -1923,5 +1927,98 @@ describe('migração 22: a calibração em andamento sem a leitura do zero, de a
     expect(
       (db.prepare("SELECT sem_linha_do_zero AS n FROM folhas_campo WHERE numero = 'FC-2026-00047'").get() as { n: number }).n,
     ).toBe(0)
+  })
+})
+
+describe('migração 23: a marca {assinaturaDigital} na mensagem padrão do e-mail do certificado', () => {
+  /** Banco na versão 22 com as configurações gravadas (`null` = nunca gravadas). */
+  function banco(config: Record<string, unknown> | null) {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 22)
+    if (config) db.prepare("INSERT INTO config (chave, valor) VALUES ('geral', ?)").run(JSON.stringify(config))
+    return db
+  }
+  const gravada = (db: DatabaseSync) => {
+    const l = db.prepare("SELECT valor FROM config WHERE chave = 'geral'").get() as { valor: string } | undefined
+    return l && (JSON.parse(l.valor) as Record<string, unknown>)
+  }
+
+  it('a mensagem padrão de antes, sem mudança, passa a ter a marca; o resto das configurações fica', () => {
+    const db = banco({ ...CONFIG_PADRAO, emailMensagem: EMAIL_MENSAGEM_ANTIGA, emailAssunto: 'Assunto da empresa' })
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(gravada(db)).toMatchObject({ emailMensagem: CONFIG_PADRAO.emailMensagem, emailAssunto: 'Assunto da empresa' })
+    expect(
+      registros(db)
+        .filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
+        .map((r) => r.detalhe),
+    ).toEqual([expect.stringContaining('{assinaturaDigital}')])
+  })
+
+  it('a de antes com as quebras do Windows também; a mudada pela empresa fica como está, sem registro', () => {
+    const windows = banco({ ...CONFIG_PADRAO, emailMensagem: EMAIL_MENSAGEM_ANTIGA.replace(/\n/g, '\r\n') })
+    migrar(windows)
+    expect(gravada(windows)?.emailMensagem).toBe(CONFIG_PADRAO.emailMensagem)
+    const mudada = `${EMAIL_MENSAGEM_ANTIGA}\nTel. (19) 3524-0000`
+    const db = banco({ ...CONFIG_PADRAO, emailMensagem: mudada })
+    migrar(db)
+    expect(gravada(db)?.emailMensagem).toBe(mudada)
+    expect(registros(db)).toEqual([])
+  })
+
+  it('sem configurações gravadas (vale o padrão, já com a marca) ou ilegíveis: nada muda', () => {
+    const vazio = banco(null)
+    migrar(vazio)
+    expect(gravada(vazio)).toBeUndefined()
+    const ilegivel = new DatabaseSync(':memory:')
+    migrar(ilegivel, 22)
+    ilegivel.prepare("INSERT INTO config (chave, valor) VALUES ('geral', '{quebrado')").run()
+    migrar(ilegivel)
+    expect((ilegivel.prepare("SELECT valor FROM config WHERE chave = 'geral'").get() as { valor: string }).valor).toBe(
+      '{quebrado',
+    )
+  })
+
+  it('pode ser repetida sem mudar nada nem registrar de novo', () => {
+    const db = banco({ ...CONFIG_PADRAO, emailMensagem: EMAIL_MENSAGEM_ANTIGA })
+    migrar(db)
+    db.exec('PRAGMA user_version = 22')
+    migrar(db)
+    expect(gravada(db)?.emailMensagem).toBe(CONFIG_PADRAO.emailMensagem)
+    expect(registros(db)).toHaveLength(1)
+  })
+})
+
+describe('migração 24: os certificados digitais da empresa (só os dados públicos)', () => {
+  it('cria a tabela vazia, sem coluna para a chave ou a senha; pode ser repetida sem perder as linhas', () => {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 23)
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    const colunas = (db.prepare('PRAGMA table_info(certificados_digitais)').all() as Array<{ name: string }>).map((c) => c.name)
+    expect(colunas).toEqual([
+      'sha256',
+      'serie',
+      'titular',
+      'cnpj',
+      'tipo',
+      'emissor',
+      'valido_de',
+      'valido_ate',
+      'certificado',
+      'cadeia',
+      'instalado_em',
+      'instalado_por',
+      'removido_em',
+      'removido_por',
+      'motivo',
+    ])
+    db.prepare(
+      `INSERT INTO certificados_digitais (sha256, serie, titular, cnpj, tipo, emissor, valido_de, valido_ate, certificado,
+       cadeia, instalado_em) VALUES ('ab', '01', 'EMPRESA LTDA', '12345678000195', 'A1', 'AC', ?, ?, x'3000', '[]', ?)`,
+    ).run(EM, EM, EM)
+    db.exec('PRAGMA user_version = 23')
+    migrar(db)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM certificados_digitais').get()).toEqual({ n: 1 })
   })
 })

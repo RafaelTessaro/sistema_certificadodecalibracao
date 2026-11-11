@@ -68,6 +68,7 @@ import { EtapaRepetibilidade } from '../components/calibracao/EtapaRepetibilidad
 import { EtapaRevisao } from '../components/calibracao/EtapaRevisao'
 import { destinoDaPendencia, destinoForaDaCalibracao, etapaTemMarcas } from '../components/calibracao/obrigatorios'
 import { PainelResultados } from '../components/calibracao/PainelResultados'
+import { useAssinadosDigitalmente } from '../components/certificadoDigital/useAssinadosDigitalmente'
 import { comMetodoDaClasse } from '../components/calibracao/util'
 import { ClienteFormModal } from '../components/ClienteFormModal'
 import { BotaoPop } from '../components/BotaoPop'
@@ -428,6 +429,8 @@ function EditorCalibracao({ id }: { id: string }) {
   /** Do servidor, para conferir sem impedir a emissão (ex.: a folha de campo saiu com outra revisão do POP). */
   const [avisosServidor, setAvisosServidor] = useState<string[]>([])
   const { dados: pop } = useConsulta('pop', () => api.pop(), ['config'])
+  // Com o certificado digital da empresa instalado, o PDF sai com os nomes, sem as imagens (a confirmação da emissão diz)
+  const assinadoDigitalmente = useAssinadosDigitalmente()
   const [editandoBalanca, setEditandoBalanca] = useState(false)
   const [previa, setPrevia] = useState<{ url: string } | { carregando: true } | null>(null)
   const [folha, setFolha] = useState<FolhaCampoImpressa | null>(null)
@@ -1002,6 +1005,7 @@ function EditorCalibracao({ id }: { id: string }) {
         numeroRevisao: dados.numeroRevisao ?? null,
         numeroReservado: numeroReservado?.numero ?? null,
         semLigar,
+        assinadoDigitalmente,
       }),
     )
     if (!ok) return

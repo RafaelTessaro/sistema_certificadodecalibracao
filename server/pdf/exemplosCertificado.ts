@@ -31,6 +31,7 @@
 import { calcularCalibracao, montarCarga, montarPonto } from '#shared/calibracao.ts'
 import { calibracaoVazia, EMPRESA_PADRAO, TEXTOS_PADRAO } from '#shared/dominio.ts'
 import type {
+  AssinaturaDigitalEmissao,
   Balanca,
   Calibracao,
   Cliente,
@@ -1484,6 +1485,44 @@ export function exemploPiorCasoLegado(): DadosCertificadoPdf {
   }
   return montar(k, e)
 }
+
+// ---- Assinatura digital (1.0.7) ----------------------------------------------------------------------------
+
+/**
+ * O certificado digital ICP-Brasil da empresa dos exemplos, como fica congelado na emissão: o titular (a razão social),
+ * o CNPJ e o SHA-256 do certificado (fictício). O PDF das amostras assinadas é o de antes da assinatura (o layout).
+ */
+export const ASSINATURA_DIGITAL_EXEMPLO: AssinaturaDigitalEmissao = {
+  titular: 'FABIO DE GODOY LIMA LTDA',
+  cnpj: '12403843000118',
+  certificado: '5f1c0a9d3e7b42c8a6d1f0e9b8c7a6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9',
+}
+
+/**
+ * O exemplo emitido com o certificado digital da empresa instalado (`EmissaoCertificado.assinaturaDigital`): sem as
+ * imagens das assinaturas e com o quadro "Documento assinado digitalmente por…". `pessoas`: só quem executou (1, a
+ * revisão por outra pessoa desligada) ou quem executou e quem autorizou (2, ligada; o signatário dos exemplos quando
+ * as duas eram a mesma pessoa); sem ele, quem assina continua o do exemplo.
+ */
+export function assinadoDigitalmente(d: DadosCertificadoPdf, pessoas?: 1 | 2): DadosCertificadoPdf {
+  const quem: Partial<EmissaoCertificado> =
+    pessoas === 1
+      ? { assinaturas: 'TECNICO' }
+      : pessoas === 2
+        ? {
+            assinaturas: 'TECNICO_E_SIGNATARIO',
+            ...(d.emissao.tecnico.id === d.emissao.signatario.id ? { signatario: RESPONSAVEL, tecnico: TECNICO } : {}),
+          }
+        : {}
+  const emissao: EmissaoCertificado = { ...d.emissao, ...quem, assinaturaDigital: { ...ASSINATURA_DIGITAL_EXEMPLO } }
+  return { ...d, emissao, calibracao: { ...d.calibracao, emissao } }
+}
+
+/** O caso mais comum (balcão 32 kg), emitido assinado digitalmente, só com quem executou. */
+export const exemploAssinadoUmaPessoa = () => assinadoDigitalmente(exemploBalanca32kg(), 1)
+
+/** A plataforma de 300 kg emitida assinada digitalmente, com quem executou e quem autorizou (a revisão ligada). */
+export const exemploAssinadoDuasPessoas = () => assinadoDigitalmente(exemploPlataforma300kg(), 2)
 
 // ---- Os nomes de antes (para quem ainda os usa: são os registros de antes do POP) ------------------------------
 

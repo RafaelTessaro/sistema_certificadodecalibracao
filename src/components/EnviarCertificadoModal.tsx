@@ -1,17 +1,19 @@
-import { CircleAlert, FileImage, FileText, Loader2, Lock, Mail, Paperclip, Send, TriangleAlert } from 'lucide-react'
+import { BadgeCheck, CircleAlert, FileImage, FileText, Loader2, Lock, Mail, Paperclip, Send, TriangleAlert } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { LIMITE_EMAIL_BYTES, problemaDosAnexos } from '#shared/arquivos.ts'
-import { balancaNoEmail, emailValido, formatarDataBr, listaEmails, paraSugerido, preencherModelo } from '#shared/dominio.ts'
+import { emailValido, listaEmails, paraSugerido, preencherModelo, textoAssinaturaDigitalEmail } from '#shared/dominio.ts'
 import type { AnexoEmailDisponivel, Balanca, Calibracao, Cliente } from '#shared/tipos.ts'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
+import { comParagrafoAntesDoFim, valoresDoEmail } from '../lib/emailCertificado'
 import { mostrarEnvio } from '../lib/envioEmail'
 import { tamanhoArquivo } from '../lib/format'
 import { usePode } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
+import { assinadoDigitalmente } from './certificadoDigital/textos'
 import { Button } from './ui/Button'
 import { Field, Input, Textarea } from './ui/Form'
 import { Modal } from './ui/Modal'
@@ -34,6 +36,67 @@ export function AvisoEmailNaoConfigurado({ podeConfigurar, aoFechar }: { podeCon
           'Peça ao administrador para configurar o e-mail da empresa em Configurações → E-mail.'
         )}
       </p>
+    </div>
+  )
+}
+
+/**
+ * Certificado assinado digitalmente com o modelo da mensagem sem {assinaturaDigital} (mudado pela empresa antes da 1.0.7):
+ * a dica, com o botão que põe o parágrafo de como conferir a assinatura nesta mensagem. Quem pode abrir as Configurações
+ * vai ao modelo; o operador é avisado para pedir ao administrador.
+ */
+export function DicaAssinaturaDigital({
+  calibracao,
+  modelo,
+  texto,
+  podeConfigurar,
+  aoIncluir,
+  aoFechar,
+}: {
+  calibracao: Pick<Calibracao, 'emissao'>
+  /** O modelo da mensagem nas configurações. */
+  modelo: string
+  /** A mensagem como está agora. */
+  texto: string
+  podeConfigurar: boolean
+  aoIncluir: (paragrafo: string) => void
+  aoFechar?: () => void
+}) {
+  const assinatura = calibracao.emissao?.assinaturaDigital
+  // Só o já assinado (o que aguarda a assinatura nem pode ser enviado, e "está assinado" não seria verdade)
+  if (!assinatura || !assinadoDigitalmente(calibracao.emissao!) || modelo.includes('{assinaturaDigital}')) return null
+  const paragrafo = textoAssinaturaDigitalEmail(assinatura)
+  if (texto.includes(paragrafo)) return null
+  return (
+    <div className="-mt-2 flex items-start gap-2.5 rounded-xl bg-brand-soft/60 px-3.5 py-2.5 text-[13px] text-ink-2">
+      <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-brand-ink" />
+      <div className="min-w-0">
+        <p>
+          Este certificado está assinado digitalmente, mas a mensagem não diz ao cliente como conferir a assinatura.{' '}
+          <button
+            type="button"
+            onClick={() => aoIncluir(paragrafo)}
+            className="cursor-pointer font-semibold text-brand-ink underline underline-offset-2"
+          >
+            Incluir na mensagem
+          </button>
+        </p>
+        <p className="mt-1 text-xs text-muted">
+          {podeConfigurar ? (
+            <>
+              Para os próximos, inclua <code className="font-mono">{'{assinaturaDigital}'}</code> no modelo, em{' '}
+              <Link to="/configuracoes?secao=vencimentos" className="font-medium underline underline-offset-2" onClick={aoFechar}>
+                Configurações → Vencimentos e lembretes
+              </Link>
+              .
+            </>
+          ) : (
+            <>
+              Peça ao administrador para incluir <code className="font-mono">{'{assinaturaDigital}'}</code> no modelo do e-mail.
+            </>
+          )}
+        </p>
+      </div>
     </div>
   )
 }
@@ -86,15 +149,7 @@ export function EnviarCertificadoModal({
   // Preenche ao abrir (e quando as configurações chegam), sem apagar o que já foi digitado
   useEffect(() => {
     if (!aberto || !config) return
-    const valores = {
-      numero: calibracao.numero,
-      empresa: config.empresa.nomeFantasia || config.empresa.razaoSocial,
-      cliente: cliente?.nome ?? '',
-      // Sem o "Balança" da frente: o texto já diz "referente à balança …"
-      balanca: balanca ? balancaNoEmail(balanca) : '',
-      data: formatarDataBr(calibracao.dataCalibracao),
-      os: calibracao.ordemServico,
-    }
+    const valores = valoresDoEmail(config, calibracao, cliente, balanca)
     setPara((p) => p || sugerido)
     setAssunto((a) => a || preencherModelo(config.emailAssunto, valores))
     setTexto((t) => t || preencherModelo(config.emailMensagem, valores))
@@ -199,6 +254,16 @@ export function EnviarCertificadoModal({
         <Field label="Mensagem">
           <Textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={7} />
         </Field>
+        {config && (
+          <DicaAssinaturaDigital
+            calibracao={calibracao}
+            modelo={config.emailMensagem}
+            texto={texto}
+            podeConfigurar={podeConfigurar}
+            aoIncluir={(p) => setTexto((t) => comParagrafoAntesDoFim(t, p))}
+            aoFechar={aoFechar}
+          />
+        )}
 
         <fieldset className="flex min-w-0 flex-col gap-2">
           <legend className="mb-2 flex w-full items-center justify-between gap-3 text-[13px] font-medium text-ink-2">

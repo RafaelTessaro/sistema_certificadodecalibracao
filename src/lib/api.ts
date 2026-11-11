@@ -1,5 +1,7 @@
 import { novoId } from '#shared/id.ts'
 import type { FinalidadeArquivo } from '#shared/arquivos.ts'
+import type { CertificadoDigitalPublico, RegistroCertificadoDigital } from '#shared/tipos.ts'
+import type { PacoteCifrado } from './cifraPacote'
 import type {
   AlteracaoUsuario,
   AnexoEmailDisponivel,
@@ -55,6 +57,23 @@ export interface ConfigEmail {
 
 /** Para gravar: a senha em branco mantém a que já está no servidor. */
 export type ConfigEmailEntrada = Omit<ConfigEmail, 'senhaDefinida' | 'configurado'> & { senha: string }
+
+/** O certificado digital como o administrador vê: tudo e o histórico. */
+export interface CertificadoDigitalAdmin {
+  certificado: CertificadoDigitalPublico
+  historico: RegistroCertificadoDigital[]
+}
+
+/**
+ * GET /api/certificado-digital: quem cuida das configurações recebe tudo, o histórico e se está no próprio servidor;
+ * os outros, só a situação, o titular e a validade.
+ */
+export interface RespostaCertificadoDigital {
+  certificado: CertificadoDigitalPublico | Pick<CertificadoDigitalPublico, 'situacao' | 'titular' | 'validoAte'>
+  historico?: RegistroCertificadoDigital[]
+  /** A tela está aberta no próprio computador do servidor (localhost). */
+  noServidor?: boolean
+}
 
 /** Pessoa da equipe (usuário ativo) para os campos da calibração: o técnico que executou e quem autoriza. */
 export interface MembroEquipe {
@@ -228,6 +247,12 @@ export interface VerificacaoCertificado {
   balanca: string
   numeroSerie: string
   hashPdf: string
+  /**
+   * Emitido e já assinado digitalmente com o certificado ICP-Brasil da empresa (1.0.7): o titular, o CNPJ (só 0-9 e A-Z) e
+   * a validade do certificado que assinou (sem carimbo do tempo, depois dela o validador do ITI dá "Indeterminado").
+   * Ausente nos outros (também no que aguarda a assinatura ou foi cancelado antes dela).
+   */
+  assinaturaDigital?: { titular: string; cnpj: string; validoAte?: string }
 }
 
 /** Erro devolvido pelo servidor (ou falta de conexão, com `status` 0). */
@@ -528,6 +553,22 @@ export const api = {
   salvarConfigEmail: (c: ConfigEmailEntrada) => requisitar<ConfigEmail>('PUT', '/api/email/config', c),
   esquecerConfigEmail: () => requisitar<void>('DELETE', '/api/email/config'),
   testarEmail: (para: string) => requisitar<ResultadoEmail>('POST', '/api/email/teste', { para }, 60_000),
+
+  // O certificado digital da empresa: o .pfx e as senhas só vão no pacote cifrado (cifraPacote.ts)
+  certificadoDigital: () => requisitar<RespostaCertificadoDigital>('GET', '/api/certificado-digital'),
+  chaveCertificadoDigital: () =>
+    requisitar<{ id: string; publicKeyPem: string; expiraEm: string }>(
+      'GET',
+      '/api/certificado-digital/chave',
+      undefined,
+      30_000,
+    ),
+  conferirCertificadoDigital: (pacote: PacoteCifrado) =>
+    requisitar<{ certificado: CertificadoDigitalPublico }>('POST', '/api/certificado-digital/conferir', pacote, 90_000),
+  instalarCertificadoDigital: (pacote: PacoteCifrado) =>
+    requisitar<CertificadoDigitalAdmin>('POST', '/api/certificado-digital', pacote, 120_000),
+  removerCertificadoDigital: (pacote: PacoteCifrado) =>
+    requisitar<CertificadoDigitalAdmin>('DELETE', '/api/certificado-digital', pacote, 60_000),
 
   backups: () => requisitar<{ backups: InfoBackup[]; pasta: string }>('GET', '/api/backups'),
   copiaAgora: () => requisitar<{ arquivo: string }>('POST', '/api/backups', undefined, 120_000),

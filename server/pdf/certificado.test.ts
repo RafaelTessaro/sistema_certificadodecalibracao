@@ -22,6 +22,7 @@ import {
   pendenciasEmissao,
   registroAnterior,
   REPRODUCAO_ANTIGA,
+  textoAssinaturaDigital,
   TEXTOS_ANTIGOS,
   TEXTOS_PADRAO,
   TIPOS_FORA_DO_POP,
@@ -46,6 +47,10 @@ import {
   textoEmaDoPonto,
 } from './certificado.ts'
 import {
+  ASSINATURA_DIGITAL_EXEMPLO,
+  assinadoDigitalmente,
+  exemploAssinadoDuasPessoas,
+  exemploAssinadoUmaPessoa,
   exemploBalanca32kg,
   exemploBancada,
   exemploClasseI220g,
@@ -2746,6 +2751,147 @@ describe('o nº do certificado do padrão sem quebra no hífen (1.0.6)', () => {
           .split('\n')
           .some((l) => l.includes('RBC-LMP-0456-2026-REV-01-ABCD')),
       ).toBe(true)
+    },
+  )
+})
+
+describe('assinatura digital com o certificado ICP-Brasil da empresa (1.0.7)', { timeout: 300_000 }, () => {
+  /** A definição do documento, em texto. */
+  const texto = (d: DadosCertificadoPdf) => JSON.stringify(definicaoCertificado(d))
+  const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex')
+  const QUADRO = textoAssinaturaDigital(ASSINATURA_DIGITAL_EXEMPLO)
+    .map((p) => p.texto)
+    .join('')
+  const PREVIA = textoAssinaturaDigital(ASSINATURA_DIGITAL_EXEMPLO, true)
+    .map((p) => p.texto)
+    .join('')
+
+  it('sem assinaturaDigital = 1.0.6: o PDF de cada amostra (e da prévia) sai byte a byte como saía, com as imagens', async () => {
+    // Gerados pelo HEAD da 1.0.6 (75048d8): os certificados emitidos sem o certificado digital (todos os de antes da
+    // 1.0.7 e os emitidos sem ele instalado) não mudam nenhum byte
+    const casos: Array<[string, string]> = [
+      ['certificado-plataforma-300kg', '24e02eb272bb37b0d8fd291df90fa8e18a2ede9b9025febb8f175bcf1cca15c2'],
+      ['certificado-bancada-30kg', 'c9868e9fb85d13e2d86dc4b6c94fd1ecc81f2048e14330a10bbad1d8b21d9298'],
+      ['certificado-classe-i-220g', '724f52bbcfcb65bd7d4759075efdebb7976ec1b1e99eecf21c48173ebd76ab40'],
+      ['certificado-balanca-32kg', '5399627119b6c45e88f2f1764d984b897968ce44a6452de6711999e9cb1c2eea'],
+      ['certificado-pior-caso', '1d8dd9c7e6a19dcad2fec10c06ccdc9f7bca4b357c281f358d797d5b4983abbf'],
+      [
+        `${LEGADO}/certificado-plataforma-300kg-ajuste-externo`,
+        '8bc9a91806988d59f201bfe1c2252ee8a113e3ad8281b8d1da29e13b1a1c53c8',
+      ],
+      [`${LEGADO}/certificado-rodoviaria-80t`, '0822bb8c72ce25083214801a0d4248bc84f272be84793eb476feacf20b6f7b10'],
+      [`${LEGADO}/certificado-pior-caso-rodoviaria`, 'de616d92d9dcf87cb759628295211d6ea7b627d0c65dcb3c8ffa6da5b0477f6d'],
+      [`${LEGADO}/certificado-classe-i-220g-como-encontrado`, '5b4ae3c1da9af2433d96823d62592587306fb428a95ab86b9e9da579dbf8b946'],
+    ]
+    expect(casos.map((c) => c[0]).sort()).toEqual(TODOS.map((e) => e.arquivo).sort())
+    for (const [arquivo, esperado] of casos) {
+      expect(TODOS.find((e) => e.arquivo === arquivo)!.dados().emissao.assinaturaDigital, arquivo).toBeUndefined()
+      expect(sha(await pdfDe(arquivo)), arquivo).toBe(esperado)
+    }
+    const previa = (d: DadosCertificadoPdf): DadosCertificadoPdf => ({ ...d, marcaDagua: 'PRÉVIA — SEM VALOR', previa: true })
+    expect(sha(await gerarCertificadoPdf(previa(exemploPlataforma300kg())))).toBe(
+      'b6b35bb8f69f9dd42e9d47478095a2e8de2dff9f732ce205757de30152fc3522',
+    )
+    expect(sha(await gerarCertificadoPdf(previa(exemploPiorCasoAtual())))).toBe(
+      'd429ce660a70dd2dc3376ae920ae6285d4588df8cbbd08897c7b66cb75ede13d',
+    )
+    // Nada da assinatura digital no certificado sem ela
+    for (const e of TODOS) expect(texto(e.dados()), e.arquivo).not.toMatch(/assinado digitalmente|ICP-Brasil/)
+  })
+
+  it('assinado: o PDF-base sai byte a byte igual (o assinado é remontado dele; mudar o layout pede uma marca nova)', async () => {
+    // Uma pessoa e duas (revisão ligada): o quadro da assinatura antes da linha de fim. Os certificados assinados só são
+    // remontados (refazerEmitido, PDF sumido) se a base refeita tiver o mesmo hash da assinada (partes.hashBase)
+    expect(sha(await gerarCertificadoPdf(exemploAssinadoUmaPessoa()))).toBe(
+      '247b5d4b50e3fe37747a5adbaf49d13155da6fa477100b049e2a0f5c6debf07a',
+    )
+    expect(sha(await gerarCertificadoPdf(exemploAssinadoDuasPessoas()))).toBe(
+      '19b491e6b44ec9cbfa3d25d2b3315f5d55a6ebf933da9f099c2b40d690f1bddb',
+    )
+  })
+
+  it('assinado: cada pessoa com o rótulo, o nome e "cargo · registro", sem imagem, sem o espaço de assinar e sem o fio', () => {
+    const imagens = (t: string) => t.match(/"image":/g)?.length ?? 0
+    // O espaço de assinar à mão (22 pt) e o fio de 180 pt embaixo dele
+    const espaco = /"fontSize":18\.18\d*,"lineHeight":1/
+    const fio180 = /"x2":180,/
+    for (const [d, papeis] of [
+      [exemploAssinadoUmaPessoa(), ['EXECUTADO POR']],
+      [exemploAssinadoDuasPessoas(), ['EXECUTADO POR', 'AUTORIZADO POR']],
+    ] as const) {
+      // Sem a assinatura digital: as imagens, o fio e, na prévia (sem as imagens), o espaço de assinar
+      const sem: DadosCertificadoPdf = { ...d, emissao: { ...d.emissao, assinaturaDigital: undefined } }
+      expect(imagens(texto(sem))).toBe(papeis.length)
+      expect(texto(sem)).toMatch(fio180)
+      expect(texto({ ...sem, previa: true })).toMatch(espaco)
+      const t = texto(d)
+      expect(imagens(t)).toBe(0)
+      expect(t).not.toMatch(espaco)
+      expect(t).not.toMatch(fio180)
+      expect(t).toMatch(new RegExp(papeis.map((p) => `"${p}"`).join('.*')))
+      expect(t).not.toMatch(/EXECUTADO E AUTORIZADO POR/)
+      const pessoas = papeis.length === 1 ? [d.emissao.tecnico] : [d.emissao.tecnico, d.emissao.signatario]
+      for (const s of pessoas) {
+        expect(t).toContain(`{"text":${JSON.stringify(s.nome)},"bold":true,"fontSize":8.2}`)
+        expect(t).toContain(JSON.stringify(`${s.cargo} · ${s.registro}`))
+      }
+      // O quadro, em 7,2 pt, com o titular em negrito, antes da linha de fim (ISO/IEC 17025, 7.8.2.1: nada do
+      // certificado depois da marca do fim)
+      expect(t).toContain('"text":"Documento assinado digitalmente por "')
+      expect(t.indexOf('— Fim do Certificado de Calibração nº')).toBeGreaterThan(t.indexOf('Documento assinado digitalmente por'))
+      expect(t).toContain(`{"text":"${ASSINATURA_DIGITAL_EXEMPLO.titular}","bold":true}`)
+      // Sem quebra de linha no meio do CNPJ, de "ICP-Brasil (MP 2.200-2/2001)" e do endereço do validador
+      for (const inteira of ['CNPJ 12.403.843/0001-18', 'ICP-Brasil (MP 2.200-2/2001)', 'validar.iti.gov.br'])
+        expect(t).toContain(`{"text":${JSON.stringify(inteira)},"noWrap":true}`)
+      expect(t).not.toMatch(/\bA1\b/)
+    }
+    // "Executado e autorizado por" (a mesma pessoa), assinado: também sem imagem, o nome e o cargo
+    const mesma = assinadoDigitalmente(exemploBancada())
+    expect(assinantes(mesma.emissao).map((x) => x.papel)).toEqual(['Executado por'])
+    expect(imagens(texto(assinadoDigitalmente({ ...exemploBancada() })))).toBe(0)
+  })
+
+  it('a imagem da assinatura quebrada não importa no assinado (não é desenhada)', async () => {
+    const d = exemploAssinadoDuasPessoas()
+    d.emissao.tecnico = { ...d.emissao.tecnico, assinatura: 'data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }
+    const pdf = await gerarCertificadoPdf(d)
+    expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    expect(pdf.toString('latin1')).not.toMatch(/\/Subtype\s*\/Image/)
+  })
+
+  it('prévia com o certificado instalado: o aviso de que a emissão sairá assinada (a prévia nunca é assinada)', () => {
+    const d: DadosCertificadoPdf = { ...exemploAssinadoDuasPessoas(), marcaDagua: 'PRÉVIA — SEM VALOR', previa: true }
+    const t = texto(d)
+    expect(t).toContain('"text":"Na emissão, este certificado será assinado digitalmente por "')
+    expect(t).not.toContain('Documento assinado digitalmente')
+    expect(t).not.toContain('validar.iti.gov.br')
+    expect(t).toContain('Prévia gerada em 14/10/2026')
+    expect(t.match(/"image":/g)).toBeNull()
+  })
+
+  it.runIf(temPdftotext)(
+    'no PDF: o quadro sai inteiro, antes da linha de fim, e o certificado continua em no máximo 3 páginas (uma e duas pessoas, todas as amostras)',
+    async () => {
+      for (const e of TODOS)
+        for (const pessoas of [1, 2] as const) {
+          const nome = `${e.arquivo} (${pessoas} ${pessoas === 1 ? 'pessoa' : 'pessoas'})`
+          const d = assinadoDigitalmente(e.dados(), pessoas)
+          const { pdf, paginas: n } = await montarCertificado(d)
+          const t = textoDoPdf(pdf)
+          expect(n, nome).toBeLessThanOrEqual(MAX_PAGINAS)
+          expect(n, nome).toBe(e.paginas)
+          const ultima = corrido(folhas(t).at(-1)!)
+          // A rodoviária (legado) é a amostra da prévia: o aviso de que será assinado
+          expect(ultima, nome).toContain(d.previa ? PREVIA : QUADRO)
+          const fim = `— Fim do Certificado de Calibração nº ${d.calibracao.numero} —`
+          expect(ultima, nome).toContain(fim)
+          expect(ultima, nome).toContain(pessoas === 1 ? 'EXECUTADO POR' : 'AUTORIZADO POR')
+          // A linha de fim fecha o certificado: o quadro da assinatura vem antes dela
+          expect(ultima.indexOf(fim), nome).toBeGreaterThan(ultima.indexOf(d.previa ? PREVIA : QUADRO))
+        }
+      // A prévia: o aviso inteiro
+      const previa = textoDoPdf(await gerarCertificadoPdf({ ...exemploAssinadoUmaPessoa(), marcaDagua: '', previa: true }))
+      expect(corrido(previa)).toContain(PREVIA)
     },
   )
 })

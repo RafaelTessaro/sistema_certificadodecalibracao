@@ -16,6 +16,8 @@ import type { Calibracao, NumeroReservado } from '#shared/tipos.ts'
 import { folhaPropriaDa } from '../../lib/folhaCampo'
 import { dataHora, hojeISO } from '../../lib/format'
 import { useSessao } from '../../store/sessao'
+import { textoAssinaturasDaEmissao } from '../certificadoDigital/textos'
+import { useAssinadosDigitalmente } from '../certificadoDigital/useAssinadosDigitalmente'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { MarcaObrigatorio, Select } from '../ui/Form'
@@ -29,6 +31,7 @@ import {
 } from './equipe'
 import { AvisoDataDaFolha } from './AvisoDataDaFolha'
 import { AvisoFolhasNaoLigadas } from './FolhasNaoLigadas'
+import { pendenciaDoAdministrador } from './obrigatorios'
 import { AvisoItem } from './PainelResultados'
 
 export function EtapaRevisao({
@@ -71,6 +74,7 @@ export function EtapaRevisao({
   const usuario = useSessao((s) => s.usuario)
   const r = calc?.resultado
   const exigir = config.exigirRevisor
+  const assinadoDigitalmente = useAssinadosDigitalmente()
   // O técnico da tela (mesmo a troca ainda não gravada: a emissão grava antes) e quem o escolheu, com a situação gravada
   const estado = estadoDaEmissao(
     exigir,
@@ -109,12 +113,17 @@ export function EtapaRevisao({
         ? (pedido?.signatarioNome ?? 'Um signatário')
         : (escolhido?.nome ?? '—')
   // O alto da etapa diz o que quem está usando pode fazer (emitir, autorizar, enviar ou só aguardar)
+  // As pendências que levam a algum lugar (a etapa, ou Configurações para o administrador); as outras, só as do
+  // administrador (o certificado digital da empresa, o POP), que para o operador não levam a nada
+  const clicaveis = pendencias.filter((p) => !!destinoDe?.(p)).length
   const cabecalho = cabecalhoDaRevisao({
     modo,
     pronto,
     autorizaVoce: !!signatarioId && signatarioId === eu,
     aguardandoDe: pedido?.signatarioNome || null,
-    irParaItens: !!destinoDe,
+    irParaItens: clicaveis > 0,
+    soDoAdministrador: !pronto && clicaveis === 0 && pendencias.every(pendenciaDoAdministrador),
+    itens: pendencias.length,
     semQuemAutorize: estado.semQuemAutorize,
     pedidoParaVoce: !!pedido && pedido.signatarioId === eu,
   })
@@ -323,9 +332,7 @@ export function EtapaRevisao({
           </div>
 
           <p className="-mt-1 text-[13px] text-muted">
-            {exigir
-              ? 'O certificado sai com duas assinaturas: a de quem executou e a de quem autorizou.'
-              : 'O certificado sai só com a assinatura de quem executou.'}
+            {textoAssinaturasDaEmissao(exigir, assinadoDigitalmente)}
             {f.substituiId &&
               ' A correção sai com o mesmo número e a data de emissão nova; a versão anterior e o motivo ficam só no sistema.'}
           </p>
@@ -399,7 +406,9 @@ export function EtapaRevisao({
           )}
           {modo === 'escolher' && escolhido && signatarioId === eu && (
             <p className="text-[13px] text-muted">
-              Você autoriza como signatário: o certificado sai com a sua assinatura em “Autorizado por”.
+              {assinadoDigitalmente
+                ? 'Você autoriza como signatário: o certificado sai com o seu nome em “Autorizado por”, e assinado digitalmente pela empresa.'
+                : 'Você autoriza como signatário: o certificado sai com a sua assinatura em “Autorizado por”.'}
             </p>
           )}
           {modo === 'autorizar' && (

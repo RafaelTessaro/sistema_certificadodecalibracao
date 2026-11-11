@@ -39,9 +39,28 @@ jobs:
           npm ci --no-audit --no-fund
           npm test
 
+  # O cofre do certificado digital (server/assinatura/cofre.ts) cifra a chave pelo DPAPI do Windows, com o Windows
+  # PowerShell 5.1 e o instalador/ferramentas/protecao-windows.ps1: o teste roda só no Windows (no Ubuntu ele é pulado).
+  dpapi-windows:
+    name: DPAPI no Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: npm ci e o teste do DPAPI
+        shell: bash
+        run: |
+          npm ci --no-audit --no-fund
+          npx vitest run server/assinatura/cofreDpapi.test.ts
+
   instalador:
     name: Gera o setup.exe
-    needs: testes
+    needs: [testes, dpapi-windows]
     runs-on: ubuntu-latest
     # O apt do Ubuntu traz o NSIS 3.09, que tem falhas de elevação de privilégio (CVE-2025-43715,
     # CVE-2026-42171). O Debian testing traz o 3.12 ou mais novo; o script recusa versões anteriores.

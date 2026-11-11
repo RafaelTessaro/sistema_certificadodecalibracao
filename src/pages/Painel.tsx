@@ -1,4 +1,15 @@
-import { ArrowRight, BellRing, Building2, FileBadge2, FilePen, Hourglass, Scale, ShieldAlert, Weight } from 'lucide-react'
+import {
+  ArrowRight,
+  BellRing,
+  Building2,
+  FileBadge2,
+  FilePen,
+  FileWarning,
+  Hourglass,
+  Scale,
+  ShieldAlert,
+  Weight,
+} from 'lucide-react'
 import { motion } from 'motion/react'
 import type { ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
@@ -7,6 +18,8 @@ import { diasEntre } from '#shared/dominio.ts'
 import type { CalibracaoResumo } from '#shared/tipos.ts'
 import { avisoParaAutorizar } from '../components/calibracao/equipe'
 import { rotaCalibracao, SituacaoDaCalibracao } from '../components/CertificadosTabela'
+import { FaixaCertificadoDigital } from '../components/certificadoDigital/FaixaCertificadoDigital'
+import { textoAguardandoAssinatura } from '../components/certificadoDigital/textos'
 import { ValidadePadraoBadge } from '../components/Selos'
 import { Card, CardHeader } from '../components/ui/Card'
 import { PageHeader, StatCard } from '../components/ui/Misc'
@@ -43,6 +56,9 @@ export function Painel() {
     ['calibracao', 'config'],
   )
   const primeiroNome = usuario?.nome.trim().split(/\s+/)[0] ?? ''
+  // Os emitidos com a assinatura digital que ainda não foram assinados (o PDF não é entregue até assinar): a faixa leva à
+  // lista deles (o operador também vê: é ele quem envia os certificados); a causa, o administrador resolve em Configurações
+  const aguardandoAssinatura = p?.aguardandoAssinatura ?? 0
   const variacao =
     p && p.emitidosMesAnterior ? Math.round(((p.emitidosMes - p.emitidosMesAnterior) / p.emitidosMesAnterior) * 100) : null
 
@@ -59,6 +75,23 @@ export function Painel() {
           <span className="flex-1">
             <b className="font-semibold">{avisoParaAutorizar(paraAutorizar, numero).destaque}</b>{' '}
             {avisoParaAutorizar(paraAutorizar, numero).texto}
+          </span>
+          <ArrowRight className="h-4 w-4 shrink-0" />
+        </Link>
+      )}
+
+      {/* Primeiro a causa (o certificado digital que não pode assinar), depois o efeito (os que aguardam a assinatura) */}
+      <FaixaCertificadoDigital />
+
+      {aguardandoAssinatura > 0 && (
+        <Link
+          to="/certificados?situacao=assinatura"
+          className="mb-6 flex items-center gap-3 rounded-2xl border border-warning/20 bg-warning-soft px-4 py-3 text-[13.5px] text-warning transition-colors hover:border-warning/40"
+        >
+          <FileWarning className="h-4 w-4 shrink-0" />
+          <span className="flex-1">
+            <b className="font-semibold">{textoAguardandoAssinatura(aguardandoAssinatura).destaque}</b>{' '}
+            {textoAguardandoAssinatura(aguardandoAssinatura).texto} {textoAguardandoAssinatura(aguardandoAssinatura).ver}
           </span>
           <ArrowRight className="h-4 w-4 shrink-0" />
         </Link>

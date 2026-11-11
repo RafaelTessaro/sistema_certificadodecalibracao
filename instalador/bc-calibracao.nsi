@@ -23,7 +23,8 @@
 ;    .env.exemplo pacote.json bc-calibracao.ico
 ;    node\node.exe, node\LICENSE           <- só o node.exe do zip oficial win-x64
 ;    servico\WinSW.NET461.exe, servico\LICENSE-WinSW.txt
-;    ferramentas\ (redefinir-senha.bat/.ps1, auxiliar-instalador.ps1, copiar-banco-antes.mjs)
+;    ferramentas\ (redefinir-senha.bat/.ps1, auxiliar-instalador.ps1, copiar-banco-antes.mjs,
+;                  protecao-windows.ps1: o DPAPI do cofre do certificado digital, server/assinatura/cofre.ts)
 ;    estacao\BC Calibracao.exe, estacao\descobrir-servidor.ps1   <- só para as estações
 ;
 ;  O que o setup faz no SERVIDOR:
@@ -218,6 +219,13 @@ Page custom PaginaEstacaoCriar PaginaEstacaoSair    ; estação: qual é o servi
 ; programa das estações, estacao\lancador.nsi)
 !define EST_INSTALADOR
 !include "estacao\estacao.nsh"
+
+; O serviço cifra o certificado digital da empresa pelo DPAPI com este script, em ferramentas\ (Program Files: só os
+; administradores gravam). Sem ele, a instalação do certificado digital recusaria: o setup não é gerado.
+!if /FileExists "${PAYLOAD}\ferramentas\protecao-windows.ps1"
+!else
+  !error "Falta ferramentas\protecao-windows.ps1 no payload (instalador/ferramentas)."
+!endif
 
 ; Arquivos usados no .onInit e nas páginas vêm primeiro no bloco de dados (compressão sólida)
 ReserveFile "${PAYLOAD}\ferramentas\auxiliar-instalador.ps1"
@@ -1138,7 +1146,9 @@ FunctionEnd
 
 ; Só SYSTEM e Administradores (controle total) e LocalService (modificar).
 ; Um usuário comum logado no servidor não lê nem altera o banco, os backups,
-; os certificados, o email.json nem os registros.
+; os certificados, o email.json nem os registros. Atenção: S-1-5-19 é a conta
+; de TODO serviço que roda como LocalService, não só a deste: eles também leem
+; a pasta, inclusive o certificado-digital.segredo (ver server/assinatura/cofre.ts).
 ;   - dono = Administradores, em tudo: um usuário comum pode ter criado a pasta
 ;     antes (o C:\ProgramData deixa) e, como dono, poderia liberar o acesso;
 ;   - /reset na raiz tira permissões explícitas que tenham sido postas nela;

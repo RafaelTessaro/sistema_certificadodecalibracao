@@ -10,6 +10,7 @@ import {
   ExternalLink,
   FileBadge2,
   FilePen,
+  FileWarning,
   Fingerprint,
   History,
   Loader2,
@@ -26,13 +27,14 @@ import {
   StickyNote,
   Weight,
 } from 'lucide-react'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { calcularCalibracao } from '#shared/calibracao.ts'
 import { capacidadeTexto, inscricaoEstadualNoCertificado, LIMITES, LOCAIS, TIPOS_BALANCA } from '#shared/dominio.ts'
 import type { Calibracao } from '#shared/tipos.ts'
 import { GraficoErro } from '../components/calibracao/GraficoErro'
 import { casasDe } from '../components/calibracao/util'
+import { assinaturaDaEmissao } from '../components/certificadoDigital/textos'
 import { EnviarCertificadoModal } from '../components/EnviarCertificadoModal'
 import { HistoricoVersoes } from '../components/HistoricoVersoes'
 import { StatusCalibracaoBadge } from '../components/Selos'
@@ -100,6 +102,8 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
   const versaoDaPagina = versoes.find((v) => v.id === k.id)
   const emitido = k.status === 'EMITIDO'
   const urlPdf = `${api.urlPdf(k.id)}${api.urlPdf(k.id).includes('?') ? '&' : '?'}v=${k.versao}-${versaoPdf}`
+  // Emitido com a assinatura digital e ainda não assinado: o PDF não sai até assinar (abrir tenta assinar)
+  const aguardandoAssinatura = emitido && !!emissao?.assinaturaDigital && !emissao.hashPdf
 
   const recalibrar = async () => {
     setCriando(true)
@@ -156,7 +160,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
         titulo={
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span className="tnum">Certificado {k.numero}</span>
-            <StatusCalibracaoBadge status={k.status} className="text-xs" />
+            <StatusCalibracaoBadge status={k.status} aguardandoAssinatura={aguardandoAssinatura} className="text-xs" />
           </span>
         }
         descricao={
@@ -168,12 +172,25 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
         }
         acoes={
           <>
-            <a href={api.urlPdf(k.id, true)} download>
-              <Button icone={<Download className="h-4 w-4" />} tabIndex={-1}>
+            {/* Aguardando a assinatura digital: o servidor não entrega o PDF (o motivo aparece no lugar dele, embaixo) */}
+            {aguardandoAssinatura ? (
+              <Button icone={<Download className="h-4 w-4" />} disabled title={SEM_PDF_ATE_ASSINAR}>
                 Baixar PDF
               </Button>
-            </a>
-            <Button icone={<Printer className="h-4 w-4" />} onClick={() => imprimir(urlPdf)} className="hidden sm:inline-flex">
+            ) : (
+              <a href={api.urlPdf(k.id, true)} download>
+                <Button icone={<Download className="h-4 w-4" />} tabIndex={-1}>
+                  Baixar PDF
+                </Button>
+              </a>
+            )}
+            <Button
+              icone={<Printer className="h-4 w-4" />}
+              onClick={() => imprimir(urlPdf)}
+              disabled={aguardandoAssinatura}
+              title={aguardandoAssinatura ? SEM_PDF_ATE_ASSINAR : undefined}
+              className="hidden sm:inline-flex"
+            >
               Imprimir
             </Button>
             {emitido && (
@@ -272,23 +289,34 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
                 <FileBadge2 className="h-4 w-4 text-brand" />
                 Certificado em PDF
               </p>
-              <a
-                href={urlPdf}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-[13px] font-medium text-brand-ink hover:underline"
-              >
-                Abrir em outra aba
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
+              {!aguardandoAssinatura && (
+                <a
+                  href={urlPdf}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-[13px] font-medium text-brand-ink hover:underline"
+                >
+                  Abrir em outra aba
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              )}
             </div>
-            {/* Navegadores de celular não mostram PDF dentro da página: lá, um botão para abrir */}
-            <iframe
-              title={`Certificado ${k.numero}`}
-              src={urlPdf}
-              className="hidden h-[78vh] min-h-[520px] w-full bg-surface-2 md:block"
-            />
-            <div className="flex flex-col items-center gap-3 px-6 py-10 text-center md:hidden">
+            {aguardandoAssinatura ? (
+              <PdfAguardandoAssinatura url={urlPdf} />
+            ) : (
+              /* Navegadores de celular não mostram PDF dentro da página: lá, um botão para abrir */
+              <iframe
+                title={`Certificado ${k.numero}`}
+                src={urlPdf}
+                className="hidden h-[78vh] min-h-[520px] w-full bg-surface-2 md:block"
+              />
+            )}
+            <div
+              className={cn(
+                'flex flex-col items-center gap-3 px-6 py-10 text-center md:hidden',
+                aguardandoAssinatura && 'hidden',
+              )}
+            >
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-soft text-brand-ink">
                 <FileBadge2 className="h-6 w-6" />
               </div>
@@ -574,12 +602,35 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
   )
 }
 
-/** Imprime o PDF sem sair da tela (num quadro escondido); se o navegador bloquear, abre numa aba. */
+/** O título dos botões do PDF enquanto o certificado aguarda a assinatura digital. */
+const SEM_PDF_ATE_ASSINAR = 'Aguardando a assinatura digital: o PDF ainda não pode ser baixado nem impresso.'
+
+/**
+ * Imprime o PDF sem sair da tela (num quadro escondido); se o navegador bloquear, abre numa aba. A resposta que não é um
+ * PDF (o servidor recusou: o erro vem em JSON) não vai para a impressão: o motivo aparece num aviso.
+ */
 function imprimir(url: string) {
   const quadro = document.createElement('iframe')
   quadro.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'
   quadro.src = url
   quadro.onload = () => {
+    let tipo = ''
+    try {
+      tipo = quadro.contentDocument?.contentType ?? ''
+    } catch {
+      tipo = ''
+    }
+    if (tipo && tipo !== 'application/pdf') {
+      let erro = ''
+      try {
+        erro = String((JSON.parse(quadro.contentDocument?.body?.textContent ?? '') as { erro?: unknown }).erro ?? '')
+      } catch {
+        erro = ''
+      }
+      quadro.remove()
+      toast.erro('Não foi possível imprimir', erro || 'O servidor não devolveu o PDF do certificado.')
+      return
+    }
     try {
       quadro.contentWindow?.focus()
       quadro.contentWindow?.print()
@@ -591,8 +642,53 @@ function imprimir(url: string) {
   document.body.appendChild(quadro)
 }
 
+/**
+ * O PDF do emitido que ainda não foi assinado digitalmente: abrir tenta assinar (no servidor). Assinado, a tela recarrega
+ * e mostra o PDF; senão, o motivo (o servidor não entrega o PDF sem a assinatura) e "Tentar de novo".
+ */
+function PdfAguardandoAssinatura({ url }: { url: string }) {
+  const [estado, setEstado] = useState<{ tentando: boolean; erro: string }>({ tentando: true, erro: '' })
+  const [tentativa, setTentativa] = useState(0)
+  useEffect(() => {
+    let ativo = true
+    fetch(url, { credentials: 'same-origin' })
+      .then(async (r) => {
+        if (r.ok) return useTempoReal.getState().mudou('calibracao')
+        const corpo = (await r.json().catch(() => null)) as { erro?: string } | null
+        if (ativo) setEstado({ tentando: false, erro: corpo?.erro || 'O certificado ainda não pôde ser assinado.' })
+      })
+      .catch(() => ativo && setEstado({ tentando: false, erro: 'Sem conexão com o servidor.' }))
+    return () => {
+      ativo = false
+    }
+  }, [url, tentativa])
+  const tentar = () => {
+    setEstado({ tentando: true, erro: '' })
+    setTentativa((n) => n + 1)
+  }
+  return (
+    <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-warning-soft text-warning">
+        {estado.tentando ? <Loader2 className="h-6 w-6 animate-spin" /> : <FileWarning className="h-6 w-6" />}
+      </div>
+      <p className="max-w-md text-sm text-ink-2">{estado.tentando ? 'Assinando o certificado digitalmente…' : estado.erro}</p>
+      {!estado.tentando && (
+        <Button icone={<RefreshCcw className="h-4 w-4" />} onClick={tentar}>
+          Tentar de novo
+        </Button>
+      )}
+    </div>
+  )
+}
+
 function CartaoEmissao({ k }: { k: Calibracao }) {
   const emissao = k.emissao!
+  // Com o certificado digital da empresa (1.0.7): assinado, aguardando a assinatura (o PDF não sai até assinar), ou
+  // cancelado/substituído antes dela (a cópia não tem assinatura)
+  const digital = assinaturaDaEmissao(emissao, k.status)
+  const aguardando = digital?.tom === 'aguardando'
+  // Emitido para ser assinado e ainda sem o PDF (aguardando, ou cancelado antes da assinatura): não há impressão digital
+  const semPdf = !!digital && !emissao.hashPdf
   const [copiado, setCopiado] = useState(false)
   const copiar = async () => {
     try {
@@ -614,7 +710,23 @@ function CartaoEmissao({ k }: { k: Calibracao }) {
         </p>
       </div>
       <div className="flex flex-col gap-3 px-5 py-4">
-        <div>
+        {digital && (
+          <p
+            className={cn(
+              'flex items-start gap-2 text-[13px] leading-snug',
+              aguardando ? 'rounded-xl bg-warning-soft px-3 py-2.5 font-medium text-warning' : 'text-ink-2',
+            )}
+          >
+            {digital.tom === 'assinado' ? (
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+            ) : (
+              <FileWarning className={cn('mt-0.5 h-4 w-4 shrink-0', !aguardando && 'text-muted')} />
+            )}
+            <span className="min-w-0">{digital.texto}</span>
+          </p>
+        )}
+        {/* Aguardando a assinatura digital: ainda não há PDF (nem impressão digital dele) */}
+        <div className={cn(semPdf && 'hidden')}>
           <p className="flex items-center gap-1.5 text-xs font-medium text-muted">
             <Fingerprint className="h-3.5 w-3.5" />
             Impressão digital do PDF (SHA-256)
@@ -631,7 +743,9 @@ function CartaoEmissao({ k }: { k: Calibracao }) {
             </Button>
           </div>
         </div>
-        <p className="text-xs text-muted">Confere se um arquivo PDF é exatamente o que foi emitido pelo sistema.</p>
+        <p className={cn('text-xs text-muted', semPdf && 'hidden')}>
+          Confere se um arquivo PDF é exatamente o que foi emitido pelo sistema.
+        </p>
       </div>
     </Card>
   )

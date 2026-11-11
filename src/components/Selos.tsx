@@ -1,4 +1,4 @@
-import { Ban, CircleCheck, Clock, FilePen, Hourglass, RefreshCcw, Undo2 } from 'lucide-react'
+import { Ban, CircleCheck, Clock, FileClock, FilePen, Hourglass, RefreshCcw, Undo2 } from 'lucide-react'
 import { diasEntre, ROTULO_VALIDADE, rotuloDaSituacao, situacaoValidade, STATUS_CALIBRACAO } from '#shared/dominio.ts'
 import type { StatusCalibracao } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
@@ -15,13 +15,15 @@ const ICONE_STATUS: Record<StatusCalibracao, typeof FilePen> = {
 
 /**
  * Situação do documento (pílula com ícone): rascunho (ou devolvido pelo signatário), aguardando autorização (de quem,
- * com `aguardando`; "Enviada para revisão" com a revisão por outra pessoa desligada), emitido, cancelado, substituído.
+ * com `aguardando`; "Enviada para revisão" com a revisão por outra pessoa desligada), emitido (ou emitido aguardando a
+ * assinatura digital, que ainda não pode ser baixado nem enviado), cancelado, substituído.
  */
 export function StatusCalibracaoBadge({
   status,
   aguardando,
   devolvida,
   semAutorizacao,
+  aguardandoAssinatura,
   className,
 }: {
   status: StatusCalibracao
@@ -31,8 +33,17 @@ export function StatusCalibracaoBadge({
   devolvida?: boolean
   /** A revisão por outra pessoa está desligada: a enviada não aguarda a autorização de ninguém (`rotuloDaSituacao`). */
   semAutorizacao?: boolean
+  /** Emitido e ainda não assinado digitalmente (1.0.7): não é o verde de "Emitido" (o PDF ainda não sai). */
+  aguardandoAssinatura?: boolean
   className?: string
 }) {
+  if (status === 'EMITIDO' && aguardandoAssinatura)
+    return (
+      <Badge tom="warning" ponto={false} className={cn('gap-1', className)}>
+        <FileClock className="h-3 w-3" />
+        Aguardando assinatura
+      </Badge>
+    )
   const s = STATUS_CALIBRACAO[status]
   const rotulo = rotuloDaSituacao(status, semAutorizacao)
   const voltou = status === 'RASCUNHO' && devolvida

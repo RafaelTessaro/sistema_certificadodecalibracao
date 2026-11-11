@@ -269,20 +269,28 @@ export function confirmacaoSemLigar(
 /**
  * A confirmação de "Emitir" e "Autorizar e emitir" (`autorizar`): o nº com que o certificado sai (a correção, o mesmo nº;
  * o reservado na folha; ou o próximo da sequência) e, com a folha do cliente ainda não ligada (`semLigar`), a pergunta
- * dela no título e no botão, sem repetir o nº de saída (ela já o diz).
+ * dela no título e no botão, sem repetir o nº de saída (ela já o diz). `assinadoDigitalmente`: com o certificado digital
+ * da empresa instalado, o PDF sai com os nomes, sem as imagens das assinaturas (e assinado digitalmente pela empresa).
  */
 export function confirmacaoDaEmissao(o: {
   autorizar: boolean
   numeroRevisao: string | null
   numeroReservado: string | null
   semLigar: { titulo: string; descricao: string; confirmar: string } | null
+  assinadoDigitalmente?: boolean
 }): { titulo: string; descricao: string; confirmar: string } {
-  const assinatura = 'Você autoriza como signatário: o certificado sai com a sua assinatura em “Autorizado por”'
+  const assinatura = o.assinadoDigitalmente
+    ? 'Você autoriza como signatário: o certificado sai com o seu nome em “Autorizado por”, e assinado digitalmente pela empresa'
+    : 'Você autoriza como signatário: o certificado sai com a sua assinatura em “Autorizado por”'
   if (o.semLigar)
     return {
       ...o.semLigar,
       descricao: `${o.semLigar.descricao} ${
-        o.autorizar ? `${assinatura} e não pode mais ser alterado.` : 'Emitido, o certificado não pode mais ser alterado.'
+        !o.autorizar
+          ? 'Emitido, o certificado não pode mais ser alterado.'
+          : o.assinadoDigitalmente
+            ? `${assinatura}. Emitido, ele não pode mais ser alterado.`
+            : `${assinatura} e não pode mais ser alterado.`
       }`,
     }
   const numeracao = o.numeroRevisao

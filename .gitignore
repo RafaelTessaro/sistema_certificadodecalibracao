@@ -26,6 +26,9 @@ dist-ssr
 # Dados do servidor (banco, backups, credenciais)
 dados/
 dados-dev/
+# Chave de teste do cofre do certificado digital fora do Windows e o segredo do cofre no Windows (server/assinatura/cofre.ts)
+certificado-digital.chave
+certificado-digital.segredo
 .env
 
 # Worktrees temporários de ferramentas

@@ -20,6 +20,7 @@ import { impedimentoDoSignatario, impedimentoDoTecnico, impedimentoParaEmitir, p
 import type { Calibracao, Cliente, StatusCalibracao } from '#shared/tipos.ts'
 import {
   anexosDoCertificado,
+  assinaturaParaVerificacao,
   avisosDa,
   certificadosDosPadroes,
   emitirCertificado,
@@ -28,6 +29,7 @@ import {
   pendenciasDa,
   popDaCalibracao,
   previa,
+  serieDaAssinatura,
   versaoDoPopEmitido,
 } from '../certificados.ts'
 import type { Contexto } from '../contexto.ts'
@@ -73,7 +75,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
   app.get('/api/calibracoes', async (req) => {
     const q = req.query as Record<string, string | undefined>
     return repo.listarCalibracoes({
-      status: (q.status ?? '') as StatusCalibracao | 'ABERTAS' | 'AUTORIZAR' | '',
+      status: (q.status ?? '') as StatusCalibracao | 'ABERTAS' | 'AUTORIZAR' | 'ASSINATURA_PENDENTE' | '',
       // "Para você autorizar": as enviadas para quem está vendo
       usuario: req.usuario,
       clienteId: q.clienteId,
@@ -258,6 +260,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
   })
 
   app.post('/api/calibracoes/:id/emitir', async (req: ComId) => {
+    const serie = (k: Calibracao) => serieDaAssinatura(ctx, k.emissao)
     const u = autor(req)
     const c = corpo(req)
     const reservado = repo.numeroReservadoDa(req.params.id)
@@ -274,7 +277,15 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       k.emissao?.mesmoNumero
         ? `${k.numero} corrigido (a versão anterior fica guardada como substituída): ${k.motivoRevisao}`
         : '',
-      aviso ? 'o PDF não foi gravado na emissão (é gerado ao abrir)' : '',
+      // Com o certificado digital da empresa (1.0.7): assinado, com a série do certificado, ou aguardando a assinatura
+      k.emissao?.assinatura
+        ? `assinado digitalmente${serie(k) ? ` (série ${serie(k)})` : ''}`
+        : k.emissao?.assinaturaDigital
+          ? 'ainda não assinado digitalmente (é assinado ao abrir ou na próxima tentativa automática)'
+          : '',
+      aviso && !(k.emissao?.assinaturaDigital && !k.emissao.assinatura)
+        ? 'o PDF não foi gravado na emissão (é gerado ao abrir)'
+        : '',
     ]
       .filter(Boolean)
       .join('; ')
@@ -454,7 +465,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
 
   /**
    * Conferência de autenticidade pelo código do QR code (sem entrar no sistema). Só o essencial:
-   * número, situação, datas, cliente, instrumento e o hash do PDF.
+   * número, situação, datas, cliente, instrumento e o hash do PDF; no assinado digitalmente (1.0.7), o titular e o
+   * CNPJ do certificado ICP-Brasil da empresa (públicos: saem no próprio PDF).
    */
   app.get('/api/verificar/:codigo', async (req) => {
     const codigo = String((req.params as { codigo: string }).codigo ?? '')
@@ -472,6 +484,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       v = seguinte && repo.obterCalibracao(seguinte.id)
       if (v?.emissao) atual = v
     }
+    const assinaturaDigital = assinaturaParaVerificacao(ctx, k.emissao)
     return {
       numero: k.numero,
       status: k.status,
@@ -487,6 +500,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       balanca: descricaoBalanca(k.emissao.balanca),
       numeroSerie: k.emissao.balanca.numeroSerie,
       hashPdf: k.emissao.hashPdf,
+      // Só o PDF já assinado (o que aguarda a assinatura, ou foi cancelado antes dela, não tem assinatura)
+      ...(assinaturaDigital ? { assinaturaDigital } : {}),
     }
   })
 }

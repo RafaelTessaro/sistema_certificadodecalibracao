@@ -42,8 +42,12 @@ export const REGRAS_TENTATIVAS: Record<Tipo, RegraSeguidas | RegraJanela> = {
 /** Tipos que a redefinição da senha destrava (o bloqueio por IP continua). */
 const DESTRAVA_COM_SENHA_NOVA: ReadonlySet<Tipo> = new Set(['par', 'login', 'senha'])
 
-/** Entrada: login já normalizado (exista ou não) e IP. Troca da própria senha: o id do usuário. */
-export type ChavesTentativa = { login: string; ip: string; loopback: boolean } | { trocaSenhaDe: string }
+/**
+ * Entrada: login já normalizado (exista ou não) e IP. Troca da própria senha: o id do usuário. A própria senha pedida de
+ * novo antes de uma ação sensível (o certificado digital): o id do usuário, num contador separado do da troca.
+ */
+export type ChavesTentativa =
+  { login: string; ip: string; loopback: boolean } | { trocaSenhaDe: string } | { confirmacaoDe: string }
 
 interface Registro {
   tipo: Tipo
@@ -217,6 +221,7 @@ export class LimiteTentativas {
 
   private chaves(c: ChavesTentativa): Array<[string, Tipo]> {
     if ('trocaSenhaDe' in c) return [[`senha:${c.trocaSenhaDe}`, 'senha']]
+    if ('confirmacaoDe' in c) return [[`confirmar:${c.confirmacaoDe}`, 'senha']]
     const lista: Array<[string, Tipo]> = [
       [`par:${c.login}|${c.ip}`, 'par'],
       [`ip:${c.ip}`, 'ip'],

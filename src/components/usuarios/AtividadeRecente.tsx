@@ -6,6 +6,7 @@ import {
   DatabaseZap,
   Download,
   FileCheck2,
+  FileKey2,
   FileX2,
   History,
   Hourglass,
@@ -65,6 +66,7 @@ const ICONE_ACAO: Partial<Record<AcaoAuditoria, LucideIcon>> = {
   CERTIFICADO_ENVIADO: Send,
   AUTORIZACAO_PEDIDA: Hourglass,
   AUTORIZACAO_DEVOLVIDA: Undo2,
+  CERTIFICADO_DIGITAL: FileKey2,
 }
 
 /** Cor do ícone: alertas em vermelho/amarelo; o resto pelo grupo. */

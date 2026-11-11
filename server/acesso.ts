@@ -133,6 +133,16 @@ export const TABELA_ACESSO: Record<string, RegraAcesso> = {
   'DELETE /api/email/config': 'configuracoes',
   'POST /api/email/teste': 'configuracoes',
 
+  // certificadoDigital.ts (o certificado digital ICP-Brasil da empresa, que assina os certificados emitidos). O GET devolve
+  // aos outros níveis só a situação, o titular e a validade. Instalar, trocar e remover: de qualquer computador da rede,
+  // com a senha do administrador pedida de novo (limite de tentativas) e o pacote cifrado no navegador com a chave de
+  // envio (RSA-OAEP, de um uso só, 10 minutos, presa a quem pediu)
+  'GET /api/certificado-digital': 'logado',
+  'GET /api/certificado-digital/chave': 'configuracoes',
+  'POST /api/certificado-digital/conferir': 'configuracoes', // confere o .pfx; não grava nada
+  'POST /api/certificado-digital': 'configuracoes',
+  'DELETE /api/certificado-digital': 'configuracoes',
+
   // rotas/consultas.ts
   'GET /api/consultas/cnpj/:cnpj': 'logado',
   'GET /api/consultas/cep/:cep': 'logado',
@@ -220,10 +230,17 @@ const ACAO_DA_ROTA: Record<string, AcaoAuditoria> = {
   'POST /api/calibracoes/:id/cancelar': 'CERTIFICADO_CANCELADO',
   'POST /api/calibracoes/:id/email': 'CERTIFICADO_ENVIADO',
   'POST /api/numeros-reservados/:reserva/nao-utilizado': 'NUMERO_NAO_UTILIZADO',
+  // Instalado, trocado ou removido (o detalhe diz qual, com o titular e a série; nunca a senha)
+  'POST /api/certificado-digital': 'CERTIFICADO_DIGITAL',
+  'DELETE /api/certificado-digital': 'CERTIFICADO_DIGITAL',
 }
 
 /** Rotas que só calculam ou geram prévia (POST sem gravar dados): fora da auditoria. */
-const SO_LEITURA = new Set(['POST /api/calibracoes/:id/previa', 'POST /api/primeiro-acesso'])
+const SO_LEITURA = new Set([
+  'POST /api/calibracoes/:id/previa',
+  'POST /api/primeiro-acesso',
+  'POST /api/certificado-digital/conferir',
+])
 
 type Bruto = Record<string, unknown>
 const obj = (v: unknown): Bruto => (v && typeof v === 'object' && !Array.isArray(v) && !Buffer.isBuffer(v) ? (v as Bruto) : {})

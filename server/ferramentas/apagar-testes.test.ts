@@ -262,7 +262,10 @@ describe('apagar-testes.mjs', { timeout: 120_000 }, () => {
     expect((antes.usuarios as Linha[]).find((u) => u.login === 'admin')!.assinatura).toBe(ASSINATURA_EXEMPLO_1)
     // Toda chave de meta que o sistema grava está classificada (a numeração sai; o resto fica)
     for (const { chave } of antes.meta as Array<{ chave: string }>)
-      expect(/^(revisao|sequencia_\d{4}|certificados_fora_do_banco|testes_apagados_em)$/.test(chave), chave).toBe(true)
+      expect(
+        /^(revisao|sequencia_\d{4}|certificados_fora_do_banco|testes_apagados_em|certificado_digital_aviso)$/.test(chave),
+        chave,
+      ).toBe(true)
     const revisao = Number((antes.meta as Array<{ chave: string; valor: string }>).find((m) => m.chave === 'revisao')!.valor)
     const emailJson = readFileSync(join(pasta, 'email.json'), 'utf8')
     // As cópias do banco do período de testes (a automática, a manual e a do instalador): com elas na pasta backups, a

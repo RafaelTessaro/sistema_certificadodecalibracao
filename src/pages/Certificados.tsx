@@ -22,12 +22,13 @@ import { type AbaCertificados, abaDaPagina, guardarAba, lerAbaGuardada, paramsDa
 import { useSessao } from '../store/sessao'
 import { EsqueletoTabela } from './Clientes'
 
-type Filtro = '' | 'ABERTAS' | 'AUTORIZAR' | 'EMITIDO' | 'CANCELADO' | 'SUBSTITUIDO'
+type Filtro = '' | 'ABERTAS' | 'AUTORIZAR' | 'ASSINATURA_PENDENTE' | 'EMITIDO' | 'CANCELADO' | 'SUBSTITUIDO'
 const POR_PAGINA = 50
 
 export function Certificados() {
   const navegar = useNavigate()
-  // "?situacao=autorizar" (o aviso do painel) abre já em "Para você autorizar"
+  // "?situacao=autorizar" (o aviso do painel) abre já em "Para você autorizar"; "?situacao=assinatura", nos emitidos que
+  // aguardam a assinatura digital
   const [parametros, setParametros] = useSearchParams()
   // As abas "Certificados" e "Folhas de campo": a do endereço (?aba=folhas) ou a última escolhida neste navegador
   const [abaGuardada, setAbaGuardada] = useState(lerAbaGuardada)
@@ -39,13 +40,22 @@ export function Certificados() {
     setAbaGuardada(a)
     setParametros((p) => paramsDaAba(p, a), { replace: true })
   }
-  const [filtro, setFiltro] = useState<Filtro>(parametros.get('situacao') === 'autorizar' ? 'AUTORIZAR' : '')
+  const [filtro, setFiltro] = useState<Filtro>(() => {
+    const situacao = parametros.get('situacao')
+    return situacao === 'autorizar' ? 'AUTORIZAR' : situacao === 'assinatura' ? 'ASSINATURA_PENDENTE' : ''
+  })
   const signatario = useSessao((s) => !!s.usuario?.signatario)
   // As que aguardam a autorização de quem está vendo (atualiza em tempo real, como a lista)
   // (nenhuma com a revisão por outra pessoa desligada: o servidor confere a configuração)
   const { dados: paraAutorizar } = useConsulta(
     signatario ? 'calibracoes:autorizar' : null,
     () => api.calibracoes({ status: 'AUTORIZAR', limite: 1 }).then((r) => r.total),
+    ['calibracao', 'config'],
+  )
+  // Os emitidos com a assinatura digital que ainda não foram assinados (o PDF não é entregue até assinar)
+  const { dados: aguardandoAssinatura } = useConsulta(
+    'calibracoes:assinatura-pendente',
+    () => api.calibracoes({ status: 'ASSINATURA_PENDENTE', limite: 1 }).then((r) => r.total),
     ['calibracao', 'config'],
   )
   const [busca, setBusca] = useState('')
@@ -165,6 +175,15 @@ export function Certificados() {
                     ? [{ valor: 'AUTORIZAR' as const, label: `Para você autorizar (${numero(paraAutorizar ?? 0)})` }]
                     : []),
                   { valor: 'EMITIDO', label: 'Emitidos' },
+                  // Só quando há algum (ou o filtro já está escolhido)
+                  ...(!!aguardandoAssinatura || filtro === 'ASSINATURA_PENDENTE'
+                    ? [
+                        {
+                          valor: 'ASSINATURA_PENDENTE' as const,
+                          label: `Aguardando assinatura (${numero(aguardandoAssinatura ?? 0)})`,
+                        },
+                      ]
+                    : []),
                   { valor: 'CANCELADO', label: 'Cancelados' },
                   { valor: 'SUBSTITUIDO', label: 'Substituídos' },
                 ]}
@@ -201,18 +220,22 @@ export function Certificados() {
               <EmptyState
                 icone={<FileBadge2 className="h-6 w-6" />}
                 titulo={
-                  filtro === 'AUTORIZAR' && !buscaAplicada && !de && !ate
-                    ? 'Nada aguarda a sua autorização'
-                    : buscaAplicada || filtro || de || ate
-                      ? 'Nada encontrado'
-                      : 'Nenhuma calibração ainda'
+                  filtro === 'ASSINATURA_PENDENTE' && !buscaAplicada && !de && !ate
+                    ? 'Nenhum certificado aguarda a assinatura digital'
+                    : filtro === 'AUTORIZAR' && !buscaAplicada && !de && !ate
+                      ? 'Nada aguarda a sua autorização'
+                      : buscaAplicada || filtro || de || ate
+                        ? 'Nada encontrado'
+                        : 'Nenhuma calibração ainda'
                 }
                 descricao={
-                  filtro === 'AUTORIZAR' && !buscaAplicada && !de && !ate
-                    ? 'Quando alguém enviar uma calibração para você autorizar, ela aparece aqui.'
-                    : buscaAplicada || filtro || de || ate
-                      ? 'Tente outra busca ou mude os filtros.'
-                      : 'Comece uma calibração: escolha o cliente e a balança, registre os ensaios e emita o certificado.'
+                  filtro === 'ASSINATURA_PENDENTE' && !buscaAplicada && !de && !ate
+                    ? 'Os emitidos para assinatura digital já foram todos assinados.'
+                    : filtro === 'AUTORIZAR' && !buscaAplicada && !de && !ate
+                      ? 'Quando alguém enviar uma calibração para você autorizar, ela aparece aqui.'
+                      : buscaAplicada || filtro || de || ate
+                        ? 'Tente outra busca ou mude os filtros.'
+                        : 'Comece uma calibração: escolha o cliente e a balança, registre os ensaios e emita o certificado.'
                 }
                 acao={
                   !(buscaAplicada || filtro || de || ate) && (

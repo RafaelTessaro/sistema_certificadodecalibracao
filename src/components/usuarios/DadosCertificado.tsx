@@ -35,6 +35,7 @@ export function DadosCertificado({
   aoMudar,
   nome,
   prefixo,
+  assinadosDigitalmente = false,
 }: {
   valor: DadosNoCertificado
   aoMudar: (v: Partial<DadosNoCertificado>) => void
@@ -42,6 +43,11 @@ export function DadosCertificado({
   nome: string
   /** Prefixo dos ids dos campos (dois formulários podem existir na página). */
   prefixo: string
+  /**
+   * Há um certificado digital ICP-Brasil instalado (1.0.7): os certificados saem assinados digitalmente, sem a imagem
+   * da assinatura. Ela continua no cadastro (os certificados de antes a usam quando são refeitos).
+   */
+  assinadosDigitalmente?: boolean
 }) {
   const semCargo = (valor.signatario || valor.tecnico) && !valor.cargo.trim()
   return (
@@ -137,6 +143,7 @@ export function DadosCertificado({
         nome={nome}
         cargo={valor.cargo}
         registro={valor.registro}
+        assinadosDigitalmente={assinadosDigitalmente}
       />
     </section>
   )
@@ -204,12 +211,14 @@ function CampoAssinatura({
   nome,
   cargo,
   registro,
+  assinadosDigitalmente,
 }: {
   valor: string
   aoMudar: (v: string) => void
   nome: string
   cargo: string
   registro: string
+  assinadosDigitalmente: boolean
 }) {
   const entrada = useRef<HTMLInputElement>(null)
   const [preparando, setPreparando] = useState(false)
@@ -239,7 +248,10 @@ function CampoAssinatura({
   return (
     <div className="flex flex-col gap-1.5">
       <p className="text-[13px] font-medium text-ink-2">
-        Assinatura digitalizada <span className="font-normal text-muted">(opcional)</span>
+        Assinatura digitalizada{' '}
+        <span className="font-normal text-muted">
+          {assinadosDigitalmente ? '(opcional; não usada nos certificados assinados digitalmente)' : '(opcional)'}
+        </span>
       </p>
       <div
         onDragOver={(e) => {
