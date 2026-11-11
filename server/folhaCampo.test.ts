@@ -7,12 +7,18 @@ import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { BALANCA_VAZIA, CLIENTE_VAZIO, PADRAO_VAZIO } from '#shared/dominio.ts'
+import { BALANCA_VAZIA, CLIENTE_VAZIO, diaEmBrasilia, PADRAO_VAZIO } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
 import { criarApp } from './app.ts'
 import { criarAppComLogin, type AppComLogin } from './auxiliaresTeste.ts'
 import { abrirBanco, type Banco } from './db.ts'
-import { dataDaImpressaoNoPdf, folhaImpressaComRegrasDa105, numeroCertificadoNoPdf, Repositorio } from './repositorio.ts'
+import {
+  dataDaImpressaoNoPdf,
+  folhaImpressaComLinhaDoZero,
+  folhaImpressaComRegrasDa105,
+  numeroCertificadoNoPdf,
+  Repositorio,
+} from './repositorio.ts'
 import { PARAMETROS_LEVES } from './senha.ts'
 import { transplantarFolhasCampo } from './usuarios.ts'
 import { comBarometrosAtivos, nomeArquivoDaFolha, numeroDaFolha } from './rotas/folhaCampo.ts'
@@ -1117,7 +1123,8 @@ describe('banco restaurado de uma cópia antiga: as folhas impressas depois dela
     expect(antes(antiga)).toBe(1)
     const r = await ligar(k.id, antiga, true)
     expect(r.statusCode, r.body).toBe(200)
-    expect(r.json().marcas).toEqual({ pressaoComoAviso: true, cargasDoEmaNaFolha: true })
+    // Sem a marca da 1.0.6, não se sabe se ela tinha a linha do zero: a falta da leitura dele fica só como aviso
+    expect(r.json().marcas).toEqual({ pressaoComoAviso: true, cargasDoEmaNaFolha: true, zeroComoAviso: true })
     // A impressa na 1.0.5 (com a marca) não é de antes, embora o banco tenha sido aberto depois da impressão dela: a
     // pressão impressa como obrigatória continua obrigatória
     const k2 = await rascunho('')
@@ -2005,6 +2012,48 @@ describe('1.0.6: a folha do cliente ainda não ligada e a data prevista', { time
     expect(numeros(lista)).toEqual([daExcluida.headers['x-folha-campo']])
   })
 
+  it('a folha trocada por uma folha nova no rascunho excluído não entra: o nº de certificado dela é da folha nova', async () => {
+    const excluido = await rascunho('')
+    const primeira = await t.chamar('GET', `/api/calibracoes/${excluido.id}/folha-campo`, { cookie: t.cookieComum })
+    const nova = await t.chamar('GET', `/api/calibracoes/${excluido.id}/folha-campo?nova=a1b2c3d4-0000-4000-8000-000000000301`, {
+      cookie: t.cookieComum,
+    })
+    expect(nova.statusCode, nova.body).toBe(200)
+    const [fc1, fc2] = [primeira.headers['x-folha-campo'] as string, nova.headers['x-folha-campo'] as string]
+    const cc = numeroCertificadoNoPdf(nova.rawPayload)
+    expect(numeroCertificadoNoPdf(primeira.rawPayload)).toBe(cc)
+    expect((await t.chamar('DELETE', `/api/calibracoes/${excluido.id}`, { cookie: t.cookieAdmin })).statusCode).toBe(204)
+    // Só a folha nova (a que foi a campo, com o nº) aparece, uma vez: a trocada nunca foi a campo
+    const k = await rascunho('')
+    expect((await detalhe(k.id)).folhasNaoLigadas).toEqual([expect.objectContaining({ numero: fc2, numeroCertificado: cc })])
+    // Ligada a folha nova, nenhuma calibração seguinte da balança volta a avisar da trocada
+    expect((await ligar(k.id, fc2)).statusCode).toBe(200)
+    const k2 = await rascunho('')
+    expect(numeros((await detalhe(k2.id)).folhasNaoLigadas)).not.toContain(fc1)
+    expect((await detalhe(k2.id)).folhasNaoLigadas).toEqual([])
+  })
+
+  it('a folha sem nº de certificado reservado (não dá para marcá-la como "Não vai ser usada") não entra', async () => {
+    const semNumero = await avulsa(`?balancaId=${balanca.id}`)
+    // Como a folha de uma correção que foi excluída: impressa sem nº de certificado
+    t.ctx.db.prepare("UPDATE folhas_campo SET numero_certificado = '' WHERE numero = ?").run(semNumero.numero)
+    t.ctx.db.prepare('DELETE FROM numeros_reservados WHERE folha = ?').run(semNumero.numero)
+    const k = await rascunho('')
+    expect((await detalhe(k.id)).folhasNaoLigadas).toEqual([])
+  })
+
+  it('a folha posta de lado pela calibração excluída (o nº dela ficou não utilizado) não entra', async () => {
+    const excluido = await rascunho('')
+    const propria = await t.chamar('GET', `/api/calibracoes/${excluido.id}/folha-campo`, { cookie: t.cookieComum })
+    const doCliente = await avulsa(`?clienteId=${cliente.id}`)
+    expect((await ligar(excluido.id, doCliente.numero)).statusCode).toBe(200)
+    expect((await t.chamar('DELETE', `/api/calibracoes/${excluido.id}`, { cookie: t.cookieAdmin })).statusCode).toBe(204)
+    const k = await rascunho('')
+    const lista = numeros((await detalhe(k.id)).folhasNaoLigadas)
+    expect(lista).toEqual([doCliente.numero])
+    expect(lista).not.toContain(propria.headers['x-folha-campo'])
+  })
+
   it('ligada, a data prevista da folha passa para a calibração que ainda tem a data de quando foi criada (e a próxima acompanha)', async () => {
     const prevista = dia(3)
     const a = await avulsa(`?clienteId=${cliente.id}&data=${prevista}`)
@@ -2048,5 +2097,138 @@ describe('1.0.6: a folha do cliente ainda não ligada e a data prevista', { time
     expect((await ligar(igual.id, b.numero)).json().dataPrevista).toBeNull()
     const semData = await avulsa(`?clienteId=${cliente.id}`)
     expect((await ligar((await rascunho('')).id, semData.numero)).json().dataPrevista).toBeNull()
+  })
+
+  it('a data do dia da impressão não sai no papel (só "prevista:" com a visita marcada para a frente): a folha não guarda data prevista', async () => {
+    // A tela de Nova calibração já vem com a data de hoje: a folha impressa sem mexer nela não tem data nenhuma
+    const hoje = diaEmBrasilia(t.ctx.repo.agora())
+    const a = await avulsa(`?clienteId=${cliente.id}&data=${hoje}`)
+    const prevista = (n: string) =>
+      (t.ctx.db.prepare('SELECT data_prevista FROM folhas_campo WHERE numero = ?').get(n) as { data_prevista: string })
+        .data_prevista
+    expect(prevista(a.numero)).toBe('')
+    // A calibração criada depois (com a data escolhida, ou ainda a do dia em que foi criada) fica com a data dela, sem
+    // aviso de uma "data prevista impressa" que o papel não tem
+    const k = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: balanca.id, dataCalibracao: dia(5) }))
+      .calibracao as Calibracao
+    const r = await ligar(k.id, a.numero)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().dataPrevista).toBeNull()
+    expect((await detalhe(k.id)).calibracao.dataCalibracao).toBe(dia(5))
+    // A da balança também, e a lista das não ligadas não mostra data
+    const b = await avulsa(`?balancaId=${balanca.id}&data=${hoje}`)
+    expect(prevista(b.numero)).toBe('')
+    // Gravada com a data do dia (uma folha de antes desta regra): não conta como impressa
+    const c = await avulsa(`?clienteId=${cliente.id}`)
+    t.ctx.db.prepare('UPDATE folhas_campo SET data_prevista = ? WHERE numero = ?').run(hoje, c.numero)
+    const outra = await rascunho('')
+    expect((await detalhe(outra.id)).folhasNaoLigadas.find((f: { numero: string }) => f.numero === c.numero)).toMatchObject({
+      dataPrevista: '',
+    })
+    t.ctx.db.prepare("UPDATE calibracoes SET dados = json_set(dados, '$.dataCalibracao', ?) WHERE id = ?").run(dia(-2), outra.id)
+    expect((await ligar(outra.id, c.numero)).json().dataPrevista).toBeNull()
+  })
+})
+
+describe('1.0.6: a folha impressa sem a linha do zero (antes desta versão)', { timeout: 60_000 }, () => {
+  const ligar = (id: string, numero: string) =>
+    t.chamar('PUT', `/api/calibracoes/${id}/folha-campo`, { cookie: t.cookieComum, payload: { numero } })
+  const avulsa = async (consulta = '') => {
+    const r = await t.chamar('GET', `/api/folha-campo${consulta}`, { cookie: t.cookieComum })
+    expect(r.statusCode, r.body).toBe(200)
+    return r.headers['x-folha-campo'] as string
+  }
+  const gravada = async (id: string): Promise<Calibracao> =>
+    (await t.chamar('GET', `/api/calibracoes/${id}`, { cookie: t.cookieAdmin })).json().calibracao
+  /** Como a migração 22 deixa a folha impressa pela 1.0.5 com um plano sem a linha do zero. */
+  const semLinhaDoZero = (numero: string) =>
+    t.ctx.db.prepare('UPDATE folhas_campo SET sem_linha_do_zero = 1 WHERE numero = ?').run(numero)
+  const marca = (numero: string) =>
+    (t.ctx.db.prepare('SELECT sem_linha_do_zero AS n FROM folhas_campo WHERE numero = ?').get(numero) as { n: number }).n
+
+  it('ligada depois da atualização, a falta da leitura do zero fica só como aviso; a desta versão no lugar a tira', async () => {
+    // A folha da balança impressa na 1.0.5 com o plano copiado de um certificado emitido sem o zero, ainda não ligada
+    const velha = await avulsa(`?balancaId=${balanca.id}`)
+    expect(marca(velha)).toBe(0)
+    semLinhaDoZero(velha)
+    const k = await rascunho('')
+    const r = await ligar(k.id, velha)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().marcas).toEqual({ zeroComoAviso: true })
+    expect((await gravada(k.id)).zeroComoAviso).toBe(true)
+    const registro = registrosDaFolha()
+      .filter(([, alvo, x]) => alvo === k.id && x.startsWith('PUT'))
+      .at(-1)
+    expect(registro?.[2]).toContain('impressa sem a linha do zero')
+    // A desta versão (com a linha do zero) ligada no lugar (engano no nº): a falta da leitura do zero volta a impedir
+    const certa = await avulsa(`?balancaId=${balanca.id}`)
+    const r2 = await ligar(k.id, certa)
+    expect(r2.statusCode, r2.body).toBe(200)
+    expect(r2.json()).toMatchObject({ marcas: null, marcasRetiradas: { zeroComoAviso: false } })
+    expect((await gravada(k.id)).zeroComoAviso).toBeUndefined()
+  })
+
+  it('a folha nova (com a linha do zero) no lugar da que saiu sem ela: a leitura do zero volta a ser obrigatória; com leituras medidas, nada muda', async () => {
+    const k = await rascunho('')
+    const primeira = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
+    semLinhaDoZero(primeira.headers['x-folha-campo'] as string)
+    t.ctx.db.prepare("UPDATE calibracoes SET dados = json_set(dados, '$.zeroComoAviso', json('true')) WHERE id = ?").run(k.id)
+    const nova = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo?nova=a1b2c3d4-0000-4000-8000-000000000206`, {
+      cookie: t.cookieAdmin,
+    })
+    expect(nova.statusCode, nova.body).toBe(200)
+    expect(marca(nova.headers['x-folha-campo'] as string)).toBe(0)
+    expect((await gravada(k.id)).zeroComoAviso).toBeUndefined()
+    // Com leituras medidas (a visita pode ter sido feita com a folha de antes), fica
+    const k2 = await rascunho('')
+    const f2 = await t.chamar('GET', `/api/calibracoes/${k2.id}/folha-campo`, { cookie: t.cookieAdmin })
+    semLinhaDoZero(f2.headers['x-folha-campo'] as string)
+    const lido = { ...k2, repetibilidade: [{ id: 'r', carga: 15, leituras: [15, 15, 15, 15, 15] }] }
+    expect((await t.chamar('PUT', `/api/calibracoes/${k2.id}`, { cookie: t.cookieAdmin, payload: lido })).statusCode).toBe(200)
+    t.ctx.db.prepare("UPDATE calibracoes SET dados = json_set(dados, '$.zeroComoAviso', json('true')) WHERE id = ?").run(k2.id)
+    await t.chamar('GET', `/api/calibracoes/${k2.id}/folha-campo?nova=a1b2c3d4-0000-4000-8000-000000000207`, {
+      cookie: t.cookieAdmin,
+    })
+    expect((await gravada(k2.id)).zeroComoAviso).toBe(true)
+  })
+
+  it('a primeira impressão que não terminou na 1.0.5 (sem PDF, marcada pela migração 22): impressa agora, com a linha do zero, a dispensa sai', async () => {
+    const k = await rascunho('')
+    const primeira = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
+    expect(primeira.statusCode, primeira.body).toBe(200)
+    const numero = primeira.headers['x-folha-campo'] as string
+    // Como a 1.0.5 deixava a folha cuja primeira impressão não terminou (o registro, sem o PDF), e a migração 22, a
+    // folha (pelo plano) e a calibração
+    const { pdf_arquivo: arquivo } = t.ctx.db.prepare('SELECT pdf_arquivo FROM folhas_campo WHERE numero = ?').get(numero) as {
+      pdf_arquivo: string
+    }
+    rmSync(join(t.ctx.pastaDados, 'folhas-campo', arquivo))
+    t.ctx.db
+      .prepare(
+        "UPDATE folhas_campo SET pdf_arquivo = '', pdf_sha256 = '', pdf = NULL, sem_linha_do_zero = 1, antes_105 = 1 WHERE numero = ?",
+      )
+      .run(numero)
+    t.ctx.db.prepare("UPDATE calibracoes SET dados = json_set(dados, '$.zeroComoAviso', json('true')) WHERE id = ?").run(k.id)
+    // Pela calibração, o PDF sai agora (o mesmo nº), com a linha do zero e as regras desta versão
+    const r = await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieAdmin })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.headers['x-folha-campo']).toBe(numero)
+    expect(folhaImpressaComLinhaDoZero(r.rawPayload)).toBe(true)
+    expect(t.ctx.db.prepare('SELECT sem_linha_do_zero, antes_105 FROM folhas_campo WHERE numero = ?').get(numero)).toEqual({
+      sem_linha_do_zero: 0,
+      antes_105: 0,
+    })
+    // A calibração medida com ela não fica com o tratamento antigo (a falta da leitura do zero, só aviso)
+    expect((await gravada(k.id)).zeroComoAviso).toBeUndefined()
+  })
+
+  it('o PDF da folha desta versão diz que ela tem a linha do zero (a que volta da pasta sem a marca fica como sem ela)', async () => {
+    const { gerarFolhaCampoPdf } = await import('./pdf/folhaCampo.ts')
+    const { folhaEmBranco } = await import('./pdf/exemplosFolhaCampo.ts')
+    const pdf = await gerarFolhaCampoPdf(folhaEmBranco())
+    expect(folhaImpressaComLinhaDoZero(pdf)).toBe(true)
+    expect(
+      folhaImpressaComLinhaDoZero(Buffer.from('<< /Keywords (folha de campo; FC-2026-00001; regras 1.0.5) >>', 'latin1')),
+    ).toBe(false)
   })
 })

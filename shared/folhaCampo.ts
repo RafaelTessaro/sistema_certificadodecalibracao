@@ -110,6 +110,14 @@ export function numeroDaFolha(v: unknown): string {
 export const MARCA_FOLHA_REGRAS_105 = 'regras 1.0.5'
 
 /**
+ * Nas palavras-chave do PDF de toda folha impressa desde a 1.0.6: o passo 5 sempre traz a linha do zero (POP 7.7; antes,
+ * o plano copiado de um certificado emitido sem ela saía sem ela). A folha que volta da pasta das folhas sem a marca fica
+ * como impressa sem a linha do zero (`sem_linha_do_zero`: ligada, a falta da leitura dele é só aviso). Não mude: as
+ * folhas impressas a trazem.
+ */
+export const MARCA_FOLHA_REGRAS_106 = 'regras 1.0.6'
+
+/**
  * Referência do formulário no rodapé de toda página: o POP configurado (`textos.procedimento`, ex.:
  * "BALANÇAS-POP-123 rev. 00" → "POP BALANÇAS-POP-123 rev. 00"; o código que já começa com POP fica como
  * está: "POP-CAL-01 rev. 00"); sem POP, nada.

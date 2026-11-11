@@ -55,6 +55,7 @@ import type { ContextoEtapa } from './contexto'
 import { marcasDaEtapa } from './obrigatorios'
 import {
   type AbaIndicacao,
+  comPontoNovo,
   ensaioEmOrdemDeCarga,
   metodoNaEtapa,
   mudarEnsaioDaAba,
@@ -335,11 +336,8 @@ function TabelaPontos({
       if (foco instanceof HTMLElement && foco !== document.activeElement && foco.isConnected) foco.focus()
     })
   }
-  const adicionar = () =>
-    setPontos((l) => [
-      ...l,
-      { id: novoId(), carga: 0, pecas: [], pecasManuais: false, crescente: null, decrescente: null, nivelSubstituicao: 0 },
-    ])
+  // No fim; sem a linha do zero no plano, ela é o zero que falta e vai no começo (POP 7.7: a primeira carga)
+  const adicionar = () => setPontos((l) => comPontoNovo(l, novoId()))
 
   return (
     <Card id={antes ? undefined : 'k-indicacao'} className="overflow-hidden">

@@ -184,7 +184,7 @@ function DescartarModal({ numero, aoFechar }: { numero: NumeroReservado | null; 
     try {
       await api.descartarNumero(n.id, motivo.trim())
       useTempoReal.getState().mudou('calibracao')
-      toast.sucesso(`Nº ${n.numero} registrado como não utilizado`)
+      toast.sucesso(`Nº ${n.numero} registrado como não utilizado`, undefined, { inteiros: [n.numero] })
       aoFechar()
     } catch (e) {
       avisarErro('Não foi possível registrar o nº como não utilizado', e)

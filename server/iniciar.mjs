@@ -1,6 +1,8 @@
 // Inicializador do servidor (`npm start` ou `node server/iniciar.mjs`).
 // Confere a versão do Node antes de carregar o código TypeScript.
 
+// Antes de tudo: o dia pelo horário de Brasília, em qualquer computador (ver server/fuso.mjs)
+import './fuso.mjs'
 import { fileURLToPath } from 'node:url'
 
 const [maior, menor] = process.versions.node.split('.').map(Number)

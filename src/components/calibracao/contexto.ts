@@ -7,11 +7,13 @@ import type {
   Configuracoes,
   FolhaCampoImpressa,
   FolhaNaoLigada,
+  NumeroReservado,
   Padrao,
   PedidoAutorizacao,
   StatusCalibracao,
 } from '#shared/tipos.ts'
 import type { MembroEquipe } from '../../lib/api'
+import type { DataDaFolhaLigada } from '../../lib/folhaCampo'
 
 /** Tudo o que as etapas da calibração precisam para mostrar e alterar os dados. */
 export interface ContextoEtapa {
@@ -39,6 +41,8 @@ export interface ContextoEtapa {
   editarBalanca: () => void
   /** Folha de campo da calibração (impressa por ela ou avulsa e ligada), ou null. */
   folhaCampo: FolhaCampoImpressa | null
+  /** O nº de certificado reservado para a calibração (o da etiqueta) e a folha em que ele saiu, ou null. */
+  numeroReservado?: Pick<NumeroReservado, 'numero' | 'folha'> | null
   /** Liga à calibração a folha avulsa preenchida no cliente, pelo nº; true se ligou. */
   vincularFolha: (numero: string) => Promise<boolean>
   /**
@@ -46,6 +50,13 @@ export interface ContextoEtapa {
    * "Cliente e OS" e "Revisão e emissão" avisam e oferecem ligar.
    */
   folhasNaoLigadas?: FolhaNaoLigada[]
+  /**
+   * A data prevista da folha que acabou de ser ligada (passou para a calibração, ou é outra): as etapas "Cliente e OS" e
+   * "Revisão e emissão" avisam até a pessoa fechar o aviso ou mudar a data (`avisoDataDaFolha`).
+   */
+  dataDaFolha?: DataDaFolhaLigada | null
+  /** Fecha o aviso da data da folha ligada. */
+  fecharDataDaFolha?: () => void
   /** Imprime uma folha nova (nº novo, plano atual) no lugar da que a calibração tem (pede confirmação). */
   novaFolha: () => void
   /** Os campos obrigatórios para emitir (`camposObrigatoriosEmissao`); sem eles, a etapa calcula. */

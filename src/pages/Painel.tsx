@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { diasEntre } from '#shared/dominio.ts'
 import type { CalibracaoResumo } from '#shared/tipos.ts'
+import { avisoParaAutorizar } from '../components/calibracao/equipe'
 import { rotaCalibracao, SituacaoDaCalibracao } from '../components/CertificadosTabela'
 import { ValidadePadraoBadge } from '../components/Selos'
 import { Card, CardHeader } from '../components/ui/Card'
@@ -56,12 +57,8 @@ export function Painel() {
         >
           <Hourglass className="h-4 w-4 shrink-0" />
           <span className="flex-1">
-            <b className="font-semibold">
-              {paraAutorizar === 1
-                ? '1 calibração aguarda a sua autorização.'
-                : `${numero(paraAutorizar)} calibrações aguardam a sua autorização.`}
-            </b>{' '}
-            Confira e autorize a emissão.
+            <b className="font-semibold">{avisoParaAutorizar(paraAutorizar, numero).destaque}</b>{' '}
+            {avisoParaAutorizar(paraAutorizar, numero).texto}
           </span>
           <ArrowRight className="h-4 w-4 shrink-0" />
         </Link>

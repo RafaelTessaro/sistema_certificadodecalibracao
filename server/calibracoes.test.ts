@@ -633,7 +633,9 @@ describe('emissão do certificado', () => {
       // Outra pessoa não envia para quem escolheu o técnico
       const negado = await pedir(escolhida, t.adminId, r.cookie)
       expect(negado.statusCode).toBe(409)
-      expect(negado.json().erro).toBe('Admin Teste escolheu o técnico desta calibração e não pode autorizá-la. Escolha outro signatário.')
+      expect(negado.json().erro).toBe(
+        'Admin Teste escolheu o técnico desta calibração e não pode autorizá-la. Escolha outro signatário.',
+      )
       // O técnico abre a dele e envia sem alterar nada (a tela não grava sem alteração), como ao gravá-la
       const enviado = await pedir(escolhida, t.adminId, t.cookieComum)
       expect(enviado.statusCode, enviado.body).toBe(200)
@@ -1887,7 +1889,10 @@ describe('revisão e cancelamento', () => {
         cookie: t.cookieAdmin,
         payload: {
           ...pronta,
-          indicacao: { ...pronta.indicacao, pontos: [zero, ...cargas.filter((p) => p.carga < 15), quinze, ...cargas.filter((p) => p.carga > 15)] },
+          indicacao: {
+            ...pronta.indicacao,
+            pontos: [zero, ...cargas.filter((p) => p.carga < 15), quinze, ...cargas.filter((p) => p.carga > 15)],
+          },
           versao: pronta.versao,
         },
       })
@@ -1917,7 +1922,10 @@ describe('revisão e cancelamento', () => {
       const lida = await t.chamar('GET', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })
       const { resultado } = calcularCalibracao(lida.json().calibracao, balanca, [pesos, ...(barometro ? [barometro] : [])])
       expect(resultado.pendencias.join('\n'), como).not.toMatch(FALTA_ZERO)
-      expect(resultado.avisos.map((a) => a.mensagem), como).toContain(AVISO)
+      expect(
+        resultado.avisos.map((a) => a.mensagem),
+        como,
+      ).toContain(AVISO)
       const r = await emitir(rev)
       expect(r.statusCode, `${como}: ${r.body}`).toBe(200)
     }

@@ -159,6 +159,24 @@ export function dataIsoValida(s: unknown): s is string {
 }
 const data = (v: unknown) => (dataIsoValida(v) ? v : '')
 
+const diaDeBrasilia = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+/**
+ * O dia (`yyyy-MM-dd`) de um instante no horário de Brasília (a empresa fica em Rio Claro/SP), qualquer que seja o fuso
+ * do computador: das 21h à meia-noite daqui, o UTC já está no dia seguinte. '' se não é um instante válido.
+ */
+export function diaEmBrasilia(instante: string | Date): string {
+  const d = typeof instante === 'string' ? (instante ? new Date(instante) : null) : instante
+  if (!d || Number.isNaN(d.getTime())) return ''
+  const p = Object.fromEntries(diaDeBrasilia.formatToParts(d).map((x) => [x.type, x.value]))
+  return `${p.year}-${p.month}-${p.day}`
+}
+
 /** Data de hoje (fuso local do computador) no formato `yyyy-MM-dd`. */
 export function hojeLocalIso(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`

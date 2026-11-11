@@ -3350,6 +3350,20 @@ describe.runIf(temPdftotext)('múltiplas faixas (3) com muitos apoios: os 8 pass
     },
   )
 
+  it('o limite: com o plano copiado muito longo (18 cargas e 16 apoios), nem a compacta basta e a folha sai como era', async () => {
+    // Os passos 7 e 8 numa 3ª página, sem nada sumir e sem linhas de escrever menores que 6,5 mm (documentado no
+    // LEIA-ME, 1.0.6, item 7). Nos planos comuns (até 17 cargas com 16 apoios), as 2 páginas valem
+    const cargas = [0, 4, 50, 100, 150, 200, 300, 400, 450, 600, 750, 900, 1000, 1125, 1200, 1500, 2000, 2250]
+    const m = await montar(folhaTresFaixas('APOIOS', 16, cargas))
+    expect(m.faltando).toEqual([])
+    expect(m.extras.compacta).toBeUndefined()
+    expect(m.marcas.get('fim:passo-7')?.pagina).toBe(3)
+    const t = palavrasDoPdf(m.pdf)
+      .map((p) => p.map((w) => w.texto).join(' '))
+      .join(' ')
+    for (let i = 1; i <= 16; i++) expect(t).toContain(`Apoio ${i} `)
+  })
+
   it('a folha que já cabia continua como era (as posições numa coluna só)', async () => {
     const m = await montar(folhaTresFaixas('APOIOS', 8))
     expect(m.marcas.get('fim:passo-7')?.pagina).toBe(2)
@@ -3377,7 +3391,10 @@ describe('passo 1: o nº do certificado do padrão numa linha só (1.0.6)', () =
     expect(rbc.fontSize).toBeGreaterThanOrEqual(6)
     expect(rbc.fontSize).toBeLessThan(9)
     // Nem com 6 pt: quebra (não passa da coluna)
-    expect(certificadoDoPadraoNaFolha('T-44100/2026-R1-LAB-METRO-SP', 74)).toEqual({ text: 'T-44100/2026-R1-LAB-METRO-SP', fontSize: 6 })
+    expect(certificadoDoPadraoNaFolha('T-44100/2026-R1-LAB-METRO-SP', 74)).toEqual({
+      text: 'T-44100/2026-R1-LAB-METRO-SP',
+      fontSize: 6,
+    })
     // Sem nº: o traço
     expect(certificadoDoPadraoNaFolha('  ', 74)).toBe('—')
     const t = JSON.stringify(definicaoFolhaCampo(comNumeros()))
@@ -3389,6 +3406,33 @@ describe('passo 1: o nº do certificado do padrão numa linha só (1.0.6)', () =
     const pagina1 = paginasDe(texto)[0]
     for (const n of NUMEROS) expect(pagina1).toContain(n)
     expect(pagina1).not.toMatch(/RBC-\s*\n/)
+  })
+
+  // Os nºs que o certificado imprime inteiros (até 28 letras, e os de até cerca de 35 com a letra menor) também saem
+  // inteiros na folha: a coluna cresce (a descrição, ao lado, encurta com "…") até a largura que o certificado usa
+  const LONGOS = ['RBC-LMP-04567-2026-REV01', 'T-44100/2026-R1-LAB-METRO-SP', 'RBC-LMP-0456-2026-REV-01-ABCD']
+  it('o nº comprido (de 22 a cerca de 35 letras) também fica inteiro: a coluna cresce, sem passar da folha', () => {
+    for (const comPlano of [true, false]) {
+      const d = comNumeros(LONGOS)
+      if (!comPlano) {
+        d.balanca = null
+        d.calibracao = null
+      }
+      const t = JSON.stringify(definicaoFolhaCampo(d))
+      for (const n of LONGOS) expect(t, n).toMatch(new RegExp(`"text":"${n.replace(/[/-]/g, '\\$&')}","noWrap":true`))
+    }
+    // Muito comprido (o cadastro aceita até 80 letras): quebra onde precisar, sem passar da coluna
+    const enorme = 'CAL-0001-LABORATORIO-METROLOGICO-PAULISTA-2026'
+    expect(JSON.stringify(definicaoFolhaCampo(comNumeros([enorme])))).toContain(`"text":"${enorme}","fontSize":6}`)
+  })
+
+  it.runIf(temPdftotext)('no PDF, o nº comprido inteiro numa linha, e a tabela dentro da folha', async () => {
+    const pdf = await gerarFolhaCampoPdf(comNumeros(LONGOS))
+    const pagina1 = paginasDe(textoDoPdf(pdf))[0]
+    for (const n of LONGOS) expect(pagina1, n).toContain(n)
+    const palavras = palavrasDoPdf(pdf)[0]
+    // Nada passa da margem direita (A4 com 34 pt de margem)
+    expect(Math.max(...palavras.map((w) => w.x1))).toBeLessThanOrEqual(595.28 - 34 + 0.5)
   })
 })
 

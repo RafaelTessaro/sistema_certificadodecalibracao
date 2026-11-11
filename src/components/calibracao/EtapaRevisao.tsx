@@ -13,13 +13,21 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import type { Calibracao, NumeroReservado } from '#shared/tipos.ts'
+import { folhaPropriaDa } from '../../lib/folhaCampo'
 import { dataHora, hojeISO } from '../../lib/format'
 import { useSessao } from '../../store/sessao'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { MarcaObrigatorio, Select } from '../ui/Form'
 import type { ContextoEtapa } from './contexto'
-import { cabecalhoDaRevisao, estadoDaEmissao, motivoDoEnvioDesativado } from './equipe'
+import {
+  avisoSemQuemAutorize,
+  cabecalhoDaRevisao,
+  estadoDaEmissao,
+  foraDaListaDeQuemAutoriza,
+  motivoDoEnvioDesativado,
+} from './equipe'
+import { AvisoDataDaFolha } from './AvisoDataDaFolha'
 import { AvisoFolhasNaoLigadas } from './FolhasNaoLigadas'
 import { AvisoItem } from './PainelResultados'
 
@@ -79,11 +87,8 @@ export function EtapaRevisao({
   const signatarioId = escolha !== null && signatarios.some((u) => u.id === escolha) ? escolha : estado.sugerido
   const escolhido = signatarios.find((u) => u.id === signatarioId)
   const tecnico = equipe.find((u) => u.id === f.tecnicoId)
-  // Quem escolheu o técnico de outra pessoa também não autoriza (o aviso de ninguém poder autorizar diz isso)
-  const escolheuOutro =
-    !!ctx.tecnicoDefinidoPorId &&
-    ctx.tecnicoDefinidoPorId !== f.tecnicoId &&
-    equipe.some((u) => u.id === ctx.tecnicoDefinidoPorId && u.signatario)
+  // Quem não está em "Quem autoriza" para quem usa a tela (o técnico e quem o escolheu), e por quê
+  const foraDaLista = modo === 'escolher' ? foraDaListaDeQuemAutoriza(equipe, f.tecnicoId, ctx.tecnicoDefinidoPorId, eu) : null
   const [emitindo, setEmitindo] = useState(false)
   // A numeração segue o ano da emissão (hoje). Sem exemplo: com a sequência 1, parecia o nº que o certificado vai receber
   const anoEmissao = hojeISO().slice(0, 4)
@@ -174,7 +179,14 @@ export function EtapaRevisao({
           </ul>
         )}
         {/* A folha do cliente ainda não ligada: se foi ela a usada, o nº da etiqueta é o dela (não impede a emissão) */}
-        <AvisoFolhasNaoLigadas folhas={ctx.folhasNaoLigadas} aoLigar={ctx.vincularFolha} className="mx-5 mb-5" />
+        <AvisoFolhasNaoLigadas
+          folhas={ctx.folhasNaoLigadas}
+          aoLigar={ctx.vincularFolha}
+          propria={folhaPropriaDa(ctx.folhaCampo, numeroReservado)}
+          className="mx-5 mb-5"
+        />
+        {/* A data prevista da folha que acabou de ser ligada aqui: confira com a do passo 8 */}
+        <AvisoDataDaFolha ctx={ctx} className="mx-5 mb-5" />
         {avisosServidor.length > 0 && (
           <div className="mx-5 mb-5 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-warning">
             <p className="mb-2 text-xs font-semibold">Confira antes de emitir (não impede a emissão)</p>
@@ -371,16 +383,15 @@ export function EtapaRevisao({
 
           {modo === 'escolher' && signatarios.length === 0 && (
             <p className="rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
-              {escolheuOutro
-                ? 'Ninguém pode autorizar esta calibração: quem executou e quem escolheu o técnico não autorizam, e não há outro signatário.'
-                : 'Ninguém pode autorizar esta calibração: quem executou não autoriza a própria, e não há outro signatário.'}{' '}
-              Peça ao administrador para marcar um signatário em Usuários.
+              {avisoSemQuemAutorize(equipe, f.tecnicoId, ctx.tecnicoDefinidoPorId, eu)}
             </p>
           )}
           {/* O signatário que não pode autorizar esta (executou, ou escolheu o técnico de outra pessoa): por quê */}
           {modo === 'escolher' && usuario?.signatario && estado.impedimento && signatarios.length > 0 && (
             <p className="text-[13px] text-muted">{estado.impedimento}</p>
           )}
+          {/* Os outros signatários que não estão na lista (quem usa a tela costuma mandar para eles): por quê */}
+          {foraDaLista && signatarios.length > 0 && <p className="text-[13px] text-muted">{foraDaLista}</p>}
           {modo === 'escolher' && escolhido && signatarioId !== eu && (
             <p className="text-[13px] text-muted">
               {escolhido.nome} recebe o pedido, revisa e autoriza a emissão. Até lá, a calibração fica aguardando.

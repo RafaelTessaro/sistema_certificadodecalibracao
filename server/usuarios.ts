@@ -1000,8 +1000,8 @@ export function transplantarRegistros(origem: Banco, destino: Banco): { folhasCa
  * As folhas de campo de `origem` que faltam em `destino` (ver `transplantarFolhasCampo`), com a revisão do POP impressa
  * nelas (`passarPops`), e as folhas dos certificados emitidos, cancelados ou revisados como no banco atual
  * (`folhasDosConcluidos`). Depois das folhas, os nºs de certificado que mudaram depois da cópia (`numerosComoNoAtual`),
- * que dependem de qual folha ficou com cada calibração, e a dispensa da folha de antes da 1.0.5 que o banco atual tirou
- * das calibrações com a folha da 1.0.5 (`dispensaComoNoAtual`). Dentro da transação.
+ * que dependem de qual folha ficou com cada calibração, e a dispensa da folha de antes da 1.0.5 como a folha vigente pede
+ * e o banco atual tem (`dispensaComoNoAtual`). Dentro da transação.
  */
 function passarFolhasCampo(origem: Banco, destino: Banco): number {
   const colunas = (db: Banco) =>
@@ -1093,33 +1093,111 @@ function passarFolhasCampo(origem: Banco, destino: Banco): number {
         : '',
     ].filter(Boolean)
     if (partes.length) gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe: partes.join('; ') })
-    // Com a folha vigente de cada calibração já decidida: a dispensa da folha de antes como no banco atual
-    if (historico) dispensaComoNoAtual(origem, destino)
+    // Com a folha vigente de cada calibração já decidida: a dispensa da folha de antes como no banco atual, e a da
+    // leitura do zero como a folha vigente pede (`zeroComoNoAtual`)
+    if (historico) {
+      dispensaComoNoAtual(origem, destino)
+      zeroComoNoAtual(origem, destino)
+    }
   })
   return passaram.length
+}
+
+/**
+ * Depois das folhas: a dispensa da leitura do zero (`zeroComoAviso`) de cada calibração em andamento da cópia fica como a
+ * folha vigente pede e o banco atual tem. A migração 22 roda na cópia (ao abrir) antes de as folhas impressas depois dela
+ * chegarem. Folha vigente impressa sem a linha do zero (`sem_linha_do_zero`, antes da 1.0.6): entra a dispensa que o banco
+ * atual tem (a visita é, ou foi, feita sem onde anotar o zero). Folha vigente com a linha do zero no lugar da que saiu sem
+ * ela (a folha nova, ou a ligada depois da cópia): sai a dispensa que o banco atual tirou
+ * (`Repositorio.semMarcasDaFolhaDeAntes`); como lá, nada sai da correção de um certificado nem da calibração com leituras
+ * medidas na cópia. A versão não sobe (a tela não grava as marcas). Grava no registro de atividades quais folhas.
+ */
+function zeroComoNoAtual(origem: Banco, destino: Banco): void {
+  if (!colunasComuns(origem, destino, 'folhas_campo').includes('sem_linha_do_zero')) return
+  const linhas = destino
+    .prepare(
+      `SELECT k.id, k.dados, f.numero, f.sem_linha_do_zero FROM calibracoes k
+         JOIN folhas_campo f ON f.calibracao_id = k.id AND f.substituida_por = ''
+        WHERE k.status IN ('RASCUNHO', 'REVISAO') ORDER BY f.ano, f.sequencia`,
+    )
+    .all() as Array<{ id: string; dados: string; numero: string; sem_linha_do_zero: number }>
+  const noAtual = origem.prepare('SELECT dados FROM calibracoes WHERE id = ?')
+  const gravar = destino.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
+  const ler = (dados: unknown): Record<string, unknown> | null => {
+    try {
+      const v = typeof dados === 'string' ? (JSON.parse(dados) as unknown) : null
+      return v && typeof v === 'object' ? (v as Record<string, unknown>) : null
+    } catch {
+      return null
+    }
+  }
+  const entraram: string[] = []
+  const sairam: string[] = []
+  for (const l of linhas) {
+    const k = ler(l.dados)
+    const atual = ler((noAtual.get(l.id) as { dados: string } | undefined)?.dados)
+    if (!k || !atual) continue
+    if (Number(l.sem_linha_do_zero) === 1) {
+      if (atual.zeroComoAviso !== true || k.zeroComoAviso === true) continue
+      k.zeroComoAviso = true
+      entraram.push(l.numero)
+    } else {
+      if (k.zeroComoAviso !== true || atual.zeroComoAviso === true || k.substituiId) continue
+      if (temLeituraMedida(k as Partial<Calibracao>)) continue
+      delete k.zeroComoAviso
+      sairam.push(l.numero)
+    }
+    gravar.run(JSON.stringify(k), l.id)
+  }
+  if (entraram.length)
+    gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', {
+      ip: 'local',
+      detalhe: caberNoRegistro(
+        (lista) =>
+          entraram.length === 1
+            ? `a folha ${lista}, impressa sem a linha do zero, é a vigente: a calibração dela ficou com a falta da leitura do zero só como aviso, como no banco atual`
+            : `as folhas ${lista}, impressas sem a linha do zero, são as vigentes: as calibrações delas ficaram com a falta da leitura do zero só como aviso, como no banco atual`,
+        entraram,
+      ),
+    })
+  if (sairam.length)
+    gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', {
+      ip: 'local',
+      detalhe: caberNoRegistro(
+        (lista) =>
+          sairam.length === 1
+            ? `a folha ${lista}, com a linha do zero, é a vigente: a leitura do zero voltou a ser obrigatória na calibração dela, como no banco atual`
+            : `as folhas ${lista}, com a linha do zero, são as vigentes: a leitura do zero voltou a ser obrigatória nas calibrações delas, como no banco atual`,
+        sairam,
+      ),
+    })
 }
 
 /** A dispensa que a folha impressa antes da 1.0.5 deu à calibração (`Repositorio.marcarFolhaDeAntes`). */
 const MARCAS_DA_FOLHA_DE_ANTES = ['pressaoComoAviso', 'cargasDoEmaNaFolha'] as const
 
 /**
- * Depois das folhas: a calibração em andamento da cópia cuja folha vigente agora é da 1.0.5 (impressa ou ligada depois
- * da cópia: pede a pressão ●, e as cargas em que o EMA muda só com a declaração de conformidade) fica sem a dispensa da
- * folha de antes que o banco atual já tinha tirado (`Repositorio.semMarcasDaFolhaDeAntes`): medida com a folha nova, a
- * falta da pressão nunca volta a ser só aviso. A que o banco atual manteve (as cargas da folha nova da própria
- * calibração, que saem nela) fica. Como lá, nada muda na revisão de um certificado nem na calibração com leituras
- * medidas na cópia (podem ter sido feitas com a folha de antes), e a versão não sobe (a tela não grava as marcas). Grava
- * no registro de atividades quais folhas; devolve os nºs delas.
+ * Depois das folhas: a dispensa da folha de antes da 1.0.5 de cada calibração em andamento da cópia fica como a folha
+ * vigente pede e o banco atual tem.
+ * - Folha vigente da 1.0.5 (impressa ou ligada depois da cópia: pede a pressão ●, e as cargas em que o EMA muda só com
+ *   a declaração de conformidade): sai a dispensa que o banco atual já tinha tirado (`Repositorio.semMarcasDaFolhaDeAntes`):
+ *   medida com a folha nova, a falta da pressão nunca volta a ser só aviso. A que o banco atual manteve (as cargas da
+ *   folha nova da própria calibração, que saem nela) fica. Como lá, nada muda na revisão de um certificado nem na
+ *   calibração com leituras medidas na cópia (podem ter sido feitas com a folha de antes).
+ * - Folha vigente de antes da 1.0.5 (impressa depois da cópia, ainda na 1.0.4: as migrações 19/20 rodaram na cópia sem
+ *   ela): entra a dispensa que o banco atual tem (`Repositorio.marcarFolhaDeAntes`, migrações 19/20): a visita é (ou foi)
+ *   feita com a folha que dizia "Pressão, opcional".
+ * A versão não sobe (a tela não grava as marcas). Grava no registro de atividades quais folhas; devolve os nºs delas.
  */
 function dispensaComoNoAtual(origem: Banco, destino: Banco): string[] {
   if (!colunasComuns(origem, destino, 'folhas_campo').includes('antes_105')) return []
   const linhas = destino
     .prepare(
-      `SELECT k.id, k.dados, f.numero FROM calibracoes k
-         JOIN folhas_campo f ON f.calibracao_id = k.id AND f.substituida_por = '' AND f.antes_105 = 0
+      `SELECT k.id, k.dados, f.numero, f.antes_105 FROM calibracoes k
+         JOIN folhas_campo f ON f.calibracao_id = k.id AND f.substituida_por = ''
         WHERE k.status IN ('RASCUNHO', 'REVISAO') ORDER BY f.ano, f.sequencia`,
     )
-    .all() as Array<{ id: string; dados: string; numero: string }>
+    .all() as Array<{ id: string; dados: string; numero: string; antes_105: number }>
   const noAtual = origem.prepare('SELECT dados FROM calibracoes WHERE id = ?')
   const gravar = destino.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
   const ler = (dados: unknown): Record<string, unknown> | null => {
@@ -1132,9 +1210,24 @@ function dispensaComoNoAtual(origem: Banco, destino: Banco): string[] {
   }
   const folhas: string[] = []
   const sairam = new Set<string>()
+  const deAntes: string[] = []
+  const entraram = new Set<string>()
   for (const l of linhas) {
     const k = ler(l.dados)
-    if (!k || k.substituiId || !MARCAS_DA_FOLHA_DE_ANTES.some((m) => k[m] === true)) continue
+    if (!k) continue
+    if (Number(l.antes_105) === 1) {
+      const atual = ler((noAtual.get(l.id) as { dados: string } | undefined)?.dados)
+      const entram = atual ? MARCAS_DA_FOLHA_DE_ANTES.filter((m) => atual[m] === true && k[m] !== true) : []
+      if (!entram.length) continue
+      for (const m of entram) {
+        k[m] = true
+        entraram.add(m)
+      }
+      gravar.run(JSON.stringify(k), l.id)
+      deAntes.push(l.numero)
+      continue
+    }
+    if (k.substituiId || !MARCAS_DA_FOLHA_DE_ANTES.some((m) => k[m] === true)) continue
     if (temLeituraMedida(k as Partial<Calibracao>)) continue
     const atual = ler((noAtual.get(l.id) as { dados: string } | undefined)?.dados)
     if (!atual) continue
@@ -1147,22 +1240,39 @@ function dispensaComoNoAtual(origem: Banco, destino: Banco): string[] {
     gravar.run(JSON.stringify(k), l.id)
     folhas.push(l.numero)
   }
-  if (!folhas.length) return folhas
-  const oQue = [
-    sairam.has('pressaoComoAviso') ? 'a pressão volta a ser obrigatória' : '',
-    sairam.has('cargasDoEmaNaFolha') ? 'as cargas em que o EMA muda, só com a declaração de conformidade' : '',
-  ]
-    .filter(Boolean)
-    .join('; ')
-  const detalhe = caberNoRegistro(
-    (lista) =>
-      folhas.length === 1
-        ? `a folha ${lista}, da 1.0.5, é a vigente: a dispensa da folha de antes saiu da calibração dela, como no banco atual (${oQue})`
-        : `as folhas ${lista}, da 1.0.5, são as vigentes: a dispensa da folha de antes saiu das calibrações delas, como no banco atual (${oQue})`,
-    folhas,
-  )
-  gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe })
-  return folhas
+  if (folhas.length) {
+    const oQue = [
+      sairam.has('pressaoComoAviso') ? 'a pressão volta a ser obrigatória' : '',
+      sairam.has('cargasDoEmaNaFolha') ? 'as cargas em que o EMA muda, só com a declaração de conformidade' : '',
+    ]
+      .filter(Boolean)
+      .join('; ')
+    const detalhe = caberNoRegistro(
+      (lista) =>
+        folhas.length === 1
+          ? `a folha ${lista}, da 1.0.5, é a vigente: a dispensa da folha de antes saiu da calibração dela, como no banco atual (${oQue})`
+          : `as folhas ${lista}, da 1.0.5, são as vigentes: a dispensa da folha de antes saiu das calibrações delas, como no banco atual (${oQue})`,
+      folhas,
+    )
+    gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe })
+  }
+  if (deAntes.length) {
+    const oQue = [
+      entraram.has('pressaoComoAviso') ? 'a falta da pressão é só aviso' : '',
+      entraram.has('cargasDoEmaNaFolha') ? 'as cargas em que o EMA muda continuam' : '',
+    ]
+      .filter(Boolean)
+      .join('; ')
+    const detalhe = caberNoRegistro(
+      (lista) =>
+        deAntes.length === 1
+          ? `a folha ${lista}, impressa antes da 1.0.5, é a vigente: a calibração dela ficou com a dispensa da folha de antes, como no banco atual (${oQue})`
+          : `as folhas ${lista}, impressas antes da 1.0.5, são as vigentes: as calibrações delas ficaram com a dispensa da folha de antes, como no banco atual (${oQue})`,
+      deAntes,
+    )
+    gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe })
+  }
+  return [...folhas, ...deAntes]
 }
 
 type EstadoFolha = { calibracao_id: string; substituida_por: string; substituida_em: string }

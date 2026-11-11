@@ -1854,7 +1854,7 @@ describe('migração 22: a calibração em andamento sem a leitura do zero, de a
     migrar(db)
     const doSistema = () => registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
     expect(doSistema().map((r) => r.detalhe)).toEqual([
-      '4 calibrações em andamento medidas, ou com a folha de campo impressa sem a linha do zero, antes desta versão saem sem a leitura do zero, com um aviso (a visita já aconteceu); nas novas, a leitura do zero é obrigatória. Confira: OS 90, OS 91, CC-2026-00043, revisão do CC-2026-00008.',
+      '4 calibrações em andamento medidas, ou com a folha impressa sem a linha do zero, antes desta versão saem sem a leitura do zero, com um aviso (a visita já foi, ou vai ser, sem a linha); nas novas, a leitura do zero é obrigatória. Confira: OS 90, OS 91, CC-2026-00043, revisão do CC-2026-00008.',
     ])
     const depois = dados(db)
     db.exec('PRAGMA user_version = 21')
@@ -1865,5 +1865,63 @@ describe('migração 22: a calibração em andamento sem a leitura do zero, de a
     nada.exec("DELETE FROM calibracoes WHERE id IN ('z1', 'z2', 'z3', 'r9')")
     migrar(nada)
     expect(registros(nada).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toEqual([])
+  })
+
+  it('cada folha já impressa guarda se saiu sem a linha do zero, pelo plano de onde veio; só a vigente sem ela marca a calibração', () => {
+    const db = bancoV21()
+    const folha = db.prepare(
+      `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, impressa_por,
+         impressa_em, ultima_em, substituida_por, substituida_em)
+       VALUES (?, 2026, ?, ?, ?, ?, 'c1', 'Ana', ?, ?, ?, '')`,
+    )
+    // z6 (plano sem a linha do zero, nada medido) com a folha só do cliente ligada: ela trazia as sugeridas, com o zero
+    folha.run('FC-2026-00045', 45, 'avulsa:cliente', 'z6', '', EM, EM, '')
+    // A da balança: o plano copiado da última emitida até o dia da impressão (o8 tem a linha do zero; o10, não)
+    db.prepare(
+      `INSERT INTO calibracoes (id, status, numero, cliente_id, balanca_id, ordem_servico, substitui_id, data_emissao, dados,
+                                versao, criado_em, atualizado_em)
+       VALUES ('o10', 'EMITIDO', 'CC-2026-00010', 'c1', 'b3', '', '', '2026-11-05', ?, 2, ?, ?)`,
+    ).run(JSON.stringify({ id: 'o10', status: 'EMITIDO', indicacao: medida('sem'), emissao: { padroes: [] } }), EM, EM)
+    db.prepare("UPDATE calibracoes SET data_emissao = '2026-11-02' WHERE id = 'o8'").run()
+    folha.run('FC-2026-00046', 46, 'avulsa:b3-antes', '', 'b3', '2026-11-03T15:00:00.000Z', EM, '')
+    folha.run('FC-2026-00047', 47, 'avulsa:b3-depois', '', 'b3', '2026-11-06T15:00:00.000Z', EM, '')
+    // A de um rascunho excluído e a que voltou da pasta: não se sabe o plano (a visita pode ter sido sem a linha)
+    folha.run('FC-2026-00048', 48, 'calibracao:excluido', '', 'b3', EM, EM, '')
+    folha.run('FC-2026-00049', 49, 'recuperada:FC-2026-00049', '', '', EM, EM, '')
+    // A substituída de z4 (a vigente, FC-44, tem a linha do zero): não foi a campo, não marca z4
+    folha.run('FC-2026-00050', 50, 'calibracao:z4:nova', 'z4', 'b3', EM, EM, 'FC-2026-00044')
+    db.prepare("UPDATE calibracoes SET dados = json_set(dados, '$.indicacao', json(?)) WHERE id = 'z4'").run(
+      JSON.stringify(plano(true)),
+    )
+    const antes = dados(db)
+    migrar(db)
+    const semZero = Object.fromEntries(
+      (
+        db.prepare('SELECT numero, sem_linha_do_zero FROM folhas_campo ORDER BY numero').all() as Array<{
+          numero: string
+          sem_linha_do_zero: number
+        }>
+      ).map((l) => [l.numero, l.sem_linha_do_zero]),
+    )
+    expect(semZero).toEqual({
+      'FC-2026-00043': 1,
+      'FC-2026-00044': 0,
+      'FC-2026-00045': 0,
+      'FC-2026-00046': 0,
+      'FC-2026-00047': 1,
+      'FC-2026-00048': 1,
+      'FC-2026-00049': 1,
+      'FC-2026-00050': 0,
+    })
+    // z6: a folha vigente (a do cliente) tinha a linha do zero; a falta da leitura dele continua impedindo
+    expect(dados(db).z6).toEqual(antes.z6)
+    expect(dados(db).z4).toEqual(antes.z4)
+    // A folha impressa depois (nesta versão) nasce com a linha do zero; repetida, a migração não muda as que já estão
+    db.prepare("UPDATE folhas_campo SET sem_linha_do_zero = 0 WHERE numero = 'FC-2026-00047'").run()
+    db.exec('PRAGMA user_version = 21')
+    migrar(db)
+    expect(
+      (db.prepare("SELECT sem_linha_do_zero AS n FROM folhas_campo WHERE numero = 'FC-2026-00047'").get() as { n: number }).n,
+    ).toBe(0)
   })
 })

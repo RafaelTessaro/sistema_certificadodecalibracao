@@ -7,7 +7,15 @@ import {
   numeroBr,
   temLeiturasDeCarga,
 } from '#shared/dominio.ts'
-import type { Balanca, CalibracaoInput, ClasseExatidao, EnsaioIndicacao, MetodoCarregamento, Padrao } from '#shared/tipos.ts'
+import type {
+  Balanca,
+  CalibracaoInput,
+  ClasseExatidao,
+  EnsaioIndicacao,
+  MetodoCarregamento,
+  Padrao,
+  PontoIndicacao,
+} from '#shared/tipos.ts'
 
 /** Abas do erro de indicação: "antes do ajuste" (como encontrado) e "depois do ajuste" (o ensaio final). */
 export type AbaIndicacao = 'antes' | 'depois'
@@ -58,13 +66,35 @@ export async function podeRefazerPontos(
 
 /**
  * O ensaio com os pontos em ordem de carga (`pontosEmOrdemDeCarga`), ao sair do campo da carga: o ponto acrescentado
- * no fim vai para o lugar dele, como no certificado ("cargas crescentes"). O "Decrescente" (só num registro de antes)
- * fica como está. Já em ordem, o mesmo ensaio (nada a gravar).
+ * no fim vai para o lugar dele, como no certificado ("cargas crescentes"), e o zero (o primeiro ponto sem carga, que o
+ * cálculo conta como o zero) vai para o começo: é a primeira carga do ensaio (POP 7.7). A carga esquecida (outro ponto
+ * sem carga) fica onde está. O "Decrescente" (só num registro de antes) fica como está. Já em ordem, o mesmo ensaio
+ * (nada a gravar).
  */
 export function ensaioEmOrdemDeCarga(e: EnsaioIndicacao): EnsaioIndicacao {
   if (e.metodo === 'DECRESCENTE') return e
-  const pontos = pontosEmOrdemDeCarga(e.pontos)
+  const ordenados = pontosEmOrdemDeCarga(e.pontos)
+  const zero = ordenados.findIndex((p) => !(p.carga > 0))
+  const pontos = zero > 0 ? [ordenados[zero], ...ordenados.slice(0, zero), ...ordenados.slice(zero + 1)] : ordenados
   return pontos === e.pontos ? e : { ...e, pontos }
+}
+
+/**
+ * "Adicionar ponto": a linha nova (sem carga e sem leituras) vai no fim. Sem a linha do zero no plano (apagada, ou o
+ * plano copiado de um certificado emitido sem ela), ela é o zero que falta e vai no começo (POP 7.7: a primeira carga do
+ * ensaio), sem leitura: a leitura é a anotada na folha.
+ */
+export function comPontoNovo(pontos: readonly PontoIndicacao[], id: string): PontoIndicacao[] {
+  const novo: PontoIndicacao = {
+    id,
+    carga: 0,
+    pecas: [],
+    pecasManuais: false,
+    crescente: null,
+    decrescente: null,
+    nivelSubstituicao: 0,
+  }
+  return pontos.some((p) => !(p.carga > 0)) ? [...pontos, novo] : [novo, ...pontos]
 }
 
 // ---- Método de carregamento: fixo pela classe (POP 7.7) ------------------------------------------------------

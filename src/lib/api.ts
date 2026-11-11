@@ -159,7 +159,7 @@ export interface FolhaLigada {
    * A folha foi impressa antes da 1.0.5: a falta da pressão ficou como aviso e "Sugerir pontos" traz as cargas em que o
    * EMA muda, como ela (as marcas novas; a versão não sobe). null = nenhuma.
    */
-  marcas?: { pressaoComoAviso?: boolean; cargasDoEmaNaFolha?: boolean } | null
+  marcas?: { pressaoComoAviso?: boolean; cargasDoEmaNaFolha?: boolean; zeroComoAviso?: boolean } | null
   /**
    * Com a pressão como aviso (`marcas`) e ainda não registrada: o barômetro que o rascunho trazia saiu dos padrões
    * (`identificacoes`), e a calibração ficou com `padroesIds` (a `versao` dela subiu). null = nada saiu.
@@ -169,7 +169,7 @@ export interface FolhaLigada {
    * A folha ligada é da 1.0.5 e ficou no lugar de uma de antes: a dispensa que vinha dela saiu (false = saiu; a versão não
    * sobe). null = nada saiu.
    */
-  marcasRetiradas?: { pressaoComoAviso?: boolean; cargasDoEmaNaFolha?: boolean } | null
+  marcasRetiradas?: { pressaoComoAviso?: boolean; cargasDoEmaNaFolha?: boolean; zeroComoAviso?: boolean } | null
   /** Sem a dispensa e sem a pressão registrada: o barômetro voltou aos padrões (a `versao` subiu). null = nada voltou. */
   barometrosDevolvidos?: { identificacoes: string[]; padroesIds: string[] } | null
   /**

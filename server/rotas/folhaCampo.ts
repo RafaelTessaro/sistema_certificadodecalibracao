@@ -158,6 +158,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
             ...e.calibracao,
             ...(retiradas.pressaoComoAviso === false ? { pressaoComoAviso: undefined } : {}),
             ...(retiradas.cargasDoEmaNaFolha === false ? { cargasDoEmaNaFolha: undefined } : {}),
+            ...(retiradas.zeroComoAviso === false ? { zeroComoAviso: undefined } : {}),
           }
         : e.calibracao
     const dados: DadosFolhaCampo & { numeroCertificado?: string } = {

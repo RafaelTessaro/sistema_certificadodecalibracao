@@ -685,10 +685,23 @@ const EMAIL_INTEIRO = 48
 
 /**
  * Nº do certificado de um padrão até este tamanho fica inteiro numa linha, no emitido a partir da 1.0.6
- * (`EmissaoCertificado.certificadoDoPadraoInteiro`). Maior (até 80 letras no cadastro), quebra onde precisar, para não
- * passar da coluna.
+ * (`EmissaoCertificado.certificadoDoPadraoInteiro`). Maior, a letra dele diminui (até 6 pt) para caber na largura que um
+ * de 28 letras ocupa (`CERTIFICADO_PADRAO_LARGURA`: a tabela continua dentro da margem); nem assim (cerca de 35 letras
+ * ou mais, até 80 no cadastro), quebra onde precisar, para não passar da coluna.
  */
 const CERTIFICADO_PADRAO_INTEIRO = 28
+/** A largura (pt) do nº do certificado de um padrão com mais de 28 letras: a de um de 28 na letra da tabela. */
+const CERTIFICADO_PADRAO_LARGURA = 125
+
+/**
+ * "Pesos padrão de 20 kg": o número junto do símbolo da unidade (espaço sem quebra), na descrição do padrão do emitido a
+ * partir da 1.0.6 (`EmissaoCertificado.certificadoDoPadraoInteiro`): o nº do certificado do padrão inteiro alarga a coluna
+ * dele e estreita a da descrição, que partia em "Pesos padrão de 20" / "kg". Os emitidos antes saem como saíram.
+ */
+const numeroJuntoDaUnidade = (e: Pick<EmissaoCertificado, 'certificadoDoPadraoInteiro'>, t: string) =>
+  e.certificadoDoPadraoInteiro === true
+    ? t.replace(/(\d) (?=(?:t|kg|g|mg|µg|lb|°C|ºC|K|%|hPa|kPa|Pa|mbar|bar|mm|cm|m)(?![\p{L}\d]))/gu, '$1\u00a0')
+    : t
 
 /** "… – CEP 13506-555": o "CEP" junto do número (espaço sem quebra), no emitido a partir da 1.0.5. */
 const cepJunto = (e: Pick<EmissaoCertificado, 'semFinalidadeEDimensoes'>, endereco: string) =>
@@ -975,7 +988,9 @@ function secaoPadroes(ctx: Contexto, n: number): No[] {
         .filter((x) => !vazio(x))
         .join(' · ')
     }
-    return detalhe ? [{ text: titulo }, pequeno(detalhe)] : titulo
+    // A partir da 1.0.6, o número junto da unidade ("Pesos padrão de 20" / "kg" não)
+    const t = numeroJuntoDaUnidade(ctx.e, titulo)
+    return detalhe ? [{ text: t }, pequeno(numeroJuntoDaUnidade(ctx.e, detalhe))] : t
   }
   const laboratorio = (p: Padrao): No =>
     vazio(p.acreditacao)
@@ -986,8 +1001,12 @@ function secaoPadroes(ctx: Contexto, n: number): No[] {
   // "LMP-0456-2026"), parece hifenização e esconde o nº verdadeiro
   const certificado = (p: Padrao): NoObjeto => {
     const n = (p.certificado ?? '').trim()
-    return ctx.e.certificadoDoPadraoInteiro === true && n && n.length <= CERTIFICADO_PADRAO_INTEIRO
-      ? { text: n, noWrap: true }
+    if (ctx.e.certificadoDoPadraoInteiro !== true || !n) return { text: ou(p.certificado) }
+    if (n.length <= CERTIFICADO_PADRAO_INTEIRO) return { text: n, noWrap: true }
+    // Mais comprido: a letra diminui até caber na largura de um de 28 letras; nem com 6 pt, quebra como antes
+    const corpo = corpoQueCabe(n, CERTIFICADO_PADRAO_LARGURA, { tamanho: 7.6, minimo: 6 })
+    return larguraTexto(n, { tamanho: corpo }) <= CERTIFICADO_PADRAO_LARGURA
+      ? { text: n, noWrap: true, fontSize: corpo }
       : { text: ou(p.certificado) }
   }
   const linhas = padroes.map((p): No[] => [

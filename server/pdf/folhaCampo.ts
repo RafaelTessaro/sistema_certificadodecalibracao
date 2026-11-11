@@ -79,6 +79,7 @@ import {
   type CargaPlanejada,
   FORMULARIO_FOLHA_CAMPO,
   MARCA_FOLHA_REGRAS_105,
+  MARCA_FOLHA_REGRAS_106,
   METODO_EXCENTRICIDADE_FOLHA,
   padroesPrevistos,
   referenciaDoFormulario,
@@ -1435,21 +1436,45 @@ export function descricaoPadraoNaFolha(p: Padrao, largura: number | null = null)
   }
 }
 
+/** A menor letra do nº do certificado do padrão no passo 1 (pt). */
+const CERTIFICADO_PADRAO_MINIMO = 6
+/** Folga da medida do nº: a quebra de linha do pdfmake não pode pegar o texto de surpresa. */
+const FOLGA_CERTIFICADO_PADRAO = 1.5
+/**
+ * A coluna "Certificado nº" do passo 1 cresce até esta largura (pt) quando um nº não cabe nela nem com a letra de 6 pt:
+ * a do certificado (server/pdf/certificado.ts, `CERTIFICADO_PADRAO_LARGURA`), onde o nº sai inteiro. A descrição, ao
+ * lado, encurta com "…".
+ */
+const CERTIFICADO_PADRAO_COLUNA_MAX = 125
+
 /**
  * O nº do certificado do padrão na tabela do passo 1, numa linha só: partido no hífen ("RBC-" / "LMP-0456-2026"),
  * parece hifenização e pode ser lido como dois nºs, no papel em que o técnico confere os padrões. Sem caber na coluna
- * (`largura`, pt), só a letra dele diminui, até 6 pt; maior que isso (até 80 letras no cadastro), quebra onde precisar,
- * para não passar da coluna. A reimpressão é o PDF guardado: nada muda nas folhas já impressas.
+ * (`largura`, pt), só a letra dele diminui, até 6 pt; maior que isso (a coluna já cresceu: `larguraDoCertificadoDoPadrao`;
+ * até 80 letras no cadastro), quebra onde precisar, para não passar da coluna. A reimpressão é o PDF guardado: nada muda
+ * nas folhas já impressas.
  */
 export function certificadoDoPadraoNaFolha(certificado: string, largura: number): No {
   const n = certificado.trim()
   if (!n) return '—'
-  const MINIMO = 6
-  // Folga da medida: a quebra de linha do pdfmake não pode pegar o texto de surpresa
-  const util = largura - 1.5
+  const MINIMO = CERTIFICADO_PADRAO_MINIMO
+  const util = largura - FOLGA_CERTIFICADO_PADRAO
   const corpo = corpoQueCabe(n, util, { tamanho: FONTE_DADO, minimo: MINIMO })
   if (larguraTexto(n, { tamanho: corpo }) > util) return { text: n, fontSize: MINIMO }
   return corpo < FONTE_DADO ? { text: n, noWrap: true, fontSize: corpo } : { text: n, noWrap: true }
+}
+
+/**
+ * A largura da coluna "Certificado nº" do passo 1 (pt): a de sempre (`base`) ou, com um nº que não cabe nela nem com a
+ * letra de 6 pt (de umas 22 letras em diante), a que ele pede, até `CERTIFICADO_PADRAO_COLUNA_MAX`: o nº que o
+ * certificado imprime inteiro também sai inteiro na folha.
+ */
+export function larguraDoCertificadoDoPadrao(certificados: readonly string[], base: number): number {
+  const pede = certificados.reduce((maior, c) => {
+    const n = c.trim()
+    return n ? Math.max(maior, larguraTexto(n, { tamanho: CERTIFICADO_PADRAO_MINIMO }) + FOLGA_CERTIFICADO_PADRAO) : maior
+  }, 0)
+  return pede <= base ? base : Math.min(CERTIFICADO_PADRAO_COLUNA_MAX, Math.ceil(pede))
 }
 
 function passoPadroes(ctx: Contexto, n: number): No[] {
@@ -1466,7 +1491,15 @@ function passoPadroes(ctx: Contexto, n: number): No[] {
     if (situacao === 'VENCENDO') return { text: [{ text: data }, { text: '\nvence em breve', fontSize: FONTE_DICA }] }
     return data
   }
-  const col = plano ? COLUNAS_PADROES.plano : COLUNAS_PADROES.semPlano
+  const colunas = plano ? COLUNAS_PADROES.plano : COLUNAS_PADROES.semPlano
+  // O nº do certificado comprido: a coluna dele cresce (a descrição encurta), para ele sair inteiro, como no certificado
+  const col = {
+    ...colunas,
+    certificado: larguraDoCertificadoDoPadrao(
+      previstos.map((p) => p.padrao.certificado ?? ''),
+      colunas.certificado,
+    ),
+  }
   // Um padrão por linha: a descrição que não cabe encurta com "…" (a lista das peças, ao lado, é que pode ocupar duas)
   const larguraDescricao = LARGURA - Object.values(col).reduce((soma, l) => soma + l, 0) - MOLDURA_PADROES
   const linhas: CelulaTabela[][] = previstos.map(({ padrao: p, situacao, separar }) => [
@@ -3598,6 +3631,8 @@ export function definicaoFolhaCampo(d: DadosFolhaCampo, o: { extras?: Extras } =
         FORMULARIO_FOLHA_CAMPO.referencia,
         // A folha que voltar da pasta com ela é da 1.0.5 ou depois (ver `folhaImpressaComRegrasDa105`)
         MARCA_FOLHA_REGRAS_105,
+        // Com ela, da 1.0.6 ou depois: o passo 5 tem a linha do zero (ver `folhaImpressaComLinhaDoZero`)
+        MARCA_FOLHA_REGRAS_106,
       ]
         .filter(Boolean)
         .join('; '),
@@ -3826,7 +3861,10 @@ async function comEnsaiosNoVerso(d: DadosFolhaCampo, m: Medida): Promise<Medida>
 export async function montar(d: DadosFolhaCampo): Promise<Medida> {
   const m = await montarDe(d, SEM_EXTRAS)
   // Os passos passaram da 2ª página (múltiplas faixas com muitos apoios): a folha compacta, o mínimo que os põe nas
-  // duas (só as Anotações podem ir para uma página a mais); nem com ela, como estava
+  // duas (só as Anotações podem ir para uma página a mais); nem com ela, como estava (os passos 7 e 8 numa 3ª página,
+  // sem nada sumir e sem linhas de escrever menores). Com três faixas e a declaração de conformidade, medido: os passos
+  // passam da 2ª página a partir de 21 cargas (contando o zero) com 8 apoios, 20 com 12, 18 com 16 (também no tanque),
+  // 15 com 20 e 13 com 24; o plano sugerido (cerca de 10 cargas) cabe. Ver o LEIA-ME, 1.0.6, item 7
   if (!passosAlemDoVerso(m)) return m
   for (const compacta of niveisDaFolhaCompacta(contexto(d))) {
     const r = await montarDe(d, { ...SEM_EXTRAS, compacta }).catch(() => null)

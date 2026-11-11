@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { QUEM_ESCOLHEU_NAO_AUTORIZA } from '#shared/permissoes.ts'
 import type { MembroEquipe } from '../../lib/api'
-import { cabecalhoDaRevisao, dicaDoTecnico, estadoDaEmissao, motivoDoEnvioDesativado } from './equipe'
+import { avisoParaAutorizar, cabecalhoDaRevisao, dicaDoTecnico, estadoDaEmissao, motivoDoEnvioDesativado } from './equipe'
 
 const membro = (id: string, tecnico: boolean, signatario: boolean, cargo = ''): MembroEquipe => ({
   id,
@@ -31,7 +31,7 @@ describe('a dica de "Técnico que executou"', () => {
 
   it('quem escolheu o técnico (signatário, com a revisão ligada) fica sabendo que outro signatário autoriza', () => {
     expect(dicaDoTecnico(EQUIPE, 'mauricio', { escolhidoPorVoce: true })).toBe(
-      'Escolhido por você: outro signatário autoriza esta calibração (quem escolhe o técnico não autoriza).',
+      'Escolhido por você: outro signatário autoriza esta calibração (quem escolhe o técnico não autoriza; se o próprio técnico gravar ou enviar a calibração, a escolha passa a ser dele).',
     )
     // O que precisa de atenção no escolhido vem antes
     expect(dicaDoTecnico(EQUIPE, 'lizi', { escolhidoPorVoce: true })).toMatch(/Sem a marca de técnico/)
@@ -168,7 +168,7 @@ describe('o alto de "Revisão e emissão"', () => {
     expect(cabecalhoDaRevisao({ ...parado, pedidoParaVoce: true })).toEqual({
       titulo: 'Você não pode autorizar esta calibração',
       descricao:
-        'Você escolheu o técnico, e quem escolhe o técnico não autoriza. Clique em Devolver: ela volta para rascunho e vai para outro signatário.',
+        'Você escolheu o técnico, e quem escolhe o técnico não autoriza. Clique em Devolver: ela volta para rascunho, com a sua nota, e quem enviou a manda para outro signatário.',
       aguardando: false,
       parado: true,
     })
@@ -190,5 +190,15 @@ describe('o alto de "Revisão e emissão"', () => {
     expect(cabecalhoDaRevisao({ ...base, pronto: false, modo: 'escolher', irParaItens: true }).descricao).toBe(
       'Resolva os itens abaixo para poder enviar para autorização. Clique num item para ir até ele.',
     )
+  })
+})
+
+describe('o aviso do Painel das calibrações para autorizar', () => {
+  it('diz o que fazer também com o pedido que quem recebeu não pode autorizar (enviado na 1.0.5 a quem escolheu o técnico)', () => {
+    expect(avisoParaAutorizar(1)).toEqual({
+      destaque: '1 calibração aguarda a sua autorização.',
+      texto: 'Confira e autorize a emissão, ou devolva com uma nota se não puder autorizar.',
+    })
+    expect(avisoParaAutorizar(3).destaque).toBe('3 calibrações aguardam a sua autorização.')
   })
 })

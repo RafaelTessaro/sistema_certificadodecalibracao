@@ -1,7 +1,8 @@
 // Voltar uma cópia do banco (`transplantarRegistros`): a calibração em andamento que na cópia tinha a dispensa da folha
 // de antes da 1.0.5 (`pressaoComoAviso`, `cargasDoEmaNaFolha`) e que, depois da cópia, passou a ter uma folha da 1.0.5
 // (a folha nova ou a ligada no lugar da de antes) fica sem a dispensa que o banco atual tinha tirado: medida com a
-// folha nova (pressão ●), nunca volta a ter a falta da pressão só como aviso.
+// folha nova (pressão ●), nunca volta a ter a falta da pressão só como aviso. No sentido inverso, a folha de antes
+// impressa depois da cópia (ainda na 1.0.4) traz a dispensa que o banco atual tem.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { BALANCA_VAZIA, CLIENTE_VAZIO, PADRAO_VAZIO } from '#shared/dominio.ts'
@@ -153,6 +154,46 @@ describe('voltar uma cópia: a dispensa da folha de antes segue a folha vigente'
     }
   })
 
+  it('a folha de antes impressa depois da cópia (ainda na 1.0.4): a calibração fica com a dispensa que o banco atual tem', async () => {
+    // Na cópia, a calibração ainda sem folha (as migrações 19/20 não a marcam)
+    const k = await rascunho('OS 1')
+    const semFolha = await rascunho('OS 2')
+    const copia = await t.ctx.backups.copiar('manual')
+    // Depois da cópia, ainda na 1.0.4: a folha impressa ("Pressão, opcional"), e a atualização deu a dispensa
+    const folha = (await imprimir(k.id)).headers['x-folha-campo'] as string
+    t.ctx.db.prepare('UPDATE folhas_campo SET antes_105 = 1 WHERE numero = ?').run(folha)
+    t.ctx.db
+      .prepare(
+        "UPDATE calibracoes SET dados = json_set(dados, '$.pressaoComoAviso', json('true'), '$.cargasDoEmaNaFolha', json('true')) WHERE id = ?",
+      )
+      .run(k.id)
+    // A dispensa no banco atual sem a folha de antes vigente (de outra origem) não passa
+    t.ctx.db
+      .prepare("UPDATE calibracoes SET dados = json_set(dados, '$.pressaoComoAviso', json('true')) WHERE id = ?")
+      .run(semFolha.id)
+
+    const destino = abrirBanco(copia)
+    try {
+      const versaoNaCopia = marcas(destino, k.id).versao
+      expect(marcas(destino, k.id)).toMatchObject({ pressaoComoAviso: undefined, cargasDoEmaNaFolha: undefined })
+      expect(transplantarRegistros(t.ctx.db, destino).folhasCampo).toBe(1)
+      expect(vigente(destino, k.id)).toEqual([folha])
+      // A visita é (ou foi) feita com a folha de antes: a falta da pressão fica só como aviso, como no banco atual
+      expect(marcas(destino, k.id)).toEqual({ pressaoComoAviso: true, cargasDoEmaNaFolha: true, versao: versaoNaCopia })
+      expect(marcas(destino, semFolha.id).pressaoComoAviso).toBeUndefined()
+      const registros = (
+        destino.prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' ORDER BY id").all() as Array<{
+          detalhe: string
+        }>
+      ).map((x) => x.detalhe)
+      expect(registros.at(-1)).toBe(
+        `a folha ${folha}, impressa antes da 1.0.5, é a vigente: a calibração dela ficou com a dispensa da folha de antes, como no banco atual (a falta da pressão é só aviso; as cargas em que o EMA muda continuam)`,
+      )
+    } finally {
+      destino.close()
+    }
+  })
+
   it('com leituras medidas na cópia (a visita pode ter sido feita com a folha de antes), a dispensa fica', async () => {
     const { k } = await comFolhaDeAntes('OS 1')
     const copia = await t.ctx.backups.copiar('manual')
@@ -168,6 +209,57 @@ describe('voltar uma cópia: a dispensa da folha de antes segue a folha vigente'
         .run(k.id)
       transplantarRegistros(t.ctx.db, destino)
       expect(marcas(destino, k.id)).toMatchObject({ pressaoComoAviso: true, cargasDoEmaNaFolha: true })
+    } finally {
+      destino.close()
+    }
+  })
+})
+
+describe('voltar uma cópia: a dispensa da leitura do zero segue a folha vigente', { timeout: 60_000 }, () => {
+  const zero = (db: Banco, id: string) =>
+    (JSON.parse((db.prepare('SELECT dados FROM calibracoes WHERE id = ?').get(id) as { dados: string }).dados) as Calibracao)
+      .zeroComoAviso
+  const semLinhaDoZero = (db: Banco, numero: string) =>
+    db.prepare('UPDATE folhas_campo SET sem_linha_do_zero = 1 WHERE numero = ?').run(numero)
+  const comZeroComoAviso = (db: Banco, id: string) =>
+    db.prepare("UPDATE calibracoes SET dados = json_set(dados, '$.zeroComoAviso', json('true')) WHERE id = ?").run(id)
+
+  it('a folha sem a linha do zero impressa depois da cópia leva a dispensa do banco atual; a folha nova (com a linha) a tira', async () => {
+    // Na cópia: k sem folha; k2 com a folha sem a linha do zero e a dispensa (como a migração 22 deixa)
+    const k = await rascunho('OS 1')
+    const k2 = await rascunho('OS 2')
+    const f2 = (await imprimir(k2.id)).headers['x-folha-campo'] as string
+    semLinhaDoZero(t.ctx.db, f2)
+    comZeroComoAviso(t.ctx.db, k2.id)
+    const copia = await t.ctx.backups.copiar('manual')
+    // Depois da cópia: a folha de k, impressa (ainda na 1.0.5) sem a linha do zero, e a atualização deu a dispensa…
+    const f = (await imprimir(k.id)).headers['x-folha-campo'] as string
+    semLinhaDoZero(t.ctx.db, f)
+    comZeroComoAviso(t.ctx.db, k.id)
+    // …e a folha nova de k2 (desta versão, com a linha do zero): a dispensa saiu
+    const nova = (await imprimir(k2.id, 'a1b2c3d4-0000-4000-8000-0000000002b1')).headers['x-folha-campo'] as string
+    expect(zero(t.ctx.db, k2.id)).toBeUndefined()
+
+    const destino = abrirBanco(copia)
+    try {
+      expect([zero(destino, k.id), zero(destino, k2.id)]).toEqual([undefined, true])
+      expect(transplantarRegistros(t.ctx.db, destino).folhasCampo).toBe(2)
+      expect(vigente(destino, k.id)).toEqual([f])
+      expect(vigente(destino, k2.id)).toEqual([nova])
+      // Como no banco atual
+      expect(zero(destino, k.id)).toBe(true)
+      expect(zero(destino, k2.id)).toBeUndefined()
+      const registros = (
+        destino.prepare("SELECT detalhe FROM auditoria WHERE acao = 'COPIA_RESTAURADA' ORDER BY id").all() as Array<{
+          detalhe: string
+        }>
+      ).map((x) => x.detalhe)
+      expect(registros).toContain(
+        `a folha ${f}, impressa sem a linha do zero, é a vigente: a calibração dela ficou com a falta da leitura do zero só como aviso, como no banco atual`,
+      )
+      expect(registros).toContain(
+        `a folha ${nova}, com a linha do zero, é a vigente: a leitura do zero voltou a ser obrigatória na calibração dela, como no banco atual`,
+      )
     } finally {
       destino.close()
     }

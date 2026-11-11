@@ -16,6 +16,7 @@ import {
   CONFIG_PADRAO,
   dataIsoValida,
   descricaoBalanca,
+  diaEmBrasilia,
   diasEntre,
   enderecoCliente,
   formatarNumeroCertificado,
@@ -50,7 +51,7 @@ import {
   type FinalidadeArquivo,
 } from '#shared/arquivos.ts'
 import { somenteDigitos, normalizarCnpj } from '#shared/documentos.ts'
-import { MARCA_FOLHA_REGRAS_105, numeroDaFolha } from '#shared/folhaCampo.ts'
+import { MARCA_FOLHA_REGRAS_105, MARCA_FOLHA_REGRAS_106, numeroDaFolha } from '#shared/folhaCampo.ts'
 import { novoId } from '#shared/id.ts'
 import { impedimentoDaTrocaDoTecnico, quemDefineOTecnico } from '#shared/permissoes.ts'
 import type {
@@ -133,7 +134,7 @@ export interface DataDaFolha {
  * da balança das classes III e IIII ou sem classe dizia "Pressão, opcional" (`pressaoComoAviso`), e o plano trazia as
  * cargas em que o EMA muda (`cargasDoEmaNaFolha`). A tela fica com elas (a versão não sobe: a tela não as grava).
  */
-export type MarcasDaFolha = Partial<Pick<Calibracao, 'pressaoComoAviso' | 'cargasDoEmaNaFolha'>>
+export type MarcasDaFolha = Partial<Pick<Calibracao, 'pressaoComoAviso' | 'cargasDoEmaNaFolha' | 'zeroComoAviso'>>
 
 /**
  * A folha impressa antes da 1.0.5 deixou a pressão como aviso numa calibração ainda sem ela: o barômetro que o rascunho
@@ -204,6 +205,15 @@ const numeroDaLinha = (l: LinhaNumero): NumeroReservado => ({
  * à impressão dela): 'recuperada:FC-2026-00042'.
  */
 export const CHAVE_RECUPERADA = 'recuperada:'
+
+/**
+ * A data prevista da visita que sai impressa na folha avulsa (passo 8, "prevista: …"): só a marcada para depois do dia
+ * da impressão (`impressaEm`, no horário de Brasília, como o PDF: server/pdf/folhaCampo.ts, `dataPrevista`). A de hoje
+ * (a tela já vem com ela) não sai no papel e não conta como data da folha. '' = nenhuma.
+ */
+export function dataPrevistaNoPapel(prevista: string | undefined, impressaEm: string): string {
+  return dataIsoValida(prevista) && prevista > diaEmBrasilia(impressaEm) ? prevista : ''
+}
 
 /**
  * A primeira impressão de uma folha reserva os nºs e só depois gera o PDF (segundos). Sem o PDF depois disto, ela não
@@ -287,6 +297,16 @@ export function numeroDoCertificadoNoPdf(pdf: Buffer): string {
 export function folhaImpressaComRegrasDa105(pdf: Buffer): boolean {
   const palavras = palavrasChaveDoPdf(pdf)
   return palavras !== null && palavras.split(';').some((p) => p.trim() === MARCA_FOLHA_REGRAS_105)
+}
+
+/**
+ * A folha de campo foi impressa pela 1.0.6 ou depois, com a linha do zero no passo 5? O próprio PDF diz: a marca nas
+ * palavras-chave (`MARCA_FOLHA_REGRAS_106`). Sem ela, a que volta da pasta fica como impressa sem a linha do zero (não se
+ * sabe o plano de onde ela veio).
+ */
+export function folhaImpressaComLinhaDoZero(pdf: Buffer): boolean {
+  const palavras = palavrasChaveDoPdf(pdf)
+  return palavras !== null && palavras.split(';').some((p) => p.trim() === MARCA_FOLHA_REGRAS_106)
 }
 
 /** As palavras-chave gravadas no PDF (/Keywords), ou null se não houver. */
@@ -1822,7 +1842,9 @@ export class Repositorio {
           e.balancaId ?? '',
           e.clienteId ?? '',
           (e.ordemServico ?? '').trim().slice(0, 40),
-          !e.calibracaoId && dataIsoValida(e.dataPrevista) ? e.dataPrevista : '',
+          // Só a data que sai no papel (passo 8, "prevista: …"): a marcada para depois do dia da impressão (a tela já
+          // vem com a data de hoje, que a folha não imprime)
+          !e.calibracaoId ? dataPrevistaNoPapel(e.dataPrevista, agora) : '',
           e.por.slice(0, 120),
           agora,
           agora,
@@ -2300,8 +2322,8 @@ export class Repositorio {
       )
       const inserir = this.db.prepare(
         `INSERT INTO folhas_campo (numero, ano, sequencia, chave, impressa_em, ultima_em, pdf_arquivo, pdf_sha256, numero_certificado,
-                                   antes_105)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                   antes_105, sem_linha_do_zero)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       const adotar = this.db.prepare(
         "UPDATE folhas_campo SET pdf_arquivo = ?, pdf_sha256 = ? WHERE numero = ? AND pdf_arquivo = '' AND pdf IS NULL",
@@ -2327,7 +2349,9 @@ export class Repositorio {
         const certificado = numeroCertificadoNoPdf(pdf)
         // Impressa pela 1.0.4 ou antes (a pressão opcional, as cargas em que o EMA muda no plano): o PDF não tem a marca
         const antes = folhaImpressaComRegrasDa105(pdf) ? 0 : 1
-        inserir.run(n, f.ano, f.sequencia, `${CHAVE_RECUPERADA}${n}`, em, em, f.arquivo, sha256, certificado, antes)
+        // Impressa antes da 1.0.6: não se sabe se o passo 5 tinha a linha do zero (ligada, a falta dela é só aviso)
+        const semZero = folhaImpressaComLinhaDoZero(pdf) ? 0 : 1
+        inserir.run(n, f.ano, f.sequencia, `${CHAVE_RECUPERADA}${n}`, em, em, f.arquivo, sha256, certificado, antes, semZero)
         if (certificado && this.reservarDoPapel(certificado, n, f.ano, em)) numeros.push(certificado)
         voltaram.push(n)
       }
@@ -2613,8 +2637,17 @@ export class Repositorio {
     return transacao(this.db, () => {
       const guardado = this.pdfFolhaCampo(numero)
       if (guardado) return guardado
-      const l = this.db.prepare('SELECT ano FROM folhas_campo WHERE numero = ?').get(numero) as { ano: number } | undefined
+      const l = this.db.prepare('SELECT ano, calibracao_id FROM folhas_campo WHERE numero = ?').get(numero) as
+        { ano: number; calibracao_id: string } | undefined
       if (!l) return pdf
+      // O PDF gerado agora (também o da primeira impressão de antes que não terminou, que nunca foi para o papel) traz a
+      // linha do zero no passo 5 e as regras desta versão (a pressão com ●)
+      this.db.prepare('UPDATE folhas_campo SET sem_linha_do_zero = 0, antes_105 = 0 WHERE numero = ?').run(numero)
+      // A calibração medida com ela não fica com a dispensa da folha de antes (a da migração 22 ou 19, pelo registro
+      // sem PDF): sai, como com a folha nova (`semMarcasDaFolhaDeAntes`)
+      if (l.calibracao_id && this.folhaCampoDaCalibracao(l.calibracao_id)?.numero === numero) {
+        if (this.semMarcasDaFolhaDeAntes(l.calibracao_id)) this.mudou('calibracao', l.calibracao_id)
+      }
       if (!this.pastaFolhas) {
         this.db.prepare('UPDATE folhas_campo SET pdf = ?, pop_id = ? WHERE numero = ? AND pdf IS NULL').run(pdf, popId, numero)
         return pdf
@@ -2796,7 +2829,7 @@ export class Repositorio {
       const linha = this.db
         .prepare(
           `SELECT calibracao_id, balanca_id, cliente_id, chave, substituida_por, substituida_em, ordem_servico, data_prevista,
-                  antes_105
+                  antes_105, impressa_em, sem_linha_do_zero
              FROM folhas_campo WHERE numero = ?`,
         )
         .get(numero) as
@@ -2810,6 +2843,8 @@ export class Repositorio {
             ordem_servico: string
             data_prevista: string
             antes_105: number
+            impressa_em: string
+            sem_linha_do_zero: number
           }
         | undefined
       if (!linha) throw new ErroApi(404, `A folha ${numero} não foi impressa por este sistema. Confira o nº no alto da folha.`)
@@ -2927,13 +2962,18 @@ export class Repositorio {
       const ordemServico = this.osDaFolhaLigada(linha.ordem_servico, k.id)
       if (ordemServico?.aplicada) notas.push('a OS impressa na folha passou para a calibração')
       // A data prevista impressa na avulsa passa para a calibração que ainda tem a data de quando foi criada
-      const dataPrevista = this.dataDaFolhaLigada(linha.data_prevista, k.id)
+      const dataPrevista = this.dataDaFolhaLigada(dataPrevistaNoPapel(linha.data_prevista, linha.impressa_em), k.id)
       if (dataPrevista?.aplicada) notas.push('a data prevista impressa na folha passou para a calibração')
       // Impressa antes da 1.0.5: a pressão "opcional" e as cargas em que o EMA muda da folha valem para a calibração
       // (a em branco e a só do cliente, sem balança, mandavam aplicar as cargas em que o EMA muda)
       const semBalanca = !linha.balanca_id && !linha.chave.startsWith(CHAVE_RECUPERADA)
-      const marcas = Number(linha.antes_105) === 1 ? this.marcarFolhaDeAntes(k.id, semBalanca) : null
-      if (marcas) notas.push('impressa antes da versão 1.0.5')
+      const deAntes = Number(linha.antes_105) === 1 ? this.marcarFolhaDeAntes(k.id, semBalanca) : null
+      if (deAntes) notas.push('impressa antes da versão 1.0.5')
+      // Impressa antes da 1.0.6 sem a linha do zero (o plano copiado de um certificado emitido sem ela): a visita não
+      // tinha onde anotar a leitura dele, e a falta dela fica como aviso
+      const semZero = Number(linha.sem_linha_do_zero) === 1 ? this.marcarFolhaSemZero(k.id) : null
+      if (semZero) notas.push('impressa sem a linha do zero: a falta da leitura do zero fica como aviso')
+      const marcas = deAntes || semZero ? { ...deAntes, ...semZero } : null
       // A falta da pressão passou a ser aviso e ela ainda não foi registrada: o barômetro que o rascunho novo já traz
       // sai dos padrões (o certificado não lista o que não foi usado; com ele e sem a pressão, a emissão ficaria pendente)
       const barometrosRetirados = marcas?.pressaoComoAviso ? this.tirarBarometrosSemPressao(k.id) : null
@@ -2943,8 +2983,9 @@ export class Repositorio {
           `${ids.length > 1 ? 'os barômetros' : 'o barômetro'} ${ids.join(', ')} ${ids.length > 1 ? 'saíram' : 'saiu'} dos padrões (a pressão era opcional na folha)`,
         )
       }
-      // Da 1.0.5 (pede a pressão) no lugar da folha de antes: a dispensa que veio dela sai, e o barômetro volta
-      const devolucao = Number(linha.antes_105) === 1 ? null : this.devolverDaFolhaDeAntes(k.id, notas)
+      // Da 1.0.5 (pede a pressão) no lugar da folha de antes: a dispensa que veio dela sai, e o barômetro volta; com a
+      // linha do zero no lugar da que saiu sem ela, a falta da leitura do zero volta a impedir (`semMarcasDaFolhaDeAntes`)
+      const devolucao = this.devolverDaFolhaDeAntes(k.id, notas)
       if (outra) this.mudou('calibracao', outra.id)
       this.mudou('calibracao', k.id)
       return {
@@ -2996,29 +3037,50 @@ export class Repositorio {
   }
 
   /**
+   * A folha impressa antes da 1.0.6 sem a linha do zero (`sem_linha_do_zero`, da migração 22 ou da folha que voltou da
+   * pasta) ligada agora à calibração em andamento: a visita é (ou foi) feita sem onde anotar a leitura do zero, e a falta
+   * dela fica como aviso (`zeroComoAviso`), como nas calibrações marcadas pela migração 22. Não sobe a versão (a tela não
+   * grava as marcas). Devolve a marca nova (null: já tinha).
+   */
+  private marcarFolhaSemZero(calibracaoId: string): MarcasDaFolha | null {
+    const k = this.obterCalibracao(calibracaoId)
+    if (!k || k.zeroComoAviso === true) return null
+    this.gravarCalibracao({ ...k, zeroComoAviso: true }, false)
+    return { zeroComoAviso: true }
+  }
+
+  /**
    * A folha que vai (ou foi) a campo agora é da 1.0.5 — a folha nova da calibração, ou uma da 1.0.5 ligada no lugar da de
    * antes —, e ela pede a pressão (●): a dispensa que vinha da folha de antes (`pressaoComoAviso`, da migração 19 ou de
    * `marcarFolhaDeAntes`) sai. As cargas em que o EMA muda (`cargasDoEmaNaFolha`) saem com a folha ligada que não foi
    * impressa para a calibração (a da 1.0.5 só as traz com a declaração de conformidade); a folha nova da calibração sai
-   * com elas (`comCargasDoEma`) e a marca fica, como o papel. Nada muda na revisão de um certificado (a visita já
-   * aconteceu), na calibração com leituras medidas (pode ter sido medida com a folha de antes) e com a folha vigente
-   * impressa antes da 1.0.5. Não sobe a versão (a tela não grava as marcas). Devolve as que saíram (null: nenhuma).
+   * com elas (`comCargasDoEma`) e a marca fica, como o papel. Do mesmo jeito, a folha vigente com a linha do zero (a da
+   * 1.0.6, ou uma de antes que já a trazia) no lugar da que saiu sem ela tira a dispensa da leitura do zero
+   * (`zeroComoAviso`). Nada muda na revisão de um certificado (a visita já aconteceu) e na calibração com leituras medidas
+   * (pode ter sido medida com a folha de antes); a pressão e as cargas, também não com a folha vigente impressa antes da
+   * 1.0.5. Não sobe a versão (a tela não grava as marcas). Devolve as que saíram (null: nenhuma).
    */
   private semMarcasDaFolhaDeAntes(calibracaoId: string): MarcasDaFolha | null {
     const k = this.obterCalibracao(calibracaoId)
-    if (!k || k.substituiId || (k.pressaoComoAviso !== true && k.cargasDoEmaNaFolha !== true) || temLeituraMedida(k)) return null
+    const comMarca = !!k && (k.pressaoComoAviso === true || k.cargasDoEmaNaFolha === true || k.zeroComoAviso === true)
+    if (!k || k.substituiId || !comMarca || temLeituraMedida(k)) return null
     const folha = this.folhaCampoDaCalibracao(k.id)
     if (!folha || folha.herdada) return null
-    const l = this.db.prepare('SELECT chave, antes_105 FROM folhas_campo WHERE numero = ?').get(folha.numero) as
-      { chave: string; antes_105: number } | undefined
-    if (!l || Number(l.antes_105) === 1) return null
+    const l = this.db
+      .prepare('SELECT chave, antes_105, sem_linha_do_zero FROM folhas_campo WHERE numero = ?')
+      .get(folha.numero) as { chave: string; antes_105: number; sem_linha_do_zero: number } | undefined
+    if (!l) return null
     const saem: MarcasDaFolha = {}
-    if (k.pressaoComoAviso === true) saem.pressaoComoAviso = false
-    if (k.cargasDoEmaNaFolha === true && !impressaPara(l.chave, k.id)) saem.cargasDoEmaNaFolha = false
+    if (Number(l.antes_105) !== 1) {
+      if (k.pressaoComoAviso === true) saem.pressaoComoAviso = false
+      if (k.cargasDoEmaNaFolha === true && !impressaPara(l.chave, k.id)) saem.cargasDoEmaNaFolha = false
+    }
+    if (k.zeroComoAviso === true && Number(l.sem_linha_do_zero) !== 1) saem.zeroComoAviso = false
     if (!Object.keys(saem).length) return null
     const novo: Calibracao = { ...k }
     if (saem.pressaoComoAviso === false) delete novo.pressaoComoAviso
     if (saem.cargasDoEmaNaFolha === false) delete novo.cargasDoEmaNaFolha
+    if (saem.zeroComoAviso === false) delete novo.zeroComoAviso
     this.gravarCalibracao(novo, false)
     return saem
   }
@@ -3037,6 +3099,7 @@ export class Repositorio {
     if (marcas.pressaoComoAviso === false) notas.push('a folha é da 1.0.5: a pressão volta a ser obrigatória')
     if (marcas.cargasDoEmaNaFolha === false)
       notas.push('a folha é da 1.0.5: as cargas em que o EMA muda, só com a declaração de conformidade')
+    if (marcas.zeroComoAviso === false) notas.push('a folha tem a linha do zero: a leitura do zero volta a ser obrigatória')
     const k = marcas.pressaoComoAviso === false ? this.obterCalibracao(calibracaoId) : undefined
     if (!k || k.ambiente.pressao !== null) return { marcas, barometros: null }
     const comBarometro = k.padroesIds.some((id) => this.obterPadrao(id)?.tipo === 'BAROMETRO')
@@ -3119,10 +3182,14 @@ export class Repositorio {
    * As folhas de campo impressas para o cliente da calibração em andamento (só do cliente, com a balança em branco, ou
    * da balança dela) e ainda não ligadas a nenhuma calibração, a da mesma OS primeiro e depois da mais nova para a mais
    * antiga (até 5): se foi uma delas a usada no cliente, o nº de certificado dela está na etiqueta da balança, e a tela
-   * avisa (sem impedir a emissão). Ficam de fora a que não vai ser usada (o nº registrado como não utilizado), a que foi
-   * trocada por uma folha nova (não foi a campo), a que não chegou a sair no papel (a primeira impressão não terminou) e
-   * a de outra balança do cliente. A calibração que já tem a folha avulsa ligada (a preenchida no cliente) ou que é a
-   * correção de um certificado (a mesma visita) não precisa do aviso.
+   * avisa (sem impedir a emissão). Só entra a folha cujo nº de certificado impresso ainda é dela, reservado e sem dono:
+   * ficam de fora a que não vai ser usada (o nº registrado como não utilizado), a que foi trocada por uma folha nova
+   * (não foi a campo; também a de um rascunho excluído, que perde a marca da troca, mas o nº ficou com a folha nova), a
+   * posta de lado por uma folha ligada no lugar dela, a sem nº (a de uma correção: não há como marcá-la como "Não vai
+   * ser usada"), a que não chegou a sair no papel (a primeira impressão não terminou) e a de outra balança do cliente.
+   * Assim o aviso sempre pode sair (ligando a folha ou marcando-a como "Não vai ser usada"). A calibração que já tem a
+   * folha avulsa ligada (a preenchida no cliente) ou que é a correção de um certificado (a mesma visita) não precisa do
+   * aviso.
    */
   folhasNaoLigadasDoCliente(
     k: Pick<Calibracao, 'id' | 'status' | 'clienteId' | 'balancaId' | 'ordemServico' | 'substituiId'>,
@@ -3137,9 +3204,11 @@ export class Repositorio {
            FROM folhas_campo f
           WHERE f.cliente_id = ? AND (f.balanca_id = '' OR f.balanca_id = ?) AND f.substituida_por = ''
             AND NOT EXISTS (SELECT 1 FROM calibracoes c WHERE f.calibracao_id <> '' AND c.id = f.calibracao_id)
-            AND NOT EXISTS (
+            AND f.numero_certificado <> ''
+            AND EXISTS (
               SELECT 1 FROM numeros_reservados n
-               WHERE n.folha = f.numero AND n.calibracao_id = '' AND n.situacao = 'nao_utilizado' AND n.situacao_por <> ''
+               WHERE n.folha = f.numero AND n.numero = f.numero_certificado AND n.calibracao_id = ''
+                 AND n.situacao = 'reservado'
             )
           ORDER BY f.ano DESC, f.sequencia DESC
           LIMIT 50`,
@@ -3161,7 +3230,7 @@ export class Repositorio {
         ordemServico: l.ordem_servico.trim(),
         mesmaOs: !!os && !!l.ordem_servico.trim() && mesmaOs(os, l.ordem_servico),
         impressaEm: l.impressa_em,
-        dataPrevista: dataIsoValida(l.data_prevista) ? l.data_prevista : '',
+        dataPrevista: dataPrevistaNoPapel(l.data_prevista, l.impressa_em),
       }))
       .sort((a, b) => Number(b.mesmaOs) - Number(a.mesmaOs))
       .slice(0, 5)

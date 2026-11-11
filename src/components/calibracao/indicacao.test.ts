@@ -11,6 +11,7 @@ import { EtapaConclusao } from './EtapaConclusao'
 import { PainelDaAba } from './EtapaIndicacao'
 import {
   type AbaIndicacao,
+  comPontoNovo,
   ensaioEmOrdemDeCarga,
   leiturasDigitadas,
   leiturasEscondidasPelaTroca,
@@ -241,6 +242,27 @@ describe('ponto acrescentado no fim com carga menor', () => {
     // O "Decrescente" (só num registro de antes) fica como está
     const decrescente = ensaioDigitado('DECRESCENTE')
     expect(ensaioEmOrdemDeCarga(decrescente)).toBe(decrescente)
+  })
+
+  it('o zero acrescentado no fim (o plano sem a linha do zero) vai para o começo: é a primeira carga do ensaio (POP 7.7)', () => {
+    const e = ensaioDigitado('CONTINUO')
+    const semZero = { ...e, pontos: [...e.pontos.slice(1), e.pontos[0]] }
+    expect(ensaioEmOrdemDeCarga(semZero).pontos.map((p) => p.id)).toEqual(['z', 'd', 'a', 'b', 'c'])
+    // A carga esquecida (outro ponto sem carga, depois do zero) continua onde está
+    const esquecida = { ...e.pontos[1], id: 'x', carga: 0 }
+    const comEsquecida = { ...e, pontos: [e.pontos[0], e.pontos[1], esquecida, e.pontos[2]] }
+    expect(ensaioEmOrdemDeCarga(comEsquecida).pontos.map((p) => p.id)).toEqual(['z', 'a', 'x', 'b'])
+  })
+
+  it('"Adicionar ponto" sem a linha do zero no plano põe a linha nova no começo, sem leitura (a do zero falta); com ela, no fim', () => {
+    const e = ensaioDigitado('CONTINUO')
+    const semZero = e.pontos.slice(1)
+    const novo = comPontoNovo(semZero, 'n')
+    expect(novo.map((p) => p.id)).toEqual(['n', 'a', 'b', 'c', 'd'])
+    expect(novo[0]).toMatchObject({ carga: 0, crescente: null, decrescente: null })
+    expect(comPontoNovo(e.pontos, 'n').map((p) => p.id)).toEqual(['z', 'a', 'b', 'c', 'd', 'n'])
+    // Sem nenhum ponto, no começo (o primeiro)
+    expect(comPontoNovo([], 'n').map((p) => p.id)).toEqual(['n'])
   })
 })
 

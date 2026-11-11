@@ -40,6 +40,7 @@ import { destinoDaPendencia, destinoForaDaCalibracao, etapaTemMarcas } from './o
 vi.mock('../../store/sessao', () => ({
   useSessao: (seletor: (s: { usuario: { id: string; nome: string; signatario: boolean } }) => unknown) =>
     seletor({ usuario: { id: 'ana', nome: 'Ana', signatario: true } }),
+  usePode: () => false,
 }))
 const { EtapaRevisao } = await import('./EtapaRevisao')
 

@@ -11,10 +11,21 @@ import type { MembroEquipe } from '../../lib/api'
 import type { ContextoEtapa } from './contexto'
 
 // Quem está usando (cada teste escolhe)
-const sessao = vi.hoisted(() => ({ usuario: { id: 'ana', nome: 'Ana Signatária', signatario: true } }))
-vi.mock('../../store/sessao', () => ({
-  useSessao: (seletor: (s: typeof sessao) => unknown) => seletor(sessao),
+const sessao = vi.hoisted(() => ({
+  usuario: { id: 'ana', nome: 'Ana Signatária', signatario: true } as {
+    id: string
+    nome: string
+    signatario: boolean
+    nivel?: 'ADMIN' | 'COMUM'
+  },
 }))
+vi.mock('../../store/sessao', async () => {
+  const { pode } = await import('#shared/permissoes.ts')
+  return {
+    useSessao: (seletor: (s: typeof sessao) => unknown) => seletor(sessao),
+    usePode: (p: Parameters<typeof pode>[1]) => pode(sessao.usuario.nivel, p),
+  }
+})
 
 const { EtapaRevisao } = await import('./EtapaRevisao')
 
@@ -54,6 +65,11 @@ function etapa(
     correcao?: { substituiId: string; numeroRevisao: string | null }
     pendencias?: string[]
     folhasNaoLigadas?: FolhaNaoLigada[]
+    /** A folha da calibração e o nº reservado (o da etiqueta). */
+    folhaCampo?: { numero: string; avulsa?: boolean }
+    numeroReservado?: { numero: string; folha: string }
+    /** O HTML como saiu (sem tirar as marcas). */
+    bruto?: boolean
   } = {},
 ) {
   const f: CalibracaoInput = { ...calibracaoVazia(), tecnicoId: o.tecnicoId ?? 'bia', substituiId: o.correcao?.substituiId ?? '' }
@@ -66,6 +82,7 @@ function etapa(
     balanca: { unidade: 'kg' } as Balanca,
     tecnicoDefinidoPorId: o.definidoPor,
     folhasNaoLigadas: o.folhasNaoLigadas ?? [],
+    folhaCampo: o.folhaCampo ?? null,
     vincularFolha: async () => true,
   } as unknown as ContextoEtapa
   const t = renderToStaticMarkup(
@@ -73,6 +90,7 @@ function etapa(
       ctx,
       gravada: { status: 'RASCUNHO', autorizacao: null, devolucao: null, ...o.gravada },
       numeroRevisao: o.correcao?.numeroRevisao ?? null,
+      numeroReservado: o.numeroReservado ?? null,
       pendencias: o.pendencias ?? [],
       salvando: false,
       aoVisualizar: () => {},
@@ -82,7 +100,12 @@ function etapa(
       aoEmitir: () => {},
     }),
   )
-  return t.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+  // Os nºs que não quebram (`SemPartir`) ficam no meio da frase, sem o espaço das outras marcas
+  if (o.bruto) return t
+  return t
+    .replace(/<span class="whitespace-nowrap">([^<]*)<\/span>/g, '$1')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
 }
 
 describe('revisão por outra pessoa desligada: qualquer pessoa emite', () => {
@@ -147,9 +170,22 @@ describe('revisão por outra pessoa ligada: escolher quem autoriza', () => {
     expect(t).toContain('Enviar para autorização')
     expect(t).toContain('Caio Signatário recebe o pedido, revisa e autoriza a emissão.')
     expect(t).toContain('Você escolheu o técnico que executou esta calibração, e quem escolhe o técnico não autoriza.')
-    // Quem escolheu o técnico também não aparece para outra pessoa escolher
+    // Quem escolheu o técnico também não aparece para outra pessoa escolher, e a tela diz por quê (uma vez só: na frase)
     usando(BIA)
-    expect(etapa({ tecnicoId: 'bia', definidoPor: 'ana' })).not.toContain('Ana Signatária')
+    const outra = etapa({ tecnicoId: 'bia', definidoPor: 'ana' })
+    expect(outra.split('Ana Signatária').length - 1).toBe(1)
+    expect(outra).toContain(
+      'Ana Signatária não está na lista: escolheu o técnico desta calibração, e quem escolhe o técnico não autoriza.',
+    )
+  })
+
+  it('o signatário que executou também não está na lista de quem usa, e a tela diz por quê', () => {
+    usando(BIA)
+    const t = etapa({ tecnicoId: 'ana', definidoPor: 'bia' })
+    expect(t).toContain('Ana Signatária não está na lista: executou esta calibração.')
+    // Quem pode autorizar não ganha a frase; nem sem a revisão ligada
+    expect(etapa({ tecnicoId: 'bia', definidoPor: 'bia' })).not.toContain('não está na lista')
+    expect(etapa({ exigirRevisor: false, tecnicoId: 'bia', definidoPor: 'ana' })).not.toContain('não está na lista')
   })
 
   it('"Quem autoriza" tem a marca de obrigatório, e o botão desativado diz por quê', () => {
@@ -179,6 +215,18 @@ describe('revisão por outra pessoa ligada: escolher quem autoriza', () => {
     expect(escolhida).toContain(
       'Ninguém pode autorizar esta calibração: quem executou e quem escolheu o técnico não autorizam, e não há outro signatário.',
     )
+    // A saída mais simples: o técnico abre e envia (a escolha passa a ser dele, e quem escolheu autoriza)
+    expect(escolhida).toContain(
+      'Peça ao técnico que executou (Ana Signatária) para abrir a calibração e enviar para autorização: a escolha passa a ser do técnico, e você pode autorizar. Ou peça ao administrador para marcar outro signatário em Usuários.',
+    )
+    // Quem olha sem ter escolhido: o nome de quem escolheu
+    usando(BIA)
+    const deOutro = etapa({ tecnicoId: 'ana', definidoPor: 'caio', equipe: [ANA, BIA, CAIO] })
+    expect(deOutro).toContain('e Caio Signatário pode autorizar.')
+    // Sem quem escolheu (só o técnico): só o administrador resolve
+    usando(ANA)
+    expect(t).toContain('Peça ao administrador para marcar um signatário em Usuários.')
+    expect(t).not.toContain('Peça ao técnico')
   })
 
   it('a devolvida mostra quem devolveu e a nota', () => {
@@ -227,7 +275,27 @@ describe('revisão por outra pessoa ligada: a enviada para autorização', () =>
     usando(ANA)
     const t = etapa({ tecnicoId: 'ana', gravada: { status: 'REVISAO', autorizacao: pedidoPara(ANA) } })
     expect(t).not.toContain('Autorizar e emitir')
-    expect(t).toContain('O técnico que executou não autoriza o próprio certificado.')
+    expect(t).toContain('Você não pode autorizar esta calibração')
+    expect(t).toContain('Você executou esta calibração e não autoriza o próprio certificado.')
+    // Devolve (não é autorizar): o pedido não fica parado com ela
+    expect(t).toContain('Devolver')
+  })
+
+  it('o pedido enviado na 1.0.5 para quem escolheu o técnico: ele devolve, e quem abre fica sabendo que ele não autoriza', () => {
+    const gravada = { status: 'REVISAO' as const, autorizacao: pedidoPara(ANA) }
+    usando(ANA)
+    const dela = etapa({ definidoPor: 'ana', gravada })
+    expect(dela).toContain('Você não pode autorizar esta calibração')
+    expect(dela).toContain('Você escolheu o técnico, e quem escolhe o técnico não autoriza.')
+    expect(dela).toContain('Devolver')
+    expect(dela).not.toContain('Autorizar e emitir')
+    expect(dela).not.toContain('Aguardando autorização de Ana')
+    usando(CAIO)
+    const outro = etapa({ definidoPor: 'ana', gravada })
+    expect(outro).toContain('Ana Signatária não pode autorizar esta calibração')
+    expect(outro).toContain('Volte para rascunho e envie para outro signatário.')
+    expect(outro).toContain('Voltar para rascunho')
+    expect(outro).not.toContain('Aguardando autorização de Ana')
   })
 
   it('a enviada para revisão antes da 1.0.5 (sem o pedido): qualquer signatário que não executou autoriza', () => {
@@ -263,6 +331,44 @@ describe('a folha do cliente ainda não ligada', () => {
     expect(t).toContain('Ligar esta folha')
     expect(t).toContain('Tudo pronto para emitir')
     expect(etapa({ exigirRevisor: false })).not.toContain('Ligar esta folha')
+    // Se não foi usada: só o administrador a marca como "Não vai ser usada"; o operador fica sabendo a quem pedir
+    expect(t).toContain(
+      'Se não foi usada, peça ao administrador para marcá-la como “Não vai ser usada” (em Números não utilizados).',
+    )
+    sessao.usuario = { id: ANA.id, nome: ANA.nome, signatario: true, nivel: 'ADMIN' }
+    expect(etapa({ exigirRevisor: false, folhasNaoLigadas: [folha] })).toContain(
+      'Se não foi usada, marque-a como “Não vai ser usada” em Certificados → Números não utilizados.',
+    )
+  })
+
+  it('com a folha impressa para a calibração, diz qual (com o nº dela) e os nºs não quebram no meio', () => {
+    usando(ANA)
+    const folha: FolhaNaoLigada = {
+      numero: 'FC-2026-00033',
+      numeroCertificado: 'CC-2026-00034',
+      ordemServico: 'OS 5590',
+      mesmaOs: true,
+      impressaEm: '2026-11-09T13:00:00.000Z',
+      dataPrevista: '',
+    }
+    const o = {
+      exigirRevisor: false,
+      folhasNaoLigadas: [folha],
+      folhaCampo: { numero: 'FC-2026-00031' },
+      numeroReservado: { numero: 'CC-2026-00032', folha: 'FC-2026-00031' },
+    }
+    const t = etapa(o)
+    expect(t).toContain(
+      'Esta calibração já tem a folha FC-2026-00031 (certificado CC-2026-00032). O cliente tem também a folha FC-2026-00033 (certificado CC-2026-00034 reservado) ainda não ligada: ligue-a só se foi ela, e não a FC-2026-00031, a usada nesta balança (a etiqueta tem o nº CC-2026-00034).',
+    )
+    expect(t).not.toContain('da mesma OS')
+    const html = etapa({ ...o, bruto: true })
+    for (const n of ['FC-2026-00031', 'CC-2026-00032', 'FC-2026-00033', 'CC-2026-00034'])
+      expect(html).toContain(`<span class="whitespace-nowrap">${n}</span>`)
+    // A avulsa já ligada (a preenchida no cliente) não é "folha própria": o servidor nem manda a lista, e o texto é o de sempre
+    expect(etapa({ ...o, folhaCampo: { numero: 'FC-2026-00031', avulsa: true } })).toContain(
+      'O cliente tem a folha FC-2026-00033',
+    )
   })
 })
 

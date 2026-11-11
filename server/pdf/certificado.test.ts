@@ -2662,6 +2662,14 @@ describe('o nº do certificado do padrão sem quebra no hífen (1.0.6)', () => {
     expect(texto(sem)).toContain(
       '"alignment":"center","fontSize":7.6,"text":"M1"},{"style":"td","alignment":"left","fontSize":7.6,"text":"—"}',
     )
+    // De 29 a cerca de 35 letras: inteiro, com a letra menor (até 6 pt), na largura que um de 28 ocupa
+    const comprido = numerosCompridos()
+    const n29 = 'RBC-LMP-0456-2026-REV-01-ABCD'
+    comprido.emissao.padroes[0] = { ...comprido.emissao.padroes[0], certificado: n29 }
+    const celula29 = new RegExp(`"fontSize":([\\d.]+),"text":"${n29}","noWrap":true}`).exec(texto(comprido))
+    expect(celula29, n29).not.toBeNull()
+    expect(Number(celula29![1])).toBeGreaterThanOrEqual(6)
+    expect(Number(celula29![1])).toBeLessThan(7.6)
     // Comprido demais para uma linha (até 80 letras no cadastro): quebra como antes, para não passar da coluna
     const enorme = numerosCompridos()
     const longo = 'CAL-0001-LABORATORIO-METROLOGICO-PAULISTA-2026'
@@ -2670,6 +2678,41 @@ describe('o nº do certificado do padrão sem quebra no hífen (1.0.6)', () => {
     // Emitido pela 1.0.5 (sem a marca): sem o noWrap
     expect(texto(de105(d))).not.toMatch(/"text":"(CAL-12345-2026|RBC-LMP-0456-2026|T-44100\/2026-R1)","noWrap":true/)
   })
+
+  it('emitido a partir da 1.0.6: na descrição do padrão, o número junto da unidade (o nº inteiro alarga a coluna dele)', () => {
+    const d = numerosCompridos()
+    d.emissao.padroes[0] = { ...d.emissao.padroes[0], certificado: 'RBC-LMP-0456-2026-REV-01-ABCD' }
+    expect(d.emissao.padroes[0].descricao).toBe('Pesos padrão de 20 kg')
+    const t = texto(d)
+    expect(t).toContain('"text":"Pesos padrão de 20\u00a0kg"')
+    expect(t).not.toContain('Pesos padrão de 20 kg')
+    // As peças embaixo também ("15 × 20 kg")
+    expect(t).toMatch(/× 20\u00a0kg/)
+    // Emitido pela 1.0.5 (sem a marca): como saía
+    expect(texto(de105(d))).toContain('"text":"Pesos padrão de 20 kg"')
+  })
+
+  it.runIf(temPdftotext)(
+    'no PDF: com o nº do padrão de 27 a 30 letras, "Pesos padrão de 20 kg" não parte entre o 20 e o kg',
+    async () => {
+      for (const n of ['RBC-LMP-0456-2026-REV-01-AB', 'RBC-LMP-0456-2026-REV-01-ABCDE']) {
+        const d = numerosCompridos()
+        d.emissao.padroes[0] = { ...d.emissao.padroes[0], certificado: n }
+        const linhas = textoDoPdf(await gerarCertificadoPdf(d)).split('\n')
+        // A coluna estreita pode levar "20 kg" para a linha de baixo, mas os dois juntos
+        const titulo = linhas.findIndex((l) => l.includes('Pesos padrão de'))
+        expect(titulo, n).toBeGreaterThanOrEqual(0)
+        expect(
+          linhas.slice(titulo, titulo + 2).some((l) => /(Pesos padrão de|^\s+)\s?20[\s\u00a0]kg\b/.test(l)),
+          n,
+        ).toBe(true)
+        expect(
+          linhas.some((l) => /Pesos padrão de 20\s*($|\s{2,})/.test(l) || /^\s+PP20\S*\s.*\s{2,}kg\s{2,}/.test(l)),
+          n,
+        ).toBe(false)
+      }
+    },
+  )
 
   it('emitido pela 1.0.5 (sem a marca): o PDF refeito dos dados congelados é o mesmo documento, byte a byte', () => {
     const casos: Array<[string, () => DadosCertificadoPdf, string]> = [
@@ -2695,6 +2738,14 @@ describe('o nº do certificado do padrão sem quebra no hífen (1.0.6)', () => {
       // Emitido pela 1.0.5: como saía (partido no hífen)
       const antes = textoDoPdf(await gerarCertificadoPdf(de105(numerosCompridos()))).split('\n')
       expect(antes.some((l) => l.includes('RBC-LMP-0456-2026'))).toBe(false)
+      // De 29 letras: inteiro também, com a letra menor
+      const d = numerosCompridos()
+      d.emissao.padroes[0] = { ...d.emissao.padroes[0], certificado: 'RBC-LMP-0456-2026-REV-01-ABCD' }
+      expect(
+        textoDoPdf(await gerarCertificadoPdf(d))
+          .split('\n')
+          .some((l) => l.includes('RBC-LMP-0456-2026-REV-01-ABCD')),
+      ).toBe(true)
     },
   )
 })

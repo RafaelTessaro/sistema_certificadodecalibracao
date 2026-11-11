@@ -25,7 +25,7 @@ export function dicaDoTecnico(
   if (!tecnicoId && !equipe.some((u) => u.tecnico))
     return 'Ninguém tem a marca de técnico. Peça ao administrador para marcar em Usuários.'
   if (tecnicoId && o.escolhidoPorVoce)
-    return 'Escolhido por você: outro signatário autoriza esta calibração (quem escolhe o técnico não autoriza).'
+    return 'Escolhido por você: outro signatário autoriza esta calibração (quem escolhe o técnico não autoriza; se o próprio técnico gravar ou enviar a calibração, a escolha passa a ser dele).'
   return tecnico?.cargo || undefined
 }
 
@@ -79,6 +79,56 @@ export function estadoDaEmissao(
   if (pedido) return { ...base, modo: impedimento ? 'aguardando' : 'autorizar', sugerido }
   if (k.status === 'REVISAO' && !impedimento) return { ...base, modo: 'autorizar', sugerido }
   return { ...base, modo: 'escolher', sugerido }
+}
+
+/**
+ * Com a revisão ligada, os signatários que não estão em "Quem autoriza" para quem está usando (`eu`), e por quê: o técnico
+ * que executou e quem escolheu o técnico (`definidoPorId`). Quem usa a tela costuma mandar tudo para a mesma pessoa e
+ * precisa saber por que ela sumiu da lista. O próprio `eu` fica de fora (o impedimento dele já diz). null: ninguém.
+ */
+export function foraDaListaDeQuemAutoriza(
+  equipe: readonly MembroEquipe[],
+  tecnicoId: string,
+  definidoPorId: string | undefined,
+  eu: string,
+): string | null {
+  const signatario = (id: string | undefined) => (id && id !== eu ? equipe.find((u) => u.id === id && u.signatario) : undefined)
+  const executou = signatario(tecnicoId)
+  const escolheu = definidoPorId !== tecnicoId ? signatario(definidoPorId) : undefined
+  return (
+    [
+      executou ? `${executou.nome} não está na lista: executou esta calibração.` : '',
+      escolheu
+        ? `${escolheu.nome} não está na lista: escolheu o técnico desta calibração, e quem escolhe o técnico não autoriza.`
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' ') || null
+  )
+}
+
+/**
+ * Ninguém pode receber o pedido (o técnico e quem o escolheu são os únicos signatários): o aviso e as saídas. Quem
+ * escolheu (`definidoPorId`, outro que não o técnico) volta a poder autorizar quando o técnico abre e envia a calibração
+ * (a escolha passa a ser dele: `quemDefineOTecnico`); senão, o administrador marca outro signatário.
+ */
+export function avisoSemQuemAutorize(
+  equipe: readonly MembroEquipe[],
+  tecnicoId: string,
+  definidoPorId: string | undefined,
+  eu: string,
+): string {
+  const tecnico = equipe.find((u) => u.id === tecnicoId)
+  const escolheu =
+    definidoPorId && definidoPorId !== tecnicoId ? equipe.find((u) => u.id === definidoPorId && u.signatario) : undefined
+  if (!escolheu)
+    return 'Ninguém pode autorizar esta calibração: quem executou não autoriza a própria, e não há outro signatário. Peça ao administrador para marcar um signatário em Usuários.'
+  const quem = escolheu.id === eu ? 'você' : escolheu.nome
+  return `Ninguém pode autorizar esta calibração: quem executou e quem escolheu o técnico não autorizam, e não há outro signatário. ${
+    tecnico
+      ? `Peça ao técnico que executou (${tecnico.nome}) para abrir a calibração e enviar para autorização: a escolha passa a ser do técnico, e ${quem} pode autorizar. Ou peça ao administrador para marcar outro signatário em Usuários.`
+      : 'Peça ao administrador para marcar outro signatário em Usuários.'
+  }`
 }
 
 /**
@@ -150,7 +200,7 @@ export function cabecalhoDaRevisao(o: {
       titulo: `${o.pedidoParaVoce ? 'Você não pode' : `${quem} não pode`} autorizar esta calibração`,
       descricao: `${porque} ${
         o.pedidoParaVoce
-          ? 'Clique em Devolver: ela volta para rascunho e vai para outro signatário.'
+          ? 'Clique em Devolver: ela volta para rascunho, com a sua nota, e quem enviou a manda para outro signatário.'
           : 'Volte para rascunho e envie para outro signatário.'
       }`,
       aguardando: false,
@@ -176,4 +226,16 @@ export function cabecalhoDaRevisao(o: {
       aguardando: false,
     }
   return { titulo: 'Tudo pronto para emitir', descricao: 'Confira a prévia do certificado antes de emitir.', aguardando: false }
+}
+
+/**
+ * O aviso do Painel das calibrações que aguardam quem está usando (o filtro AUTORIZAR): também conta o pedido enviado na
+ * 1.0.5 a quem escolheu o técnico, que ele não autoriza mas devolve (`podeDevolver`); a calibração diz por quê.
+ */
+export function avisoParaAutorizar(total: number, numero: (n: number) => string = String): { destaque: string; texto: string } {
+  return {
+    destaque:
+      total === 1 ? '1 calibração aguarda a sua autorização.' : `${numero(total)} calibrações aguardam a sua autorização.`,
+    texto: 'Confira e autorize a emissão, ou devolva com uma nota se não puder autorizar.',
+  }
 }

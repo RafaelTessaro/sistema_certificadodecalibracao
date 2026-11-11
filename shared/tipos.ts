@@ -663,9 +663,11 @@ export interface Calibracao {
   pressaoComoAviso?: boolean
   /**
    * Calibração em andamento que já tinha leituras, ou a folha de campo impressa sem a linha do zero, quando a leitura do
-   * zero passou a ser uma das cargas obrigatórias do erro de indicação (atualização para a 1.0.6, migração 22), e a
+   * zero passou a ser uma das cargas obrigatórias do erro de indicação (atualização para a 1.0.6, migração 22), a que
+   * recebe depois uma folha impressa antes da 1.0.6 sem a linha do zero (`Repositorio.vincularFolhaCampo`) e a
    * correção de um certificado emitido sem ela: a visita já aconteceu (ou vai acontecer com a folha sem a linha), e a
-   * falta da leitura do zero fica só como aviso (POP 7.7). O resto das regras continua. Quem define é o servidor;
+   * falta da leitura do zero fica só como aviso (POP 7.7). Sai quando a folha vigente passa a ser uma com a linha do zero
+   * antes de medir (a folha nova, ou outra ligada no lugar). O resto das regras continua. Quem define é o servidor;
    * ausente = não.
    */
   zeroComoAviso?: boolean

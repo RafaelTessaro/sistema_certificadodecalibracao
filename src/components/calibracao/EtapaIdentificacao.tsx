@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import { enderecoCliente, enderecoEmpresa, inscricaoEstadualNoCertificado, LOCAIS } from '#shared/dominio.ts'
 import { impedimentoDaTrocaDoTecnico, tecnicosParaEscolher } from '#shared/permissoes.ts'
 import type { FolhaCampoImpressa, LocalCalibracao } from '#shared/tipos.ts'
-import { TEXTO_FOLHA_NOVA } from '../../lib/folhaCampo'
+import { folhaPropriaDa, TEXTO_FOLHA_NOVA } from '../../lib/folhaCampo'
 import { dataHora } from '../../lib/format'
 import { useSessao } from '../../store/sessao'
 import { Button } from '../ui/Button'
@@ -13,6 +13,7 @@ import { Field, Input, MarcaObrigatorio, Select, Textarea } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
 import type { ContextoEtapa } from './contexto'
 import { dicaDoTecnico } from './equipe'
+import { AvisoDataDaFolha } from './AvisoDataDaFolha'
 import { AvisoFolhasNaoLigadas } from './FolhasNaoLigadas'
 import { marcasDaEtapa } from './obrigatorios'
 import { proximaAcompanhando } from './util'
@@ -53,7 +54,11 @@ export function EtapaIdentificacao(ctx: ContextoEtapa) {
   return (
     <div className="flex flex-col gap-6">
       {/* A folha do cliente ainda não ligada (a da mesma OS primeiro): se foi ela a usada, ligue-a */}
-      <AvisoFolhasNaoLigadas folhas={ctx.folhasNaoLigadas} aoLigar={vincularFolha} />
+      <AvisoFolhasNaoLigadas
+        folhas={ctx.folhasNaoLigadas}
+        aoLigar={vincularFolha}
+        propria={folhaPropriaDa(folhaCampo, ctx.numeroReservado)}
+      />
       <Card>
         <CardHeader
           icone={<Building2 className="h-4 w-4" />}
@@ -135,6 +140,9 @@ export function EtapaIdentificacao(ctx: ContextoEtapa) {
               ))}
             </Select>
           </Field>
+
+          {/* A data prevista da folha que acabou de ser ligada (passou para a calibração, ou é outra): fica até fechar */}
+          <AvisoDataDaFolha ctx={ctx} className="sm:col-span-6" />
 
           {/* Recomeça do nº ligado sempre que ele muda (ao ligar ou ao imprimir pelo assistente) */}
           <CampoFolhaCampo

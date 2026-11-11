@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { POP_DA_ATUALIZACAO, separarProcedimento } from '#shared/arquivos.ts'
 import {
   calculoLegado,
+  diaEmBrasilia,
   enderecoCliente,
   formatarDataBr,
   hojeLocalIso,
@@ -293,11 +294,14 @@ const MIGRACOES: Migracao[] = [
   // calibração; com outra data, a tela avisa para conferir ('' nas outras folhas e nas impressas antes). 1.0.6.
   (db) => acrescentarColuna(db, 'folhas_campo', 'data_prevista', "TEXT NOT NULL DEFAULT ''"),
 
-  // 22: a calibração em andamento (também a correção de um certificado) que já tinha cargas lidas sem a leitura do zero,
-  // ou a folha de campo impressa com um plano sem a linha do zero (o copiado do certificado anterior), na atualização
-  // para a 1.0.6, quando o zero passou a ser uma das cargas obrigatórias do erro de indicação (POP 7.7), fica com a falta
-  // da leitura dele como aviso (`zeroComoAviso`): a visita já aconteceu, ou vai acontecer com a folha sem a linha, e na
-  // 1.0.5 ela não era cobrada. As novas seguem a regra. A que já tem os mínimos como avisos não precisa. 1.0.6.
+  // 22: (a) cada folha de campo já impressa guarda se saiu sem a linha do zero no passo 5 (`sem_linha_do_zero`: o plano
+  // de onde veio não tinha a carga zero, como o copiado de um certificado emitido sem ela; a folha desta versão sempre a
+  // imprime): ligada depois a uma calibração, deixa a falta da leitura do zero como aviso (`Repositorio.vincularFolhaCampo`).
+  // (b) A calibração em andamento (também a correção de um certificado) que já tinha cargas lidas sem a leitura do zero,
+  // ou cuja folha vigente saiu sem a linha do zero, na atualização para a 1.0.6, quando o zero passou a ser uma das
+  // cargas obrigatórias do erro de indicação (POP 7.7), fica com a falta da leitura dele como aviso (`zeroComoAviso`): a
+  // visita já aconteceu, ou vai acontecer com a folha sem a linha, e na 1.0.5 ela não era cobrada. As novas seguem a
+  // regra. A que já tem os mínimos como avisos não precisa. 1.0.6.
   zerosAntesDaRegra,
 ]
 
@@ -560,21 +564,72 @@ function pressoesAntesDaRegra(db: Banco) {
     )
 }
 
+/** O plano do erro de indicação (os pontos gravados) sem a carga zero: a folha impressa dele sai sem a linha do zero. */
+function planoSemLinhaDoZero(dados: string): boolean {
+  const k = JSON.parse(dados) as Partial<Calibracao>
+  const pontos = Array.isArray(k.indicacao?.pontos) ? k.indicacao.pontos : []
+  return pontos.length > 0 && !pontos.some((p) => !(Number(p.carga) > 0))
+}
+
 /**
- * Migração 22 (ver acima). Repetível: só marca a calibração em andamento (rascunho ou em revisão, também a correção de
- * um certificado) sem a leitura do zero no erro de indicação, ainda sem a marca e sem os mínimos como avisos
- * (`minimosDoPopComoAviso`, onde a falta do zero já é aviso), que já tem cargas lidas (`temCargasSemZero`) ou, sem a
- * linha do zero no plano, alguma leitura medida (`temLeituraMedida`) ou uma folha de campo impressa (a folha imprime as
- * linhas do plano; sem pontos, as sugeridas, que começam pelo zero). Não sobe a versão: a marca não muda nada do que a
- * tela grava. O registro de atividades diz quais.
+ * Migração 22 (a): se cada folha já impressa (até a 1.0.5) saiu sem a linha do zero, pelo plano de onde ela veio. A da
+ * calibração, o plano dela; a da balança, o da última calibração dela emitida até o dia da impressão (o que a folha
+ * copiava; sem nenhuma, as sugeridas, que começam pelo zero); a só do cliente e a em branco traziam o zero. Não se sabe
+ * o plano da folha de um rascunho excluído nem da que voltou da pasta: marcadas (a visita pode ter sido feita sem a
+ * linha; com a marca, a falta da leitura do zero é só aviso).
+ */
+function folhasSemLinhaDoZero(db: Banco) {
+  const folhas = db.prepare('SELECT numero, chave, balanca_id, impressa_em FROM folhas_campo').all() as Array<{
+    numero: string
+    chave: string
+    balanca_id: string
+    impressa_em: string
+  }>
+  const daCalibracao = db.prepare('SELECT dados FROM calibracoes WHERE id = ?')
+  const ultimaEmitida = db.prepare(
+    `SELECT dados FROM calibracoes
+      WHERE balanca_id = ? AND status IN ('EMITIDO','SUBSTITUIDO') AND data_emissao <> '' AND data_emissao <= ?
+      ORDER BY data_emissao DESC, sequencia DESC, revisao DESC LIMIT 1`,
+  )
+  const marcar = db.prepare('UPDATE folhas_campo SET sem_linha_do_zero = 1 WHERE numero = ?')
+  for (const f of folhas) {
+    const calibracao = /^calibracao:([^:]+)/.exec(f.chave)
+    let sem = false
+    if (f.chave.startsWith('recuperada:')) sem = true
+    else if (calibracao) {
+      const k = daCalibracao.get(calibracao[1]) as { dados: string } | undefined
+      sem = k ? planoSemLinhaDoZero(k.dados) : true
+    } else if (f.balanca_id) {
+      const dia = diaEmBrasilia(f.impressa_em) || f.impressa_em.slice(0, 10)
+      const k = ultimaEmitida.get(f.balanca_id, dia) as { dados: string } | undefined
+      sem = !!k && planoSemLinhaDoZero(k.dados)
+    }
+    if (sem) marcar.run(f.numero)
+  }
+}
+
+/**
+ * Migração 22 (ver acima). Repetível: a coluna e a marca das folhas já impressas só quando a coluna nasce
+ * (`folhasSemLinhaDoZero`; repetida, não marca as impressas depois dela, que têm a linha do zero). Só marca a calibração
+ * em andamento (rascunho ou em revisão, também a correção de um certificado) sem a leitura do zero no erro de indicação,
+ * ainda sem a marca e sem os mínimos como avisos (`minimosDoPopComoAviso`, onde a falta do zero já é aviso), que já tem
+ * cargas lidas (`temCargasSemZero`) ou, sem a linha do zero no plano, alguma leitura medida (`temLeituraMedida`), ou cuja
+ * folha vigente saiu sem a linha do zero (a substituída não foi a campo; a só do cliente trazia o zero). Não sobe a
+ * versão: a marca não muda nada do que a tela grava. O registro de atividades diz quais.
  */
 function zerosAntesDaRegra(db: Banco) {
+  const colunas = db.prepare('PRAGMA table_info(folhas_campo)').all() as Array<{ name: string }>
+  if (!colunas.some((c) => c.name === 'sem_linha_do_zero')) {
+    acrescentarColuna(db, 'folhas_campo', 'sem_linha_do_zero', 'INTEGER NOT NULL DEFAULT 0')
+    folhasSemLinhaDoZero(db)
+  }
   const linhas = db
     .prepare(
       `SELECT k.id, k.dados, c.nome AS cliente, o.numero AS revisado,
               (SELECT n.numero FROM numeros_reservados n
                 WHERE n.calibracao_id = k.id AND n.situacao = 'reservado' ORDER BY n.id DESC LIMIT 1) AS reservado,
-              EXISTS (SELECT 1 FROM folhas_campo f WHERE f.calibracao_id = k.id) AS com_folha
+              EXISTS (SELECT 1 FROM folhas_campo f
+                       WHERE f.calibracao_id = k.id AND f.substituida_por = '' AND f.sem_linha_do_zero = 1) AS folha_sem_zero
          FROM calibracoes k LEFT JOIN clientes c ON c.id = k.cliente_id
               LEFT JOIN calibracoes o ON o.id = k.substitui_id AND k.substitui_id <> ''
         WHERE k.status IN ('RASCUNHO','REVISAO')
@@ -586,7 +641,7 @@ function zerosAntesDaRegra(db: Banco) {
     cliente: string | null
     revisado: string | null
     reservado: string | null
-    com_folha: number
+    folha_sem_zero: number
   }>
   const gravar = db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
   const lido = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
@@ -600,7 +655,7 @@ function zerosAntesDaRegra(db: Banco) {
     if (
       k.zeroComoAviso === true ||
       zeroLido ||
-      !(temCargasSemZero({ pontos }) || (semLinhaDoZero && (temLeituraMedida(k) || Number(l.com_folha) === 1))) ||
+      !(temCargasSemZero({ pontos }) || (semLinhaDoZero && temLeituraMedida(k)) || Number(l.folha_sem_zero) === 1) ||
       minimosDoPopComoAviso({ ...k, opcoes: k.opcoes ?? {} })
     )
       continue
@@ -618,8 +673,8 @@ function zerosAntesDaRegra(db: Banco) {
       new Date().toISOString(),
       detalheLista(
         marcadas.length === 1
-          ? 'A calibração em andamento medida, ou com a folha de campo impressa sem a linha do zero, antes desta versão sai sem a leitura do zero, com um aviso (a visita já aconteceu); nas novas, a leitura do zero é obrigatória. Confira: '
-          : `${marcadas.length} calibrações em andamento medidas, ou com a folha de campo impressa sem a linha do zero, antes desta versão saem sem a leitura do zero, com um aviso (a visita já aconteceu); nas novas, a leitura do zero é obrigatória. Confira: `,
+          ? 'A calibração em andamento medida, ou com a folha impressa sem a linha do zero, antes desta versão sai sem a leitura do zero, com um aviso (a visita já foi, ou vai ser, sem a linha); nas novas, a leitura do zero é obrigatória. Confira: '
+          : `${marcadas.length} calibrações em andamento medidas, ou com a folha impressa sem a linha do zero, antes desta versão saem sem a leitura do zero, com um aviso (a visita já foi, ou vai ser, sem a linha); nas novas, a leitura do zero é obrigatória. Confira: `,
         marcadas,
       ),
     )

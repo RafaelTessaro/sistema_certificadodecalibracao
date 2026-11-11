@@ -87,14 +87,19 @@ import { useConsulta } from '../lib/consulta'
 import { criarFilaGravacao } from '../lib/filaGravacao'
 import {
   abrirFolhaCampo,
+  type AcaoSemLigar,
+  confirmacaoDaEmissao,
   confirmacaoSemLigar,
+  type DataDaFolhaLigada,
+  folhaPropriaDa,
   TEXTO_FOLHA_NOVA,
   semMarcasRetiradas,
+  TEXTO_ZERO_DA_FOLHA,
   temFolhaNova,
   textoBarometrosRetirados,
+  textoDesfazerLigacao,
   textoPressaoDeVolta,
   textoReimprimir,
-  textosDataDaFolha,
   textosOsDaFolha,
 } from '../lib/folhaCampo'
 import { dataCurta, hojeISO } from '../lib/format'
@@ -430,6 +435,8 @@ function EditorCalibracao({ id }: { id: string }) {
   const [numeroReservado, setNumeroReservado] = useState<NumeroReservado | null>(null)
   /** As folhas impressas para o cliente e ainda não ligadas (o aviso das etapas 1 e 8 e a confirmação da emissão). */
   const [folhasNaoLigadas, setFolhasNaoLigadas] = useState<FolhaNaoLigada[]>([])
+  /** A data prevista da folha que acabou de ser ligada (o aviso das etapas 1 e 8, até fechar ou mudar a data), ou null. */
+  const [dataDaFolha, setDataDaFolha] = useState<DataDaFolhaLigada | null>(null)
   /** Janela "reimprimir ou folha nova" aberta (com a opção que vem selecionada), ou null. */
   const [escolhaFolha, setEscolhaFolha] = useState<EscolhaFolha | null>(null)
   /** Janela "Devolver sem autorizar" aberta. */
@@ -501,10 +508,14 @@ function EditorCalibracao({ id }: { id: string }) {
           // grava; a versão não sobe): a tela fica sem ela
           const k = d.calibracao
           setF((atual) =>
-            atual && (atual.pressaoComoAviso !== k.pressaoComoAviso || atual.cargasDoEmaNaFolha !== k.cargasDoEmaNaFolha)
+            atual &&
+            (atual.pressaoComoAviso !== k.pressaoComoAviso ||
+              atual.cargasDoEmaNaFolha !== k.cargasDoEmaNaFolha ||
+              atual.zeroComoAviso !== k.zeroComoAviso)
               ? semMarcasRetiradas(atual, {
                   ...(k.pressaoComoAviso !== true ? { pressaoComoAviso: false } : {}),
                   ...(k.cargasDoEmaNaFolha !== true ? { cargasDoEmaNaFolha: false } : {}),
+                  ...(k.zeroComoAviso !== true ? { zeroComoAviso: false } : {}),
                 })
               : atual,
           )
@@ -673,6 +684,8 @@ function EditorCalibracao({ id }: { id: string }) {
   const vincularFolha = async (numero: string, confirmado = false): Promise<boolean> => {
     // O que está pendente vai antes: o servidor confere a OS gravada
     if (!confirmado && !(await salvar())) return false
+    // A folha impressa para a calibração, que sai dela se outra for ligada no lugar (o toast diz como desfazer)
+    const propriaAntes = folhaPropriaDa(folha, numeroReservado)
     try {
       const r = await api.vincularFolhaCampo(id, numero, confirmado)
       setFolha(r.folhaCampo)
@@ -715,26 +728,34 @@ function EditorCalibracao({ id }: { id: string }) {
       }
       const daFolha = r.numeroDaFolha
       const textosOs = textosOsDaFolha(os)
-      const textosData = textosDataDaFolha(data)
+      // A data prevista impressa na folha (passou para a calibração, ou é outra): o aviso fica nas etapas "Cliente e OS" e
+      // "Revisão e emissão" até a pessoa fechá-lo ou mudar a data (um toast sumiria antes de ser lido), com o botão que
+      // volta para a data de antes (ou usa a da folha)
+      setDataDaFolha(
+        data
+          ? { folha: r.folhaCampo.numero, daFolha: data.daFolha, aplicada: data.aplicada, antes: data.daCalibracao ?? '' }
+          : null,
+      )
+      // Os nºs (das folhas e dos certificados) não quebram no meio: são os que a pessoa confere com a etiqueta
+      const inteiros = [r.folhaCampo.numero, daFolha?.numero, propriaAntes?.numero, propriaAntes?.numeroCertificado]
       if (daFolha && !daFolha.usado) {
         // O nº impresso na folha pode já estar na etiqueta da balança: avisa até a pessoa fechar
-        void avisar(avisoNumeroDaFolha(daFolha, r.folhaCampo.numero))
-        if (textosData.aplicada) toast.aviso('A data da folha passou para a calibração', textosData.aplicada)
+        void avisar({ ...avisoNumeroDaFolha(daFolha, r.folhaCampo.numero), inteiros })
       } else
         toast.sucesso(
           `Folha de campo ${r.folhaCampo.numero} ligada a esta calibração`,
-          [
-            daFolha ? `O certificado vai ser emitido com o nº ${daFolha.numero}, o impresso na folha.` : '',
-            textosOs.aplicada,
-            textosData.aplicada,
-          ]
+          [daFolha ? `O certificado vai sair com o nº ${daFolha.numero}, o impresso na folha.` : '', textosOs.aplicada]
             .filter(Boolean)
             .join(' ') || undefined,
+          { inteiros },
         )
+      // A folha impressa para a calibração saiu (ficou como não usada): como desfazer, se foi engano
+      if (propriaAntes && propriaAntes.numero !== r.folhaCampo.numero) {
+        const t = textoDesfazerLigacao(propriaAntes)
+        toast.aviso(t.titulo, t.texto, { inteiros })
+      }
       // A folha saiu com outra OS: fica a da calibração, e a pessoa confere
       if (textosOs.diferente) toast.aviso('A OS da folha é outra', textosOs.diferente)
-      // A folha saiu com outra data prevista: fica a da calibração, e a pessoa confere com a data real (passo 8 da folha)
-      if (textosData.diferente) toast.aviso('Confira a data da calibração', textosData.diferente)
       if (semBarometro) {
         const t = textoBarometrosRetirados(semBarometro.identificacoes)
         toast.aviso(t.titulo, t.texto)
@@ -743,6 +764,10 @@ function EditorCalibracao({ id }: { id: string }) {
         const t = textoPressaoDeVolta(devolvidos?.identificacoes ?? [])
         toast.aviso(t.titulo, t.texto)
       }
+      // A folha impressa antes da 1.0.6 sem a linha do zero (a falta da leitura dele, só aviso), ou a com a linha no
+      // lugar dela (de novo obrigatória)
+      if (marcas?.zeroComoAviso) toast.aviso(TEXTO_ZERO_DA_FOLHA.marcada.titulo, TEXTO_ZERO_DA_FOLHA.marcada.texto)
+      if (retiradas?.zeroComoAviso === false) toast.aviso(TEXTO_ZERO_DA_FOLHA.retirada.titulo, TEXTO_ZERO_DA_FOLHA.retirada.texto)
       return true
     } catch (e) {
       if (!confirmado && e instanceof ErroApi && e.dados.codigo === 'CONFIRMAR_FOLHA') {
@@ -774,8 +799,11 @@ function EditorCalibracao({ id }: { id: string }) {
     tecnicoDefinidoPorId: quemDefineOTecnico(dados.calibracao, f.tecnicoId, eu),
     editarBalanca: () => void editarBalanca(),
     folhaCampo: folha,
+    numeroReservado,
     vincularFolha,
     folhasNaoLigadas,
+    dataDaFolha,
+    fecharDataDaFolha: () => setDataDaFolha(null),
     novaFolha: () => setEscolhaFolha('nova'),
     obrigatorios,
     destacar: (c) => vistos.etapas.has(c.etapa) || vistos.campos.has(c.campo),
@@ -889,8 +917,56 @@ function EditorCalibracao({ id }: { id: string }) {
     }
   }
 
-  // Com a revisão por outra pessoa ligada: vai para o signatário escolhido, que a vê na lista dele
+  // As folhas do cliente ainda não ligadas, buscadas de novo antes de enviar ou emitir: com a calibração aberta, outra
+  // pessoa pode ter impresso uma folha para o cliente (a tela só a atualiza ao abrir, gravar, ligar uma folha ou trocar a
+  // balança). Sem resposta, a lista da tela
+  const folhasDoClienteAgora = async (): Promise<FolhaNaoLigada[]> => {
+    try {
+      const atuais = (await api.calibracao(id)).folhasNaoLigadas
+      if (atuais) {
+        setFolhasNaoLigadas(atuais)
+        return atuais
+      }
+    } catch {
+      // A lista da tela
+    }
+    return folhasNaoLigadas
+  }
+
+  // Com folha do cliente ainda não ligada: a pergunta com o nº dela, o do certificado reservado nela (o da etiqueta, se foi
+  // ela a usada) e o nº com que este sai. Os nºs não quebram no meio. true: pode seguir (nenhuma folha, ou confirmou)
+  const confirmarSemLigar = async (
+    folhasDoCliente: FolhaNaoLigada[],
+    acao: AcaoSemLigar,
+    extra: (c: { titulo: string; descricao: string; confirmar: string } | null) => {
+      titulo: string
+      descricao: string
+      confirmar: string
+    } | null = (c) => c,
+  ): Promise<boolean> => {
+    const semLigar = confirmacaoSemLigar(
+      folhasDoCliente,
+      numeroReservado?.numero ?? dados.numeroRevisao ?? null,
+      podeDescartarFolha,
+      acao,
+    )
+    const pedido = extra(semLigar)
+    if (!pedido) return true
+    return confirmar({
+      ...pedido,
+      inteiros: [
+        ...folhasDoCliente.flatMap((x) => [x.numero, x.numeroCertificado]),
+        numeroReservado?.numero,
+        dados.numeroRevisao,
+      ],
+    })
+  }
+
+  // Com a revisão por outra pessoa ligada: vai para o signatário escolhido, que a vê na lista dele. Com folha do cliente
+  // ainda não ligada, quem envia (em geral quem digitou e tem a folha de papel na mão) confirma antes: quem autoriza em
+  // geral não sabe qual folha foi usada no cliente
   const pedirAutorizacao = async (signatarioId: string) => {
+    if (!(await confirmarSemLigar(await folhasDoClienteAgora(), 'enviar'))) return
     if (!(await salvar())) return
     try {
       const k = (await api.pedirAutorizacao(id, signatarioId, versao.current)).calibracao
@@ -917,52 +993,25 @@ function EditorCalibracao({ id }: { id: string }) {
   }
 
   const emitir = async () => {
-    // Com a revisão por outra pessoa ligada, emitir é autorizar: sai com a assinatura de quem autoriza
+    // Com a revisão por outra pessoa ligada, emitir é autorizar: sai com a assinatura de quem autoriza. Com folha do cliente
+    // ainda não ligada, a pergunta dela vai no título e no botão (o nº de saída, uma vez só)
     const autorizar = dados.config.exigirRevisor
-    const numeracao = dados.numeroRevisao
-      ? `A correção sai com o mesmo nº ${dados.numeroRevisao} e a data de emissão nova, e não pode mais ser alterada. A versão anterior fica guardada só no sistema.`
-      : numeroReservado
-        ? `O certificado sai com o nº ${numeroReservado.numero}, o da folha de campo, e não pode mais ser alterado. Se precisar corrigir depois, a correção sai com o mesmo número.`
-        : 'O certificado recebe o número definitivo e não pode mais ser alterado. Se precisar corrigir depois, a correção sai com o mesmo número.'
-    // Com folha do cliente ainda não ligada: a confirmação diz o nº dela e o do certificado reservado nela (o da etiqueta,
-    // se foi ela a usada) e o nº com que este sai. A lista é buscada de novo: com a calibração aberta, outra pessoa pode
-    // ter impresso uma folha para o cliente (a tela só a atualiza ao abrir, gravar, ligar uma folha ou trocar a balança)
-    let folhasDoCliente = folhasNaoLigadas
-    try {
-      const atuais = (await api.calibracao(id)).folhasNaoLigadas
-      if (atuais) {
-        folhasDoCliente = atuais
-        setFolhasNaoLigadas(atuais)
-      }
-    } catch {
-      // Sem resposta, a lista da tela
-    }
-    const semLigar = confirmacaoSemLigar(
-      folhasDoCliente,
-      numeroReservado?.numero ?? dados.numeroRevisao ?? null,
-      podeDescartarFolha,
+    const ok = await confirmarSemLigar(await folhasDoClienteAgora(), autorizar ? 'autorizar' : 'emitir', (semLigar) =>
+      confirmacaoDaEmissao({
+        autorizar,
+        numeroRevisao: dados.numeroRevisao ?? null,
+        numeroReservado: numeroReservado?.numero ?? null,
+        semLigar,
+      }),
     )
-    const descricao = autorizar
-      ? `Você autoriza como signatário: o certificado sai com a sua assinatura em “Autorizado por”. ${numeracao}`
-      : numeracao
-    const ok = await confirmar({
-      titulo: semLigar?.titulo ?? (autorizar ? 'Autorizar e emitir o certificado?' : 'Emitir o certificado?'),
-      descricao: semLigar ? `${semLigar.descricao} ${descricao}` : descricao,
-      confirmar: semLigar
-        ? autorizar
-          ? 'Autorizar e emitir sem ligar'
-          : 'Emitir sem ligar'
-        : autorizar
-          ? 'Autorizar e emitir'
-          : 'Emitir certificado',
-    })
     if (!ok) return
     if (!(await salvar())) return
     try {
       const r = await api.emitir(id, { versao: versao.current })
       useTempoReal.getState().mudou('calibracao')
-      if (r.aviso) toast.aviso(`Certificado ${r.calibracao.numero} emitido`, r.aviso)
-      else toast.sucesso(`Certificado ${r.calibracao.numero} emitido`, 'O PDF já está pronto para baixar e enviar.')
+      const inteiros = [r.calibracao.numero]
+      if (r.aviso) toast.aviso(`Certificado ${r.calibracao.numero} emitido`, r.aviso, { inteiros })
+      else toast.sucesso(`Certificado ${r.calibracao.numero} emitido`, 'O PDF já está pronto para baixar e enviar.', { inteiros })
       sujo.current = false
       navegar(`/calibracoes/${id}`, { replace: true })
     } catch (e) {
