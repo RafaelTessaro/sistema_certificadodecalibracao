@@ -909,6 +909,78 @@ export interface EmissaoCertificado {
    * no hífen ("RBC-" / "LMP-0456-2026"). Ausente = emitido antes: o PDF refeito dos dados congelados sai igual ao emitido.
    */
   certificadoDoPadraoInteiro?: boolean
+  /**
+   * Emitido a partir da 1.0.7 com o certificado digital ICP-Brasil da empresa instalado: o PDF sai assinado
+   * digitalmente (PAdES), sem as imagens das assinaturas à mão e com o quadro "Documento assinado digitalmente por…".
+   * Congelado na emissão; é o que sai impresso e o que manda assinar. Ausente = sem assinatura digital (antes da 1.0.7
+   * ou sem certificado instalado): o PDF refeito dos dados congelados sai igual ao emitido.
+   */
+  assinaturaDigital?: AssinaturaDigitalEmissao
+  /**
+   * As partes variáveis da assinatura digital já aplicada ao PDF desta emissão (gravadas uma vez, antes do arquivo,
+   * e nunca mudadas). Com elas e com a parte pública do certificado (tabela `certificados_digitais`), o PDF assinado
+   * que sumir é remontado idêntico, sem a chave privada. Ausente = ainda não assinado, ou sem `assinaturaDigital`.
+   */
+  assinatura?: PartesAssinaturaPdf
+}
+
+/** Quem assina digitalmente o certificado emitido (o titular do certificado ICP-Brasil da empresa). */
+export interface AssinaturaDigitalEmissao {
+  /** Nome do titular (o CN sem o ":CNPJ"). */
+  titular: string
+  /** CNPJ do titular, só dígitos (ou alfanumérico, no formato novo). */
+  cnpj: string
+  /** SHA-256 (hex) do certificado digital usado. */
+  certificado: string
+}
+
+/** Partes variáveis de uma assinatura PAdES aplicada pelo sistema (ver server/pdf/assinaturaPdf.ts). */
+export interface PartesAssinaturaPdf {
+  formato: 1
+  /** Hora da assinatura (/M), ISO 8601 em UTC, truncada ao segundo. */
+  m: string
+  /** Bytes reservados para o /Contents (o CMS). */
+  reservado: number
+  /** /Name, /Location e /Reason do dicionário da assinatura. */
+  nome: string
+  local: string
+  motivo: string
+  /** Permissão DocMDP (/P) em /Reference. */
+  docmdp: 2
+  /** Valor da assinatura RSA, em base64. */
+  valor: string
+  /** TimeStampToken (DER, base64), só quando houver carimbo do tempo. */
+  carimbo?: string
+  /** SHA-256 (hex) do certificado digital que assinou. */
+  certificado: string
+  /** SHA-256 (hex) do PDF antes da assinatura (o do pdfmake), para diagnosticar a remontagem. */
+  hashBase: string
+}
+
+export type SituacaoCertificadoDigital =
+  | 'SEM_CERTIFICADO'
+  | 'OK'
+  | 'VENCENDO'
+  | 'VENCIDO'
+  | 'AINDA_NAO_VALE'
+  | 'NAO_ABRE'
+  | 'CNPJ_DIFERENTE'
+
+/** O que o sistema mostra do certificado digital instalado (nunca a chave, a senha ou o CPF do responsável). */
+export interface CertificadoDigitalPublico {
+  situacao: SituacaoCertificadoDigital
+  titular?: string
+  cnpj?: string
+  tipo?: 'A1' | 'SE-S'
+  emissor?: string
+  serie?: string
+  sha256?: string
+  validoDe?: string
+  validoAte?: string
+  diasParaVencer?: number
+  instaladoEm?: string
+  instaladoPor?: string
+  avisos: string[]
 }
 
 export interface Signatario {
