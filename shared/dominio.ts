@@ -174,6 +174,18 @@ export function somarMeses(iso: string, meses: number): string {
   return alvo.toISOString().slice(0, 10)
 }
 
+/**
+ * A próxima calibração quando a data da calibração muda: se ela era a calculada pela data antiga (o padrão da
+ * empresa, 6, 12 ou 24 meses depois), passa a contar da nova; a digitada à mão fica como está. A tela (a data mudada) e
+ * o servidor (a data prevista da folha ligada) usam esta.
+ */
+export function proximaAcompanhando(proxima: string, dataAntiga: string, dataNova: string, mesesPadrao: number): string {
+  if (!proxima || !dataIsoValida(dataAntiga) || !dataIsoValida(dataNova)) return proxima
+  const meses = [...new Set([mesesPadrao, 12, 6, 24])].filter((n) => n > 0)
+  const n = meses.find((m) => somarMeses(dataAntiga, m) === proxima)
+  return n ? somarMeses(dataNova, n) : proxima
+}
+
 /** Dias entre duas datas ISO (b − a). */
 export function diasEntre(a: string, b: string): number {
   return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000)

@@ -1075,10 +1075,20 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
   // Só o zero lido não é ensaio de carga: pendência também na calibração já medida antes das regras
   if (!legado && pontosLidos > 0 && !cargaLida)
     pendencias.push('Erro de indicação: registre as leituras das cargas acima de zero (POP 7.7).')
+  /**
+   * O zero é uma das cargas (POP 7.7: "zero; Min…"), mesmo com outras 5 lidas: o plano copiado do certificado anterior
+   * ("Calibrar de novo", "Nova calibração") traz a linha dele em branco, e sem a leitura ela não sai no certificado.
+   */
+  const semZero = cargaLida && !zeroLidoAntes
+  const linhaDoZero = entrada.indicacao.pontos.some((p) => ehZero(p.carga, ctx))
   if (!minimosComoAviso) {
     if (pontosLidos > 0 && cargaLida && pontosLidos < 5)
       pendencias.push(
         `Erro de indicação: ${pontosLidos} ${pontosLidos === 1 ? 'ponto lido' : 'pontos lidos'}; o POP pede no mínimo 5, contando o zero (7.7).`,
+      )
+    if (semZero)
+      pendencias.push(
+        `Erro de indicação: falta a leitura do zero, a primeira carga do ensaio${linhaDoZero ? '' : '; acrescente o ponto sem carga'} (POP 7.7).`,
       )
     if (metodo === 'DECRESCENTE')
       pendencias.push('Erro de indicação: a subida é obrigatória; troque o método “Decrescente” (POP 7.7).')
@@ -1245,6 +1255,8 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       nivel: 'atencao',
       mensagem: `Erro de indicação com ${pontosLidos} ponto(s); o mínimo é 5, contando o zero (cg-18 §5.2).`,
     })
+  if (minimosComoAviso && semZero)
+    avisos.push({ nivel: 'atencao', mensagem: 'Erro de indicação sem a leitura do zero, uma das cargas do ensaio (POP 7.7).' })
   // A descida que falta: na calibração nova, a pendência (mais acima); medida antes de ela ser obrigatória, só o aviso
   if (descidaComoAviso && cargasSemDescida.length)
     avisos.push({

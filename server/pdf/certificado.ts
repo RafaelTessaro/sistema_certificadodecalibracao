@@ -683,6 +683,13 @@ const quebrasCuidadas = (e: Pick<EmissaoCertificado, 'semFinalidadeEDimensoes'>)
 /** E-mail até este tamanho fica inteiro numa linha (maior, quebra onde precisar, para não passar da coluna). */
 const EMAIL_INTEIRO = 48
 
+/**
+ * Nº do certificado de um padrão até este tamanho fica inteiro numa linha, no emitido a partir da 1.0.6
+ * (`EmissaoCertificado.certificadoDoPadraoInteiro`). Maior (até 80 letras no cadastro), quebra onde precisar, para não
+ * passar da coluna.
+ */
+const CERTIFICADO_PADRAO_INTEIRO = 28
+
 /** "… – CEP 13506-555": o "CEP" junto do número (espaço sem quebra), no emitido a partir da 1.0.5. */
 const cepJunto = (e: Pick<EmissaoCertificado, 'semFinalidadeEDimensoes'>, endereco: string) =>
   quebrasCuidadas(e) ? endereco.replace(/\bCEP (?=\d)/g, 'CEP\u00a0') : endereco
@@ -975,11 +982,19 @@ function secaoPadroes(ctx: Contexto, n: number): No[] {
       ? ou(p.laboratorio)
       : [{ text: ou(p.laboratorio) }, pequeno(`Acreditação Cgcre ${p.acreditacao.trim().replace(/^cgcre\s*/i, '')}`)]
 
+  // A partir da 1.0.6, o nº do certificado inteiro numa linha, como o e-mail do cliente: partido no hífen ("RBC-" /
+  // "LMP-0456-2026"), parece hifenização e esconde o nº verdadeiro
+  const certificado = (p: Padrao): NoObjeto => {
+    const n = (p.certificado ?? '').trim()
+    return ctx.e.certificadoDoPadraoInteiro === true && n && n.length <= CERTIFICADO_PADRAO_INTEIRO
+      ? { text: n, noWrap: true }
+      : { text: ou(p.certificado) }
+  }
   const linhas = padroes.map((p): No[] => [
     { text: ou(p.identificacao), bold: true },
     descricao(p),
     { text: ou(p.classe), alignment: 'center' },
-    { text: ou(p.certificado) },
+    certificado(p),
     laboratorio(p),
     { text: ou(formatarDataBr(p.validade)), alignment: 'right' },
   ])

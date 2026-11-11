@@ -1918,3 +1918,135 @@ describe('1.0.5: reimpressão pelo nº e folha do cliente com a OS', { timeout: 
     expect((await ligar(k.id, velha.numero)).json().marcas).toEqual({ cargasDoEmaNaFolha: true })
   })
 })
+
+describe('1.0.6: a folha do cliente ainda não ligada e a data prevista', { timeout: 60_000 }, () => {
+  const ligar = (id: string, numero: string) =>
+    t.chamar('PUT', `/api/calibracoes/${id}/folha-campo`, { cookie: t.cookieComum, payload: { numero } })
+  const avulsa = async (consulta = '') => {
+    const r = await t.chamar('GET', `/api/folha-campo${consulta}`, { cookie: t.cookieComum })
+    expect(r.statusCode, r.body).toBe(200)
+    return { numero: r.headers['x-folha-campo'] as string, cc: numeroCertificadoNoPdf(r.rawPayload) ?? '' }
+  }
+  const detalhe = async (id: string) => (await t.chamar('GET', `/api/calibracoes/${id}`, { cookie: t.cookieComum })).json()
+  const numeros = (l: Array<{ numero: string }>) => l.map((f) => f.numero)
+  /** O dia daqui a `n` dias (AAAA-MM-DD, no horário daqui). */
+  const dia = (n: number) => {
+    const d = new Date(Date.now() + n * 86_400_000)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  it('a calibração do cliente lista as folhas impressas para ele (ou para a balança dela) e não ligadas, a da mesma OS primeiro', async () => {
+    const outraOs = await avulsa(`?clienteId=${cliente.id}&os=OS%20111`)
+    const mesmaOs = await avulsa(`?clienteId=${cliente.id}&os=OS%20777`)
+    const daBalanca = await avulsa(`?balancaId=${balanca.id}`)
+    // A em branco (sem cliente) e a de outra balança do cliente não entram
+    await avulsa()
+    const outra = (
+      await criar('/api/balancas', {
+        ...BALANCA_VAZIA,
+        clienteId: cliente.id,
+        fabricante: 'Filizola',
+        numeroSerie: 'FZ-1',
+        faixas: [{ max: 15, e: 0.005, d: 0.005 }],
+      })
+    ).balanca as Balanca
+    await avulsa(`?balancaId=${outra.id}`)
+    const k = await rascunho('777')
+    const d = await detalhe(k.id)
+    expect(numeros(d.folhasNaoLigadas)).toEqual([mesmaOs.numero, daBalanca.numero, outraOs.numero])
+    expect(d.folhasNaoLigadas[0]).toMatchObject({
+      numero: mesmaOs.numero,
+      numeroCertificado: mesmaOs.cc,
+      ordemServico: 'OS 777',
+      mesmaOs: true,
+    })
+    expect(mesmaOs.cc).toMatch(/^CC-/)
+    expect(d.folhasNaoLigadas[1]).toMatchObject({ numero: daBalanca.numero, mesmaOs: false })
+    // A gravação devolve a lista de novo (com a OS gravada)
+    const salvo = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieComum,
+      payload: { ...d.calibracao, ordemServico: 'OS 111', versao: d.calibracao.versao },
+    })
+    expect(salvo.statusCode, salvo.body).toBe(200)
+    expect(salvo.json().folhasNaoLigadas[0]).toMatchObject({ numero: outraOs.numero, mesmaOs: true })
+    // Ligada uma avulsa, a calibração já tem a folha preenchida no cliente: nada a avisar
+    const r = await ligar(k.id, mesmaOs.numero)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().folhasNaoLigadas).toEqual([])
+    expect((await detalhe(k.id)).folhasNaoLigadas).toEqual([])
+    // Outra calibração do cliente vê as que restam
+    const k2 = await rascunho('')
+    expect(numeros((await detalhe(k2.id)).folhasNaoLigadas)).toEqual([daBalanca.numero, outraOs.numero])
+  })
+
+  it('a que não vai ser usada e a impressa pela própria calibração não entram; a do rascunho excluído, sim', async () => {
+    const perdida = await avulsa(`?clienteId=${cliente.id}`)
+    const reservas = (await t.chamar('GET', '/api/numeros-reservados', { cookie: t.cookieAdmin })).json().numeros as Array<{
+      id: number
+      folha: string
+    }>
+    const descarte = await t.chamar(
+      'POST',
+      `/api/numeros-reservados/${reservas.find((n) => n.folha === perdida.numero)!.id}/nao-utilizado`,
+      {
+        cookie: t.cookieAdmin,
+        payload: { motivo: 'A folha molhou na chuva.' },
+      },
+    )
+    expect(descarte.statusCode, descarte.body).toBe(200)
+    // O rascunho excluído devolve a folha dele, com o nº de certificado, para a calibração refeita
+    const excluido = await rascunho('')
+    const daExcluida = await t.chamar('GET', `/api/calibracoes/${excluido.id}/folha-campo`, { cookie: t.cookieComum })
+    expect(daExcluida.statusCode).toBe(200)
+    expect((await t.chamar('DELETE', `/api/calibracoes/${excluido.id}`, { cookie: t.cookieAdmin })).statusCode).toBe(204)
+    const k = await rascunho('')
+    expect((await t.chamar('GET', `/api/calibracoes/${k.id}/folha-campo`, { cookie: t.cookieComum })).statusCode).toBe(200)
+    const lista = (await detalhe(k.id)).folhasNaoLigadas
+    expect(numeros(lista)).toEqual([daExcluida.headers['x-folha-campo']])
+  })
+
+  it('ligada, a data prevista da folha passa para a calibração que ainda tem a data de quando foi criada (e a próxima acompanha)', async () => {
+    const prevista = dia(3)
+    const a = await avulsa(`?clienteId=${cliente.id}&data=${prevista}`)
+    expect(
+      (t.ctx.db.prepare('SELECT data_prevista FROM folhas_campo WHERE numero = ?').get(a.numero) as { data_prevista: string })
+        .data_prevista,
+    ).toBe(prevista)
+    const k = await rascunho('')
+    expect(k.dataCalibracao).toBe(dia(0))
+    const meses = t.ctx.repo.obterConfig().mesesProximaPadrao
+    const r = await ligar(k.id, a.numero)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json()).toMatchObject({
+      dataPrevista: { daFolha: prevista, aplicada: true, daCalibracao: k.dataCalibracao },
+      versao: k.versao + 1,
+    })
+    const gravada: Calibracao = (await detalhe(k.id)).calibracao
+    expect(gravada.dataCalibracao).toBe(prevista)
+    if (meses) expect(gravada.proximaCalibracao).toBe(r.json().dataPrevista.proximaCalibracao)
+    if (meses) expect(r.json().dataPrevista.proximaCalibracao).not.toBe(k.proximaCalibracao)
+    // O registro diz que a data veio da folha
+    const registro = registrosDaFolha().find(([, alvo, d]) => alvo === k.id && d.startsWith('PUT'))
+    expect(registro?.[2]).toContain('a data prevista impressa na folha passou para a calibração')
+  })
+
+  it('com a data escolhida por alguém (diferente da folha), fica a da calibração e a resposta avisa; a mesma data, nada', async () => {
+    const prevista = dia(3)
+    const a = await avulsa(`?clienteId=${cliente.id}&data=${prevista}`)
+    const k = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: balanca.id, dataCalibracao: dia(5) }))
+      .calibracao as Calibracao
+    const r = await ligar(k.id, a.numero)
+    expect(r.json()).toMatchObject({
+      dataPrevista: { daFolha: prevista, aplicada: false, daCalibracao: dia(5) },
+      versao: k.versao,
+    })
+    expect((await detalhe(k.id)).calibracao.dataCalibracao).toBe(dia(5))
+    // A mesma data: nada a dizer; folha sem data (ou impressa antes da 1.0.6): nada
+    const b = await avulsa(`?clienteId=${cliente.id}&data=${prevista}`)
+    const igual = (await criar('/api/calibracoes', { clienteId: cliente.id, balancaId: balanca.id, dataCalibracao: prevista }))
+      .calibracao as Calibracao
+    expect((await ligar(igual.id, b.numero)).json().dataPrevista).toBeNull()
+    const semData = await avulsa(`?clienteId=${cliente.id}`)
+    expect((await ligar((await rascunho('')).id, semData.numero)).json().dataPrevista).toBeNull()
+  })
+})

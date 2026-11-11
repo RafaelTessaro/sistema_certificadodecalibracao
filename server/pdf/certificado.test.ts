@@ -2371,6 +2371,7 @@ describe('quem assina e a correção com o mesmo nº (1.0.4)', () => {
       mesmoNumero: _m,
       semFinalidadeEDimensoes: _f,
       inscricaoEstadualDoCliente: _ie,
+      certificadoDoPadraoInteiro: _c,
       ...emissao
     } = d.emissao
     return { ...d, emissao }
@@ -2485,9 +2486,9 @@ describe('quem assina e a correção com o mesmo nº (1.0.4)', () => {
 describe('sem a finalidade de uso e as dimensões, com a inscrição estadual do cliente (1.0.5)', () => {
   /** A definição do documento, em texto (os rótulos saem em maiúsculas). */
   const texto = (d: DadosCertificadoPdf) => JSON.stringify(definicaoCertificado(d))
-  /** O mesmo certificado emitido pela 1.0.4 (sem as marcas da 1.0.5, congeladas na emissão). */
+  /** O mesmo certificado emitido pela 1.0.4 (sem as marcas da 1.0.5 e da 1.0.6, congeladas na emissão). */
   const de104 = (d: DadosCertificadoPdf): DadosCertificadoPdf => {
-    const { semFinalidadeEDimensoes: _f, inscricaoEstadualDoCliente: _ie, ...emissao } = d.emissao
+    const { semFinalidadeEDimensoes: _f, inscricaoEstadualDoCliente: _ie, certificadoDoPadraoInteiro: _c, ...emissao } = d.emissao
     return { ...d, emissao }
   }
   const sha = (d: DadosCertificadoPdf) => createHash('sha256').update(texto(d)).digest('hex')
@@ -2630,4 +2631,70 @@ describe('sem a finalidade de uso e as dimensões, com a inscrição estadual do
     ]
     for (const [nome, dados, esperado] of casos) expect(sha(de104(dados())), nome).toBe(esperado)
   })
+})
+
+describe('o nº do certificado do padrão sem quebra no hífen (1.0.6)', () => {
+  /** A definição do documento, em texto. */
+  const texto = (d: DadosCertificadoPdf) => JSON.stringify(definicaoCertificado(d))
+  /** O mesmo certificado emitido pela 1.0.5 (sem a marca da 1.0.6, congelada na emissão). */
+  const de105 = (d: DadosCertificadoPdf): DadosCertificadoPdf => {
+    const { certificadoDoPadraoInteiro: _c, ...emissao } = d.emissao
+    return { ...d, emissao }
+  }
+  const sha = (d: DadosCertificadoPdf) => createHash('sha256').update(texto(d)).digest('hex')
+  /** A plataforma com o nº do certificado dos padrões comprido e com hífens (o do jogo partia em "RBC-" / "LMP-…"). */
+  const numerosCompridos = (): DadosCertificadoPdf => {
+    const d = exemploPlataforma300kg()
+    const numeros = ['CAL-12345-2026', 'RBC-LMP-0456-2026', 'T-44100/2026-R1']
+    d.emissao = { ...d.emissao, padroes: d.emissao.padroes.map((p, i) => ({ ...p, certificado: numeros[i % numeros.length] })) }
+    return d
+  }
+
+  it('emitido a partir da 1.0.6: o nº inteiro numa linha; os emitidos antes, como saíam', () => {
+    const d = numerosCompridos()
+    expect(d.emissao.certificadoDoPadraoInteiro).toBe(true)
+    const t = texto(d)
+    const celula = (n: string) => `"text":${JSON.stringify(n)},"noWrap":true}`
+    for (const p of d.emissao.padroes) expect(t).toContain(celula(p.certificado))
+    // Sem o nº (só na prévia: na emissão é pendência), o traço de sempre
+    const sem = numerosCompridos()
+    sem.emissao.padroes[0] = { ...sem.emissao.padroes[0], certificado: ' ' }
+    expect(texto(sem)).toContain(
+      '"alignment":"center","fontSize":7.6,"text":"M1"},{"style":"td","alignment":"left","fontSize":7.6,"text":"—"}',
+    )
+    // Comprido demais para uma linha (até 80 letras no cadastro): quebra como antes, para não passar da coluna
+    const enorme = numerosCompridos()
+    const longo = 'CAL-0001-LABORATORIO-METROLOGICO-PAULISTA-2026'
+    enorme.emissao.padroes[0] = { ...enorme.emissao.padroes[0], certificado: longo }
+    expect(texto(enorme)).toContain(`"text":"${longo}"}`)
+    // Emitido pela 1.0.5 (sem a marca): sem o noWrap
+    expect(texto(de105(d))).not.toMatch(/"text":"(CAL-12345-2026|RBC-LMP-0456-2026|T-44100\/2026-R1)","noWrap":true/)
+  })
+
+  it('emitido pela 1.0.5 (sem a marca): o PDF refeito dos dados congelados é o mesmo documento, byte a byte', () => {
+    const casos: Array<[string, () => DadosCertificadoPdf, string]> = [
+      ['plataforma 300 kg', exemploPlataforma300kg, 'd1b974c402fcf8b3dcf7488934bc755dcfc8a31915117cbead1a06d6108e226c'],
+      ['bancada 30 kg', exemploBancada, '5ddd24dcbe87e8ee9fa1fbb3bf70ef29ea9afa986fc6d2e254cc37f19034252d'],
+      ['classe I 220 g', exemploClasseI220g, '378e0d82fa34960b4849ee7ec97bdf6bb9a07a27e9028e33dc9c9486d1978a07'],
+      ['balança 32 kg', exemploBalanca32kg, '34207259e41fad607bba2d6f68b9065fb7cdc8a26d6824eee93acc979a9b6092'],
+      ['pior caso', exemploPiorCasoAtual, '77de884d2390eb1f18aae32121dff4ce73a7669ee6fd24e0099fd0d87716bb32'],
+    ]
+    for (const [nome, dados, esperado] of casos) expect(sha(de105(dados())), nome).toBe(esperado)
+  })
+
+  it.runIf(temPdftotext)(
+    'no PDF: o nº do certificado do padrão numa linha só, também no emitido com a coluna apertada',
+    async () => {
+      const linhas = textoDoPdf(await gerarCertificadoPdf(numerosCompridos())).split('\n')
+      for (const n of ['CAL-12345-2026', 'RBC-LMP-0456-2026', 'T-44100/2026-R1'])
+        expect(
+          linhas.some((l) => l.includes(n)),
+          n,
+        ).toBe(true)
+      expect(linhas.some((l) => /\bRBC-\s*$|\sRBC-\s{2,}/.test(l))).toBe(false)
+      // Emitido pela 1.0.5: como saía (partido no hífen)
+      const antes = textoDoPdf(await gerarCertificadoPdf(de105(numerosCompridos()))).split('\n')
+      expect(antes.some((l) => l.includes('RBC-LMP-0456-2026'))).toBe(false)
+    },
+  )
 })

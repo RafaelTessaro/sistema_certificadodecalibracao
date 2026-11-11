@@ -286,6 +286,11 @@ const MIGRACOES: Migracao[] = [
   // (ou vai) a campo, quando os pontos dela não desmentem (`folhaDeAntesComCargasDoEma`: a folha do rascunho com pontos
   // saía com os pontos dele). 1.0.5.
   folhasAntesDa105,
+
+  // 21: a data prevista da visita impressa na folha de campo avulsa (a do cliente com a balança em branco, ou a da
+  // balança): ao ligar a folha a uma calibração que ainda tem a data do dia em que foi criada, ela passa para a
+  // calibração; com outra data, a tela avisa para conferir ('' nas outras folhas e nas impressas antes). 1.0.6.
+  (db) => acrescentarColuna(db, 'folhas_campo', 'data_prevista', "TEXT NOT NULL DEFAULT ''"),
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */

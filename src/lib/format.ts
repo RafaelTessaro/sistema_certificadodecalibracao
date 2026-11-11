@@ -6,10 +6,44 @@ export const numero = (v: number) => inteiro.format(v || 0)
 
 export const hojeISO = () => hojeLocalIso()
 
-/** "2026-10-14" (ou ISO com hora) → "14/10/2026"; vazio → "—". */
+/**
+ * A empresa fica em Rio Claro/SP: a data e a hora de um instante gravado (ISO, em UTC: "criado em", "atualizado em",
+ * "impressa em"…) aparecem no horário de Brasília, qualquer que seja o fuso do computador, como no certificado. Das 21h
+ * às 23h59 daqui o UTC já está no dia seguinte: cortar o ISO ("…T01:30Z".slice(0, 10)) daria a data errada.
+ */
+export const FUSO_BRASILIA = 'America/Sao_Paulo'
+
+const relogioBrasilia = new Intl.DateTimeFormat('pt-BR', {
+  timeZone: FUSO_BRASILIA,
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+})
+
+/** O dia (AAAA-MM-DD e DD/MM/AAAA) e a hora (HH:mm) de um instante em Brasília; null se não é um instante válido. */
+function emBrasilia(instante: string | Date): { dia: string; data: string; hora: string } | null {
+  const d = typeof instante === 'string' ? (instante ? new Date(instante) : null) : instante
+  if (!d || Number.isNaN(d.getTime())) return null
+  const p = Object.fromEntries(relogioBrasilia.formatToParts(d).map((x) => [x.type, x.value]))
+  return { dia: `${p.year}-${p.month}-${p.day}`, data: `${p.day}/${p.month}/${p.year}`, hora: `${p.hour}:${p.minute}` }
+}
+
+/** O dia (AAAA-MM-DD) de um instante em Brasília: "2026-11-11T01:30:00.000Z" (22h30 do dia 10) → "2026-11-10"; '' se inválido. */
+export const diaBrasilia = (instante: string | Date) => emBrasilia(instante)?.dia ?? ''
+
+/** Hoje em Brasília (AAAA-MM-DD), para comparar com o dia de um instante (`diaBrasilia`). */
+export const hojeBrasilia = (agora = new Date()) => diaBrasilia(agora)
+
+/** A data sem hora (data da calibração, emissão, validade: AAAA-MM-DD) fica como está; o instante vira o dia de Brasília. */
+const diaDoValor = (v: string) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? v : diaBrasilia(v))
+
+/** "2026-10-14" → "14/10/2026"; instante ISO → o dia em Brasília; vazio ou inválido → "—". */
 export function dataCurta(iso: string | null | undefined) {
   if (!iso) return '—'
-  return formatarDataBr(iso.slice(0, 10)) || '—'
+  return formatarDataBr(diaDoValor(iso)) || '—'
 }
 
 /** Primeira letra maiúscula, o resto como está. */
@@ -23,10 +57,35 @@ export const balancaNaLista = (descricao: string) => cap(descricao.replace(/^Bal
 
 const dataLonga = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
 
-/** "Quarta-feira, 14 de outubro". */
+/** "Quarta-feira, 14 de outubro" (de uma data ou do dia de um instante em Brasília). */
 export function dataExtensa(iso: string) {
-  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`)
+  const d = new Date(`${diaDoValor(iso)}T00:00:00Z`)
   return Number.isNaN(d.getTime()) ? '' : cap(dataLonga.format(d))
+}
+
+const diaPorExtenso = new Intl.DateTimeFormat('pt-BR', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  timeZone: 'UTC',
+})
+
+/** O dia anterior a uma data AAAA-MM-DD. */
+function diaAnterior(dia: string) {
+  const d = new Date(`${dia}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
+
+/** O título do dia de um instante no registro de atividades: "Hoje", "Ontem" ou "Terça-feira, 10 de novembro de 2026" (Brasília). */
+export function tituloDoDia(instante: string, agora = new Date()) {
+  const dia = diaBrasilia(instante)
+  if (!dia) return ''
+  const hoje = hojeBrasilia(agora)
+  if (dia === hoje) return 'Hoje'
+  if (dia === diaAnterior(hoje)) return 'Ontem'
+  return cap(diaPorExtenso.format(new Date(`${dia}T12:00:00Z`)))
 }
 
 const mesAno = new Intl.DateTimeFormat('pt-BR', { month: 'short', timeZone: 'UTC' })
@@ -37,13 +96,10 @@ export function mesCurto(yyyyMM: string) {
   return Number.isNaN(d.getTime()) ? yyyyMM : mesAno.format(d).replace('.', '')
 }
 
-/** Data e hora local: "14/10/2026 às 10:32". */
+/** Data e hora de um instante em Brasília: "14/10/2026 às 10:32". */
 export function dataHora(iso: string | null | undefined) {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '—'
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} às ${p(d.getHours())}:${p(d.getMinutes())}`
+  const b = iso ? emBrasilia(iso) : null
+  return b ? `${b.data} às ${b.hora}` : '—'
 }
 
 /** "há 3 dias", "daqui a 12 dias", "hoje". */

@@ -29,12 +29,11 @@ import {
 } from 'lucide-react'
 import { createElement, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { hojeLocalIso } from '#shared/dominio.ts'
 import type { AcaoAuditoria, GrupoAuditoria, RegistroAuditoria, Usuario } from '#shared/tipos.ts'
 import { ROTULO_GRUPO_AUDITORIA } from '#shared/usuarios.ts'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
-import { cap } from '../../lib/format'
+import { diaBrasilia, FUSO_BRASILIA, tituloDoDia } from '../../lib/format'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Select } from '../ui/Form'
@@ -89,20 +88,9 @@ function iconeDoRegistro(r: RegistroAuditoria): LucideIcon {
   return metodo === 'DELETE' ? Trash2 : metodo === 'POST' ? Plus : Pencil
 }
 
-const formatoDia = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-const formatoHora = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' })
-const formatoCompleto = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'medium' })
-
-/** Dia do registro no fuso deste computador ("2026-10-14"). */
-const diaLocal = (iso: string) => hojeLocalIso(new Date(iso))
-
-function rotuloDia(iso: string) {
-  const dia = diaLocal(iso)
-  const hoje = new Date()
-  if (dia === hojeLocalIso(hoje)) return 'Hoje'
-  if (dia === hojeLocalIso(new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 1))) return 'Ontem'
-  return cap(formatoDia.format(new Date(iso)))
-}
+// O dia e a hora de cada registro no horário de Brasília (`diaBrasilia`, `tituloDoDia`), qualquer que seja o fuso do computador
+const formatoHora = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: FUSO_BRASILIA })
+const formatoCompleto = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'medium', timeZone: FUSO_BRASILIA })
 
 /**
  * "Atividade recente": o registro de acessos e alterações (`GET /api/auditoria`), do mais novo para o
@@ -200,7 +188,7 @@ export function AtividadeRecente({ usuarios, atualizar }: { usuarios: Usuario[];
   const dias = useMemo(() => {
     const out: Array<{ dia: string; itens: RegistroAuditoria[] }> = []
     for (const r of registros) {
-      const dia = diaLocal(r.em)
+      const dia = diaBrasilia(r.em)
       const ultimo = out[out.length - 1]
       if (ultimo?.dia === dia) ultimo.itens.push(r)
       else out.push({ dia, itens: [r] })
@@ -270,7 +258,7 @@ export function AtividadeRecente({ usuarios, atualizar }: { usuarios: Usuario[];
           {dias.map(({ dia, itens }) => (
             <section key={dia}>
               <h4 className="border-b border-line bg-surface-2/70 px-5 py-1.5 text-[11.5px] font-semibold tracking-[0.04em] text-muted uppercase">
-                {rotuloDia(itens[0].em)}
+                {tituloDoDia(itens[0].em)}
               </h4>
               <ul>
                 {itens.map((r) => (

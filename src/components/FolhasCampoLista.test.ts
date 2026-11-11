@@ -128,7 +128,7 @@ describe('Números não utilizados → aba "Folhas de campo"', () => {
     sequencia: 44,
     calibracaoId: '',
     folha: 'FC-2026-00011',
-    reservadoEm: '2026-10-20T13:05:00',
+    reservadoEm: '2026-10-20T16:05:00.000Z',
     reservadoPor: 'Ana',
     situacao: 'reservado',
     motivo: '',

@@ -31,6 +31,7 @@ import {
   normalizarConfig,
   normalizarPadrao,
   OPCOES_CALCULO_PADRAO,
+  proximaAcompanhando,
   temCargaSemDescida,
   textoBusca,
   textoBuscaBalanca,
@@ -50,7 +51,7 @@ import {
 import { somenteDigitos, normalizarCnpj } from '#shared/documentos.ts'
 import { MARCA_FOLHA_REGRAS_105, numeroDaFolha } from '#shared/folhaCampo.ts'
 import { novoId } from '#shared/id.ts'
-import { impedimentoDaTrocaDoTecnico } from '#shared/permissoes.ts'
+import { impedimentoDaTrocaDoTecnico, quemDefineOTecnico } from '#shared/permissoes.ts'
 import type {
   ArquivoAnexo,
   Balanca,
@@ -66,6 +67,7 @@ import type {
   Envio,
   FolhaCampoImpressa,
   FolhaCampoListada,
+  FolhaNaoLigada,
   MensagemTempoReal,
   NumeroReservado,
   Padrao,
@@ -111,6 +113,18 @@ export interface OsDaFolha {
   daFolha: string
   aplicada: boolean
   daCalibracao?: string
+}
+
+/**
+ * A data prevista da visita impressa na folha avulsa ligada a uma calibração: `aplicada` = passou para a calibração (que
+ * ainda tinha a data do dia em que foi criada; `proximaCalibracao`: a próxima, que acompanha); senão, a calibração ficou
+ * com a dela (`daCalibracao`, diferente), e a tela avisa para conferir.
+ */
+export interface DataDaFolha {
+  daFolha: string
+  aplicada: boolean
+  daCalibracao?: string
+  proximaCalibracao?: string
 }
 
 /**
@@ -1080,16 +1094,18 @@ export class Repositorio {
     if (filtro.status === 'ABERTAS') condicoes.push("k.status IN ('RASCUNHO','REVISAO')")
     else if (filtro.status === 'AUTORIZAR') {
       // Só com a revisão por outra pessoa ligada (desligada, ninguém autoriza: qualquer pessoa emite) e só as que ele
-      // pode autorizar (`impedimentoParaEmitir`): signatário e nunca o técnico; as enviadas para ele e as de antes do
-      // pedido (sem signatário escolhido)
+      // pode autorizar (`impedimentoParaEmitir`): signatário e nunca o técnico nem quem o escolheu; as enviadas para ele e
+      // as de antes do pedido (sem signatário escolhido)
       const pedidoPara = "json_extract(k.dados, '$.autorizacao.signatarioId')"
       const u = filtro.usuario
       if (!this.obterConfig().exigirRevisor || !u?.signatario) condicoes.push('0')
       else {
         condicoes.push(
-          `k.status = 'REVISAO' AND json_extract(k.dados, '$.tecnicoId') IS NOT ? AND (${pedidoPara} = ? OR ${pedidoPara} IS NULL)`,
+          `k.status = 'REVISAO' AND json_extract(k.dados, '$.tecnicoId') IS NOT ?
+             AND NOT (COALESCE(json_extract(k.dados, '$.tecnicoId'), '') <> '' AND json_extract(k.dados, '$.tecnicoDefinidoPorId') IS ?)
+             AND (${pedidoPara} = ? OR ${pedidoPara} IS NULL)`,
         )
-        params.push(u.id, u.id)
+        params.push(u.id, u.id, u.id)
       }
     } else if (filtro.status) {
       condicoes.push('k.status = ?')
@@ -1313,7 +1329,8 @@ export class Repositorio {
 
   /**
    * Grava o rascunho. `autor`: quem grava. Quem troca o técnico passa a ser quem o indicou; o próprio técnico que grava
-   * a calibração dele também (confere que foi ele: com a revisão por outra pessoa, quem a digitou pode emitir).
+   * a calibração dele também (confere que foi ele: com a revisão por outra pessoa, quem a digitou pode emitir). Ver
+   * `quemDefineOTecnico`: quem escolheu o técnico não autoriza.
    */
   atualizarCalibracao(id: string, entrada: unknown, autor: { id: string }): Calibracao {
     const valor = validar(normalizarCalibracao(entrada))
@@ -1331,7 +1348,8 @@ export class Repositorio {
       this.verificarLigacoes(valor, atual.substituiId)
       const tecnicoId = valor.tecnicoId || atual.tecnicoId
       // Aguardando a autorização, quem recebeu o pedido não passa a ser o técnico (nunca autoriza o próprio certificado)
-      const impedimento = tecnicoId !== atual.tecnicoId && impedimentoDaTrocaDoTecnico(atual, tecnicoId)
+      // nem o troca (quem escolhe o técnico não autoriza)
+      const impedimento = tecnicoId !== atual.tecnicoId && impedimentoDaTrocaDoTecnico(atual, tecnicoId, autor.id)
       if (impedimento) throw new ErroApi(409, impedimento)
       const k: Calibracao = {
         ...atual,
@@ -1341,7 +1359,7 @@ export class Repositorio {
         // A data de emissão é dada na emissão
         dataEmissao: '',
         tecnicoId,
-        tecnicoDefinidoPorId: tecnicoId !== atual.tecnicoId || tecnicoId === autor.id ? autor.id : atual.tecnicoDefinidoPorId,
+        tecnicoDefinidoPorId: quemDefineOTecnico(atual, tecnicoId, autor.id),
         versao: atual.versao + 1,
         atualizadoEm: this.agora().toISOString(),
       }
@@ -1702,8 +1720,9 @@ export class Repositorio {
    * a revisão de um certificado feito sem folha, não ganha nº novo (409). `pdf`: o arquivo da primeira
    * impressão, se já guardado (`guardarPdfFolhaCampo`): a reimpressão é esse arquivo.
    * `numeroCertificado`: o nº do certificado que sai na folha (ver `numeroParaFolha`), reservado na primeira
-   * impressão; '' = nenhum. `eventos`: os nºs reservados agora, para o registro de atividades. `ordemServico`: a OS
-   * impressa na folha avulsa (passa para a calibração sem OS a que ela for ligada; ver `vincularFolhaCampo`).
+   * impressão; '' = nenhum. `eventos`: os nºs reservados agora, para o registro de atividades. `ordemServico` e
+   * `dataPrevista`: a OS e a data prevista da visita impressas na folha avulsa (passam para a calibração a que ela for
+   * ligada; ver `vincularFolhaCampo`).
    */
   reservarFolhaCampo(e: {
     chave: string
@@ -1711,6 +1730,7 @@ export class Repositorio {
     balancaId?: string
     clienteId?: string
     ordemServico?: string
+    dataPrevista?: string
     por: string
     nova?: boolean
   }): FolhaCampoImpressa & {
@@ -1780,8 +1800,8 @@ export class Repositorio {
       const numero = `FC-${ano}-${String(sequencia).padStart(5, '0')}`
       this.db
         .prepare(
-          `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, ordem_servico, impressa_por, impressa_em, ultima_em)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, ordem_servico, data_prevista, impressa_por, impressa_em, ultima_em)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           numero,
@@ -1792,6 +1812,7 @@ export class Repositorio {
           e.balancaId ?? '',
           e.clienteId ?? '',
           (e.ordemServico ?? '').trim().slice(0, 40),
+          !e.calibracaoId && dataIsoValida(e.dataPrevista) ? e.dataPrevista : '',
           e.por.slice(0, 120),
           agora,
           agora,
@@ -2749,6 +2770,7 @@ export class Repositorio {
     eventos: EventoNumero[]
     numeroDaFolha: NumeroDaFolha | null
     ordemServico: OsDaFolha | null
+    dataPrevista: DataDaFolha | null
     marcas: MarcasDaFolha | null
     barometrosRetirados: BarometrosRetirados | null
     /** A folha da 1.0.5 ligada no lugar da de antes: as marcas que saíram e o barômetro que voltou aos padrões. */
@@ -2763,7 +2785,8 @@ export class Repositorio {
         throw new ErroApi(409, 'A folha de campo só pode ser ligada a uma calibração em andamento (rascunho ou em revisão).')
       const linha = this.db
         .prepare(
-          `SELECT calibracao_id, balanca_id, cliente_id, chave, substituida_por, substituida_em, ordem_servico, antes_105
+          `SELECT calibracao_id, balanca_id, cliente_id, chave, substituida_por, substituida_em, ordem_servico, data_prevista,
+                  antes_105
              FROM folhas_campo WHERE numero = ?`,
         )
         .get(numero) as
@@ -2775,6 +2798,7 @@ export class Repositorio {
             substituida_por: string
             substituida_em: string
             ordem_servico: string
+            data_prevista: string
             antes_105: number
           }
         | undefined
@@ -2799,6 +2823,7 @@ export class Repositorio {
           eventos: [...troca.eventos, ...cert.eventos],
           numeroDaFolha: cert.numeroDaFolha,
           ordemServico: null,
+          dataPrevista: null,
           marcas: null,
           barometrosRetirados: null,
           marcasRetiradas: devolucao?.marcas ?? null,
@@ -2891,6 +2916,9 @@ export class Repositorio {
       // A OS impressa na avulsa (a do cliente com a balança em branco) passa para a calibração sem OS
       const ordemServico = this.osDaFolhaLigada(linha.ordem_servico, k.id)
       if (ordemServico?.aplicada) notas.push('a OS impressa na folha passou para a calibração')
+      // A data prevista impressa na avulsa passa para a calibração que ainda tem a data de quando foi criada
+      const dataPrevista = this.dataDaFolhaLigada(linha.data_prevista, k.id)
+      if (dataPrevista?.aplicada) notas.push('a data prevista impressa na folha passou para a calibração')
       // Impressa antes da 1.0.5: a pressão "opcional" e as cargas em que o EMA muda da folha valem para a calibração
       // (a em branco e a só do cliente, sem balança, mandavam aplicar as cargas em que o EMA muda)
       const semBalanca = !linha.balanca_id && !linha.chave.startsWith(CHAVE_RECUPERADA)
@@ -2917,6 +2945,7 @@ export class Repositorio {
         eventos: [...troca.eventos, ...cert.eventos],
         numeroDaFolha: cert.numeroDaFolha,
         ordemServico,
+        dataPrevista,
         marcas,
         barometrosRetirados,
         marcasRetiradas: devolucao?.marcas ?? null,
@@ -3042,6 +3071,90 @@ export class Repositorio {
     if (atual) return mesmaOs(atual, os) ? null : { daFolha: os, aplicada: false, daCalibracao: atual }
     this.gravarCalibracao({ ...k, ordemServico: os, versao: k.versao + 1, atualizadoEm: this.agora().toISOString() }, false)
     return { daFolha: os, aplicada: true }
+  }
+
+  /**
+   * A data prevista da visita impressa na folha avulsa ligada agora à calibração em andamento (as impressas a partir da
+   * 1.0.6): passa para ela se a data dela ainda é a do dia em que foi criada (o padrão do rascunho: ninguém a escolheu),
+   * e a próxima calibração calculada pela data acompanha (a versão sobe: a tela fica com as novas); com outra data, a da
+   * calibração fica, e a tela avisa para conferir (a data real é a que o técnico escreve no passo 8 da folha). null: a
+   * folha não tem data prevista, ou é a mesma.
+   */
+  private dataDaFolhaLigada(daFolha: string, calibracaoId: string): DataDaFolha | null {
+    if (!dataIsoValida(daFolha)) return null
+    const k = this.obterCalibracao(calibracaoId)
+    if (!k || k.dataCalibracao === daFolha) return null
+    const criada = Number.isNaN(Date.parse(k.criadoEm)) ? '' : hojeLocalIso(new Date(k.criadoEm))
+    if (k.dataCalibracao && k.dataCalibracao !== criada) return { daFolha, aplicada: false, daCalibracao: k.dataCalibracao }
+    const proximaCalibracao = proximaAcompanhando(
+      k.proximaCalibracao,
+      k.dataCalibracao,
+      daFolha,
+      this.obterConfig().mesesProximaPadrao,
+    )
+    this.gravarCalibracao(
+      {
+        ...k,
+        dataCalibracao: daFolha,
+        proximaCalibracao,
+        versao: k.versao + 1,
+        atualizadoEm: this.agora().toISOString(),
+      },
+      false,
+    )
+    return { daFolha, aplicada: true, ...(k.dataCalibracao ? { daCalibracao: k.dataCalibracao } : {}), proximaCalibracao }
+  }
+
+  /**
+   * As folhas de campo impressas para o cliente da calibração em andamento (só do cliente, com a balança em branco, ou
+   * da balança dela) e ainda não ligadas a nenhuma calibração, a da mesma OS primeiro e depois da mais nova para a mais
+   * antiga (até 5): se foi uma delas a usada no cliente, o nº de certificado dela está na etiqueta da balança, e a tela
+   * avisa (sem impedir a emissão). Ficam de fora a que não vai ser usada (o nº registrado como não utilizado), a que foi
+   * trocada por uma folha nova (não foi a campo), a que não chegou a sair no papel (a primeira impressão não terminou) e
+   * a de outra balança do cliente. A calibração que já tem a folha avulsa ligada (a preenchida no cliente) ou que é a
+   * correção de um certificado (a mesma visita) não precisa do aviso.
+   */
+  folhasNaoLigadasDoCliente(
+    k: Pick<Calibracao, 'id' | 'status' | 'clienteId' | 'balancaId' | 'ordemServico' | 'substituiId'>,
+  ): FolhaNaoLigada[] {
+    if ((k.status !== 'RASCUNHO' && k.status !== 'REVISAO') || !k.clienteId || k.substituiId) return []
+    const propria = this.folhaCampoDaCalibracao(k.id)
+    if (propria?.avulsa || propria?.herdada) return []
+    const linhas = this.db
+      .prepare(
+        `SELECT f.numero, f.numero_certificado, f.ordem_servico, f.data_prevista, f.impressa_em,
+                (f.pdf_arquivo = '' AND f.pdf IS NULL) AS sem_pdf
+           FROM folhas_campo f
+          WHERE f.cliente_id = ? AND (f.balanca_id = '' OR f.balanca_id = ?) AND f.substituida_por = ''
+            AND NOT EXISTS (SELECT 1 FROM calibracoes c WHERE f.calibracao_id <> '' AND c.id = f.calibracao_id)
+            AND NOT EXISTS (
+              SELECT 1 FROM numeros_reservados n
+               WHERE n.folha = f.numero AND n.calibracao_id = '' AND n.situacao = 'nao_utilizado' AND n.situacao_por <> ''
+            )
+          ORDER BY f.ano DESC, f.sequencia DESC
+          LIMIT 50`,
+      )
+      .all(k.clienteId, k.balancaId) as Array<{
+      numero: string
+      numero_certificado: string
+      ordem_servico: string
+      data_prevista: string
+      impressa_em: string
+      sem_pdf: number
+    }>
+    const os = k.ordemServico.trim()
+    return linhas
+      .filter((l) => !(Number(l.sem_pdf) && this.impressaoInterrompida(l.impressa_em)))
+      .map((l): FolhaNaoLigada => ({
+        numero: l.numero,
+        numeroCertificado: l.numero_certificado,
+        ordemServico: l.ordem_servico.trim(),
+        mesmaOs: !!os && !!l.ordem_servico.trim() && mesmaOs(os, l.ordem_servico),
+        impressaEm: l.impressa_em,
+        dataPrevista: dataIsoValida(l.data_prevista) ? l.data_prevista : '',
+      }))
+      .sort((a, b) => Number(b.mesmaOs) - Number(a.mesmaOs))
+      .slice(0, 5)
   }
 
   /**

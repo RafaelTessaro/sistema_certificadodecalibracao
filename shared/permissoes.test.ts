@@ -10,6 +10,8 @@ import {
   pode,
   podeAutorizar,
   podeDevolver,
+  QUEM_ESCOLHEU_NAO_AUTORIZA,
+  quemDefineOTecnico,
   RESUMO_NIVEL,
   ROTULO_PERMISSAO,
   SEM_PERMISSAO,
@@ -100,9 +102,42 @@ describe('emitir e autorizar (Configurações → "Exigir revisão por outra pes
     expect(impedimentoParaEmitir(true, k('ana', 'REVISAO', pedido('ana')), ana)).toBe(TECNICO_NAO_AUTORIZA)
   })
 
-  it('ligada: o signatário que não é o técnico faz tudo sozinho (escolhe a si mesmo e autoriza direto)', () => {
+  it('ligada: o signatário que não executou nem escolheu o técnico faz tudo sozinho (escolhe a si mesmo e autoriza)', () => {
     expect(impedimentoParaEmitir(true, k('bia'), ana)).toBeNull()
+    expect(impedimentoParaEmitir(true, { ...k('bia'), tecnicoDefinidoPorId: 'bia' }, ana)).toBeNull()
     expect(impedimentoParaEmitir(true, k(''), ana)).toBeNull()
+  })
+
+  it('ligada: quem escolheu ou trocou o técnico não autoriza (ninguém assina por outra pessoa)', () => {
+    // Ana digitou a folha de Bia e escolheu Bia como técnica: envia para Caio
+    const escolhidaPorAna = { ...k('bia'), tecnicoDefinidoPorId: 'ana' }
+    expect(impedimentoParaEmitir(true, escolhidaPorAna, ana)).toBe(QUEM_ESCOLHEU_NAO_AUTORIZA)
+    expect(impedimentoParaEmitir(true, escolhidaPorAna, caio)).toBeNull()
+    // Com o pedido para ela (enviado antes da troca, ou de antes da 1.0.6), também não
+    const comPedido = { ...k('bia', 'REVISAO', pedido('ana')), tecnicoDefinidoPorId: 'ana' }
+    expect(impedimentoParaEmitir(true, comPedido, ana)).toBe(QUEM_ESCOLHEU_NAO_AUTORIZA)
+    expect(podeDevolver(comPedido, ana)).toBe(false)
+    // A enviada para revisão antes da 1.0.5 (sem o pedido): qualquer outro signatário
+    const antiga = { ...k('bia', 'REVISAO'), tecnicoDefinidoPorId: 'ana' }
+    expect(impedimentoParaEmitir(true, antiga, ana)).toBe(QUEM_ESCOLHEU_NAO_AUTORIZA)
+    expect(impedimentoParaEmitir(true, antiga, caio)).toBeNull()
+    // Sem técnico escolhido ainda (quem criou fica registrado), não conta; desligada, ninguém é impedido
+    expect(impedimentoParaEmitir(true, { ...k(''), tecnicoDefinidoPorId: 'ana' }, ana)).toBeNull()
+    expect(impedimentoParaEmitir(false, escolhidaPorAna, ana)).toBeNull()
+    expect(QUEM_ESCOLHEU_NAO_AUTORIZA).toMatch(/escolheu o técnico/)
+    expect(QUEM_ESCOLHEU_NAO_AUTORIZA).toMatch(/outro signatário/)
+  })
+
+  it('quem passa a ter escolhido o técnico: quem o troca, ou o próprio técnico que grava; senão, quem já tinha escolhido', () => {
+    const gravada = { tecnicoId: 'bia', tecnicoDefinidoPorId: 'ana' }
+    // Caio só corrige a digitação: continua de Ana
+    expect(quemDefineOTecnico(gravada, 'bia', 'caio')).toBe('ana')
+    // Caio troca o técnico: passa a ser dele
+    expect(quemDefineOTecnico(gravada, 'dani', 'caio')).toBe('caio')
+    // A própria técnica grava: confere que foi ela
+    expect(quemDefineOTecnico(gravada, 'bia', 'bia')).toBe('bia')
+    // De antes do registro (sem quem escolheu)
+    expect(quemDefineOTecnico({ tecnicoId: 'bia' }, 'bia', 'caio')).toBeUndefined()
   })
 
   it('ligada, com o pedido: só o signatário escolhido autoriza; ninguém assina por outra pessoa', () => {
@@ -164,10 +199,35 @@ describe('as listas de técnicos e signatários', () => {
     ])
   })
 
-  it('quem autoriza: os signatários, nunca o técnico da calibração', () => {
+  it('quem autoriza: os signatários, nunca o técnico da calibração nem quem o escolheu', () => {
     expect(signatariosParaAutorizar(equipe, 'mauricio').map((u) => u.id)).toEqual(['fabio', 'lizi'])
     expect(signatariosParaAutorizar(equipe, 'fabio').map((u) => u.id)).toEqual(['lizi'])
     expect(signatariosParaAutorizar([{ ...equipe[0], ativo: false }], '')).toEqual([])
+    // Lizi escolheu Maurício: Fábio autoriza; Fábio digitou e escolheu Maurício: Lizi autoriza
+    expect(signatariosParaAutorizar(equipe, 'mauricio', 'lizi').map((u) => u.id)).toEqual(['fabio'])
+    expect(signatariosParaAutorizar(equipe, 'mauricio', 'fabio').map((u) => u.id)).toEqual(['lizi'])
+    // O próprio técnico escolheu, ou ninguém ainda (sem técnico): ninguém mais sai da lista
+    expect(signatariosParaAutorizar(equipe, 'mauricio', 'mauricio').map((u) => u.id)).toEqual(['fabio', 'lizi'])
+    expect(signatariosParaAutorizar(equipe, '', 'fabio').map((u) => u.id)).toEqual(['fabio', 'lizi'])
+  })
+
+  it('aguardando a autorização: quem recebeu o pedido não troca o técnico (passaria a não poder autorizar)', () => {
+    const pedido: PedidoAutorizacao = {
+      signatarioId: 'fabio',
+      signatarioNome: 'Fábio',
+      porId: 'lizi',
+      por: 'Lizi',
+      em: '2026-11-09T12:00:00.000Z',
+    }
+    const aguardando = { status: 'REVISAO' as const, autorizacao: pedido }
+    expect(impedimentoDaTrocaDoTecnico(aguardando, 'mauricio', 'fabio')).toBe(
+      'Você recebeu o pedido de autorização: quem troca o técnico não autoriza. Para trocar, volte para rascunho e envie para outro signatário.',
+    )
+    // Qualquer troca, mesmo sem dizer para quem (a tela trava a lista)
+    expect(impedimentoDaTrocaDoTecnico(aguardando, '', 'fabio')).not.toBeNull()
+    // Os outros trocam (menos para quem recebeu o pedido)
+    expect(impedimentoDaTrocaDoTecnico(aguardando, 'mauricio', 'lizi')).toBeNull()
+    expect(impedimentoDaTrocaDoTecnico({ status: 'RASCUNHO', autorizacao: pedido }, 'mauricio', 'fabio')).toBeNull()
   })
 
   it('o servidor confere o técnico indicado e o signatário escolhido', () => {
@@ -183,5 +243,11 @@ describe('as listas de técnicos e signatários', () => {
     expect(impedimentoDoSignatario({ ...fabio, signatario: false }, 'mauricio')).toMatch(/não tem a marca de signatário/)
     expect(impedimentoDoSignatario({ ...fabio, ativo: false }, 'mauricio')).toMatch(/desativado/)
     expect(impedimentoDoSignatario(undefined, 'mauricio')).toMatch(/não foi encontrado/)
+    // Quem escolheu o técnico não recebe o pedido
+    expect(impedimentoDoSignatario(fabio, 'mauricio', 'fabio')).toBe(
+      'Fábio escolheu o técnico desta calibração e não pode autorizá-la. Escolha outro signatário.',
+    )
+    expect(impedimentoDoSignatario(fabio, 'mauricio', 'lizi')).toBeNull()
+    expect(impedimentoDoSignatario(fabio, 'mauricio', 'mauricio')).toBeNull()
   })
 })

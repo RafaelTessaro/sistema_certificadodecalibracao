@@ -6,7 +6,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { calibracaoVazia, CONFIG_PADRAO } from '#shared/dominio.ts'
-import type { Balanca, Calibracao, CalibracaoInput, PedidoAutorizacao } from '#shared/tipos.ts'
+import type { Balanca, Calibracao, CalibracaoInput, FolhaNaoLigada, PedidoAutorizacao } from '#shared/tipos.ts'
 import type { MembroEquipe } from '../../lib/api'
 import type { ContextoEtapa } from './contexto'
 
@@ -46,11 +46,14 @@ const pedidoPara = (u: MembroEquipe): PedidoAutorizacao => ({
 function etapa(
   o: {
     tecnicoId?: string
+    /** Quem escolheu o técnico (o que a tela gravaria: `quemDefineOTecnico`). */
+    definidoPor?: string
     exigirRevisor?: boolean
     gravada?: Partial<Pick<Calibracao, 'status' | 'autorizacao' | 'devolucao'>>
     equipe?: MembroEquipe[]
     correcao?: { substituiId: string; numeroRevisao: string | null }
     pendencias?: string[]
+    folhasNaoLigadas?: FolhaNaoLigada[]
   } = {},
 ) {
   const f: CalibracaoInput = { ...calibracaoVazia(), tecnicoId: o.tecnicoId ?? 'bia', substituiId: o.correcao?.substituiId ?? '' }
@@ -61,6 +64,9 @@ function etapa(
     equipe: o.equipe ?? EQUIPE,
     status: o.gravada?.status ?? 'RASCUNHO',
     balanca: { unidade: 'kg' } as Balanca,
+    tecnicoDefinidoPorId: o.definidoPor,
+    folhasNaoLigadas: o.folhasNaoLigadas ?? [],
+    vincularFolha: async () => true,
   } as unknown as ContextoEtapa
   const t = renderToStaticMarkup(
     createElement(EtapaRevisao, {
@@ -114,9 +120,9 @@ describe('revisão por outra pessoa ligada: escolher quem autoriza', () => {
     expect(t).toContain('O certificado sai com duas assinaturas: a de quem executou e a de quem autorizou.')
   })
 
-  it('o signatário que não executou já vem escolhido e autoriza direto (faz tudo sozinho)', () => {
+  it('o signatário que não executou nem escolheu o técnico já vem escolhido e autoriza direto', () => {
     usando(ANA)
-    const t = etapa({ tecnicoId: 'bia' })
+    const t = etapa({ tecnicoId: 'bia', definidoPor: 'bia' })
     expect(t).toContain('Ana Signatária (você)')
     expect(t).toContain('Autorizar e emitir')
     expect(t).not.toContain('Enviar para autorização')
@@ -133,11 +139,46 @@ describe('revisão por outra pessoa ligada: escolher quem autoriza', () => {
     expect(t).toContain('Caio Signatário recebe o pedido, revisa e autoriza a emissão.')
   })
 
+  it('o signatário que escolheu o técnico de outra pessoa não se escolhe: envia para outro, e a tela diz por quê', () => {
+    usando(ANA)
+    const t = etapa({ tecnicoId: 'bia', definidoPor: 'ana' })
+    expect(t).not.toContain('Ana Signatária (você)')
+    expect(t).not.toContain('Autorizar e emitir')
+    expect(t).toContain('Enviar para autorização')
+    expect(t).toContain('Caio Signatário recebe o pedido, revisa e autoriza a emissão.')
+    expect(t).toContain('Você escolheu o técnico que executou esta calibração, e quem escolhe o técnico não autoriza.')
+    // Quem escolheu o técnico também não aparece para outra pessoa escolher
+    usando(BIA)
+    expect(etapa({ tecnicoId: 'bia', definidoPor: 'ana' })).not.toContain('Ana Signatária')
+  })
+
+  it('"Quem autoriza" tem a marca de obrigatório, e o botão desativado diz por quê', () => {
+    usando(BIA)
+    const t = etapa({ tecnicoId: 'bia' })
+    expect(t).toContain('Quem autoriza (obrigatório)')
+    // Dois signatários possíveis: nenhum vem escolhido, e o botão diz o que falta
+    expect(t).toContain('Escolha quem autoriza para enviar.')
+    expect(etapa({ tecnicoId: 'bia', pendencias: ['Registre a pressão.'] })).toContain(
+      'Escolha quem autoriza e resolva os itens de “Falta completar” para enviar.',
+    )
+    // Com o único possível já escolhido, nada a dizer
+    const pronto = etapa({ tecnicoId: 'bia', equipe: [ANA, BIA] })
+    expect(pronto).not.toContain('para enviar.')
+    // Aguardando a autorização, ninguém escolhe: sem a marca
+    expect(etapa({ gravada: { status: 'REVISAO', autorizacao: pedidoPara(ANA) } })).not.toContain('(obrigatório)')
+  })
+
   it('sem outro signatário além do técnico, avisa que ninguém pode autorizar', () => {
     usando(ANA)
     const t = etapa({ tecnicoId: 'ana', equipe: [ANA, BIA] })
     expect(t).toContain('Ninguém pode autorizar esta calibração')
     expect(t).toContain('Nenhum signatário')
+    // Nem quem escolheu o técnico: o aviso diz isso
+    usando(CAIO)
+    const escolhida = etapa({ tecnicoId: 'ana', definidoPor: 'caio' })
+    expect(escolhida).toContain(
+      'Ninguém pode autorizar esta calibração: quem executou e quem escolheu o técnico não autorizam, e não há outro signatário.',
+    )
   })
 
   it('a devolvida mostra quem devolveu e a nota', () => {
@@ -201,6 +242,27 @@ describe('revisão por outra pessoa ligada: a enviada para autorização', () =>
     expect(outra).toContain('Enviar para autorização')
     expect(outra).toContain('Voltar para rascunho')
     expect(outra).not.toContain('Autorizar e emitir')
+  })
+})
+
+describe('a folha do cliente ainda não ligada', () => {
+  it('avisa com os dois nºs e oferece ligar, sem impedir a emissão', () => {
+    usando(ANA)
+    const folha: FolhaNaoLigada = {
+      numero: 'FC-2026-00012',
+      numeroCertificado: 'CC-2026-00034',
+      ordemServico: 'OS 777',
+      mesmaOs: true,
+      impressaEm: '2026-11-09T13:00:00.000Z',
+      dataPrevista: '',
+    }
+    const t = etapa({ exigirRevisor: false, folhasNaoLigadas: [folha] })
+    expect(t).toContain(
+      'O cliente tem a folha FC-2026-00012 (da mesma OS 777, certificado CC-2026-00034 reservado) ainda não ligada. Se foi ela a usada no cliente, ligue-a: o nº da etiqueta é CC-2026-00034.',
+    )
+    expect(t).toContain('Ligar esta folha')
+    expect(t).toContain('Tudo pronto para emitir')
+    expect(etapa({ exigirRevisor: false })).not.toContain('Ligar esta folha')
   })
 })
 

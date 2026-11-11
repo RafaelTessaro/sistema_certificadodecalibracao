@@ -2,16 +2,18 @@ import { Building2, ExternalLink, FilePlus2, Link2, Loader2, MapPin } from 'luci
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { enderecoCliente, enderecoEmpresa, inscricaoEstadualNoCertificado, LOCAIS } from '#shared/dominio.ts'
-import { tecnicosParaEscolher } from '#shared/permissoes.ts'
+import { impedimentoDaTrocaDoTecnico, tecnicosParaEscolher } from '#shared/permissoes.ts'
 import type { FolhaCampoImpressa, LocalCalibracao } from '#shared/tipos.ts'
 import { TEXTO_FOLHA_NOVA } from '../../lib/folhaCampo'
 import { dataHora } from '../../lib/format'
+import { useSessao } from '../../store/sessao'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Field, Input, MarcaObrigatorio, Select, Textarea } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
 import type { ContextoEtapa } from './contexto'
 import { dicaDoTecnico } from './equipe'
+import { AvisoFolhasNaoLigadas } from './FolhasNaoLigadas'
 import { marcasDaEtapa } from './obrigatorios'
 import { proximaAcompanhando } from './util'
 
@@ -22,7 +24,18 @@ export function EtapaIdentificacao(ctx: ContextoEtapa) {
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => alterar((s) => ({ ...s, [k]: v }))
   // Só quem tem a marca de técnico; o desta calibração continua na lista mesmo sem a marca hoje. Aguardando a
   // autorização, sem quem recebeu o pedido (o técnico nunca autoriza o próprio certificado)
-  const tecnicos = tecnicosParaEscolher(equipe, f.tecnicoId, { status: ctx.status, autorizacao: ctx.autorizacao ?? null })
+  const aguardando = { status: ctx.status, autorizacao: ctx.autorizacao ?? null }
+  const tecnicos = tecnicosParaEscolher(equipe, f.tecnicoId, aguardando)
+  // Quem recebeu o pedido de autorização não troca o técnico (quem escolhe o técnico não autoriza): a lista fica travada.
+  // Com a revisão ligada, o signatário que escolheu o técnico de outra pessoa fica sabendo que outro signatário autoriza
+  const usuario = useSessao((s) => s.usuario)
+  const travado = impedimentoDaTrocaDoTecnico(aguardando, '', usuario?.id)
+  const escolhidoPorVoce =
+    config.exigirRevisor &&
+    !!usuario?.signatario &&
+    !!usuario.id &&
+    ctx.tecnicoDefinidoPorId === usuario.id &&
+    f.tecnicoId !== usuario.id
   const mudarLocal = (local: LocalCalibracao) =>
     alterar((s) => ({
       ...s,
@@ -39,6 +52,8 @@ export function EtapaIdentificacao(ctx: ContextoEtapa) {
     }))
   return (
     <div className="flex flex-col gap-6">
+      {/* A folha do cliente ainda não ligada (a da mesma OS primeiro): se foi ela a usada, ligue-a */}
+      <AvisoFolhasNaoLigadas folhas={ctx.folhasNaoLigadas} aoLigar={vincularFolha} />
       <Card>
         <CardHeader
           icone={<Building2 className="h-4 w-4" />}
@@ -108,10 +123,10 @@ export function EtapaIdentificacao(ctx: ContextoEtapa) {
             label="Técnico que executou"
             htmlFor="k-tec"
             className="sm:col-span-2"
-            hint={dicaDoTecnico(equipe, f.tecnicoId)}
+            hint={dicaDoTecnico(equipe, f.tecnicoId, { escolhidoPorVoce, travado })}
             {...marca('tecnicoId')}
           >
-            <Select id="k-tec" value={f.tecnicoId} onChange={(e) => set('tecnicoId', e.target.value)}>
+            <Select id="k-tec" value={f.tecnicoId} onChange={(e) => set('tecnicoId', e.target.value)} disabled={!!travado}>
               <option value="">Escolha…</option>
               {tecnicos.map((u) => (
                 <option key={u.id} value={u.id} title={u.cargo || undefined}>

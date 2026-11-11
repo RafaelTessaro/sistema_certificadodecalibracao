@@ -16,6 +16,7 @@ import {
   padroesSemHistorico,
   somarMeses,
 } from '#shared/dominio.ts'
+import { novoId } from '#shared/id.ts'
 import type {
   Balanca,
   Calibracao,
@@ -88,6 +89,25 @@ export function comPecasDosPadroes<T extends Pick<CalibracaoInput, 'indicacao'>>
 }
 
 /**
+ * O plano copiado com a linha do zero, sem leitura, no começo: o zero é uma das cargas (POP 7.7: "zero; Min…") e a
+ * leitura dele, uma pendência do cálculo. O certificado emitido sem ela (a linha apagada antes de emitir) não a tira da
+ * calibração nova nem da folha de campo. Já com ela, o mesmo plano.
+ */
+export function comPontoZero<T extends Pick<CalibracaoInput, 'indicacao'>>(k: T): T {
+  if (!k.indicacao.pontos.length || k.indicacao.pontos.some((p) => !(p.carga > 0))) return k
+  const zero = {
+    id: novoId(),
+    carga: 0,
+    pecas: [],
+    pecasManuais: false,
+    crescente: null,
+    decrescente: null,
+    nivelSubstituicao: 0,
+  }
+  return { ...k, indicacao: { ...k.indicacao, pontos: [zero, ...k.indicacao.pontos] } }
+}
+
+/**
  * O plano copiado de uma calibração anterior (sem as leituras, `semLeituras`), conforme o POP para a classe de hoje da
  * balança: a excentricidade pelo método da classe (POP 7.10: 1; na classe I, 3), o erro de indicação também (POP 7.7:
  * "crescente e decrescente"; na classe I, "crescente com descarga"; o "crescente contínuo" ou o "Decrescente" do
@@ -109,8 +129,9 @@ export function planoConformeAoPop<
  * O plano de uma calibração nova copiado de uma emitida da mesma balança (`anterior`, na unidade atual; "Nova
  * calibração", "Calibrar de novo" e a folha da balança): sem as leituras (`semLeituras`), conforme o POP para a classe
  * de hoje (`planoConformeAoPop`), só com as peças dos `padroes` que entram (os ativos da lista do rascunho novo;
- * `comPecasDosPadroes`) e, sem a declaração de conformidade pedida, sem as cargas em que o EMA muda que as sugestões
- * até a 1.0.4 sempre traziam (`planoDoHistoricoSemConformidade`; POP 7.7). Na emitida a partir da 1.0.5
+ * `comPecasDosPadroes`), sempre com a linha do zero (`comPontoZero`) e, sem a declaração de conformidade pedida, sem
+ * as cargas em que o EMA muda que as sugestões até a 1.0.4 sempre traziam (`planoDoHistoricoSemConformidade`; POP
+ * 7.7). Na emitida a partir da 1.0.5
  * (`emissao.cargasDoEmaAcordadas`), elas ficam: a sugestão já não as trazia, então a que está entre os pontos foi
  * acordada com o cliente. Com a declaração pedida, as que faltavam na última entram (`comCargasDoEmaIncluidas`).
  */
@@ -121,7 +142,9 @@ export function planoDoHistorico(
   emissao: Pick<EmissaoCertificado, 'cargasDoEmaAcordadas'> | null | undefined,
 ): Pick<CalibracaoInput, 'repetibilidade' | 'excentricidade' | 'indicacao' | 'opcoes'> {
   const plano = planoDoHistoricoSemConformidade(
-    comPecasDosPadroes(planoConformeAoPop({ ...semLeituras(anterior), opcoes: anterior.opcoes }, balanca?.classe), padroes),
+    comPontoZero(
+      comPecasDosPadroes(planoConformeAoPop({ ...semLeituras(anterior), opcoes: anterior.opcoes }, balanca?.classe), padroes),
+    ),
     balanca,
     padroes,
     anterior.conformidade.solicitada || emissao?.cargasDoEmaAcordadas === true,

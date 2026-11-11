@@ -560,8 +560,9 @@ export interface Calibracao {
   tecnicoId: ID
   /**
    * Quem indicou o técnico (usuário): quem criou a calibração, quem trocou o técnico depois ou o próprio técnico ao
-   * gravar a calibração dele. Fica registrado (a troca vai também para o registro de atividades); não impede ninguém de
-   * autorizar desde a 1.0.5 (só o técnico não autoriza a própria). A revisão de um certificado mantém o do revisado.
+   * gravar a calibração dele (`quemDefineOTecnico`). Fica registrado (a troca vai também para o registro de atividades).
+   * Com a revisão por outra pessoa ligada, quem escolheu o técnico de outra pessoa não autoriza a calibração (como na
+   * 1.0.4; a 1.0.5 tinha deixado de conferir; `impedimentoParaEmitir`). A revisão de um certificado mantém o do revisado.
    * Quem define é o servidor; ausente = calibração de antes deste campo.
    */
   tecnicoDefinidoPorId?: ID
@@ -893,6 +894,11 @@ export interface EmissaoCertificado {
    * Ausente = emitido antes (as sugestões sempre as traziam): o plano copiado sai sem elas.
    */
   cargasDoEmaAcordadas?: boolean
+  /**
+   * Emitido a partir da 1.0.6: em "Padrões utilizados", o nº do certificado de cada padrão numa linha só, nunca partido
+   * no hífen ("RBC-" / "LMP-0456-2026"). Ausente = emitido antes: o PDF refeito dos dados congelados sai igual ao emitido.
+   */
+  certificadoDoPadraoInteiro?: boolean
 }
 
 export interface Signatario {
@@ -1096,6 +1102,23 @@ export interface FolhaCampoListada {
   motivo?: string
   descartadaEm?: string
   descartadaPor?: string
+}
+
+/**
+ * Uma folha de campo impressa para o cliente da calibração em andamento (só do cliente, com a balança em branco, ou da
+ * balança dela) e ainda não ligada a nenhuma calibração: se foi ela a usada no cliente, o nº de certificado dela já está
+ * na etiqueta da balança. A tela avisa e oferece ligá-la (`Repositorio.folhasNaoLigadasDoCliente`).
+ */
+export interface FolhaNaoLigada {
+  numero: string
+  /** O nº de certificado impresso nela (reservado: o da etiqueta, se foi ela a usada); '' = nenhum. */
+  numeroCertificado: string
+  /** A OS impressa nela ('' = nenhuma) e se é a da calibração (a mais provável). */
+  ordemServico: string
+  mesmaOs: boolean
+  impressaEm: string
+  /** A data prevista da visita impressa nela (AAAA-MM-DD; '' = nenhuma, ou impressa antes da 1.0.6). */
+  dataPrevista: string
 }
 
 export interface Envio {

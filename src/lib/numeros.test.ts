@@ -19,7 +19,7 @@ const numero = (x: Partial<NumeroReservado>): NumeroReservado => ({
   sequencia: 42,
   calibracaoId: 'k1',
   folha: 'FC-2026-00010',
-  reservadoEm: '2026-10-20T13:05:00',
+  reservadoEm: '2026-10-20T16:05:00.000Z',
   reservadoPor: 'Ana',
   situacao: 'reservado',
   motivo: '',
@@ -67,9 +67,9 @@ describe('nº de certificado reservado', () => {
 
   it('quando: o não utilizado, de quando ficou assim e quem; o reservado, de quando foi impresso', () => {
     expect(quandoDoNumero(numero({}))).toBe('20/10/2026 às 13:05 · Ana')
-    expect(quandoDoNumero(numero({ situacao: 'nao_utilizado', situacaoEm: '2026-10-21T08:30:00', situacaoPor: 'Bruno' }))).toBe(
-      '21/10/2026 às 08:30 · Bruno',
-    )
+    expect(
+      quandoDoNumero(numero({ situacao: 'nao_utilizado', situacaoEm: '2026-10-21T11:30:00.000Z', situacaoPor: 'Bruno' })),
+    ).toBe('21/10/2026 às 08:30 · Bruno')
   })
 
   it('aviso da folha ligada cujo nº não vai ser usado: o motivo do servidor e o pedido para corrigir a etiqueta', () => {

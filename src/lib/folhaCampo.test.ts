@@ -2,12 +2,63 @@ import { describe, expect, it, vi } from 'vitest'
 import { api, chaveFolhaAvulsa, JANELA_FOLHA_AVULSA_MS } from './api'
 import {
   abrirFolhaCampo,
+  confirmacaoSemLigar,
   dataDaFolha,
   TEXTO_FOLHA_NOVA,
   textoBarometrosRetirados,
+  textoFolhaNaoLigada,
   textoReimprimir,
+  textosDataDaFolha,
   textosOsDaFolha,
 } from './folhaCampo'
+
+describe('a folha do cliente ainda não ligada', () => {
+  const folha = {
+    numero: 'FC-2026-00012',
+    numeroCertificado: 'CC-2026-00034',
+    ordemServico: 'OS 777',
+    mesmaOs: false,
+    impressaEm: '2026-11-09T13:00:00.000Z',
+    dataPrevista: '',
+  }
+
+  it('o aviso diz o nº da folha e o da etiqueta, e pede para ligar', () => {
+    expect(textoFolhaNaoLigada(folha)).toBe(
+      'O cliente tem a folha FC-2026-00012 (certificado CC-2026-00034 reservado) ainda não ligada. Se foi ela a usada no cliente, ligue-a: o nº da etiqueta é CC-2026-00034.',
+    )
+    // A da mesma OS diz isso; sem nº de certificado, só a folha
+    expect(textoFolhaNaoLigada({ ...folha, mesmaOs: true })).toMatch(
+      /^O cliente tem a folha FC-2026-00012 \(da mesma OS 777, certificado CC-2026-00034 reservado\)/,
+    )
+    expect(textoFolhaNaoLigada({ ...folha, numeroCertificado: '' })).toBe(
+      'O cliente tem a folha FC-2026-00012 ainda não ligada. Se foi ela a usada no cliente, ligue-a.',
+    )
+  })
+
+  it('emitir sem ligar pede confirmação com os dois nºs', () => {
+    expect(confirmacaoSemLigar([], null)).toBeNull()
+    expect(confirmacaoSemLigar([folha], 'CC-2026-00050')).toEqual({
+      titulo: 'Emitir sem ligar a folha FC-2026-00012?',
+      descricao:
+        'A folha FC-2026-00012 (certificado CC-2026-00034) deste cliente ainda não está ligada. Se foi ela a usada no cliente, a etiqueta da balança tem o nº CC-2026-00034, e este certificado sai com o nº CC-2026-00050. Para ligar, cancele e use “Ligar esta folha”.',
+    })
+    const duas = confirmacaoSemLigar([folha, { ...folha, numero: 'FC-2026-00013', numeroCertificado: 'CC-2026-00035' }], null)
+    expect(duas?.titulo).toBe('Emitir sem ligar as folhas do cliente?')
+    expect(duas?.descricao).toMatch(
+      /^As folhas FC-2026-00012 \(certificado CC-2026-00034\) e FC-2026-00013 \(certificado CC-2026-00035\) deste cliente ainda não estão ligadas\. Se uma delas foi a usada no cliente, a etiqueta da balança tem o nº de certificado dela, e este certificado sai com outro nº\./,
+    )
+  })
+
+  it('a data prevista da folha ligada: passou para a calibração, ou é outra (confira no passo 8)', () => {
+    expect(textosDataDaFolha({ daFolha: '2026-11-12', aplicada: true, daCalibracao: '2026-11-10' }).aplicada).toBe(
+      'A data prevista impressa na folha (12/11/2026) passou para esta calibração. Confira com a data real, que o técnico escreve no passo 8 da folha.',
+    )
+    expect(textosDataDaFolha({ daFolha: '2026-11-12', aplicada: false, daCalibracao: '2026-11-15' }).diferente).toBe(
+      'A folha saiu com a data prevista 12/11/2026, e esta calibração está com 15/11/2026. Confira a data real, que o técnico escreve no passo 8 da folha.',
+    )
+    expect(textosDataDaFolha(null)).toEqual({})
+  })
+})
 
 describe('textos da folha de campo', () => {
   it('reimprimir diz o nº e o dia da primeira impressão (o mesmo nº é o mesmo papel)', () => {

@@ -46,7 +46,6 @@ import {
   emailValido,
   enderecoEmpresa,
   formatarNumeroCertificado,
-  hojeLocalIso,
   preencherModelo,
   termosSensiveis,
   TEXTOS_PADRAO,
@@ -67,7 +66,7 @@ import { api, type ConfigEmail } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
 import { textoRecusados } from '../lib/envioEmail'
-import { dataHora, hojeISO, tamanhoArquivo } from '../lib/format'
+import { dataHora, diaBrasilia, hojeBrasilia, hojeISO, tamanhoArquivo } from '../lib/format'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast, useUI, type Tema } from '../store/ui'
 
@@ -1304,11 +1303,12 @@ function SecaoCertificado({ config, salvarParte, aoSujo }: PropsSecao) {
           titulo="Exigir revisão por outra pessoa antes de emitir"
           descricao={
             <>
-              <b className="font-medium text-ink">Ligado:</b> quem digita escolhe um signatário (nunca o técnico que executou) e
-              envia para a autorização dele; o signatário confere, autoriza e o certificado é emitido com duas assinaturas, a de
-              quem executou e a de quem autorizou. O signatário que não executou também pode autorizar direto.{' '}
-              <b className="font-medium text-ink">Desligado:</b> qualquer pessoa que entrou no sistema emite, e o certificado sai
-              só com a assinatura de quem executou (quem emitiu fica registrado).
+              <b className="font-medium text-ink">Ligado:</b> quem digita escolhe um signatário (nunca o técnico que executou nem
+              quem escolheu o técnico) e envia para a autorização dele; o signatário confere, autoriza e o certificado é emitido
+              com duas assinaturas, a de quem executou e a de quem autorizou. O signatário que não executou nem escolheu o técnico
+              também pode autorizar direto: ninguém assina por outra pessoa. <b className="font-medium text-ink">Desligado:</b>{' '}
+              qualquer pessoa que entrou no sistema emite, e o certificado sai só com a assinatura de quem executou (quem emitiu
+              fica registrado).
             </>
           }
         />
@@ -2297,7 +2297,7 @@ function SecaoBackup() {
   const pasta = dados?.pasta ?? ''
   const pastaDados = pasta.replace(/[\\/]backups[\\/]?$/, '')
   const ultima = lista[0]
-  const diasDesdeUltima = ultima ? diasEntre(hojeLocalIso(new Date(ultima.criadoEm)), hojeISO()) : Infinity
+  const diasDesdeUltima = ultima ? diasEntre(diaBrasilia(ultima.criadoEm), hojeBrasilia()) : Infinity
   const visiveis = todas ? lista : lista.slice(0, 8)
 
   return (

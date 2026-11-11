@@ -25,8 +25,8 @@
 //
 // Paginação medida (`montar`): a parte de um passo que passa para a página seguinte repete o título do
 // passo com "(continuação)"; a tabela de pontos vai sempre inteira (só a que não cabe numa página se divide,
-// com o título e o cabeçalho de novo) e, quando passa para a página seguinte, o título, a instrução e o
-// método ficam na sobra desta, com o aviso "tabela na próxima página"; os pontos e as etapas de
+// com o título e o cabeçalho de novo, e a da folha compacta, abaixo) e, quando passa para a página seguinte, o
+// título, a instrução e o método ficam na sobra desta, com o aviso "tabela na próxima página"; os pontos e as etapas de
 // substituição, preenchidos intercalados, ficam na mesma página quando cabem nela (senão, os pontos na página do título
 // e as etapas depois: `comEtapasAParte`).
 //
@@ -35,8 +35,11 @@
 // frente acaba no passo 4 com a linha "Continua na próxima página"), as assinaturas (com o lembrete de preencher a
 // linha Fim do ambiente antes de assinar) e, por último, o bloco Anotações (linhas pontilhadas até o pé da última
 // página, medido na montagem: `comAnotacoes`; sem espaço para as linhas mínimas no fim do verso, sozinho numa página a
-// mais) para o que for diferente, as observações e as anomalias. Sem QR (o nº da folha basta), sem rubrica no rodapé
-// (a data da calibração e a assinatura ficam só no passo das assinaturas) e sem faixa no alto (a OS está no passo 2).
+// mais) para o que for diferente, as observações e as anomalias. Montada assim, se os passos passam da 2ª página
+// (múltiplas faixas com muitos apoios), a folha sai compacta (`Extras.compacta`): as posições da excentricidade em duas
+// colunas e, só se ainda faltar, a tabela dos pontos dividida entre a frente e o verso, com as mesmas linhas de escrever.
+// Sem QR (o nº da folha basta), sem rubrica no rodapé (a data da calibração e a assinatura ficam só no passo das
+// assinaturas) e sem faixa no alto (a OS está no passo 2).
 // Instruções de uma linha por passo (a curta na barra do título; o POP explica o resto); a chegada e a identificação da
 // balança (passos 2 e 3) num bloco só, com as medidas, o telefone e o nº que não se partem na quebra de linha
 // (`medidasSemQuebra`); o ambiente no início e no fim numa tabela só, no passo 4; o método de carregamento numa linha
@@ -1213,6 +1216,14 @@ export interface Extras {
    * fim da última página, e o bloco vai sozinho para uma página a mais, depois do passo 8 (a caixa até o pé dela).
    */
   anotacoes?: { altura: number; paginaNova?: boolean }
+  /**
+   * Folha compacta: montada do jeito de sempre, os passos passaram da 2ª página (múltiplas faixas com muitos apoios: o
+   * passo 5 inteiro no verso, com o 6 e o 7, que não cabem nele com o 8). 'posicoes': no tanque e na plataforma com
+   * muitos apoios, as posições da excentricidade em duas colunas lado a lado, com a mesma altura de escrever; 'pontos':
+   * também a tabela dos pontos dividida entre a frente e o verso, onde a frente acaba (o técnico vira a folha no meio da
+   * subida e da descida: melhor que os passos 7 e 8 numa 3ª página). Ver `montar`.
+   */
+  compacta?: 'posicoes' | 'pontos'
 }
 
 const SEM_EXTRAS: Extras = { continuacoes: [], cortes: [] }
@@ -2278,10 +2289,12 @@ function pontosComEtapas(ctx: Contexto): boolean {
 /**
  * A montagem pode dividir a tabela de pontos entre as páginas (medindo onde a página acaba)? Só a que não
  * cabe numa página: a que cabe vai sempre inteira (com até ≈ 20 linhas, o técnico nunca vira a folha no
- * meio da subida ou da descida).
+ * meio da subida ou da descida). A exceção é a folha compacta que divide os pontos (`Extras.compacta`): inteira, a
+ * tabela levaria os passos 7 e 8 para uma 3ª página.
  */
 function pontosDivisiveis(ctx: Contexto): boolean {
-  return !ctx.extras.semBlocos && pontosLongos(ctx)
+  // Na folha compacta que divide os pontos (`Extras.compacta`), também a que cabe numa página
+  return !ctx.extras.semBlocos && (pontosLongos(ctx) || ctx.extras.compacta === 'pontos')
 }
 
 /** A tabela dos pontos inteira (com as etapas, quando vão juntas): a parte que passa inteira para a página seguinte. */
@@ -2823,7 +2836,7 @@ function passoExcentricidade(ctx: Contexto, n: number, fim: No[] = []): No[] {
   const receptor = b?.receptor ?? 'RETANGULAR'
   // Em branco o receptor não é conhecido: as posições 1 a 5 dos desenhos de referência vêm impressas
   // (`posicoesEmBranco`); as demais (mais de 4 apoios ou tanque) são escritas no local
-  const rotulos = b ? (ecc?.posicoes.length ? ecc.posicoes : posicoesExcentricidade(receptor, b.apoios)) : []
+  const rotulos = posicoesDaFolha(ctx)
   const diagrama = b ? diagramaExcentricidade(receptor, rotulos, -1, b.apoios, { frente: 'FRENTE' }) : null
   // Rodoviária, mais de 4 apoios e tanque: o desenho comprido à esquerda da tabela das posições; prato e plataforma:
   // o desenho e as posições na horizontal, lado a lado
@@ -2836,22 +2849,38 @@ function passoExcentricidade(ctx: Contexto, n: number, fim: No[] = []): No[] {
       ? LARGURA_DESENHO + 6
       : 2 * LARGURA_DESENHO_REFERENCIA + 6
   const comCarga = !!ecc && ecc.carga > 0
+  // Folha compacta (`Extras.compacta`), no tanque e na plataforma com muitos apoios: as posições em duas colunas lado a
+  // lado (a 1ª metade à esquerda), cada uma com a sua linha de escrever
+  const duasColunas = !!ctx.extras.compacta && posicoesEmDuasColunas(ctx)
+  const linhasDasPosicoes = duasColunas ? Math.ceil(rotulos.length / 2) : rotulos.length
   // Desenho comprido: a coluna da esquerda (o desenho e, com a carga prevista, a caixa dela embaixo) não passa da
   // tabela das posições (`layoutComprido`): o passo 7 vai inteiro com o 8, e a sobra desceria o fim da folha
   const { larguraDiagrama, cargaNoDesenho: comCargaNoDesenho } = comprido
-    ? layoutComprido(ctx, receptor, rotulos.length, diagrama, comCarga ? ecc! : null, larguraEsquerda)
+    ? layoutComprido(ctx, receptor, linhasDasPosicoes, diagrama, comCarga ? ecc! : null, larguraEsquerda)
     : { larguraDiagrama: LARGURA_DESENHO, cargaNoDesenho: false }
-  const tabela = tabelaLeituras(
-    [
-      { titulo: 'Nº', largura: 15, alinhamento: 'center' },
-      { titulo: 'Posição', largura: '*' },
-      // O zero antes de cada posição só na classe I (método 3)
-      ...(classeI ? [{ titulo: 'Zero antes', unidade: uc, largura: 70 }] : []),
-      { titulo: 'Indicação', unidade: uc, largura: 76 },
-    ],
-    rotulos.map((r, i): CelulaTabela[] => [nro(String(i + 1)), pre(r), ...(classeI ? [livre()] : []), livre()]),
-    { altura: alturaLeitura(ctx, N.excentricidade) },
-  )
+  const tabelaDasPosicoes = (de: number, ate: number) =>
+    tabelaLeituras(
+      [
+        { titulo: 'Nº', largura: 15, alinhamento: 'center' },
+        { titulo: 'Posição', largura: '*' },
+        // O zero antes de cada posição só na classe I (método 3)
+        ...(classeI ? [{ titulo: 'Zero antes', unidade: uc, largura: 70 }] : []),
+        { titulo: 'Indicação', unidade: uc, largura: 76 },
+      ],
+      rotulos
+        .slice(de, ate)
+        .map((r, j): CelulaTabela[] => [nro(String(de + j + 1)), pre(r), ...(classeI ? [livre()] : []), livre()]),
+      { altura: alturaLeitura(ctx, N.excentricidade) },
+    )
+  const tabela: NoObjeto = duasColunas
+    ? {
+        columns: [
+          { width: '*', stack: [tabelaDasPosicoes(0, linhasDasPosicoes)] },
+          { width: '*', stack: [tabelaDasPosicoes(linhasDasPosicoes, rotulos.length)] },
+        ],
+        columnGap: 6,
+      }
+    : tabelaDasPosicoes(0, rotulos.length)
   // O método numa frase fixa, no começo da instrução; sem carga prevista, a regra da carga vai junto (a caixa da
   // carga fica livre para escrever). Prato e plataforma com a carga prevista (impressa na tabela das posições): a
   // instrução curta, na barra do título
@@ -2947,6 +2976,29 @@ const CABECALHO_POSICOES = 0.8 + 1.1 + FONTE_ROTULO * 0.95 * LINHA_INTER + 0.8 +
 const ALEM_DA_LINHA = 3.5
 /** Largura mínima do desenho do tanque e da plataforma com mais de 4 apoios (pt), quando ele encolhe para a tabela. */
 const DESENHO_COMPRIDO_MINIMO = 120
+/** Posições a partir das quais a folha compacta as põe em duas colunas (`Extras.compacta`): 3 linhas ou mais em cada. */
+const MIN_POSICOES_EM_DUAS_COLUNAS = 6
+
+/** As posições da excentricidade da balança cadastrada, na ordem do desenho (em branco, nenhuma: são escritas). */
+function posicoesDaFolha(ctx: Contexto): string[] {
+  const ecc = ctx.plano?.excentricidade
+  if (!ctx.b) return []
+  return ecc?.posicoes.length ? ecc.posicoes : posicoesExcentricidade(ctx.b.receptor ?? 'RETANGULAR', ctx.b.apoios)
+}
+
+/**
+ * A folha compacta pode pôr as posições em duas colunas (`Extras.compacta`)? No tanque e na plataforma com muitos apoios
+ * (o desenho comprido ao lado da tabela), com o ensaio previsto, fora da classe I (a coluna "Zero antes" não caberia).
+ */
+function posicoesEmDuasColunas(ctx: Contexto): boolean {
+  const receptor = ctx.b?.receptor
+  return (
+    (receptor === 'APOIOS' || receptor === 'TANQUE') &&
+    ctx.b?.classe !== 'I' &&
+    ctx.plano?.excentricidade.aplicavel !== false &&
+    posicoesDaFolha(ctx).length >= MIN_POSICOES_EM_DUAS_COLUNAS
+  )
+}
 
 /**
  * Altura (pt) da caixa da carga embaixo do desenho comprido (`cargaEmBaixoDoDesenho`) numa coluna da largura dada: a
@@ -3735,12 +3787,40 @@ async function comEnsaiosNoVerso(d: DadosFolhaCampo, m: Medida): Promise<Medida>
  * juntos, e nada mais alto que uma página fica inteiro); se ainda assim faltar algo, erro, antes de guardar o PDF.
  */
 export async function montar(d: DadosFolhaCampo): Promise<Medida> {
-  let m = await montarCom(d, SEM_EXTRAS)
+  const m = await montarDe(d, SEM_EXTRAS)
+  // Os passos passaram da 2ª página (múltiplas faixas com muitos apoios): a folha compacta, o mínimo que os põe nas
+  // duas (só as Anotações podem ir para uma página a mais); nem com ela, como estava
+  if (!passosAlemDoVerso(m)) return m
+  for (const compacta of niveisDaFolhaCompacta(contexto(d))) {
+    const r = await montarDe(d, { ...SEM_EXTRAS, compacta }).catch(() => null)
+    if (r && !passosAlemDoVerso(r)) return r
+  }
+  return m
+}
+
+/**
+ * Os níveis da folha compacta que mudam algo nesta folha, do menor para o maior: 'posicoes' (ver
+ * `posicoesEmDuasColunas`) e 'pontos', a tabela dos pontos dividida, só sem as cargas de substituição (os pontos e as
+ * etapas, preenchidos intercalados, ficariam em lados diferentes da folha).
+ */
+function niveisDaFolhaCompacta(ctx: Contexto): Array<NonNullable<Extras['compacta']>> {
+  return [
+    ...(posicoesEmDuasColunas(ctx) ? (['posicoes'] as const) : []),
+    ...(ctx.plano && !comSubstituicao(ctx) ? (['pontos'] as const) : []),
+  ]
+}
+
+/** Os passos (até o 8, que vai no bloco do 7) passaram da 2ª página, a frente e o verso de uma folha. */
+const passosAlemDoVerso = (m: Medida) => (m.marcas.get(`fim:passo-${N.excentricidade}`)?.pagina ?? 0) > 2
+
+/** A montagem de `montar`, a partir das marcas dadas (`base`: a de sempre ou a compacta). */
+async function montarDe(d: DadosFolhaCampo, base: Extras): Promise<Medida> {
+  let m = await montarCom(d, base)
   // Um bloco que cabia no pé da página por uma fração de ponto sumiu: empurrado, ele passa para a seguinte
   for (let i = 0; i < 3 && m.faltando.length; i++)
-    m = await montarCom(d, { ...SEM_EXTRAS, folgas: [...new Set([...(m.extras.folgas ?? []), ...m.faltando])] })
+    m = await montarCom(d, { ...base, folgas: [...new Set([...(m.extras.folgas ?? []), ...m.faltando])] })
   if (!m.faltando.length) return comAnotacoes(d, await comLinhasFolgadas(d, m))
-  const seguro = await montarCom(d, { ...SEM_EXTRAS, semBlocos: true })
+  const seguro = await montarCom(d, { ...base, semBlocos: true })
   if (!seguro.faltando.length) return comAnotacoes(d, seguro)
   const passos = [...new Set(seguro.faltando.map((id) => /\d+/.exec(id)?.[0]).filter(Boolean))]
   throw new ErroApi(

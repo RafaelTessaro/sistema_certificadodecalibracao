@@ -80,23 +80,49 @@ export function podeAutorizar(usuario: Pick<UsuarioSessao, 'signatario'> | null 
 export const TECNICO_NAO_AUTORIZA = 'O técnico que executou não autoriza o próprio certificado. Escolha outro signatário.'
 
 /**
+ * Quem escolheu ou trocou "Técnico que executou" não autoriza a calibração (como na 1.0.4): sem isso, bastava escolher um
+ * colega como técnico para autorizar a própria calibração com o nome dele. Ninguém assina por outra pessoa.
+ */
+export const QUEM_ESCOLHEU_NAO_AUTORIZA =
+  'Você escolheu o técnico que executou esta calibração, e quem escolhe o técnico não autoriza. Envie para outro signatário.'
+
+/**
+ * Quem passa a ter escolhido o técnico quando `autorId` grava a calibração com `tecnicoId` (`tecnicoDefinidoPorId`): quem
+ * o troca; o próprio técnico que grava a calibração dele (confere que foi ele: quem digitou pode autorizar); senão, quem
+ * já tinha escolhido (quem só corrige a digitação não passa a ser). O servidor (`atualizarCalibracao`) e a tela usam esta.
+ */
+export function quemDefineOTecnico(
+  atual: Pick<Calibracao, 'tecnicoId' | 'tecnicoDefinidoPorId'>,
+  tecnicoId: string,
+  autorId: string,
+): string | undefined {
+  return tecnicoId !== atual.tecnicoId || tecnicoId === autorId ? autorId : atual.tecnicoDefinidoPorId
+}
+
+/** Escolheu o técnico (que não é ele mesmo) da calibração: não autoriza. Sem técnico escolhido ainda, não conta. */
+const escolheuOTecnico = (k: Pick<Calibracao, 'tecnicoId' | 'tecnicoDefinidoPorId'>, id: string | undefined) =>
+  !!k.tecnicoId && !!id && k.tecnicoDefinidoPorId === id && k.tecnicoId !== id
+
+/**
  * Por que este usuário não pode emitir o certificado da calibração agora, ou null. O servidor (`emitirCertificado`) e a
  * tela usam esta.
  * - Revisão por outra pessoa desligada (`exigirRevisor`): qualquer pessoa que entrou no sistema emite (o certificado sai
  *   só com a assinatura do técnico).
- * - Ligada: emitir é autorizar, com a assinatura de quem autoriza. Só um signatário que não seja o técnico que executou;
- *   com o pedido de autorização (`Calibracao.autorizacao`), só o signatário escolhido (ninguém põe a assinatura de outra
- *   pessoa sem ela agir). A enviada para revisão antes da 1.0.5 (sem o pedido), qualquer signatário que não seja o
- *   técnico; o rascunho, o signatário que escolhe a si mesmo (autoriza direto).
+ * - Ligada: emitir é autorizar, com a assinatura de quem autoriza. Só um signatário que não seja o técnico que executou
+ *   nem quem escolheu ou trocou o técnico (`tecnicoDefinidoPorId`, como na 1.0.4); com o pedido de autorização
+ *   (`Calibracao.autorizacao`), só o signatário escolhido (ninguém põe a assinatura de outra pessoa sem ela agir). A
+ *   enviada para revisão antes da 1.0.5 (sem o pedido), qualquer outro signatário; o rascunho, o signatário que escolhe a
+ *   si mesmo (autoriza direto).
  */
 export function impedimentoParaEmitir(
   exigirRevisor: boolean,
-  k: Pick<Calibracao, 'tecnicoId' | 'status' | 'autorizacao'>,
+  k: Pick<Calibracao, 'tecnicoId' | 'tecnicoDefinidoPorId' | 'status' | 'autorizacao'>,
   usuario: Pick<UsuarioSessao, 'id' | 'signatario'> | null | undefined,
 ): string | null {
   if (!exigirRevisor) return null
   if (!usuario?.signatario) return SEM_PERMISSAO_EMITIR
   if (k.tecnicoId && k.tecnicoId === usuario.id) return TECNICO_NAO_AUTORIZA
+  if (escolheuOTecnico(k, usuario.id)) return QUEM_ESCOLHEU_NAO_AUTORIZA
   const pedido = k.status === 'REVISAO' ? k.autorizacao : null
   if (pedido && pedido.signatarioId !== usuario.id)
     return `Esta calibração foi enviada para a autorização de ${pedido.signatarioNome}: só essa pessoa pode autorizar.`
@@ -108,7 +134,7 @@ export function impedimentoParaEmitir(
  * com a revisão por outra pessoa ligada (`impedimentoParaEmitir`).
  */
 export function podeDevolver(
-  k: Pick<Calibracao, 'tecnicoId' | 'status' | 'autorizacao'>,
+  k: Pick<Calibracao, 'tecnicoId' | 'tecnicoDefinidoPorId' | 'status' | 'autorizacao'>,
   usuario: Pick<UsuarioSessao, 'id' | 'signatario'> | null | undefined,
 ): boolean {
   return k.status === 'REVISAO' && !impedimentoParaEmitir(true, k, usuario)
@@ -132,18 +158,35 @@ export function tecnicosParaEscolher<T extends Membro>(
 }
 
 /**
- * Por que o técnico não pode passar a ser esta pessoa agora, ou null: aguardando a autorização, quem recebeu o pedido
- * não passa a ser o técnico (o técnico nunca autoriza o próprio certificado; o servidor confere a troca com esta).
+ * Por que o técnico não pode passar a ser esta pessoa agora (trocado por `autorId`), ou null. Aguardando a autorização:
+ * quem recebeu o pedido não passa a ser o técnico (o técnico nunca autoriza o próprio certificado) nem troca o técnico
+ * (quem escolhe o técnico não autoriza; a tela trava a lista para ele). O servidor confere a troca com esta.
  */
-export function impedimentoDaTrocaDoTecnico(k: Pick<Calibracao, 'status' | 'autorizacao'>, tecnicoId: string): string | null {
+export function impedimentoDaTrocaDoTecnico(
+  k: Pick<Calibracao, 'status' | 'autorizacao'>,
+  tecnicoId: string,
+  autorId?: string,
+): string | null {
   const pedido = k.status === 'REVISAO' ? k.autorizacao : null
-  if (!pedido || !tecnicoId || tecnicoId !== pedido.signatarioId) return null
+  if (!pedido) return null
+  if (autorId && autorId === pedido.signatarioId)
+    return 'Você recebeu o pedido de autorização: quem troca o técnico não autoriza. Para trocar, volte para rascunho e envie para outro signatário.'
+  if (!tecnicoId || tecnicoId !== pedido.signatarioId) return null
   return `${pedido.signatarioNome} recebeu o pedido de autorização e não pode ser o técnico desta calibração. Para trocar, volte para rascunho e escolha outro signatário.`
 }
 
-/** Quem pode ser escolhido para autorizar: os signatários ativos, menos o técnico que executou. */
-export function signatariosParaAutorizar<T extends Membro>(equipe: readonly T[], tecnicoId: string): T[] {
-  return equipe.filter((u) => u.signatario && u.ativo !== false && u.id !== tecnicoId)
+/**
+ * Quem pode ser escolhido para autorizar: os signatários ativos, menos o técnico que executou e quem escolheu o técnico
+ * (`definidoPorId`: `tecnicoDefinidoPorId`, ou quem passa a ser com a troca na tela, `quemDefineOTecnico`).
+ */
+export function signatariosParaAutorizar<T extends Membro>(equipe: readonly T[], tecnicoId: string, definidoPorId = ''): T[] {
+  return equipe.filter(
+    (u) =>
+      u.signatario &&
+      u.ativo !== false &&
+      u.id !== tecnicoId &&
+      !escolheuOTecnico({ tecnicoId, tecnicoDefinidoPorId: definidoPorId }, u.id),
+  )
 }
 
 /** Por que esta pessoa não pode ser indicada como técnico que executou, ou null (o servidor confere a troca com esta). */
@@ -158,11 +201,15 @@ export function impedimentoDoTecnico(u: Pick<Usuario, 'nome' | 'ativo' | 'tecnic
 export function impedimentoDoSignatario(
   u: Pick<Usuario, 'id' | 'nome' | 'ativo' | 'signatario'> | undefined,
   tecnicoId: string,
+  /** Quem escolheu o técnico (`tecnicoDefinidoPorId`): não recebe o pedido. */
+  definidoPorId = '',
 ): string | null {
   if (!u) return 'O signatário escolhido não foi encontrado. Escolha de novo.'
   if (!u.ativo) return `${u.nome} está com o usuário desativado. Escolha outro signatário.`
   if (!u.signatario) return `${u.nome} não tem a marca de signatário (em Usuários). Escolha outro signatário.`
   if (u.id === tecnicoId)
     return `${u.nome} executou esta calibração e não autoriza o próprio certificado. Escolha outro signatário.`
+  if (escolheuOTecnico({ tecnicoId, tecnicoDefinidoPorId: definidoPorId }, u.id))
+    return `${u.nome} escolheu o técnico desta calibração e não pode autorizá-la. Escolha outro signatário.`
   return null
 }

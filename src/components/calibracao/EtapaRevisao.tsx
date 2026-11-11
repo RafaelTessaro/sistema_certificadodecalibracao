@@ -17,9 +17,10 @@ import { dataHora, hojeISO } from '../../lib/format'
 import { useSessao } from '../../store/sessao'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
-import { Select } from '../ui/Form'
+import { MarcaObrigatorio, Select } from '../ui/Form'
 import type { ContextoEtapa } from './contexto'
-import { cabecalhoDaRevisao, estadoDaEmissao } from './equipe'
+import { cabecalhoDaRevisao, estadoDaEmissao, motivoDoEnvioDesativado } from './equipe'
+import { AvisoFolhasNaoLigadas } from './FolhasNaoLigadas'
 import { AvisoItem } from './PainelResultados'
 
 export function EtapaRevisao({
@@ -62,8 +63,13 @@ export function EtapaRevisao({
   const usuario = useSessao((s) => s.usuario)
   const r = calc?.resultado
   const exigir = config.exigirRevisor
-  // O técnico da tela (mesmo a troca ainda não gravada: a emissão grava antes) com a situação gravada
-  const estado = estadoDaEmissao(exigir, { ...gravada, tecnicoId: f.tecnicoId }, usuario, equipe)
+  // O técnico da tela (mesmo a troca ainda não gravada: a emissão grava antes) e quem o escolheu, com a situação gravada
+  const estado = estadoDaEmissao(
+    exigir,
+    { ...gravada, tecnicoId: f.tecnicoId, tecnicoDefinidoPorId: ctx.tecnicoDefinidoPorId },
+    usuario,
+    equipe,
+  )
   const { modo, signatarios } = estado
   const pedido = gravada.status === 'REVISAO' ? (gravada.autorizacao ?? null) : null
   const devolucao = gravada.status === 'RASCUNHO' ? (gravada.devolucao ?? null) : null
@@ -73,12 +79,22 @@ export function EtapaRevisao({
   const signatarioId = escolha !== null && signatarios.some((u) => u.id === escolha) ? escolha : estado.sugerido
   const escolhido = signatarios.find((u) => u.id === signatarioId)
   const tecnico = equipe.find((u) => u.id === f.tecnicoId)
+  // Quem escolheu o técnico de outra pessoa também não autoriza (o aviso de ninguém poder autorizar diz isso)
+  const escolheuOutro =
+    !!ctx.tecnicoDefinidoPorId &&
+    ctx.tecnicoDefinidoPorId !== f.tecnicoId &&
+    equipe.some((u) => u.id === ctx.tecnicoDefinidoPorId && u.signatario)
   const [emitindo, setEmitindo] = useState(false)
   // A numeração segue o ano da emissão (hoje). Sem exemplo: com a sequência 1, parecia o nº que o certificado vai receber
   const anoEmissao = hojeISO().slice(0, 4)
   const avisos = [...(r?.avisos ?? []), ...(calc?.comoEncontrado?.avisos ?? [])].filter((a) => a.nivel !== 'info')
   const pronto = pendencias.length === 0
   const bloqueado = !pronto || salvando || emitindo
+  // Ao lado de "Enviar para autorização" desativado: o que falta
+  const motivoEnvio =
+    modo === 'escolher' && signatarioId !== eu
+      ? motivoDoEnvioDesativado({ pronto, signatarioId, semSignatarios: signatarios.length === 0, salvando })
+      : null
   // Quem vai assinar como "Autorizado por" (ligada) ou quem emite (desligada: fica só registrado). Antes da emissão, o
   // rótulo fica no presente ("Quem autoriza", "Quem emite"): "Autorizado por" pareceria já autorizado
   const quemAutoriza =
@@ -153,6 +169,8 @@ export function EtapaRevisao({
             })}
           </ul>
         )}
+        {/* A folha do cliente ainda não ligada: se foi ela a usada, o nº da etiqueta é o dela (não impede a emissão) */}
+        <AvisoFolhasNaoLigadas folhas={ctx.folhasNaoLigadas} aoLigar={ctx.vincularFolha} className="mx-5 mb-5" />
         {avisosServidor.length > 0 && (
           <div className="mx-5 mb-5 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-warning">
             <p className="mb-2 text-xs font-semibold">Confira antes de emitir (não impede a emissão)</p>
@@ -237,7 +255,11 @@ export function EtapaRevisao({
             </div>
             {modo === 'escolher' ? (
               <label className="flex flex-col rounded-xl bg-surface-2/60 px-4 py-3">
-                <span className="text-xs text-muted">Quem autoriza</span>
+                {/* Obrigatório para enviar (a marca das etapas) */}
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+                  Quem autoriza
+                  <MarcaObrigatorio />
+                </span>
                 <Select
                   className="mt-1"
                   value={signatarioId}
@@ -329,23 +351,31 @@ export function EtapaRevisao({
               </Button>
             )}
             {modo === 'escolher' && signatarioId !== eu && (
-              <Button
-                variante="primary"
-                icone={<Send className="h-4 w-4" />}
-                disabled={bloqueado || !signatarioId}
-                onClick={() => aoPedirAutorizacao(signatarioId)}
-                className="sm:ml-auto"
-              >
-                Enviar para autorização
-              </Button>
+              <div className="flex flex-col gap-1.5 sm:ml-auto sm:flex-row sm:items-center sm:gap-3">
+                {motivoEnvio && <p className="text-[13px] text-muted sm:order-first sm:text-right">{motivoEnvio}</p>}
+                <Button
+                  variante="primary"
+                  icone={<Send className="h-4 w-4" />}
+                  disabled={bloqueado || !signatarioId}
+                  onClick={() => aoPedirAutorizacao(signatarioId)}
+                >
+                  Enviar para autorização
+                </Button>
+              </div>
             )}
           </div>
 
           {modo === 'escolher' && signatarios.length === 0 && (
             <p className="rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
-              Ninguém pode autorizar esta calibração: quem executou não autoriza a própria, e não há outro signatário. Peça ao
-              administrador para marcar um signatário em Usuários.
+              {escolheuOutro
+                ? 'Ninguém pode autorizar esta calibração: quem executou e quem escolheu o técnico não autorizam, e não há outro signatário.'
+                : 'Ninguém pode autorizar esta calibração: quem executou não autoriza a própria, e não há outro signatário.'}{' '}
+              Peça ao administrador para marcar um signatário em Usuários.
             </p>
+          )}
+          {/* O signatário que não pode autorizar esta (executou, ou escolheu o técnico de outra pessoa): por quê */}
+          {modo === 'escolher' && usuario?.signatario && estado.impedimento && signatarios.length > 0 && (
+            <p className="text-[13px] text-muted">{estado.impedimento}</p>
           )}
           {modo === 'escolher' && escolhido && signatarioId !== eu && (
             <p className="text-[13px] text-muted">

@@ -101,6 +101,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       pendencias: aberta ? pendenciasDa(ctx, k) : [],
       // Para conferir, sem impedir a emissão (ex.: a folha de campo saiu com outra revisão do POP que a da data)
       avisos: aberta ? avisosDa(ctx, k) : [],
+      // Em andamento: as folhas impressas para o cliente e ainda não ligadas (a tela avisa e oferece ligar)
+      folhasNaoLigadas: aberta ? repo.folhasNaoLigadasDoCliente(k) : [],
       revisoes: repo.revisoesDe(k.id),
       // Corrigido com o mesmo nº: as versões, da primeira à atual (o histórico interno; [] = nunca corrigido assim)
       versoes: k.emissao ? repo.versoesDoCertificado(k.id) : [],
@@ -151,7 +153,12 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     // A troca do técnico fica no registro de atividades
     if (antes !== undefined && antes !== k.tecnicoId)
       req.detalheAuditoria = `técnico: ${antes ? nomeDe(antes) : 'nenhum'} → ${nomeDe(k.tecnicoId)}`
-    return { calibracao: k, pendencias: pendenciasDa(ctx, k), avisos: avisosDa(ctx, k) }
+    return {
+      calibracao: k,
+      pendencias: pendenciasDa(ctx, k),
+      avisos: avisosDa(ctx, k),
+      folhasNaoLigadas: repo.folhasNaoLigadasDoCliente(k),
+    }
   })
 
   // O nº de certificado reservado para ela volta para a folha de campo em que foi impresso (para a refeita)
@@ -177,7 +184,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
 
   /**
    * Envia para a autorização de um signatário (com a revisão por outra pessoa ligada): a calibração fica aguardando ele
-   * (só ele autoriza ou devolve; ver `impedimentoParaEmitir`). Nunca o técnico que executou. Já enviada, vai para outro.
+   * (só ele autoriza ou devolve; ver `impedimentoParaEmitir`). Nunca o técnico que executou nem quem escolheu o técnico.
+   * Já enviada, vai para outro.
    */
   app.post('/api/calibracoes/:id/autorizacao', async (req: ComId) => {
     const u = autor(req)
@@ -191,7 +199,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     if (!signatarioId) throw new ErroApi(400, 'Escolha o signatário que vai autorizar.')
     const signatario = ctx.usuarios.obter(signatarioId)
     const conferir = (atual: Calibracao) => {
-      const erro = impedimentoDoSignatario(signatario, atual.tecnicoId)
+      const erro = impedimentoDoSignatario(signatario, atual.tecnicoId, atual.tecnicoDefinidoPorId)
       if (erro) throw new ErroApi(409, erro)
     }
     const enviada = repo.mudarSituacao(
@@ -238,7 +246,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
             ? (impedimentoParaEmitir(true, atual, u) ?? '')
             : pedido
               ? `Só ${pedido.signatarioNome}, que recebeu o pedido, pode devolver esta calibração.`
-              : 'Só um signatário que não seja o técnico desta calibração pode devolvê-la.',
+              : 'Só um signatário que não seja o técnico desta calibração nem quem o escolheu pode devolvê-la.',
           { codigo: 'SEM_PERMISSAO' },
         )
       },

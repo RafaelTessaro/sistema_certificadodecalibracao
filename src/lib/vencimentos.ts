@@ -1,9 +1,8 @@
 // Vencimentos: o agrupamento por cliente, os indicadores e a planilha. O lembrete de cada balança é o que a incluiu
 // depois do último certificado dela (`lembreteEm`); o do cliente, o último enviado a ele (`ultimoLembreteCliente`).
 
-import { hojeLocalIso } from '#shared/dominio.ts'
 import type { Vencimento } from '#shared/tipos.ts'
-import { dataCurta } from './format'
+import { dataCurta, diaBrasilia } from './format'
 
 export interface GrupoCliente {
   clienteId: string
@@ -17,11 +16,11 @@ export interface GrupoCliente {
   ultimoLembrete: string
 }
 
-/** Mês (yyyy-MM) de um instante, no fuso deste computador. */
-export const mesLocal = (iso: string) => hojeLocalIso(new Date(iso)).slice(0, 7)
+/** Mês (yyyy-MM) de um instante, no horário de Brasília. */
+export const mesBrasilia = (iso: string) => diaBrasilia(iso).slice(0, 7)
 
-/** "04/11/2026": o dia de um instante no fuso deste computador ('' sem instante). */
-export const diaDoLembrete = (iso: string) => (iso ? dataCurta(hojeLocalIso(new Date(iso))) : '')
+/** "04/11/2026": o dia de um instante no horário de Brasília ('' sem instante). */
+export const diaDoLembrete = (iso: string) => (iso ? dataCurta(iso) : '')
 
 /** O último lembrete enviado ao cliente da balança (com ela ou não). */
 const lembreteAoCliente = (v: Vencimento) => v.ultimoLembreteCliente ?? v.lembreteEm
@@ -61,7 +60,7 @@ export function clientesAvisadosNoMes(todos: Vencimento[], mes: string): number 
     todos
       .filter((v) => {
         const lembrete = lembreteAoCliente(v)
-        return !!lembrete && mesLocal(lembrete) === mes
+        return !!lembrete && mesBrasilia(lembrete) === mes
       })
       .map((v) => v.clienteId),
   ).size

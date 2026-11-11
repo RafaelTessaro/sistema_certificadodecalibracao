@@ -6,6 +6,7 @@ import type {
   Cliente,
   Configuracoes,
   FolhaCampoImpressa,
+  FolhaNaoLigada,
   Padrao,
   PedidoAutorizacao,
   StatusCalibracao,
@@ -29,12 +30,22 @@ export interface ContextoEtapa {
   status: StatusCalibracao
   /** Aguardando a autorização (REVISAO): o pedido gravado (quem recebeu não pode passar a ser o técnico). */
   autorizacao?: PedidoAutorizacao | null
+  /**
+   * Quem escolheu o técnico, como a gravação deixa (a troca na tela passa a ser de quem está usando:
+   * `quemDefineOTecnico`). Com a revisão por outra pessoa ligada, não autoriza a calibração.
+   */
+  tecnicoDefinidoPorId?: string
   /** Reabre o cadastro da balança (para corrigir Max, d, classe… sem sair da calibração). */
   editarBalanca: () => void
   /** Folha de campo da calibração (impressa por ela ou avulsa e ligada), ou null. */
   folhaCampo: FolhaCampoImpressa | null
   /** Liga à calibração a folha avulsa preenchida no cliente, pelo nº; true se ligou. */
   vincularFolha: (numero: string) => Promise<boolean>
+  /**
+   * As folhas impressas para o cliente e ainda não ligadas a nenhuma calibração (a da mesma OS primeiro): as etapas
+   * "Cliente e OS" e "Revisão e emissão" avisam e oferecem ligar.
+   */
+  folhasNaoLigadas?: FolhaNaoLigada[]
   /** Imprime uma folha nova (nº novo, plano atual) no lugar da que a calibração tem (pede confirmação). */
   novaFolha: () => void
   /** Os campos obrigatórios para emitir (`camposObrigatoriosEmissao`); sem eles, a etapa calcula. */

@@ -142,6 +142,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       balancaId: e.balanca?.id,
       clienteId: e.cliente?.id,
       ordemServico: e.ordemServico,
+      dataPrevista: e.dataPrevista,
       por: u.nome,
     })
     if (folha.substituiu.length) req.detalheAuditoria = detalheDaTroca(folha.numero, [], folha.substituiu, folha.liberadas)
@@ -253,6 +254,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       eventos,
       numeroDaFolha: daFolha,
       ordemServico,
+      dataPrevista,
       marcas,
       barometrosRetirados,
       marcasRetiradas,
@@ -273,17 +275,23 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     // cargas em que o EMA muda na sugestão (a tela fica com elas; a versão não sobe). `barometrosRetirados`: com a
     // pressão como aviso e ainda não registrada, o barômetro que o rascunho trazia saiu dos padrões (a versão subiu).
     // `marcasRetiradas`: a folha da 1.0.5 no lugar da de antes tirou a dispensa (false = saiu; a tela fica sem ela; a
-    // versão não sobe); `barometrosDevolvidos`: sem a pressão registrada, o barômetro voltou aos padrões (a versão subiu)
+    // versão não sobe); `barometrosDevolvidos`: sem a pressão registrada, o barômetro voltou aos padrões (a versão subiu).
+    // `dataPrevista`: a data prevista impressa na avulsa, que passou para a calibração com a data de quando foi criada
+    // (`aplicada`; a versão subiu) ou não (a calibração tem outra: a tela avisa para conferir). `folhasNaoLigadas`: as
+    // folhas do cliente que continuam sem ligação (`folhasNaoLigadasDoCliente`)
+    const ligada = repo.obterCalibracao(k.id) ?? k
     return {
       folhaCampo,
       numeroReservado: repo.numeroReservadoDa(k.id),
       numeroDaFolha: daFolha,
       ordemServico,
+      dataPrevista,
+      folhasNaoLigadas: repo.folhasNaoLigadasDoCliente(ligada),
       marcas,
       barometrosRetirados,
       marcasRetiradas,
       barometrosDevolvidos,
-      versao: repo.obterCalibracao(k.id)?.versao ?? k.versao,
+      versao: ligada.versao,
     }
   })
 

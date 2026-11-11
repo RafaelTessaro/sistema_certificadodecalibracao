@@ -165,7 +165,7 @@ export function CampoArquivo({
             {local ? (
               <span className="text-warning"> · será enviado ao salvar</span>
             ) : (
-              enviadoEm && ` · anexado em ${dataCurta(enviadoEm.slice(0, 10))}`
+              enviadoEm && ` · anexado em ${dataCurta(enviadoEm)}`
             )}
           </span>
         </span>

@@ -54,7 +54,7 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
   - **técnico**: executa as calibrações (só quem tem a marca aparece em "Técnico que executou" e na folha de campo; na atualização para a 1.0.5, todos ganharam a marca);
   - **signatário**: autoriza os certificados, com a assinatura digitalizada.
 
-  Com a revisão por outra pessoa desligada, qualquer pessoa emite. Ligada, quem digita escolhe um signatário (nunca o técnico daquela calibração) e envia para a autorização dele; a calibração fica "Aguardando autorização", o signatário a vê em Certificados ("Para você autorizar") e no painel, confere (pode corrigir a digitação) e clica em "Autorizar e emitir", ou devolve com uma nota. O signatário que não executou pode fazer tudo sozinho e autorizar direto. Ninguém autoriza no lugar de outra pessoa.
+  Com a revisão por outra pessoa desligada, qualquer pessoa emite. Ligada, quem digita escolhe um signatário (nunca o técnico daquela calibração nem quem escolheu ou trocou o "Técnico que executou") e envia para a autorização dele; a calibração fica "Aguardando autorização", o signatário a vê em Certificados ("Para você autorizar") e no painel, confere (pode corrigir a digitação) e clica em "Autorizar e emitir", ou devolve com uma nota. O signatário que não executou nem escolheu o técnico pode fazer tudo sozinho e autorizar direto; o que digitou a folha de outra pessoa e escolheu o técnico envia para outro signatário. Ninguém assina por outra pessoa.
 
   Há também o registro de atividades.
 

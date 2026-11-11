@@ -33,6 +33,7 @@ import {
   type CampoEmissao,
   type CampoObrigatorio,
 } from '#shared/dominio.ts'
+import { quemDefineOTecnico } from '#shared/permissoes.ts'
 import type {
   Balanca,
   Calibracao,
@@ -40,6 +41,7 @@ import type {
   Cliente,
   Configuracoes,
   FolhaCampoImpressa,
+  FolhaNaoLigada,
   NumeroReservado,
   Padrao,
 } from '#shared/tipos.ts'
@@ -85,17 +87,19 @@ import { useConsulta } from '../lib/consulta'
 import { criarFilaGravacao } from '../lib/filaGravacao'
 import {
   abrirFolhaCampo,
+  confirmacaoSemLigar,
   TEXTO_FOLHA_NOVA,
   semMarcasRetiradas,
   temFolhaNova,
   textoBarometrosRetirados,
   textoPressaoDeVolta,
   textoReimprimir,
+  textosDataDaFolha,
   textosOsDaFolha,
 } from '../lib/folhaCampo'
 import { dataCurta, hojeISO } from '../lib/format'
 import { avisoNumeroDaFolha } from '../lib/numeros'
-import { usePode } from '../store/sessao'
+import { usePode, useSessao } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
 
@@ -407,6 +411,7 @@ interface Carregado {
 function EditorCalibracao({ id }: { id: string }) {
   const navegar = useNavigate()
   const podeConfigurar = usePode('configuracoes')
+  const eu = useSessao((s) => s.usuario?.id ?? '')
   const [dados, setDados] = useState<Carregado | null>(null)
   const [erro, setErro] = useState('')
   const [f, setF] = useState<CalibracaoInput | null>(null)
@@ -421,6 +426,8 @@ function EditorCalibracao({ id }: { id: string }) {
   const [folha, setFolha] = useState<FolhaCampoImpressa | null>(null)
   /** O nº de certificado reservado na impressão da folha de campo (null = ainda sem nº: é dado na emissão). */
   const [numeroReservado, setNumeroReservado] = useState<NumeroReservado | null>(null)
+  /** As folhas impressas para o cliente e ainda não ligadas (o aviso das etapas 1 e 8 e a confirmação da emissão). */
+  const [folhasNaoLigadas, setFolhasNaoLigadas] = useState<FolhaNaoLigada[]>([])
   /** Janela "reimprimir ou folha nova" aberta (com a opção que vem selecionada), ou null. */
   const [escolhaFolha, setEscolhaFolha] = useState<EscolhaFolha | null>(null)
   /** Janela "Devolver sem autorizar" aberta. */
@@ -464,6 +471,7 @@ function EditorCalibracao({ id }: { id: string }) {
         setF(inicial.f)
         setFolha(inicial.folha)
         setNumeroReservado(inicial.numeroReservado)
+        setFolhasNaoLigadas(d.folhasNaoLigadas ?? [])
         setPendenciasServidor(inicial.pendencias)
         setAvisosServidor(inicial.avisos)
         // Retoma na primeira etapa ainda sem leituras (o plano copiado da última calibração não conta)
@@ -486,6 +494,7 @@ function EditorCalibracao({ id }: { id: string }) {
         .then((d) => {
           setFolha(d.folhaCampo)
           setNumeroReservado(d.numeroReservado ?? null)
+          setFolhasNaoLigadas(d.folhasNaoLigadas ?? [])
           // A folha nova (da 1.0.5) no lugar da de antes tirou a dispensa da pressão (marca do servidor, que a tela não
           // grava; a versão não sobe): a tela fica sem ela
           const k = d.calibracao
@@ -565,6 +574,8 @@ function EditorCalibracao({ id }: { id: string }) {
           setDados((d) => (d ? { ...d, calibracao: r.calibracao } : d))
           setPendenciasServidor(r.pendencias)
           setAvisosServidor(r.avisos ?? [])
+          // A OS gravada põe a folha do cliente com a mesma OS em primeiro
+          if (r.folhasNaoLigadas) setFolhasNaoLigadas(r.folhasNaoLigadas)
           setSalvo(sujo.current ? 'pendente' : 'salvo')
           useTempoReal.getState().mudou('calibracao')
           return true
@@ -669,6 +680,19 @@ function EditorCalibracao({ id }: { id: string }) {
         versao.current = r.versao
         setF((atual) => (atual ? { ...atual, ordemServico: os.daFolha } : atual))
       }
+      // A data prevista impressa na folha passou para a calibração que ainda tinha a data de quando foi criada (o servidor
+      // gravou, com a próxima que acompanha; a versão subiu)
+      const data = r.dataPrevista
+      if (data?.aplicada && r.versao !== undefined) {
+        versao.current = r.versao
+        setF((atual) =>
+          atual
+            ? { ...atual, dataCalibracao: data.daFolha, proximaCalibracao: data.proximaCalibracao ?? atual.proximaCalibracao }
+            : atual,
+        )
+      }
+      // As folhas do cliente que continuam sem ligação (a ligada sai; com a avulsa ligada, o aviso some)
+      setFolhasNaoLigadas((l) => r.folhasNaoLigadas ?? l.filter((x) => x.numero !== r.folhaCampo.numero))
       // Folha impressa antes da 1.0.5: a pressão "opcional" dela fica como aviso e as cargas em que o EMA muda continuam
       // na sugestão (marcas do servidor, que a tela não grava)
       const marcas = r.marcas
@@ -689,18 +713,26 @@ function EditorCalibracao({ id }: { id: string }) {
       }
       const daFolha = r.numeroDaFolha
       const textosOs = textosOsDaFolha(os)
-      if (daFolha && !daFolha.usado)
+      const textosData = textosDataDaFolha(data)
+      if (daFolha && !daFolha.usado) {
         // O nº impresso na folha pode já estar na etiqueta da balança: avisa até a pessoa fechar
         void avisar(avisoNumeroDaFolha(daFolha, r.folhaCampo.numero))
-      else
+        if (textosData.aplicada) toast.aviso('A data da folha passou para a calibração', textosData.aplicada)
+      } else
         toast.sucesso(
           `Folha de campo ${r.folhaCampo.numero} ligada a esta calibração`,
-          [daFolha ? `O certificado vai ser emitido com o nº ${daFolha.numero}, o impresso na folha.` : '', textosOs.aplicada]
+          [
+            daFolha ? `O certificado vai ser emitido com o nº ${daFolha.numero}, o impresso na folha.` : '',
+            textosOs.aplicada,
+            textosData.aplicada,
+          ]
             .filter(Boolean)
             .join(' ') || undefined,
         )
       // A folha saiu com outra OS: fica a da calibração, e a pessoa confere
       if (textosOs.diferente) toast.aviso('A OS da folha é outra', textosOs.diferente)
+      // A folha saiu com outra data prevista: fica a da calibração, e a pessoa confere com a data real (passo 8 da folha)
+      if (textosData.diferente) toast.aviso('Confira a data da calibração', textosData.diferente)
       if (semBarometro) {
         const t = textoBarometrosRetirados(semBarometro.identificacoes)
         toast.aviso(t.titulo, t.texto)
@@ -736,9 +768,12 @@ function EditorCalibracao({ id }: { id: string }) {
     equipe: dados.equipe,
     status: dados.calibracao.status,
     autorizacao: dados.calibracao.autorizacao ?? null,
+    // Quem escolheu o técnico depois de gravar (a troca na tela passa a ser de quem está usando): não autoriza
+    tecnicoDefinidoPorId: quemDefineOTecnico(dados.calibracao, f.tecnicoId, eu),
     editarBalanca: () => void editarBalanca(),
     folhaCampo: folha,
     vincularFolha,
+    folhasNaoLigadas,
     novaFolha: () => setEscolhaFolha('nova'),
     obrigatorios,
     destacar: (c) => vistos.etapas.has(c.etapa) || vistos.campos.has(c.campo),
@@ -766,6 +801,7 @@ function EditorCalibracao({ id }: { id: string }) {
         setF(e.f)
         setFolha(e.folha)
         setNumeroReservado(e.numeroReservado)
+        setFolhasNaoLigadas(d.folhasNaoLigadas ?? [])
         setPendenciasServidor(e.pendencias)
         setAvisosServidor(e.avisos)
         setSalvo('salvo')
@@ -886,12 +922,22 @@ function EditorCalibracao({ id }: { id: string }) {
       : numeroReservado
         ? `O certificado sai com o nº ${numeroReservado.numero}, o da folha de campo, e não pode mais ser alterado. Se precisar corrigir depois, a correção sai com o mesmo número.`
         : 'O certificado recebe o número definitivo e não pode mais ser alterado. Se precisar corrigir depois, a correção sai com o mesmo número.'
+    // Com folha do cliente ainda não ligada: a confirmação diz o nº dela e o do certificado reservado nela (o da etiqueta,
+    // se foi ela a usada) e o nº com que este sai
+    const semLigar = confirmacaoSemLigar(folhasNaoLigadas, numeroReservado?.numero ?? dados.numeroRevisao ?? null)
+    const descricao = autorizar
+      ? `Você autoriza como signatário: o certificado sai com a sua assinatura em “Autorizado por”. ${numeracao}`
+      : numeracao
     const ok = await confirmar({
-      titulo: autorizar ? 'Autorizar e emitir o certificado?' : 'Emitir o certificado?',
-      descricao: autorizar
-        ? `Você autoriza como signatário: o certificado sai com a sua assinatura em “Autorizado por”. ${numeracao}`
-        : numeracao,
-      confirmar: autorizar ? 'Autorizar e emitir' : 'Emitir certificado',
+      titulo: semLigar?.titulo ?? (autorizar ? 'Autorizar e emitir o certificado?' : 'Emitir o certificado?'),
+      descricao: semLigar ? `${semLigar.descricao} ${descricao}` : descricao,
+      confirmar: semLigar
+        ? autorizar
+          ? 'Autorizar e emitir sem ligar'
+          : 'Emitir sem ligar'
+        : autorizar
+          ? 'Autorizar e emitir'
+          : 'Emitir certificado',
     })
     if (!ok) return
     if (!(await salvar())) return

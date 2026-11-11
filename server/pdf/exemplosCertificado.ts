@@ -382,13 +382,15 @@ function ensaio(metodo: MetodoCarregamento, pontos: PontoIndicacao[], retornoZer
  * A emissão das amostras com as regras do POP, como a desta versão (`montarEmissao`, em server/certificados.ts): com a
  * marca do texto do "crescente e decrescente" (`EmissaoCertificado.carregamentoSemZerar`) e, da 1.0.5, sem a
  * finalidade de uso e as dimensões do prato e com a inscrição estadual do cliente, quando há
- * (`semFinalidadeEDimensoes`, `inscricaoEstadualDoCliente`). Os registros de antes (legado) vêm sem as marcas.
+ * (`semFinalidadeEDimensoes`, `inscricaoEstadualDoCliente`) e, da 1.0.6, com o nº do certificado dos padrões numa linha
+ * só (`certificadoDoPadraoInteiro`). Os registros de antes (legado) vêm sem as marcas.
  */
 const COM_REGRAS = {
   regrasDoPop: true,
   carregamentoSemZerar: true,
   semFinalidadeEDimensoes: true,
   inscricaoEstadualDoCliente: true,
+  certificadoDoPadraoInteiro: true,
 } as const
 
 function montar(

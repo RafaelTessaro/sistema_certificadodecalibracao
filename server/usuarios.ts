@@ -19,6 +19,7 @@ import { novoId } from '#shared/id.ts'
 import { NOME_NIVEL } from '#shared/permissoes.ts'
 import type {
   AcaoAuditoria,
+  Calibracao,
   GrupoAuditoria,
   NivelUsuario,
   RegistroAuditoria,
@@ -26,7 +27,7 @@ import type {
   Usuario,
   UsuarioSessao,
 } from '#shared/tipos.ts'
-import { type Banco, transacao } from './db.ts'
+import { type Banco, temLeituraMedida, transacao } from './db.ts'
 import { ErroApi } from './erros.ts'
 import { type ChavesTentativa, LimiteTentativas, REGRAS_TENTATIVAS } from './limiteTentativas.ts'
 import { impressaPara } from './repositorio.ts'
@@ -999,7 +1000,8 @@ export function transplantarRegistros(origem: Banco, destino: Banco): { folhasCa
  * As folhas de campo de `origem` que faltam em `destino` (ver `transplantarFolhasCampo`), com a revisão do POP impressa
  * nelas (`passarPops`), e as folhas dos certificados emitidos, cancelados ou revisados como no banco atual
  * (`folhasDosConcluidos`). Depois das folhas, os nºs de certificado que mudaram depois da cópia (`numerosComoNoAtual`),
- * que dependem de qual folha ficou com cada calibração. Dentro da transação.
+ * que dependem de qual folha ficou com cada calibração, e a dispensa da folha de antes da 1.0.5 que o banco atual tirou
+ * das calibrações com a folha da 1.0.5 (`dispensaComoNoAtual`). Dentro da transação.
  */
 function passarFolhasCampo(origem: Banco, destino: Banco): number {
   const colunas = (db: Banco) =>
@@ -1091,8 +1093,76 @@ function passarFolhasCampo(origem: Banco, destino: Banco): number {
         : '',
     ].filter(Boolean)
     if (partes.length) gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe: partes.join('; ') })
+    // Com a folha vigente de cada calibração já decidida: a dispensa da folha de antes como no banco atual
+    if (historico) dispensaComoNoAtual(origem, destino)
   })
   return passaram.length
+}
+
+/** A dispensa que a folha impressa antes da 1.0.5 deu à calibração (`Repositorio.marcarFolhaDeAntes`). */
+const MARCAS_DA_FOLHA_DE_ANTES = ['pressaoComoAviso', 'cargasDoEmaNaFolha'] as const
+
+/**
+ * Depois das folhas: a calibração em andamento da cópia cuja folha vigente agora é da 1.0.5 (impressa ou ligada depois
+ * da cópia: pede a pressão ●, e as cargas em que o EMA muda só com a declaração de conformidade) fica sem a dispensa da
+ * folha de antes que o banco atual já tinha tirado (`Repositorio.semMarcasDaFolhaDeAntes`): medida com a folha nova, a
+ * falta da pressão nunca volta a ser só aviso. A que o banco atual manteve (as cargas da folha nova da própria
+ * calibração, que saem nela) fica. Como lá, nada muda na revisão de um certificado nem na calibração com leituras
+ * medidas na cópia (podem ter sido feitas com a folha de antes), e a versão não sobe (a tela não grava as marcas). Grava
+ * no registro de atividades quais folhas; devolve os nºs delas.
+ */
+function dispensaComoNoAtual(origem: Banco, destino: Banco): string[] {
+  if (!colunasComuns(origem, destino, 'folhas_campo').includes('antes_105')) return []
+  const linhas = destino
+    .prepare(
+      `SELECT k.id, k.dados, f.numero FROM calibracoes k
+         JOIN folhas_campo f ON f.calibracao_id = k.id AND f.substituida_por = '' AND f.antes_105 = 0
+        WHERE k.status IN ('RASCUNHO', 'REVISAO') ORDER BY f.ano, f.sequencia`,
+    )
+    .all() as Array<{ id: string; dados: string; numero: string }>
+  const noAtual = origem.prepare('SELECT dados FROM calibracoes WHERE id = ?')
+  const gravar = destino.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
+  const ler = (dados: unknown): Record<string, unknown> | null => {
+    try {
+      const v: unknown = JSON.parse(String(dados))
+      return v && typeof v === 'object' ? (v as Record<string, unknown>) : null
+    } catch {
+      return null
+    }
+  }
+  const folhas: string[] = []
+  const sairam = new Set<string>()
+  for (const l of linhas) {
+    const k = ler(l.dados)
+    if (!k || k.substituiId || !MARCAS_DA_FOLHA_DE_ANTES.some((m) => k[m] === true)) continue
+    if (temLeituraMedida(k as Partial<Calibracao>)) continue
+    const atual = ler((noAtual.get(l.id) as { dados: string } | undefined)?.dados)
+    if (!atual) continue
+    const saem = MARCAS_DA_FOLHA_DE_ANTES.filter((m) => k[m] === true && atual[m] !== true)
+    if (!saem.length) continue
+    for (const m of saem) {
+      delete k[m]
+      sairam.add(m)
+    }
+    gravar.run(JSON.stringify(k), l.id)
+    folhas.push(l.numero)
+  }
+  if (!folhas.length) return folhas
+  const oQue = [
+    sairam.has('pressaoComoAviso') ? 'a pressão volta a ser obrigatória' : '',
+    sairam.has('cargasDoEmaNaFolha') ? 'as cargas em que o EMA muda, só com a declaração de conformidade' : '',
+  ]
+    .filter(Boolean)
+    .join('; ')
+  const detalhe = caberNoRegistro(
+    (lista) =>
+      folhas.length === 1
+        ? `a folha ${lista}, da 1.0.5, é a vigente: a dispensa da folha de antes saiu da calibração dela, como no banco atual (${oQue})`
+        : `as folhas ${lista}, da 1.0.5, são as vigentes: a dispensa da folha de antes saiu das calibrações delas, como no banco atual (${oQue})`,
+    folhas,
+  )
+  gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe })
+  return folhas
 }
 
 type EstadoFolha = { calibracao_id: string; substituida_por: string; substituida_em: string }

@@ -278,6 +278,8 @@ export function montarEmissao(
     // ele tem). Congelado: os emitidos antes continuam saindo como saíam
     semFinalidadeEDimensoes: true,
     inscricaoEstadualDoCliente: true,
+    // A partir da 1.0.6: o nº do certificado de cada padrão numa linha só (congelado, como as de cima)
+    certificadoDoPadraoInteiro: true,
     // As cargas em que o EMA muda entre os pontos sem a declaração de conformidade foram acordadas com o cliente (a
     // sugestão da 1.0.5 não as traz): a próxima calibração da balança as mantém. Não na calibração com a folha de antes
     // (que as trazia) nem na correção de um certificado de antes (os pontos são os dele)

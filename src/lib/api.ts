@@ -20,6 +20,7 @@ import type {
   EstadoSessao,
   FolhaCampoImpressa,
   FolhaCampoListada,
+  FolhaNaoLigada,
   GrupoAuditoria,
   MensagemTempoReal,
   NovoUsuario,
@@ -115,6 +116,11 @@ export interface DetalheCalibracao {
   numeroReservado?: NumeroReservado | null
   /** Correção em andamento: o nº com que ela sai (o mesmo do certificado corrigido); null = não é correção. */
   numeroRevisao?: string | null
+  /**
+   * Em andamento: as folhas impressas para o cliente e ainda não ligadas a nenhuma calibração (a da mesma OS primeiro).
+   * Ausente numa resposta de antes desta versão.
+   */
+  folhasNaoLigadas?: FolhaNaoLigada[]
   /** Certificado (arquivo) de cada padrão usado: o congelado na emissão, ou o do cadastro. */
   certificadosPadroes: CertificadoDoPadrao[]
   /**
@@ -166,6 +172,14 @@ export interface FolhaLigada {
   marcasRetiradas?: { pressaoComoAviso?: boolean; cargasDoEmaNaFolha?: boolean } | null
   /** Sem a dispensa e sem a pressão registrada: o barômetro voltou aos padrões (a `versao` subiu). null = nada voltou. */
   barometrosDevolvidos?: { identificacoes: string[]; padroesIds: string[] } | null
+  /**
+   * A data prevista impressa na folha avulsa: passou para a calibração, que ainda tinha a data do dia em que foi criada
+   * (`aplicada`, com a próxima que acompanha; a `versao` subiu), ou a calibração ficou com a dela (`daCalibracao`: a tela
+   * avisa para conferir). null = a folha não tinha data prevista, ou é a mesma.
+   */
+  dataPrevista?: { daFolha: string; aplicada: boolean; daCalibracao?: string; proximaCalibracao?: string } | null
+  /** As folhas do cliente que continuam sem ligação (`DetalheCalibracao.folhasNaoLigadas`). */
+  folhasNaoLigadas?: FolhaNaoLigada[]
   /** A versão da calibração depois da ligação (a tela grava com ela). */
   versao?: number
 }
@@ -361,10 +375,11 @@ export const api = {
   calibracao: (id: string) => requisitar<DetalheCalibracao>('GET', `/api/calibracoes/${enc(id)}`),
   criarCalibracao: (dados: Partial<CalibracaoInput>) => requisitar<{ calibracao: Calibracao }>('POST', '/api/calibracoes', dados),
   salvarCalibracao: (id: string, dados: CalibracaoInput, versao?: number) =>
-    requisitar<{ calibracao: Calibracao; pendencias: string[]; avisos?: string[] }>('PUT', `/api/calibracoes/${enc(id)}`, {
-      ...dados,
-      versao,
-    }),
+    requisitar<{ calibracao: Calibracao; pendencias: string[]; avisos?: string[]; folhasNaoLigadas?: FolhaNaoLigada[] }>(
+      'PUT',
+      `/api/calibracoes/${enc(id)}`,
+      { ...dados, versao },
+    ),
   excluirCalibracao: (id: string) => requisitar<void>('DELETE', `/api/calibracoes/${enc(id)}`),
   /** Volta para rascunho (retira o pedido de autorização). */
   voltarParaRascunho: (id: string, versao?: number) =>

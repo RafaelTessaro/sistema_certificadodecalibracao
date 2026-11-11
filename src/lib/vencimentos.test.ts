@@ -2,12 +2,12 @@
 // Lembrete e a planilha, por balança (só a balança que foi no lembrete aparece avisada).
 
 import { describe, expect, it } from 'vitest'
-import { hojeLocalIso } from '#shared/dominio.ts'
 import type { Vencimento } from '#shared/tipos.ts'
 import { agruparPorCliente, clientesAvisadosNoMes, COLUNAS_CSV_VENCIMENTOS, linhaCsvVencimento } from './vencimentos'
 
 const ENVIO = '2026-11-04T13:00:00.000Z'
-const DIA_ENVIO = hojeLocalIso(new Date(ENVIO)).split('-').reverse().join('/')
+// O dia e o mês do lembrete no horário de Brasília, qualquer que seja o fuso do computador
+const DIA_ENVIO = '04/11/2026'
 
 const venc = (extra: Partial<Vencimento>): Vencimento => ({
   balancaId: 'b1',
@@ -62,9 +62,12 @@ describe('vencimentos', () => {
   })
 
   it('clientes avisados no mês: por cliente, com qualquer balança', () => {
-    const mes = hojeLocalIso(new Date(ENVIO)).slice(0, 7)
-    expect(clientesAvisadosNoMes([fz88, fz50, outro], mes)).toBe(1)
+    expect(clientesAvisadosNoMes([fz88, fz50, outro], '2026-11')).toBe(1)
     expect(clientesAvisadosNoMes([fz88, fz50, outro], '2026-10')).toBe(0)
+    // Enviado às 22h de 30/11 em Brasília (já 1º/12 em UTC): conta em novembro
+    const noite = venc({ clienteId: 'c3', ultimoLembreteCliente: '2026-12-01T01:00:00.000Z' })
+    expect(clientesAvisadosNoMes([noite], '2026-11')).toBe(1)
+    expect(clientesAvisadosNoMes([noite], '2026-12')).toBe(0)
   })
 
   it('servidor de antes (sem o lembrete ao cliente): vale o da balança', () => {

@@ -37,7 +37,7 @@ import { detalheTrocaIndicador, lerMeta, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 20
+const ULTIMA = 21
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -1705,5 +1705,29 @@ describe('migração 20: as folhas de campo impressas antes da 1.0.5', () => {
     expect(db.prepare("SELECT antes_105 FROM folhas_campo WHERE numero = 'FC-2026-00010'").get()).toEqual({ antes_105: 0 })
     expect(dados(db)).toEqual(depois)
     expect(registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toHaveLength(1)
+  })
+})
+
+describe('migração 21: a data prevista impressa na folha de campo avulsa', () => {
+  const colunas = (db: DatabaseSync) =>
+    (db.prepare('PRAGMA table_info(folhas_campo)').all() as Array<{ name: string }>).map((c) => c.name)
+
+  it("acrescenta a coluna; as folhas de antes ficam sem data (''); pode ser repetida", () => {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 20)
+    expect(colunas(db)).not.toContain('data_prevista')
+    db.prepare(
+      `INSERT INTO folhas_campo (numero, ano, sequencia, chave, impressa_em, ultima_em)
+       VALUES ('FC-2026-00001', 2026, 1, 'avulsa:x', ?, ?)`,
+    ).run(EM, EM)
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(db.prepare('SELECT numero, data_prevista FROM folhas_campo').all()).toEqual([
+      { numero: 'FC-2026-00001', data_prevista: '' },
+    ])
+    db.exec("UPDATE folhas_campo SET data_prevista = '2026-11-12'")
+    db.exec('PRAGMA user_version = 20')
+    migrar(db)
+    expect(db.prepare('SELECT data_prevista FROM folhas_campo').get()).toEqual({ data_prevista: '2026-11-12' })
   })
 })

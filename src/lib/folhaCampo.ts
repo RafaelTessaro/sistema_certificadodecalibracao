@@ -2,6 +2,10 @@
 // for preciso gravar o rascunho (ou criá-lo), o navegador não a bloqueia como janela não pedida. E os
 // textos de "reimprimir" (o mesmo nº, igual à primeira impressão) e de "folha nova" (nº novo).
 
+import { formatarDataBr } from '#shared/dominio.ts'
+import type { FolhaNaoLigada } from '#shared/tipos.ts'
+import { dataCurta } from './format'
+
 /**
  * `preparar` (opcional) roda com a aba já aberta e devolve a URL do PDF, ou null para desistir (a aba
  * fecha). Sem `preparar`, abre direto `url`.
@@ -36,13 +40,8 @@ export async function abrirFolhaCampo(url: string | (() => Promise<string | null
   }
 }
 
-/** Dia (no horário daqui) em que a folha foi impressa a primeira vez: "21/10/2026". */
-export function dataDaFolha(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '—'
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`
-}
+/** Dia (no horário de Brasília) em que a folha foi impressa a primeira vez: "21/10/2026". */
+export const dataDaFolha = (iso: string): string => dataCurta(iso)
 
 /** "Reimprimir a folha FC-2026-00001 (igual à impressa em 21/10/2026)": o mesmo nº é sempre o mesmo papel. */
 export const textoReimprimir = (f: { numero: string; impressaEm: string }) =>
@@ -76,6 +75,71 @@ export function textosOsDaFolha(os: { daFolha: string; aplicada: boolean; daCali
   if (os.aplicada) return { aplicada: `A ${textoOs(os.daFolha)}, impressa na folha, passou para esta calibração.` }
   return {
     diferente: `A folha saiu com a ${textoOs(os.daFolha)}; esta calibração ficou com a ${textoOs(os.daCalibracao ?? '')}.`,
+  }
+}
+
+/**
+ * Ao ligar a folha avulsa impressa com a data prevista da visita: a data passou para a calibração, que ainda tinha a do
+ * dia em que foi criada (`aplicada`), ou a calibração ficou com a dela, diferente (`diferente`). A data real é a que o
+ * técnico escreve no passo 8 da folha.
+ */
+export function textosDataDaFolha(d: { daFolha: string; aplicada: boolean; daCalibracao?: string } | null | undefined): {
+  aplicada?: string
+  diferente?: string
+} {
+  if (!d) return {}
+  const passo8 = 'que o técnico escreve no passo 8 da folha'
+  if (d.aplicada)
+    return {
+      aplicada: `A data prevista impressa na folha (${formatarDataBr(d.daFolha)}) passou para esta calibração. Confira com a data real, ${passo8}.`,
+    }
+  return {
+    diferente: `A folha saiu com a data prevista ${formatarDataBr(d.daFolha)}, e esta calibração está com ${formatarDataBr(d.daCalibracao ?? '')}. Confira a data real, ${passo8}.`,
+  }
+}
+
+/**
+ * O aviso da folha impressa para o cliente e ainda não ligada (etapas "Cliente e OS" e "Revisão e emissão"): se foi ela a
+ * usada no cliente, o nº de certificado dela já está na etiqueta da balança.
+ */
+export function textoFolhaNaoLigada(
+  f: Pick<FolhaNaoLigada, 'numero' | 'numeroCertificado' | 'ordemServico' | 'mesmaOs'>,
+): string {
+  const sobre = [
+    f.mesmaOs && f.ordemServico ? `da mesma ${textoOs(f.ordemServico)}` : '',
+    f.numeroCertificado ? `certificado ${f.numeroCertificado} reservado` : '',
+  ]
+    .filter(Boolean)
+    .join(', ')
+  return `O cliente tem a folha ${f.numero}${sobre ? ` (${sobre})` : ''} ainda não ligada. Se foi ela a usada no cliente, ligue-a${
+    f.numeroCertificado ? `: o nº da etiqueta é ${f.numeroCertificado}` : ''
+  }.`
+}
+
+/**
+ * Emitir com folhas do cliente ainda não ligadas: o título e a frase da confirmação, com o nº de cada folha e o do
+ * certificado reservado nela (o da etiqueta, se foi ela a usada), e o nº com que este certificado sai (`numeroDesta`;
+ * null: o próximo da sequência). null: nenhuma folha.
+ */
+export function confirmacaoSemLigar(
+  folhas: ReadonlyArray<Pick<FolhaNaoLigada, 'numero' | 'numeroCertificado'>>,
+  numeroDesta: string | null,
+): { titulo: string; descricao: string } | null {
+  if (!folhas.length) return null
+  const uma = folhas.length === 1
+  const itens = folhas.map((f) => (f.numeroCertificado ? `${f.numero} (certificado ${f.numeroCertificado})` : f.numero))
+  const lista = uma ? itens[0] : `${itens.slice(0, -1).join(', ')} e ${itens.at(-1)}`
+  const etiqueta =
+    uma && folhas[0].numeroCertificado
+      ? `a etiqueta da balança tem o nº ${folhas[0].numeroCertificado}`
+      : 'a etiqueta da balança tem o nº de certificado dela'
+  return {
+    titulo: uma ? `Emitir sem ligar a folha ${folhas[0].numero}?` : 'Emitir sem ligar as folhas do cliente?',
+    descricao: `${uma ? 'A folha' : 'As folhas'} ${lista} deste cliente ${
+      uma ? 'ainda não está ligada' : 'ainda não estão ligadas'
+    }. Se ${uma ? 'foi ela' : 'uma delas foi'} a usada no cliente, ${etiqueta}, e este certificado sai com ${
+      numeroDesta ? `o nº ${numeroDesta}` : 'outro nº'
+    }. Para ligar, cancele e use “Ligar esta folha”.`,
   }
 }
 

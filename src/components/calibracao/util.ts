@@ -6,7 +6,6 @@ import {
   metodoExcentricidadePadrao,
   METODOS_EXCENTRICIDADE,
   metodoIndicacaoDaVisita,
-  somarMeses,
   temLeiturasExcentricidade,
 } from '#shared/dominio.ts'
 import { cargaDaFaixaDecrescente, casasDecimais, leituraImplausivel } from '#shared/metrologia/index.ts'
@@ -143,16 +142,8 @@ export function cartoesDosPadroes(padroes: Padrao[], selecionados: Padrao[]): Pa
 export const calibradoDepois = (p: Pick<Padrao, 'dataCalibracao'>, dataCalibracao: string) =>
   dataIsoValida(p.dataCalibracao) && dataIsoValida(dataCalibracao) && p.dataCalibracao > dataCalibracao
 
-/**
- * A próxima calibração quando a data da calibração muda: se ela era a calculada pela data antiga (o padrão da
- * empresa, 6, 12 ou 24 meses depois), passa a contar da nova; a digitada à mão fica como está.
- */
-export function proximaAcompanhando(proxima: string, dataAntiga: string, dataNova: string, mesesPadrao: number): string {
-  if (!proxima || !dataIsoValida(dataAntiga) || !dataIsoValida(dataNova)) return proxima
-  const meses = [...new Set([mesesPadrao, 12, 6, 24])].filter((n) => n > 0)
-  const n = meses.find((m) => somarMeses(dataAntiga, m) === proxima)
-  return n ? somarMeses(dataNova, n) : proxima
-}
+/** A próxima calibração acompanha a data nova quando era a calculada pela antiga (em shared: o servidor também usa). */
+export { proximaAcompanhando } from '#shared/dominio.ts'
 
 /** O dia seguinte (para o mínimo da próxima calibração: depois da data da calibração). */
 export function diaSeguinte(iso: string): string {

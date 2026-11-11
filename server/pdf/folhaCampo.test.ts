@@ -3264,3 +3264,95 @@ describe.runIf(temPdftotext)('passo 7 do tanque e da plataforma com mais de 4 ap
     expect(carga.y0).toBeGreaterThan(posicao.y1)
   })
 })
+
+// ---- Múltiplas faixas (3) com muitos apoios: os 8 passos em 2 páginas (só as Anotações podem ir para uma 3ª) ----
+
+/**
+ * Balança de piso de múltiplas faixas (600 / 1500 / 3000 kg × 0,2 / 0,5 / 1 kg, classe III, com a declaração de
+ * conformidade), com os apoios dados e os padrões da empresa (sem histórico); `cargas`: o plano copiado do certificado
+ * anterior ("Calibrar de novo"), sem as leituras.
+ */
+function folhaTresFaixas(receptor: 'APOIOS' | 'TANQUE', apoios: number, cargas?: number[]): DadosFolhaCampo {
+  const base = folhaComprida(3000, receptor, apoios)
+  const balanca = {
+    ...base.balanca,
+    tipoFaixas: 'MULTIPLAS_FAIXAS' as const,
+    faixas: [
+      { max: 600, e: 0.2, d: 0.2 },
+      { max: 1500, e: 0.5, d: 0.5 },
+      { max: 3000, e: 1, d: 1 },
+    ],
+    min: 4,
+  }
+  const calibracao = {
+    ...base.calibracao,
+    padroesIds: padroesSemHistorico(base.padroes, balanca).map((p) => p.id),
+    conformidade: {
+      solicitada: true,
+      criterio: 'PORTARIA_SERVICO' as const,
+      toleranciaCliente: 0,
+      regra: 'BANDA_GUARDA' as const,
+    },
+  }
+  if (cargas)
+    calibracao.indicacao = {
+      ...calibracao.indicacao,
+      pontos: cargas.map((carga, i) => ({
+        id: `p${i}`,
+        carga,
+        pecas: [],
+        pecasManuais: false,
+        crescente: null,
+        decrescente: null,
+        nivelSubstituicao: 0,
+      })),
+    }
+  return { ...base, balanca, calibracao }
+}
+
+describe.runIf(temPdftotext)('múltiplas faixas (3) com muitos apoios: os 8 passos em 2 páginas', { timeout: 120_000 }, () => {
+  // Antes, o passo 7 (com o 8) ia para uma 3ª página: o 5 inteiro no verso, com o 6, e as posições numa coluna só
+  const casos: Array<[string, () => DadosFolhaCampo, number, 'posicoes' | 'pontos']> = [
+    ['plataforma com 12 apoios', () => folhaTresFaixas('APOIOS', 12), 12, 'posicoes'],
+    ['plataforma com 16 apoios', () => folhaTresFaixas('APOIOS', 16), 16, 'posicoes'],
+    ['tanque com 12 apoios', () => folhaTresFaixas('TANQUE', 12), 12, 'posicoes'],
+    [
+      'plataforma com 12 apoios e o plano copiado (15 cargas)',
+      () => folhaTresFaixas('APOIOS', 12, [0, 4, 50, 100, 150, 300, 450, 600, 750, 1000, 1125, 1500, 2000, 2250, 3000]),
+      12,
+      'pontos',
+    ],
+  ]
+  it.each(casos)(
+    '%s: até o passo 8 nas 2 primeiras páginas, nada some, e as linhas das posições com ≈ 6,5 mm',
+    async (_, dados, apoios, compacta) => {
+      const m = await montar(dados())
+      expect(m.faltando).toEqual([])
+      expect(m.marcas.get('fim:passo-7')?.pagina).toBe(2)
+      // Uma 3ª página só com as Anotações
+      expect(m.paginas).toBeLessThanOrEqual(3)
+      if (m.paginas === 3) expect(m.extras.anotacoes?.paginaNova).toBe(true)
+      // O mínimo que coube: as posições em duas colunas e, só se ainda faltar, a tabela dos pontos dividida entre a
+      // frente e o verso (com o título de continuação)
+      expect(m.extras.compacta).toBe(compacta)
+      expect(m.extras.cortes.length > 0).toBe(compacta === 'pontos')
+      if (compacta === 'pontos') expect(m.marcas.get('passo-5')?.pagina).toBe(1)
+      // Todas as posições impressas, em duas colunas, uma linha de escrever cada (a 1ª e a última, com ≈ 6,5 mm de fio
+      // a fio)
+      const paginas = palavrasDoPdf(m.pdf)
+      const verso = paginas[1]
+      expect(verso.filter((w) => w.texto === 'Posição')).toHaveLength(2)
+      const t = paginas.map((p) => p.map((w) => w.texto).join(' ')).join(' ')
+      for (let i = 1; i <= apoios; i++) expect(t).toContain(`Apoio ${i} `)
+      for (const n of [1, apoios]) expect(alturaDaLinha(m.pdf, paginas, ['Apoio', String(n)]).mm).toBeGreaterThanOrEqual(6.3)
+    },
+  )
+
+  it('a folha que já cabia continua como era (as posições numa coluna só)', async () => {
+    const m = await montar(folhaTresFaixas('APOIOS', 8))
+    expect(m.marcas.get('fim:passo-7')?.pagina).toBe(2)
+    expect(m.extras.compacta).toBeUndefined()
+    const pagina = palavrasDoPdf(m.pdf).find((p) => p.some((w) => w.texto === 'ASSINATURAS'))!
+    expect(pagina.filter((w) => w.texto === 'Posição')).toHaveLength(1)
+  })
+})

@@ -5,7 +5,6 @@ import { BellRing, CalendarClock, CircleCheck, Download, FilePlus2, Mail, MailX,
 import { motion } from 'motion/react'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { hojeLocalIso } from '#shared/dominio.ts'
 import type { Vencimento } from '#shared/tipos.ts'
 import { LembreteModal } from '../components/LembreteModal'
 import { PrazoBadge } from '../components/Selos'
@@ -17,7 +16,7 @@ import { Linha, Tabela, Td, Th } from '../components/ui/Table'
 import { api } from '../lib/api'
 import { useConsulta } from '../lib/consulta'
 import { exportarCSV } from '../lib/csv'
-import { dataCurta, normalizar, numero } from '../lib/format'
+import { dataCurta, hojeBrasilia, normalizar, numero } from '../lib/format'
 import {
   agruparPorCliente,
   clientesAvisadosNoMes,
@@ -82,7 +81,8 @@ export function Vencimentos() {
   )
 
   const indicadores = useMemo(() => {
-    const mes = hojeLocalIso().slice(0, 7)
+    // O mês de Brasília, como o dia de cada lembrete (`mesBrasilia`)
+    const mes = hojeBrasilia().slice(0, 7)
     const vencidas = todos.filter((v) => v.dias < 0)
     const em30 = todos.filter((v) => v.dias >= 0 && v.dias <= 30)
     return {
@@ -114,7 +114,7 @@ export function Vencimentos() {
 
   const exportar = () => exportarCSV('vencimentos.csv', COLUNAS_CSV_VENCIMENTOS, lista.map(linhaCsvVencimento))
 
-  const nomeMes = MESES[Number(hojeLocalIso().slice(5, 7)) - 1]
+  const nomeMes = MESES[Number(hojeBrasilia().slice(5, 7)) - 1]
 
   return (
     <>
