@@ -1626,6 +1626,18 @@ export function temCargaSemDescida(e: Pick<EnsaioIndicacao, 'metodo' | 'pontos' 
 }
 
 /**
+ * O erro de indicação tem carga lida e nenhuma leitura do zero (o ponto sem carga, sem a linha ou com ela em branco)?
+ * Como a pendência do cálculo (POP 7.7, desde a 1.0.6). Para o servidor marcar o que foi medido antes de a leitura do
+ * zero ser obrigatória (`Calibracao.zeroComoAviso`).
+ */
+export function temCargasSemZero(e: Pick<EnsaioIndicacao, 'pontos'> | null | undefined): boolean {
+  if (!e) return false
+  const lido = (p: { crescente: number | null; decrescente: number | null }) =>
+    [p.crescente, p.decrescente].some((v) => typeof v === 'number' && Number.isFinite(v))
+  return e.pontos.some((p) => p.carga > 0 && lido(p)) && !e.pontos.some((p) => !(p.carga > 0) && lido(p))
+}
+
+/**
  * O ensaio "como encontrado" tem alguma leitura? A tela de antes criava um vazio ao escolher um ajuste; vazio, ele
  * não entra no cálculo nem no certificado.
  */

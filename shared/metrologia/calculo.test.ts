@@ -1280,6 +1280,30 @@ describe('calibração nova: os mínimos do POP e as leituras fora do esperado b
     expect(nova((e) => Object.assign(e, { regrasDoPop: undefined })).avisos).not.toContain(AVISO)
   })
 
+  it('medida antes de o zero ser obrigatório (`zeroComoAviso`, 1.0.6): a falta dele é aviso; os outros mínimos continuam', () => {
+    const AVISO = 'atencao: Erro de indicação sem a leitura do zero, uma das cargas do ensaio (POP 7.7).'
+    const cincoCargas = [5000, 10000, 15000, 20000, 30000]
+    const semLinha = (e: EntradaCalculo) => (e.indicacao.pontos = e.indicacao.pontos.filter((p) => p.carga > 0))
+    for (const mudar of [(e: EntradaCalculo) => comLeituras(e, cincoCargas), semLinha]) {
+      const r = nova((e) => {
+        e.zeroComoAviso = true
+        mudar(e)
+      })
+      expect(r.pendencias).toEqual([])
+      expect(r.avisos).toContain(AVISO)
+    }
+    // Com o zero lido, nada
+    expect(nova((e) => (e.zeroComoAviso = true)).avisos).not.toContain(AVISO)
+    // Os outros mínimos do POP continuam pendências (4 cargas lidas e nenhum zero: 4 pontos)
+    const quatro = nova((e) => {
+      e.zeroComoAviso = true
+      comLeituras(e, [5000, 10000, 20000, 30000])
+    })
+    expect(quatro.pendencias).toEqual(['Erro de indicação: 4 pontos lidos; o POP pede no mínimo 5, contando o zero (7.7).'])
+    // Sem as regras do POP, a marca não muda nada (tudo já é aviso)
+    expect(nova((e) => Object.assign(e, { regrasDoPop: undefined, zeroComoAviso: true })).pendencias).toEqual([])
+  })
+
   it('subida obrigatória: o método "Decrescente" e o ponto lido só na descida são pendência', () => {
     expect(nova((e) => (e.indicacao.metodo = 'DECRESCENTE')).pendencias).toContain(
       'Erro de indicação: a subida é obrigatória; troque o método “Decrescente” (POP 7.7).',

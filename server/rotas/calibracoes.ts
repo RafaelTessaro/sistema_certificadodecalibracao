@@ -214,6 +214,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
           por: u.nome,
           em: repo.agora().toISOString(),
         },
+        // O técnico que envia a calibração dele confirma que a executou (como ao gravá-la; `quemDefineOTecnico`)
+        autorId: u.id,
       },
       conferir,
     )

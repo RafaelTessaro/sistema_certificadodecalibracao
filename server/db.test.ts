@@ -16,6 +16,8 @@
 // Migração 17: a marca de técnico de cada usuário (todos os de antes ganham a marca).
 // Migração 19: a calibração em andamento das classes III e IIII ou sem classe, já medida (ou com a folha de campo impressa)
 // sem a pressão antes de ela ser obrigatória em toda classe (1.0.5), fica com a falta dela como aviso.
+// Migração 22: a calibração em andamento já medida sem a leitura do zero (ou com a folha impressa sem a linha dele) antes
+// de ela ser obrigatória (1.0.6) fica com a falta dela como aviso.
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
@@ -37,7 +39,7 @@ import { detalheTrocaIndicador, lerMeta, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 21
+const ULTIMA = 22
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -1729,5 +1731,139 @@ describe('migração 21: a data prevista impressa na folha de campo avulsa', () 
     db.exec('PRAGMA user_version = 20')
     migrar(db)
     expect(db.prepare('SELECT data_prevista FROM folhas_campo').get()).toEqual({ data_prevista: '2026-11-12' })
+  })
+})
+
+describe('migração 22: a calibração em andamento sem a leitura do zero, de antes de ela ser obrigatória', () => {
+  const OPCOES = { ...OPCOES_CALCULO_PADRAO }
+  const ponto = (carga: number, lida: boolean) => ({
+    id: `p${carga}`,
+    carga,
+    pecas: [],
+    crescente: lida ? carga : null,
+    decrescente: lida ? carga : null,
+  })
+  const ensaio = (pontos: ReturnType<typeof ponto>[]) => ({
+    metodo: 'CRESCENTE_DECRESCENTE',
+    retornoZero: null,
+    substituicao: { ativa: false, pecas: [], etapas: [] },
+    pontos,
+  })
+  const CARGAS = [5, 10, 15, 20, 30]
+  /** As 5 cargas lidas e o zero: em branco (a linha copiada do certificado anterior), lido ou sem a linha. */
+  const medida = (zero: 'branco' | 'lido' | 'sem') =>
+    ensaio([...(zero === 'sem' ? [] : [ponto(0, zero === 'lido')]), ...CARGAS.map((c) => ponto(c, true))])
+  const plano = (comZero: boolean) => ensaio([...(comZero ? [ponto(0, false)] : []), ...CARGAS.map((c) => ponto(c, false))])
+  /**
+   * Banco na versão 21 com a balança b3 (classe III) e: z1 (medida, o zero em branco, OS 90), z2 (medida, sem a linha do
+   * zero), z3 (em revisão, sem leituras, com a folha impressa e o plano sem a linha do zero, nº reservado), z4 (sem
+   * leituras, folha impressa com a linha do zero), z5 (medida com o zero lido), z6 (sem leituras nem folha, plano sem a
+   * linha), z7 (os mínimos já como avisos), o8 (emitido sem a leitura do zero) e r9 (correção de o8 aberta na 1.0.5).
+   */
+  function bancoV21() {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 1)
+    db.prepare(
+      `INSERT INTO clientes (id, tipo, documento, nome, busca, ativo, dados, versao, criado_em, atualizado_em)
+       VALUES ('c1', 'PJ', '', 'Frigorífico', 'frigorifico', 1, '{}', 1, ?, ?)`,
+    ).run(EM, EM)
+    inserirBalanca(db, 'b3', { numeroSerie: 'TL-1', classe: 'III', faixas: [{ max: 30, e: 0.01, d: 0.01 }] })
+    migrar(db, 21)
+    const inserir = db.prepare(
+      `INSERT INTO calibracoes (id, status, numero, cliente_id, balanca_id, ordem_servico, substitui_id, dados, versao,
+                                criado_em, atualizado_em)
+       VALUES (?, ?, ?, 'c1', 'b3', ?, ?, ?, 2, ?, ?)`,
+    )
+    let minutos = 0
+    const calibracao = (id: string, status: string, o: { os?: string; numero?: string; substitui?: string }, dados: object) => {
+      const em = new Date(Date.parse(EM) + ++minutos * 60_000).toISOString()
+      const k = {
+        id,
+        status,
+        numero: o.numero ?? '',
+        clienteId: 'c1',
+        balancaId: 'b3',
+        ordemServico: o.os ?? '',
+        dataCalibracao: '2026-11-04',
+        substituiId: o.substitui ?? '',
+        opcoes: OPCOES,
+        emissao: null,
+        ambiente: { temperaturaInicial: 22, temperaturaFinal: 22.5, umidadeInicial: 55, umidadeFinal: 56, pressao: 927 },
+        repetibilidade: [],
+        excentricidade: { aplicavel: true, carga: 10, posicoes: [] },
+        comoEncontrado: null,
+        indicacao: medida('branco'),
+        ...dados,
+      }
+      inserir.run(id, status, o.numero ?? '', o.os ?? '', o.substitui ?? '', JSON.stringify(k), em, em)
+    }
+    calibracao('z1', 'RASCUNHO', { os: '90' }, {})
+    calibracao('z2', 'RASCUNHO', { os: '91' }, { indicacao: medida('sem') })
+    calibracao('z3', 'REVISAO', {}, { indicacao: plano(false) })
+    calibracao('z4', 'RASCUNHO', { os: '93' }, { indicacao: plano(true) })
+    calibracao('z5', 'RASCUNHO', { os: '94' }, { indicacao: medida('lido') })
+    calibracao('z6', 'RASCUNHO', { os: '95' }, { indicacao: plano(false) })
+    calibracao('z7', 'RASCUNHO', { os: '96' }, { minimosComoAviso: true })
+    calibracao('o8', 'EMITIDO', { numero: 'CC-2026-00008' }, { emissao: { padroes: [], regrasDoPop: true } })
+    calibracao('r9', 'RASCUNHO', { substitui: 'o8' }, { regrasDoPop: true })
+    const folha = db.prepare(
+      `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, impressa_por,
+         impressa_em, ultima_em, substituida_por, substituida_em)
+       VALUES (?, 2026, ?, ?, ?, 'b3', 'c1', 'Ana', ?, ?, '', '')`,
+    )
+    folha.run('FC-2026-00043', 43, 'calibracao:z3', 'z3', EM, EM)
+    folha.run('FC-2026-00044', 44, 'calibracao:z4', 'z4', EM, EM)
+    db.prepare(
+      `INSERT INTO numeros_reservados (numero, ano, sequencia, calibracao_id, folha, reservado_em, situacao)
+       VALUES ('CC-2026-00043', 2026, 43, 'z3', 'FC-2026-00043', ?, 'reservado')`,
+    ).run(EM)
+    return db
+  }
+  const dados = (db: DatabaseSync) =>
+    Object.fromEntries(
+      (db.prepare('SELECT id, dados FROM calibracoes ORDER BY id').all() as Array<{ id: string; dados: string }>).map((l) => [
+        l.id,
+        JSON.parse(l.dados) as Record<string, unknown>,
+      ]),
+    )
+
+  it('marca a medida sem a leitura do zero e a com a folha impressa sem a linha dele (também a correção aberta)', () => {
+    const db = bancoV21()
+    const antes = dados(db)
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    const depois = dados(db)
+    for (const id of ['z1', 'z2', 'z3', 'r9']) expect(depois[id], id).toEqual({ ...antes[id], zeroComoAviso: true })
+    // A folha com a linha do zero, o zero lido, sem nada medido nem folha, os mínimos já como avisos e o emitido
+    for (const id of ['z4', 'z5', 'z6', 'z7', 'o8']) expect(depois[id], id).toEqual(antes[id])
+    // A marcada sai sem a leitura do zero, com o aviso; sem a marca, é pendência
+    const b = { unidade: 'kg', classe: 'III', tipoFaixas: 'UNICA', faixas: [{ max: 30, e: 0.01, d: 0.01 }] } as Balanca
+    const z1 = { ...calibracaoVazia(), ...(depois.z1 as unknown as Calibracao) }
+    const { resultado } = calcularCalibracao(z1, b, [])
+    expect(resultado.pendencias.join('\n')).not.toMatch(/leitura do zero/)
+    expect(resultado.avisos.map((a) => a.mensagem)).toContain(
+      'Erro de indicação sem a leitura do zero, uma das cargas do ensaio (POP 7.7).',
+    )
+    expect(calcularCalibracao({ ...z1, zeroComoAviso: undefined }, b, []).resultado.pendencias).toContain(
+      'Erro de indicação: falta a leitura do zero, a primeira carga do ensaio (POP 7.7).',
+    )
+  })
+
+  it('o registro de atividades diz quais; pode ser repetida sem mudar nada nem registrar de novo', () => {
+    const db = bancoV21()
+    migrar(db)
+    const doSistema = () => registros(db).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')
+    expect(doSistema().map((r) => r.detalhe)).toEqual([
+      '4 calibrações em andamento medidas, ou com a folha de campo impressa sem a linha do zero, antes desta versão saem sem a leitura do zero, com um aviso (a visita já aconteceu); nas novas, a leitura do zero é obrigatória. Confira: OS 90, OS 91, CC-2026-00043, revisão do CC-2026-00008.',
+    ])
+    const depois = dados(db)
+    db.exec('PRAGMA user_version = 21')
+    migrar(db)
+    expect(dados(db)).toEqual(depois)
+    expect(doSistema()).toHaveLength(1)
+    const nada = bancoV21()
+    nada.exec("DELETE FROM calibracoes WHERE id IN ('z1', 'z2', 'z3', 'r9')")
+    migrar(nada)
+    expect(registros(nada).filter((r) => r.acao === 'SISTEMA_ATUALIZADO')).toEqual([])
   })
 })

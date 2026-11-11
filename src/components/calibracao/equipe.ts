@@ -2,7 +2,7 @@
 // emissão" oferece a quem está usando (emitir, autorizar, enviar para autorização, devolver ou só aguardar), pelas
 // regras de shared/permissoes.ts (as mesmas que o servidor confere).
 
-import { impedimentoParaEmitir, podeDevolver, signatariosParaAutorizar } from '#shared/permissoes.ts'
+import { impedimentoParaEmitir, pedidoSemQuemAutorize, podeDevolver, signatariosParaAutorizar } from '#shared/permissoes.ts'
 import type { Calibracao, UsuarioSessao } from '#shared/tipos.ts'
 import type { MembroEquipe } from '../../lib/api'
 
@@ -49,6 +49,11 @@ export interface EstadoEmissao {
   sugerido: string
   /** Por que quem está usando não autoriza (ligada), ou null. */
   impedimento: string | null
+  /**
+   * Quem recebeu o pedido não pode autorizar (executou, ou escolheu o técnico: o pedido enviado na 1.0.5), ou null: ele
+   * devolve, ou quem enviou volta para rascunho (`pedidoSemQuemAutorize`).
+   */
+  semQuemAutorize: 'TECNICO' | 'ESCOLHEU' | null
   podeDevolver: boolean
 }
 
@@ -65,7 +70,8 @@ export function estadoDaEmissao(
   const signatarios = signatariosParaAutorizar(equipe, k.tecnicoId, k.tecnicoDefinidoPorId)
   const impedimento = impedimentoParaEmitir(exigirRevisor, k, usuario)
   const devolver = exigirRevisor && podeDevolver(k, usuario)
-  const base = { signatarios, impedimento, podeDevolver: devolver }
+  const semQuemAutorize = exigirRevisor ? pedidoSemQuemAutorize(k) : null
+  const base = { signatarios, impedimento, semQuemAutorize, podeDevolver: devolver }
   if (!exigirRevisor) return { ...base, modo: 'emitir', sugerido: '' }
   const pedido = k.status === 'REVISAO' ? k.autorizacao : null
   const eu = usuario?.id ?? ''
@@ -96,7 +102,9 @@ export function motivoDoEnvioDesativado(o: {
 /**
  * O título e a frase do alto de "Revisão e emissão", pelo que quem está usando pode fazer: emitir (`emitir`), autorizar
  * e emitir (`autorizar`, ou `escolher` com ele mesmo escolhido: `autorizaVoce`), enviar para a autorização de outro
- * signatário (`escolher`) ou só aguardar a autorização pedida (`aguardando`; `aguardandoDe`: o nome do escolhido).
+ * signatário (`escolher`) ou só aguardar a autorização pedida (`aguardando`; `aguardandoDe`: o nome do escolhido). O
+ * pedido parado com quem não pode autorizar (`semQuemAutorize`; `pedidoParaVoce`: é quem está usando) diz o que fazer
+ * (`parado`).
  */
 export function cabecalhoDaRevisao(o: {
   modo: ModoEmissao
@@ -105,7 +113,9 @@ export function cabecalhoDaRevisao(o: {
   aguardandoDe: string | null
   /** As pendências levam à etapa delas (a frase convida a clicar). */
   irParaItens: boolean
-}): { titulo: string; descricao: string; aguardando: boolean } {
+  semQuemAutorize?: 'TECNICO' | 'ESCOLHEU' | null
+  pedidoParaVoce?: boolean
+}): { titulo: string; descricao: string; aguardando: boolean; parado?: boolean } {
   const acao =
     o.modo === 'aguardando'
       ? 'aguardando'
@@ -130,6 +140,23 @@ export function cabecalhoDaRevisao(o: {
             }.${clique}`,
       aguardando: false,
     }
+  if (acao === 'aguardando' && o.semQuemAutorize) {
+    const quem = o.pedidoParaVoce ? 'Você' : (o.aguardandoDe ?? 'Quem recebeu o pedido')
+    const porque =
+      o.semQuemAutorize === 'TECNICO'
+        ? `${quem} executou esta calibração e não autoriza o próprio certificado.`
+        : `${quem} escolheu o técnico, e quem escolhe o técnico não autoriza${o.pedidoParaVoce ? '' : ' (o pedido é de antes da atualização)'}.`
+    return {
+      titulo: `${o.pedidoParaVoce ? 'Você não pode' : `${quem} não pode`} autorizar esta calibração`,
+      descricao: `${porque} ${
+        o.pedidoParaVoce
+          ? 'Clique em Devolver: ela volta para rascunho e vai para outro signatário.'
+          : 'Volte para rascunho e envie para outro signatário.'
+      }`,
+      aguardando: false,
+      parado: true,
+    }
+  }
   if (acao === 'aguardando')
     return {
       titulo: o.aguardandoDe ? `Aguardando autorização de ${o.aguardandoDe}` : 'Aguardando autorização',

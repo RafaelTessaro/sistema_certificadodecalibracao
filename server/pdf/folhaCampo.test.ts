@@ -30,6 +30,7 @@ import {
   AJUSTE_INTERNO_CLASSE_I,
   AVISO_ANOTACOES,
   AVISO_CLASSE_I_EM_BRANCO,
+  certificadoDoPadraoNaFolha,
   DICA_ANOTACOES,
   type DadosFolhaCampo,
   definicaoFolhaCampo,
@@ -45,6 +46,7 @@ import {
   nomeArquivoFolhaCampo,
   ONDE_ANOTAR,
   POSICOES_IMPRESSAS_EM_BRANCO,
+  semPartirPalavras,
   TITULO_ANOTACOES,
 } from './folhaCampo.ts'
 import { exemploBancada, exemploClasseI, POP_EXEMPLO } from './exemplosCertificado.ts'
@@ -3354,5 +3356,61 @@ describe.runIf(temPdftotext)('múltiplas faixas (3) com muitos apoios: os 8 pass
     expect(m.extras.compacta).toBeUndefined()
     const pagina = palavrasDoPdf(m.pdf).find((p) => p.some((w) => w.texto === 'ASSINATURAS'))!
     expect(pagina.filter((w) => w.texto === 'Posição')).toHaveLength(1)
+  })
+})
+
+describe('passo 1: o nº do certificado do padrão numa linha só (1.0.6)', () => {
+  const NUMEROS = ['RBC-LMP-0456-2026', 'CAL-0001-2026-SP-0001', 'LAB-0456/2026']
+  /** A plataforma com os nºs de certificado dos padrões compridos e com hífens ("RBC-" / "LMP-0456-2026" partia). */
+  const comNumeros = (numeros = NUMEROS) => {
+    const d = folhaPlataforma()
+    d.padroes = d.padroes.map((p, i) => ({ ...p, certificado: numeros[i % numeros.length] }))
+    return d
+  }
+
+  it('a letra só desse nº diminui até caber (até 6 pt), sem partir no hífen; comprido demais, quebra onde precisar', () => {
+    // Cabe no corpo de sempre: igual
+    expect(certificadoDoPadraoNaFolha('LAB-0456/2026', 74)).toEqual({ text: 'LAB-0456/2026', noWrap: true })
+    // Menor, numa linha
+    const rbc = certificadoDoPadraoNaFolha('RBC-LMP-0456-2026', 74) as { fontSize: number; noWrap: boolean }
+    expect(rbc).toMatchObject({ text: 'RBC-LMP-0456-2026', noWrap: true })
+    expect(rbc.fontSize).toBeGreaterThanOrEqual(6)
+    expect(rbc.fontSize).toBeLessThan(9)
+    // Nem com 6 pt: quebra (não passa da coluna)
+    expect(certificadoDoPadraoNaFolha('T-44100/2026-R1-LAB-METRO-SP', 74)).toEqual({ text: 'T-44100/2026-R1-LAB-METRO-SP', fontSize: 6 })
+    // Sem nº: o traço
+    expect(certificadoDoPadraoNaFolha('  ', 74)).toBe('—')
+    const t = JSON.stringify(definicaoFolhaCampo(comNumeros()))
+    for (const n of NUMEROS) expect(t).toMatch(new RegExp(`"text":"${n.replace(/[/-]/g, '\\$&')}","noWrap":true`))
+  })
+
+  it.runIf(temPdftotext)('no PDF, cada nº inteiro numa linha', async () => {
+    const texto = textoDoPdf(await gerarFolhaCampoPdf(comNumeros()))
+    const pagina1 = paginasDe(texto)[0]
+    for (const n of NUMEROS) expect(pagina1).toContain(n)
+    expect(pagina1).not.toMatch(/RBC-\s*\n/)
+  })
+})
+
+describe('passo 3: o tipo de balança quebra só entre as palavras', () => {
+  it('"Computadora (preço)": a letra diminui até a palavra mais longa caber (nunca "Computador" / "a (preço)")', () => {
+    // Cabe: igual
+    expect(semPartirPalavras('Plataforma', 58)).toBe('Plataforma')
+    // O hífen é lugar de quebra: "Médico-" / "hospitalar" não diminui
+    expect(semPartirPalavras('Médico-hospitalar', 58)).toBe('Médico-hospitalar')
+    for (const tipo of ['Computadora (preço)', 'Transpaleteira / pallet']) {
+      const no = semPartirPalavras(tipo, 58) as { text: string; fontSize: number }
+      expect(no.text).toBe(tipo)
+      expect(no.fontSize).toBeLessThan(9)
+      expect(no.fontSize).toBeGreaterThanOrEqual(7)
+    }
+  })
+
+  it.runIf(temPdftotext)('na folha da computadora, a palavra inteira', async () => {
+    const d = folhaPlataforma()
+    d.balanca = { ...d.balanca!, tipo: 'COMPUTADORA' }
+    const pagina1 = paginasDe(textoDoPdf(await gerarFolhaCampoPdf(d)))[0]
+    expect(pagina1).toMatch(/Computadora\b/)
+    expect(pagina1).not.toMatch(/Computador\s/)
   })
 })

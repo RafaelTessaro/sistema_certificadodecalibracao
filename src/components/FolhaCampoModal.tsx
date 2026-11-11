@@ -1,8 +1,8 @@
 import { ChevronRight, FilePlus2, Printer, RotateCcw } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { type ReactNode, useEffect, useRef } from 'react'
 import type { FolhaCampoImpressa } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
-import { dataDaFolha, TEXTO_FOLHA_NOVA } from '../lib/folhaCampo'
+import { dataDaFolha, escolhaPorAbertura, TEXTO_FOLHA_NOVA } from '../lib/folhaCampo'
 import { Button } from './ui/Button'
 import { Modal } from './ui/Modal'
 
@@ -28,6 +28,16 @@ export function FolhaCampoModal({
 }) {
   const numero = folha?.numero ?? ''
   const data = folha ? dataDaFolha(folha.impressaEm) : ''
+  // Uma escolha por abertura: na animação de saída a janela ainda responde, e o clique duplo em "Folha nova" reservaria
+  // duas folhas (a primeira já registrada como não usada)
+  const janela = useRef(escolhaPorAbertura())
+  const aberta = !!folha
+  useEffect(() => {
+    if (aberta) janela.current.abrir()
+  }, [aberta])
+  const escolher = (e: EscolhaFolha) => {
+    if (aberta) janela.current.escolher(() => aoEscolher(e))
+  }
   // O nº nunca quebra no meio ("FC-" numa linha e o resto na outra)
   const numeroFc = <span className="tnum whitespace-nowrap">{numero}</span>
   return (
@@ -54,7 +64,7 @@ export function FolhaCampoModal({
           texto={`Igual à impressa em ${data}. Use se o papel se perdeu ou estragou.`}
           destaque
           autoFocus={foco === 'reimprimir'}
-          aoClicar={() => aoEscolher('reimprimir')}
+          aoClicar={() => escolher('reimprimir')}
         />
         <Opcao
           icone={<FilePlus2 className="h-4 w-4" />}
@@ -66,7 +76,7 @@ export function FolhaCampoModal({
             </>
           }
           autoFocus={foco === 'nova'}
-          aoClicar={() => aoEscolher('nova')}
+          aoClicar={() => escolher('nova')}
         />
       </div>
     </Modal>

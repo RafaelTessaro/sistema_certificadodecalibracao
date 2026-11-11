@@ -411,6 +411,8 @@ interface Carregado {
 function EditorCalibracao({ id }: { id: string }) {
   const navegar = useNavigate()
   const podeConfigurar = usePode('configuracoes')
+  // Marca a folha do cliente que não foi usada ("Não vai ser usada"): o aviso e a confirmação da emissão dizem quem faz
+  const podeDescartarFolha = usePode('cancelarCertificado')
   const eu = useSessao((s) => s.usuario?.id ?? '')
   const [dados, setDados] = useState<Carregado | null>(null)
   const [erro, setErro] = useState('')
@@ -923,8 +925,23 @@ function EditorCalibracao({ id }: { id: string }) {
         ? `O certificado sai com o nº ${numeroReservado.numero}, o da folha de campo, e não pode mais ser alterado. Se precisar corrigir depois, a correção sai com o mesmo número.`
         : 'O certificado recebe o número definitivo e não pode mais ser alterado. Se precisar corrigir depois, a correção sai com o mesmo número.'
     // Com folha do cliente ainda não ligada: a confirmação diz o nº dela e o do certificado reservado nela (o da etiqueta,
-    // se foi ela a usada) e o nº com que este sai
-    const semLigar = confirmacaoSemLigar(folhasNaoLigadas, numeroReservado?.numero ?? dados.numeroRevisao ?? null)
+    // se foi ela a usada) e o nº com que este sai. A lista é buscada de novo: com a calibração aberta, outra pessoa pode
+    // ter impresso uma folha para o cliente (a tela só a atualiza ao abrir, gravar, ligar uma folha ou trocar a balança)
+    let folhasDoCliente = folhasNaoLigadas
+    try {
+      const atuais = (await api.calibracao(id)).folhasNaoLigadas
+      if (atuais) {
+        folhasDoCliente = atuais
+        setFolhasNaoLigadas(atuais)
+      }
+    } catch {
+      // Sem resposta, a lista da tela
+    }
+    const semLigar = confirmacaoSemLigar(
+      folhasDoCliente,
+      numeroReservado?.numero ?? dados.numeroRevisao ?? null,
+      podeDescartarFolha,
+    )
     const descricao = autorizar
       ? `Você autoriza como signatário: o certificado sai com a sua assinatura em “Autorizado por”. ${numeracao}`
       : numeracao

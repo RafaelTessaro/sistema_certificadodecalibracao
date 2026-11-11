@@ -1081,12 +1081,14 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
    */
   const semZero = cargaLida && !zeroLidoAntes
   const linhaDoZero = entrada.indicacao.pontos.some((p) => ehZero(p.carga, ctx))
+  /** A falta do zero só como aviso: com os mínimos, e na calibração medida antes de ele ser obrigatório (1.0.6). */
+  const zeroComoAviso = minimosComoAviso || entrada.zeroComoAviso === true
   if (!minimosComoAviso) {
     if (pontosLidos > 0 && cargaLida && pontosLidos < 5)
       pendencias.push(
         `Erro de indicação: ${pontosLidos} ${pontosLidos === 1 ? 'ponto lido' : 'pontos lidos'}; o POP pede no mínimo 5, contando o zero (7.7).`,
       )
-    if (semZero)
+    if (semZero && !zeroComoAviso)
       pendencias.push(
         `Erro de indicação: falta a leitura do zero, a primeira carga do ensaio${linhaDoZero ? '' : '; acrescente o ponto sem carga'} (POP 7.7).`,
       )
@@ -1255,7 +1257,7 @@ export function calcular(entrada: EntradaCalculo): ResultadoCalculo {
       nivel: 'atencao',
       mensagem: `Erro de indicação com ${pontosLidos} ponto(s); o mínimo é 5, contando o zero (cg-18 §5.2).`,
     })
-  if (minimosComoAviso && semZero)
+  if (zeroComoAviso && semZero)
     avisos.push({ nivel: 'atencao', mensagem: 'Erro de indicação sem a leitura do zero, uma das cargas do ensaio (POP 7.7).' })
   // A descida que falta: na calibração nova, a pendência (mais acima); medida antes de ela ser obrigatória, só o aviso
   if (descidaComoAviso && cargasSemDescida.length)

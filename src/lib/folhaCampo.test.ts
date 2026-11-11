@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { api, chaveFolhaAvulsa, JANELA_FOLHA_AVULSA_MS } from './api'
 import {
   abrirFolhaCampo,
+  escolhaPorAbertura,
   confirmacaoSemLigar,
   dataDaFolha,
   TEXTO_FOLHA_NOVA,
@@ -22,16 +23,21 @@ describe('a folha do cliente ainda não ligada', () => {
     dataPrevista: '',
   }
 
-  it('o aviso diz o nº da folha e o da etiqueta, e pede para ligar', () => {
+  it('o aviso diz o nº da folha e o da etiqueta, pede para ligar e diz como tirá-lo se ela não foi usada', () => {
+    const NAO_USADA = 'Se não foi usada, peça ao administrador para marcá-la como “Não vai ser usada” (em Números não utilizados).'
     expect(textoFolhaNaoLigada(folha)).toBe(
-      'O cliente tem a folha FC-2026-00012 (certificado CC-2026-00034 reservado) ainda não ligada. Se foi ela a usada no cliente, ligue-a: o nº da etiqueta é CC-2026-00034.',
+      `O cliente tem a folha FC-2026-00012 (certificado CC-2026-00034 reservado) ainda não ligada. Se foi ela a usada no cliente, ligue-a: o nº da etiqueta é CC-2026-00034. ${NAO_USADA}`,
     )
     // A da mesma OS diz isso; sem nº de certificado, só a folha
     expect(textoFolhaNaoLigada({ ...folha, mesmaOs: true })).toMatch(
       /^O cliente tem a folha FC-2026-00012 \(da mesma OS 777, certificado CC-2026-00034 reservado\)/,
     )
     expect(textoFolhaNaoLigada({ ...folha, numeroCertificado: '' })).toBe(
-      'O cliente tem a folha FC-2026-00012 ainda não ligada. Se foi ela a usada no cliente, ligue-a.',
+      `O cliente tem a folha FC-2026-00012 ainda não ligada. Se foi ela a usada no cliente, ligue-a. ${NAO_USADA}`,
+    )
+    // O administrador marca ele mesmo
+    expect(textoFolhaNaoLigada(folha, true)).toMatch(
+      /Se não foi usada, marque-a como “Não vai ser usada” em Certificados → Números não utilizados\.$/,
     )
   })
 
@@ -40,13 +46,20 @@ describe('a folha do cliente ainda não ligada', () => {
     expect(confirmacaoSemLigar([folha], 'CC-2026-00050')).toEqual({
       titulo: 'Emitir sem ligar a folha FC-2026-00012?',
       descricao:
-        'A folha FC-2026-00012 (certificado CC-2026-00034) deste cliente ainda não está ligada. Se foi ela a usada no cliente, a etiqueta da balança tem o nº CC-2026-00034, e este certificado sai com o nº CC-2026-00050. Para ligar, cancele e use “Ligar esta folha”.',
+        'A folha FC-2026-00012 (certificado CC-2026-00034) deste cliente ainda não está ligada. Se foi ela a usada no cliente, a etiqueta da balança tem o nº CC-2026-00034, e este certificado sai com o nº CC-2026-00050. Para ligar, cancele e use “Ligar esta folha”. Se não foi usada, peça ao administrador para marcá-la como “Não vai ser usada”.',
     })
+    // A folha sem nº de certificado (impressa antes de a folha reservar o nº): nada de "o nº de certificado dela"
+    const semNumero = confirmacaoSemLigar([{ ...folha, numeroCertificado: '' }], 'CC-2026-00050', true)
+    expect(semNumero?.descricao).toBe(
+      'A folha FC-2026-00012 deste cliente ainda não está ligada. Se foi ela a usada no cliente, ligue-a antes de emitir: cancele e use “Ligar esta folha”. Se não foi usada, marque-a como “Não vai ser usada” em Certificados → Números não utilizados.',
+    )
+    expect(semNumero?.descricao).not.toMatch(/nº de certificado dela/)
     const duas = confirmacaoSemLigar([folha, { ...folha, numero: 'FC-2026-00013', numeroCertificado: 'CC-2026-00035' }], null)
     expect(duas?.titulo).toBe('Emitir sem ligar as folhas do cliente?')
     expect(duas?.descricao).toMatch(
       /^As folhas FC-2026-00012 \(certificado CC-2026-00034\) e FC-2026-00013 \(certificado CC-2026-00035\) deste cliente ainda não estão ligadas\. Se uma delas foi a usada no cliente, a etiqueta da balança tem o nº de certificado dela, e este certificado sai com outro nº\./,
     )
+    expect(duas?.descricao).toMatch(/Se não foram usadas, peça ao administrador para marcá-las como “Não vai ser usada”\.$/)
   })
 
   it('a data prevista da folha ligada: passou para a calibração, ou é outra (confira no passo 8)', () => {
@@ -142,5 +155,22 @@ describe('folha avulsa: o clique duplo não reserva dois nºs (nem abre duas aba
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+describe('"Folha nova (novo nº)": o clique duplo não reserva duas folhas', () => {
+  it('a escolha da janela vale uma vez por abertura (a janela ainda responde na animação de saída)', () => {
+    const escolhas: string[] = []
+    const janela = escolhaPorAbertura()
+    janela.abrir()
+    expect(janela.escolher(() => escolhas.push('nova'))).toBe(true)
+    // O segundo clique do clique duplo (e qualquer outro, até abrir de novo): nada
+    expect(janela.escolher(() => escolhas.push('nova'))).toBe(false)
+    expect(janela.escolher(() => escolhas.push('reimprimir'))).toBe(false)
+    expect(escolhas).toEqual(['nova'])
+    // Aberta de novo: escolhe de novo
+    janela.abrir()
+    expect(janela.escolher(() => escolhas.push('reimprimir'))).toBe(true)
+    expect(escolhas).toEqual(['nova', 'reimprimir'])
   })
 })

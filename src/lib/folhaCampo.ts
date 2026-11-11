@@ -40,6 +40,26 @@ export async function abrirFolhaCampo(url: string | (() => Promise<string | null
   }
 }
 
+/**
+ * A escolha de uma janela vale uma vez por abertura (`abrir` a cada vez que ela abre): a janela "Folha de campo já
+ * impressa" continua respondendo na animação de saída, e o clique duplo em "Folha nova (novo nº)" reservaria duas folhas
+ * (a primeira já registrada como não usada). `escolher` roda `fazer` só na primeira vez (true se rodou).
+ */
+export function escolhaPorAbertura(): { abrir: () => void; escolher: (fazer: () => void) => boolean } {
+  let feita = false
+  return {
+    abrir: () => {
+      feita = false
+    },
+    escolher: (fazer) => {
+      if (feita) return false
+      feita = true
+      fazer()
+      return true
+    },
+  }
+}
+
 /** Dia (no horário de Brasília) em que a folha foi impressa a primeira vez: "21/10/2026". */
 export const dataDaFolha = (iso: string): string => dataCurta(iso)
 
@@ -100,10 +120,12 @@ export function textosDataDaFolha(d: { daFolha: string; aplicada: boolean; daCal
 
 /**
  * O aviso da folha impressa para o cliente e ainda não ligada (etapas "Cliente e OS" e "Revisão e emissão"): se foi ela a
- * usada no cliente, o nº de certificado dela já está na etiqueta da balança.
+ * usada no cliente, o nº de certificado dela já está na etiqueta da balança; se não foi, o aviso sai quando ela é marcada
+ * como "Não vai ser usada", o que só o administrador faz (`administrador`: quem está usando).
  */
 export function textoFolhaNaoLigada(
   f: Pick<FolhaNaoLigada, 'numero' | 'numeroCertificado' | 'ordemServico' | 'mesmaOs'>,
+  administrador = false,
 ): string {
   const sobre = [
     f.mesmaOs && f.ordemServico ? `da mesma ${textoOs(f.ordemServico)}` : '',
@@ -113,33 +135,47 @@ export function textoFolhaNaoLigada(
     .join(', ')
   return `O cliente tem a folha ${f.numero}${sobre ? ` (${sobre})` : ''} ainda não ligada. Se foi ela a usada no cliente, ligue-a${
     f.numeroCertificado ? `: o nº da etiqueta é ${f.numeroCertificado}` : ''
-  }.`
+  }. ${
+    administrador
+      ? 'Se não foi usada, marque-a como “Não vai ser usada” em Certificados → Números não utilizados.'
+      : 'Se não foi usada, peça ao administrador para marcá-la como “Não vai ser usada” (em Números não utilizados).'
+  }`
 }
 
 /**
  * Emitir com folhas do cliente ainda não ligadas: o título e a frase da confirmação, com o nº de cada folha e o do
  * certificado reservado nela (o da etiqueta, se foi ela a usada), e o nº com que este certificado sai (`numeroDesta`;
- * null: o próximo da sequência). null: nenhuma folha.
+ * null: o próximo da sequência). A folha sem nº reservado (impressa antes de a folha reservar o nº) só pede para ligar.
+ * `administrador`: quem está usando marca a folha que não foi usada. null: nenhuma folha.
  */
 export function confirmacaoSemLigar(
   folhas: ReadonlyArray<Pick<FolhaNaoLigada, 'numero' | 'numeroCertificado'>>,
   numeroDesta: string | null,
+  administrador = false,
 ): { titulo: string; descricao: string } | null {
   if (!folhas.length) return null
   const uma = folhas.length === 1
   const itens = folhas.map((f) => (f.numeroCertificado ? `${f.numero} (certificado ${f.numeroCertificado})` : f.numero))
   const lista = uma ? itens[0] : `${itens.slice(0, -1).join(', ')} e ${itens.at(-1)}`
-  const etiqueta =
-    uma && folhas[0].numeroCertificado
+  const comNumero = folhas.some((f) => f.numeroCertificado)
+  const etiqueta = !comNumero
+    ? ''
+    : uma
       ? `a etiqueta da balança tem o nº ${folhas[0].numeroCertificado}`
       : 'a etiqueta da balança tem o nº de certificado dela'
+  const usada = `Se ${uma ? 'foi ela' : 'uma delas foi'} a usada no cliente, ${
+    etiqueta
+      ? `${etiqueta}, e este certificado sai com ${numeroDesta ? `o nº ${numeroDesta}` : 'outro nº'}. Para ligar, cancele e use “Ligar esta folha”.`
+      : `ligue-a antes de emitir: cancele e use “Ligar esta folha”.`
+  }`
+  const naoUsada = administrador
+    ? `Se não ${uma ? 'foi usada, marque-a' : 'foram usadas, marque-as'} como “Não vai ser usada” em Certificados → Números não utilizados.`
+    : `Se não ${uma ? 'foi usada' : 'foram usadas'}, peça ao administrador para ${uma ? 'marcá-la' : 'marcá-las'} como “Não vai ser usada”.`
   return {
     titulo: uma ? `Emitir sem ligar a folha ${folhas[0].numero}?` : 'Emitir sem ligar as folhas do cliente?',
     descricao: `${uma ? 'A folha' : 'As folhas'} ${lista} deste cliente ${
       uma ? 'ainda não está ligada' : 'ainda não estão ligadas'
-    }. Se ${uma ? 'foi ela' : 'uma delas foi'} a usada no cliente, ${etiqueta}, e este certificado sai com ${
-      numeroDesta ? `o nº ${numeroDesta}` : 'outro nº'
-    }. Para ligar, cancele e use “Ligar esta folha”.`,
+    }. ${usada} ${naoUsada}`,
   }
 }
 

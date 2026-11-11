@@ -33,6 +33,7 @@ import {
   OPCOES_CALCULO_PADRAO,
   proximaAcompanhando,
   temCargaSemDescida,
+  temCargasSemZero,
   textoBusca,
   textoBuscaBalanca,
   textoBuscaCalibracao,
@@ -354,8 +355,9 @@ const chaveTexto = (t: string) => t.trim().replace(/\s+/g, ' ').toUpperCase()
 
 export interface FiltroCalibracoes {
   /**
-   * 'AUTORIZAR': as que `usuario` pode autorizar agora (signatário, nunca o técnico): as enviadas para ele e as enviadas
-   * para revisão antes da 1.0.5; nenhuma com a revisão por outra pessoa desligada (Configurações).
+   * 'AUTORIZAR': as que `usuario` pode autorizar agora (signatário, nunca o técnico nem quem o escolheu): as enviadas
+   * para ele (a enviada na 1.0.5 para quem escolheu o técnico também, para ele devolver) e as enviadas para revisão antes
+   * da 1.0.5; nenhuma com a revisão por outra pessoa desligada (Configurações).
    */
   status?: StatusCalibracao | 'ABERTAS' | 'AUTORIZAR' | ''
   /** Quem está vendo a lista (para 'AUTORIZAR'). */
@@ -1093,17 +1095,18 @@ export class Repositorio {
     const params: Array<string | number> = []
     if (filtro.status === 'ABERTAS') condicoes.push("k.status IN ('RASCUNHO','REVISAO')")
     else if (filtro.status === 'AUTORIZAR') {
-      // Só com a revisão por outra pessoa ligada (desligada, ninguém autoriza: qualquer pessoa emite) e só as que ele
-      // pode autorizar (`impedimentoParaEmitir`): signatário e nunca o técnico nem quem o escolheu; as enviadas para ele e
-      // as de antes do pedido (sem signatário escolhido)
+      // Só com a revisão por outra pessoa ligada (desligada, ninguém autoriza: qualquer pessoa emite) e só signatário:
+      // as enviadas para ele (também a enviada na 1.0.5 para quem escolheu o técnico: ele não autoriza, mas devolve,
+      // `podeDevolver`, e o pedido não fica parado sem ninguém ver) e as de antes do pedido (sem signatário escolhido)
+      // que ele pode autorizar (`impedimentoParaEmitir`: nunca o técnico nem quem o escolheu)
       const pedidoPara = "json_extract(k.dados, '$.autorizacao.signatarioId')"
       const u = filtro.usuario
       if (!this.obterConfig().exigirRevisor || !u?.signatario) condicoes.push('0')
       else {
         condicoes.push(
-          `k.status = 'REVISAO' AND json_extract(k.dados, '$.tecnicoId') IS NOT ?
-             AND NOT (COALESCE(json_extract(k.dados, '$.tecnicoId'), '') <> '' AND json_extract(k.dados, '$.tecnicoDefinidoPorId') IS ?)
-             AND (${pedidoPara} = ? OR ${pedidoPara} IS NULL)`,
+          `k.status = 'REVISAO' AND (${pedidoPara} = ? OR (${pedidoPara} IS NULL
+             AND json_extract(k.dados, '$.tecnicoId') IS NOT ?
+             AND NOT (COALESCE(json_extract(k.dados, '$.tecnicoId'), '') <> '' AND json_extract(k.dados, '$.tecnicoDefinidoPorId') IS ?)))`,
         )
         params.push(u.id, u.id, u.id)
       }
@@ -1316,6 +1319,9 @@ export class Repositorio {
           // Emitido sem a pressão atmosférica (opcional nas classes III e IIII e sem classe até a 1.0.4): a revisão não
           // pode pedir uma medição que a visita não fez; a falta dela fica como aviso (`pressaoComoAviso`)
           if (original.pressaoComoAviso === true || original.ambiente.pressao === null) k.pressaoComoAviso = true
+          // Emitido sem a leitura do zero (uma das cargas obrigatórias só desde a 1.0.6): a revisão não pode pedir uma
+          // leitura que a visita não fez; a falta dela fica como aviso (`zeroComoAviso`)
+          if (original.zeroComoAviso === true || temCargasSemZero(original.indicacao)) k.zeroComoAviso = true
         }
         // Os padrões como foram congelados na emissão (o certificado e as correções da época), mesmo que tenham sido
         // calibrados de novo ou desativados depois (`padroesDaCalibracao`)
@@ -1373,19 +1379,23 @@ export class Repositorio {
    * Muda a situação da calibração em andamento: REVISAO = enviada para autorização (com o pedido, `extra.autorizacao`,
    * que tira a devolução de antes); RASCUNHO = voltou (o pedido sai; com `extra.devolucao`, devolvida pelo signatário).
    * `antes`: confere a calibração lida antes (a rota confere quem pode, e nada muda entre a conferência e a gravação).
+   * `extra.autorId`: quem muda; o próprio técnico que envia a calibração dele confirma que a executou, como ao gravá-la
+   * (`quemDefineOTecnico`: a tela, que não grava sem alteração, já conta com isso), e `antes` confere com ele.
    */
   mudarSituacao(
     id: string,
     status: 'RASCUNHO' | 'REVISAO',
     versao?: number,
-    extra: Pick<Calibracao, 'autorizacao' | 'devolucao'> = {},
+    extra: Pick<Calibracao, 'autorizacao' | 'devolucao'> & { autorId?: string } = {},
     antes?: (atual: Calibracao) => void,
   ): Calibracao {
     return transacao(this.db, () => {
-      const atual = this.obterCalibracao(id)
-      if (!atual) throw new ErroApi(404, 'Calibração não encontrada.')
-      if (atual.status !== 'RASCUNHO' && atual.status !== 'REVISAO') throw new ErroApi(409, 'Este certificado já foi emitido.')
-      if (versao !== undefined && versao !== atual.versao) throw conflito('esta calibração')
+      const lida = this.obterCalibracao(id)
+      if (!lida) throw new ErroApi(404, 'Calibração não encontrada.')
+      if (lida.status !== 'RASCUNHO' && lida.status !== 'REVISAO') throw new ErroApi(409, 'Este certificado já foi emitido.')
+      if (versao !== undefined && versao !== lida.versao) throw conflito('esta calibração')
+      const definido = extra.autorId ? quemDefineOTecnico(lida, lida.tecnicoId, extra.autorId) : lida.tecnicoDefinidoPorId
+      const atual = definido === lida.tecnicoDefinidoPorId ? lida : { ...lida, tecnicoDefinidoPorId: definido }
       antes?.(atual)
       const k: Calibracao = {
         ...atual,

@@ -1435,6 +1435,23 @@ export function descricaoPadraoNaFolha(p: Padrao, largura: number | null = null)
   }
 }
 
+/**
+ * O nº do certificado do padrão na tabela do passo 1, numa linha só: partido no hífen ("RBC-" / "LMP-0456-2026"),
+ * parece hifenização e pode ser lido como dois nºs, no papel em que o técnico confere os padrões. Sem caber na coluna
+ * (`largura`, pt), só a letra dele diminui, até 6 pt; maior que isso (até 80 letras no cadastro), quebra onde precisar,
+ * para não passar da coluna. A reimpressão é o PDF guardado: nada muda nas folhas já impressas.
+ */
+export function certificadoDoPadraoNaFolha(certificado: string, largura: number): No {
+  const n = certificado.trim()
+  if (!n) return '—'
+  const MINIMO = 6
+  // Folga da medida: a quebra de linha do pdfmake não pode pegar o texto de surpresa
+  const util = largura - 1.5
+  const corpo = corpoQueCabe(n, util, { tamanho: FONTE_DADO, minimo: MINIMO })
+  if (larguraTexto(n, { tamanho: corpo }) > util) return { text: n, fontSize: MINIMO }
+  return corpo < FONTE_DADO ? { text: n, noWrap: true, fontSize: corpo } : { text: n, noWrap: true }
+}
+
 function passoPadroes(ctx: Contexto, n: number): No[] {
   const { d, plano } = ctx
   // Sem plano (em branco ou só do cliente), a validade é conferida do mesmo jeito, na data da visita ou da impressão
@@ -1463,7 +1480,7 @@ function passoPadroes(ctx: Contexto, n: number): No[] {
       : p.tipo === 'PESOS'
         ? livre()
         : pre('—', 'center'),
-    pre({ text: p.certificado || '—' }),
+    pre(certificadoDoPadraoNaFolha(p.certificado ?? '', col.certificado)),
     pre(validade(p, situacao), 'right'),
   ])
   // A lista impressa é a dos padrões cadastrados (outro levado vai em Anotações): sem linha em branco no fim. Sem
@@ -1650,7 +1667,27 @@ function dataPrevista(ctx: Contexto): string {
 }
 
 /** Colunas da grade da balança: cada rótulo numa linha só (medidos na letra dos rótulos). */
-const LARGURAS_BALANCA = [58, 76, 64, 80, 84, '*']
+// O pdfmake troca os números de `widths` por objetos na própria lista: a largura medida vem da constante, não dela
+const LARGURA_TIPO_BALANCA = 58
+const LARGURAS_BALANCA = [LARGURA_TIPO_BALANCA, 76, 64, 80, 84, '*']
+
+/**
+ * Valor impresso numa coluna estreita que quebra só entre as palavras (e depois de um hífen): sem a palavra mais longa
+ * caber em `largura` (pt), o pdfmake a parte no meio ("Computador" / "a (preço)"); a letra só desse valor diminui até
+ * ela caber (até 7 pt). Cabe: o texto como está.
+ */
+export function semPartirPalavras(texto: string, largura: number): No {
+  const util = largura - 1.5
+  const maior = Math.max(
+    0,
+    ...texto
+      .split(/\s+/)
+      .flatMap((p) => p.split(/(?<=-)/))
+      .map((p) => larguraTexto(p, { tamanho: FONTE_DADO })),
+  )
+  if (maior <= util) return texto
+  return { text: texto, fontSize: Math.max(7, Math.floor(((FONTE_DADO * util) / maior) * 10) / 10) }
+}
 
 /** Identificação da balança (passo 3), impressa do cadastro para conferir com a plaqueta (diferente, em Anotações). */
 function gradeBalanca(b: Balanca): NoObjeto {
@@ -1684,7 +1721,7 @@ function gradeBalanca(b: Balanca): NoObjeto {
     stack: [
       linha(
         [
-          c('Tipo de balança', TIPOS_BALANCA[b.tipo] ?? '—'),
+          c('Tipo de balança', semPartirPalavras(TIPOS_BALANCA[b.tipo] ?? '—', LARGURA_TIPO_BALANCA)),
           c('Fabricante (indicador)', b.fabricante || '—'),
           c('Modelo (indicador)', b.modelo || '—'),
           c('Nº de série (indicador)', { text: b.numeroSerie || '—', bold: true }),

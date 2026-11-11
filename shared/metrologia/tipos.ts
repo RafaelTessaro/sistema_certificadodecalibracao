@@ -152,6 +152,13 @@ export interface EntradaCalculo {
    */
   descidaComoAviso?: boolean
   /**
+   * Com `regrasDoPop`: a falta da leitura do zero, uma das cargas do erro de indicação (POP 7.7), fica só como aviso. É a
+   * calibração medida (ou com a folha de campo impressa sem a linha do zero) antes de a leitura do zero ser obrigatória,
+   * e a correção de um certificado emitido sem ela (`Calibracao.zeroComoAviso`): a visita já aconteceu. Os outros
+   * mínimos continuam.
+   */
+  zeroComoAviso?: boolean
+  /**
    * Revisão de um certificado emitido antes das regras do POP (sem `regrasDoPop`): as leituras dele. A leitura fora do
    * esperado que a revisão mudou (ou acrescentou) é pendência; a que já estava no certificado revisado, só o aviso.
    */

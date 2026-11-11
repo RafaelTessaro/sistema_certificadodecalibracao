@@ -363,7 +363,7 @@ export function planoDaFolha(
   const doRascunho = !!ensaio?.pontos.length
   const sub = ensaio?.substituicao
   const substituicaoAtiva = !!sub?.ativa
-  const pontosBase = doRascunho
+  const doPlano = doRascunho
     ? ensaio!.pontos.map((p) => ({ carga: p.carga, pecas: p.pecasManuais ? p.pecas : undefined, nivel: p.nivelSubstituicao }))
     : // Sem os pontos no rascunho, os sugeridos: as cargas em que o EMA muda só com a conformidade pedida (POP 7.7) ou
       // com a folha da calibração impressa antes da 1.0.5, que as trazia (`comCargasDoEma`, como "Sugerir pontos")
@@ -372,6 +372,11 @@ export function planoDaFolha(
         pecas: undefined as PecaCarga[] | undefined,
         nivel: 0,
       }))
+  // O zero é uma das cargas (POP 7.7) e a leitura dele, obrigatória: o plano do rascunho sem a linha dele (o copiado na
+  // 1.0.5 de um certificado emitido sem ela, ou a linha apagada) sai com ela no começo, para o técnico anotar a leitura
+  const pontosBase = doPlano.some((p) => !(p.carga > 0))
+    ? doPlano
+    : [{ carga: 0, pecas: undefined as PecaCarga[] | undefined, nivel: 0 }, ...doPlano]
   // Rodoviária sem a substituição no plano e com pesos que não chegam às cargas: a folha sugere as etapas
   const subSugerida =
     !substituicaoAtiva && ehRodoviaria(balanca)

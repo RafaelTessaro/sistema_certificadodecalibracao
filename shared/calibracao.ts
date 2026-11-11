@@ -569,7 +569,14 @@ export function entradaDoCalculo(
     Partial<
       Pick<
         CalibracaoInput,
-        'ambiente' | 'ajuste' | 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso' | 'descidaComoAviso'
+        | 'ambiente'
+        | 'ajuste'
+        | 'calculoLegado'
+        | 'substituiId'
+        | 'regrasDoPop'
+        | 'minimosComoAviso'
+        | 'descidaComoAviso'
+        | 'zeroComoAviso'
       >
     > & {
       emissao?: unknown
@@ -604,13 +611,15 @@ export function entradaDoCalculo(
     ar: arDoAmbiente(k.ambiente, ajustadaAntes),
     termica: termicaDoAmbiente(k.ambiente),
     // A calibração já medida antes das regras: os mínimos como avisos (`minimosDoPopComoAviso`); medida antes de a
-    // descida ser obrigatória, a descida que falta (`descidaComoAviso`)
+    // descida ser obrigatória, a descida que falta (`descidaComoAviso`); antes de o zero ser, a leitura dele
+    // (`zeroComoAviso`)
     ...(comoAviso
       ? {}
       : {
           regrasDoPop: true,
           ...(minimosDoPopComoAviso(k, momento) ? { minimosComoAviso: true } : {}),
           ...(k.descidaComoAviso === true ? { descidaComoAviso: true } : {}),
+          ...(k.zeroComoAviso === true ? { zeroComoAviso: true } : {}),
         }),
     ...(comoAviso && momento === 'FINAL' && original ? { leiturasDoOriginal: leiturasOriginais(original) } : {}),
   }
@@ -628,7 +637,7 @@ export function calcularCalibracao(
     Partial<
       Pick<
         CalibracaoInput,
-        'ambiente' | 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso' | 'descidaComoAviso'
+        'ambiente' | 'calculoLegado' | 'substituiId' | 'regrasDoPop' | 'minimosComoAviso' | 'descidaComoAviso' | 'zeroComoAviso'
       >
     > & {
       emissao?: unknown

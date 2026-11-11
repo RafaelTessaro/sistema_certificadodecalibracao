@@ -110,6 +110,8 @@ export function EtapaRevisao({
     autorizaVoce: !!signatarioId && signatarioId === eu,
     aguardandoDe: pedido?.signatarioNome || null,
     irParaItens: !!destinoDe,
+    semQuemAutorize: estado.semQuemAutorize,
+    pedidoParaVoce: !!pedido && pedido.signatarioId === eu,
   })
   const emitir = async () => {
     setEmitindo(true)
@@ -127,6 +129,8 @@ export function EtapaRevisao({
           icone={
             !pronto ? (
               <CircleAlert className="h-4 w-4 text-warning" />
+            ) : cabecalho.parado ? (
+              <TriangleAlert className="h-4 w-4 text-warning" />
             ) : cabecalho.aguardando ? (
               <Hourglass className="h-4 w-4 text-info" />
             ) : (
@@ -323,7 +327,7 @@ export function EtapaRevisao({
                 Voltar para rascunho
               </Button>
             )}
-            {modo === 'autorizar' && estado.podeDevolver && (
+            {(modo === 'autorizar' || modo === 'aguardando') && estado.podeDevolver && (
               <Button icone={<Undo2 className="h-4 w-4" />} onClick={aoDevolver} disabled={salvando || emitindo}>
                 Devolver
               </Button>
@@ -391,17 +395,21 @@ export function EtapaRevisao({
             <p className="rounded-xl bg-info-soft px-3.5 py-2.5 text-[13px] text-info">
               {pedido
                 ? `${pedido.por} pediu a sua autorização em ${dataHora(pedido.em)}. Confira os dados e a prévia; se precisar, corrija a digitação antes de autorizar.`
-                : 'Enviada para revisão antes da atualização do sistema: qualquer signatário que não seja o técnico pode autorizar.'}
+                : 'Enviada para revisão antes da atualização do sistema: qualquer signatário que não seja o técnico nem quem o escolheu pode autorizar.'}
             </p>
           )}
           {modo === 'aguardando' && pedido && (
             <p className="flex items-start gap-2 rounded-xl bg-info-soft px-3.5 py-2.5 text-[13px] text-info">
               <Hourglass className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
-                {pedido.signatarioId === eu
-                  ? estado.impedimento
-                  : `Aguardando a autorização de ${pedido.signatarioNome} (pedida por ${pedido.por} em ${dataHora(pedido.em)}).`}{' '}
-                Para corrigir ou escolher outro signatário, volte para rascunho.
+                {estado.semQuemAutorize
+                  ? `Pedida por ${pedido.por} em ${dataHora(pedido.em)} para ${pedido.signatarioId === eu ? 'você' : pedido.signatarioNome}, que não pode autorizar.`
+                  : pedido.signatarioId === eu
+                    ? estado.impedimento
+                    : `Aguardando a autorização de ${pedido.signatarioNome} (pedida por ${pedido.por} em ${dataHora(pedido.em)}).`}{' '}
+                {estado.podeDevolver
+                  ? 'Devolva com uma nota para quem enviou, ou volte para rascunho.'
+                  : 'Para corrigir ou escolher outro signatário, volte para rascunho.'}
               </span>
             </p>
           )}

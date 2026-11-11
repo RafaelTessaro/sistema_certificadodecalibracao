@@ -10,6 +10,7 @@ import {
   minimosDoPopComoAviso,
   parteSeparada,
   semIndicadorLegado,
+  temCargasSemZero,
   textoBusca,
   textoBuscaBalanca,
   textoBuscaCalibracao,
@@ -291,6 +292,13 @@ const MIGRACOES: Migracao[] = [
   // balança): ao ligar a folha a uma calibração que ainda tem a data do dia em que foi criada, ela passa para a
   // calibração; com outra data, a tela avisa para conferir ('' nas outras folhas e nas impressas antes). 1.0.6.
   (db) => acrescentarColuna(db, 'folhas_campo', 'data_prevista', "TEXT NOT NULL DEFAULT ''"),
+
+  // 22: a calibração em andamento (também a correção de um certificado) que já tinha cargas lidas sem a leitura do zero,
+  // ou a folha de campo impressa com um plano sem a linha do zero (o copiado do certificado anterior), na atualização
+  // para a 1.0.6, quando o zero passou a ser uma das cargas obrigatórias do erro de indicação (POP 7.7), fica com a falta
+  // da leitura dele como aviso (`zeroComoAviso`): a visita já aconteceu, ou vai acontecer com a folha sem a linha, e na
+  // 1.0.5 ela não era cobrada. As novas seguem a regra. A que já tem os mínimos como avisos não precisa. 1.0.6.
+  zerosAntesDaRegra,
 ]
 
 /** Acrescenta a coluna se a tabela ainda não a tem (a migração pode ser repetida sem erro). */
@@ -547,6 +555,71 @@ function pressoesAntesDaRegra(db: Banco) {
         marcadas.length === 1
           ? 'A calibração em andamento medida ou com a folha impressa antes desta versão, sem a pressão atmosférica, sai sem ela, com um aviso (a visita já aconteceu); nas novas, a pressão é obrigatória em toda classe. Confira: '
           : `${marcadas.length} calibrações em andamento medidas ou com a folha impressa antes desta versão, sem a pressão atmosférica, saem sem ela, com um aviso (a visita já aconteceu); nas novas, a pressão é obrigatória em toda classe. Confira: `,
+        marcadas,
+      ),
+    )
+}
+
+/**
+ * Migração 22 (ver acima). Repetível: só marca a calibração em andamento (rascunho ou em revisão, também a correção de
+ * um certificado) sem a leitura do zero no erro de indicação, ainda sem a marca e sem os mínimos como avisos
+ * (`minimosDoPopComoAviso`, onde a falta do zero já é aviso), que já tem cargas lidas (`temCargasSemZero`) ou, sem a
+ * linha do zero no plano, alguma leitura medida (`temLeituraMedida`) ou uma folha de campo impressa (a folha imprime as
+ * linhas do plano; sem pontos, as sugeridas, que começam pelo zero). Não sobe a versão: a marca não muda nada do que a
+ * tela grava. O registro de atividades diz quais.
+ */
+function zerosAntesDaRegra(db: Banco) {
+  const linhas = db
+    .prepare(
+      `SELECT k.id, k.dados, c.nome AS cliente, o.numero AS revisado,
+              (SELECT n.numero FROM numeros_reservados n
+                WHERE n.calibracao_id = k.id AND n.situacao = 'reservado' ORDER BY n.id DESC LIMIT 1) AS reservado,
+              EXISTS (SELECT 1 FROM folhas_campo f WHERE f.calibracao_id = k.id) AS com_folha
+         FROM calibracoes k LEFT JOIN clientes c ON c.id = k.cliente_id
+              LEFT JOIN calibracoes o ON o.id = k.substitui_id AND k.substitui_id <> ''
+        WHERE k.status IN ('RASCUNHO','REVISAO')
+        ORDER BY k.criado_em, k.id`,
+    )
+    .all() as Array<{
+    id: string
+    dados: string
+    cliente: string | null
+    revisado: string | null
+    reservado: string | null
+    com_folha: number
+  }>
+  const gravar = db.prepare('UPDATE calibracoes SET dados = ? WHERE id = ?')
+  const lido = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
+  const marcadas: string[] = []
+  for (const l of linhas) {
+    const k = JSON.parse(l.dados) as Calibracao
+    const pontos = Array.isArray(k.indicacao?.pontos) ? k.indicacao.pontos : []
+    const semCarga = pontos.filter((p) => !(Number(p.carga) > 0))
+    const zeroLido = semCarga.some((p) => lido(p.crescente) || lido(p.decrescente))
+    const semLinhaDoZero = pontos.length > 0 && !semCarga.length
+    if (
+      k.zeroComoAviso === true ||
+      zeroLido ||
+      !(temCargasSemZero({ pontos }) || (semLinhaDoZero && (temLeituraMedida(k) || Number(l.com_folha) === 1))) ||
+      minimosDoPopComoAviso({ ...k, opcoes: k.opcoes ?? {} })
+    )
+      continue
+    gravar.run(JSON.stringify({ ...k, zeroComoAviso: true }), l.id)
+    const os = String(k.ordemServico ?? '').trim()
+    marcadas.push(
+      l.revisado
+        ? `revisão do ${l.revisado}`
+        : l.reservado ||
+            (os ? `OS ${os}` : `${l.cliente || 'Cliente'}${k.dataCalibracao ? ` (${formatarDataBr(k.dataCalibracao)})` : ''}`),
+    )
+  }
+  if (marcadas.length)
+    db.prepare("INSERT INTO auditoria (em, ip, acao, detalhe) VALUES (?, 'local', 'SISTEMA_ATUALIZADO', ?)").run(
+      new Date().toISOString(),
+      detalheLista(
+        marcadas.length === 1
+          ? 'A calibração em andamento medida, ou com a folha de campo impressa sem a linha do zero, antes desta versão sai sem a leitura do zero, com um aviso (a visita já aconteceu); nas novas, a leitura do zero é obrigatória. Confira: '
+          : `${marcadas.length} calibrações em andamento medidas, ou com a folha de campo impressa sem a linha do zero, antes desta versão saem sem a leitura do zero, com um aviso (a visita já aconteceu); nas novas, a leitura do zero é obrigatória. Confira: `,
         marcadas,
       ),
     )

@@ -58,7 +58,8 @@ export function PermissoesNiveis() {
     },
     {
       rotulo: 'Autorizar certificados',
-      detalhe: 'Com a revisão por outra pessoa ligada: só quem tem a marca de signatário, nunca na própria calibração',
+      detalhe:
+        'Com a revisão por outra pessoa ligada: só quem tem a marca de signatário, nunca na calibração que executou nem na que escolheu o técnico',
       valores: { ADMIN: 'signatario', COMUM: 'signatario' },
       base: true,
     },

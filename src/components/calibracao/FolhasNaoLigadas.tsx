@@ -7,6 +7,7 @@ import { useState } from 'react'
 import type { FolhaNaoLigada } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { textoFolhaNaoLigada } from '../../lib/folhaCampo'
+import { usePode } from '../../store/sessao'
 import { Button } from '../ui/Button'
 
 export function AvisoFolhasNaoLigadas({
@@ -20,6 +21,8 @@ export function AvisoFolhasNaoLigadas({
   className?: string
 }) {
   const [ligando, setLigando] = useState<string | null>(null)
+  // Só o administrador marca a folha que não foi usada ("Não vai ser usada"): o aviso diz a quem pedir
+  const administrador = usePode('cancelarCertificado')
   if (!folhas?.length) return null
   const ligar = async (numero: string) => {
     setLigando(numero)
@@ -36,7 +39,7 @@ export function AvisoFolhasNaoLigadas({
           <li key={f.numero} className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
             <p className="flex min-w-0 flex-1 items-start gap-2 text-[13px] font-medium">
               <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-              <span className="min-w-0">{textoFolhaNaoLigada(f)}</span>
+              <span className="min-w-0">{textoFolhaNaoLigada(f, administrador)}</span>
             </p>
             <Button
               tamanho="sm"

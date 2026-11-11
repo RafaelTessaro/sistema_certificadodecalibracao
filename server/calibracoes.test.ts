@@ -619,7 +619,31 @@ describe('emissão do certificado', () => {
       expect(ok.json().calibracao.emissao).toMatchObject({ tecnico: { id: t.comumId }, signatario: { id: t.adminId } })
     })
 
-    it('quem escolheu o técnico não vê para autorizar, nem com o pedido de antes da 1.0.6 para ele', async () => {
+    it('o técnico que envia a calibração dele confirma que a executou: quem o escolheu pode receber o pedido', async () => {
+      await exigirRevisor(true)
+      const r = await revisor()
+      const k = await calibracaoPronta(t.cookieAdmin)
+      const escolhida: Calibracao = (
+        await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+          cookie: t.cookieAdmin,
+          payload: { ...k, tecnicoId: t.comumId, versao: k.versao },
+        })
+      ).json().calibracao
+      expect(escolhida.tecnicoDefinidoPorId).toBe(t.adminId)
+      // Outra pessoa não envia para quem escolheu o técnico
+      const negado = await pedir(escolhida, t.adminId, r.cookie)
+      expect(negado.statusCode).toBe(409)
+      expect(negado.json().erro).toBe('Admin Teste escolheu o técnico desta calibração e não pode autorizá-la. Escolha outro signatário.')
+      // O técnico abre a dele e envia sem alterar nada (a tela não grava sem alteração), como ao gravá-la
+      const enviado = await pedir(escolhida, t.adminId, t.cookieComum)
+      expect(enviado.statusCode, enviado.body).toBe(200)
+      const aguardando: Calibracao = enviado.json().calibracao
+      expect(aguardando).toMatchObject({ tecnicoDefinidoPorId: t.comumId, autorizacao: { signatarioId: t.adminId } })
+      const ok = await emitir(aguardando, t.cookieAdmin)
+      expect(ok.statusCode, ok.body).toBe(200)
+    })
+
+    it('quem escolheu o técnico não autoriza; o pedido de antes da 1.0.6 para ele aparece para ele devolver', async () => {
       await exigirRevisor(true)
       const r = await revisor()
       const k = await calibracaoPronta(t.cookieAdmin)
@@ -633,9 +657,21 @@ describe('emissão do certificado', () => {
       const pedidoAntigo = t.ctx.repo.mudarSituacao(escolhida.id, 'REVISAO', undefined, {
         autorizacao: { signatarioId: t.adminId, signatarioNome: 'Admin Teste', porId: t.comumId, por: 'Comum Teste', em: '' },
       })
-      expect(await paraAutorizar(t.cookieAdmin)).toEqual([])
+      // Aparece para ele (o pedido não fica parado sem ninguém ver), mas ele não autoriza: devolve
+      expect((await paraAutorizar(t.cookieAdmin)).map((x) => x.id)).toEqual([k.id])
+      expect(await paraAutorizar(r.cookie)).toEqual([])
       expect((await emitir(pedidoAntigo, t.cookieAdmin)).json().erro).toBe(QUEM_ESCOLHEU_NAO_AUTORIZA)
-      expect((await devolver(pedidoAntigo, 'Confira a temperatura')).statusCode).toBe(403)
+      expect((await devolver(pedidoAntigo, 'Confira a temperatura', r.cookie)).statusCode).toBe(403)
+      const devolvida = await devolver(pedidoAntigo, 'Escolhi o técnico: envie para outro signatário')
+      expect(devolvida.statusCode, devolvida.body).toBe(200)
+      expect(devolvida.json().calibracao).toMatchObject({ status: 'RASCUNHO', autorizacao: null })
+      expect(await paraAutorizar(t.cookieAdmin)).toEqual([])
+      // Quem escolheu o técnico e não recebeu o pedido não vê para autorizar
+      t.ctx.repo.mudarSituacao(escolhida.id, 'REVISAO', undefined, {
+        autorizacao: { signatarioId: r.id, signatarioNome: 'Revisor Teste', porId: t.comumId, por: 'Comum Teste', em: '' },
+      })
+      expect(await paraAutorizar(t.cookieAdmin)).toEqual([])
+      expect((await paraAutorizar(r.cookie)).map((x) => x.id)).toEqual([k.id])
       // A enviada para revisão antes da 1.0.5 (sem o pedido): os outros signatários, não quem escolheu o técnico
       t.ctx.db.prepare("UPDATE calibracoes SET dados = json_set(dados, '$.autorizacao', NULL) WHERE id = ?").run(k.id)
       const semPedido = t.ctx.repo.obterCalibracao(k.id)!
@@ -657,7 +693,7 @@ describe('emissão do certificado', () => {
       })
       expect(trocado.statusCode).toBe(409)
       expect(trocado.json().erro).toBe(
-        'Você recebeu o pedido de autorização: quem troca o técnico não autoriza. Para trocar, volte para rascunho e envie para outro signatário.',
+        'Você recebeu o pedido de autorização: quem troca o técnico não autoriza. Para trocar, clique em Devolver (volta para rascunho), troque e envie para outro signatário.',
       )
       // Corrigir a digitação continua podendo, e ele autoriza
       const corrigida = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
@@ -715,9 +751,12 @@ describe('emissão do certificado', () => {
       })
       expect(outro.statusCode, outro.body).toBe(200)
       expect(await paraAutorizar(t.cookieAdmin)).toMatchObject([{ id: k.id }])
-      // Gravado de antes da conferência (técnico = quem recebeu o pedido): não aparece para ele autorizar
+      // Gravado de antes da conferência (técnico = quem recebeu o pedido): aparece para ele, que não autoriza, mas devolve
       t.ctx.db.prepare("UPDATE calibracoes SET dados = json_set(dados, '$.tecnicoId', ?) WHERE id = ?").run(t.adminId, k.id)
-      expect(await paraAutorizar(t.cookieAdmin)).toEqual([])
+      expect(await paraAutorizar(t.cookieAdmin)).toMatchObject([{ id: k.id }])
+      const errado = t.ctx.repo.obterCalibracao(k.id)!
+      expect((await emitir(errado, t.cookieAdmin)).json().erro).toBe(TECNICO_NAO_AUTORIZA)
+      expect((await devolver(errado, 'Sou o técnico: envie para outro signatário')).statusCode).toBe(200)
     })
 
     it('com a revisão desligada, nada aparece para autorizar e a enviada aparece como enviada para revisão', async () => {
@@ -1826,6 +1865,78 @@ describe('revisão e cancelamento', () => {
     })
     expect(com.statusCode, com.body).toBe(200)
     expect(com.json().pendencias).toEqual([])
+  })
+
+  it('a correção de um certificado emitido sem a leitura do zero (1.0.3 a 1.0.5): a falta dela é aviso, não pendência', async () => {
+    const FALTA_ZERO = /falta a leitura do zero/
+    const AVISO = 'Erro de indicação sem a leitura do zero, uma das cargas do ensaio (POP 7.7).'
+    // Emitido com 6 pontos lidos (15 kg a mais), como os de antes: sem o zero, ainda 5
+    const comSeis = async () => {
+      const pronta = await calibracaoPronta()
+      const [zero, ...cargas] = pronta.indicacao.pontos
+      const quinze = {
+        id: 'q15',
+        carga: 15,
+        pecas: [peca('p10a'), peca('p5')],
+        pecasManuais: true,
+        crescente: 15,
+        decrescente: 15,
+        nivelSubstituicao: 0,
+      }
+      const r = await t.chamar('PUT', `/api/calibracoes/${pronta.id}`, {
+        cookie: t.cookieAdmin,
+        payload: {
+          ...pronta,
+          indicacao: { ...pronta.indicacao, pontos: [zero, ...cargas.filter((p) => p.carga < 15), quinze, ...cargas.filter((p) => p.carga > 15)] },
+          versao: pronta.versao,
+        },
+      })
+      expect(r.statusCode, r.body).toBe(200)
+      expect(r.json().pendencias).toEqual([])
+      return r.json().calibracao as Calibracao
+    }
+    for (const como of ['sem a linha', 'com a linha em branco'] as const) {
+      const k: Calibracao = (await emitir(await comSeis())).json().calibracao
+      expect(k.emissao?.regrasDoPop).toBe(true)
+      t.ctx.db
+        .prepare(
+          como === 'sem a linha'
+            ? `UPDATE calibracoes SET dados = json_set(dados, '$.indicacao.pontos',
+                 json((SELECT json_group_array(json(value)) FROM json_each(dados, '$.indicacao.pontos') WHERE json_extract(value, '$.carga') <> 0)))
+               WHERE id = ?`
+            : `UPDATE calibracoes SET dados = json_set(dados, '$.indicacao.pontos[0].crescente', json('null'),
+                 '$.indicacao.pontos[0].decrescente', json('null'))
+               WHERE id = ?`,
+        )
+        .run(k.id)
+      const { calibracao: rev } = (await criar(`/api/calibracoes/${k.id}/revisar`, {
+        motivo: 'Corrigir o endereço do cliente',
+      })) as { calibracao: Calibracao }
+      // A revisão não pode pedir uma leitura que a visita não fez: a falta do zero fica como aviso
+      expect(rev, como).toMatchObject({ regrasDoPop: true, zeroComoAviso: true })
+      const lida = await t.chamar('GET', `/api/calibracoes/${rev.id}`, { cookie: t.cookieAdmin })
+      const { resultado } = calcularCalibracao(lida.json().calibracao, balanca, [pesos, ...(barometro ? [barometro] : [])])
+      expect(resultado.pendencias.join('\n'), como).not.toMatch(FALTA_ZERO)
+      expect(resultado.avisos.map((a) => a.mensagem), como).toContain(AVISO)
+      const r = await emitir(rev)
+      expect(r.statusCode, `${como}: ${r.body}`).toBe(200)
+    }
+    // Emitido com a leitura do zero: a correção que a apaga fica pendente (a visita a fez)
+    const comZero: Calibracao = (await emitir(await comSeis())).json().calibracao
+    const { calibracao: rev } = (await criar(`/api/calibracoes/${comZero.id}/revisar`, { motivo: 'Corrigir a OS' })) as {
+      calibracao: Calibracao
+    }
+    expect(rev.zeroComoAviso).toBeUndefined()
+    const apagada = await t.chamar('PUT', `/api/calibracoes/${rev.id}`, {
+      cookie: t.cookieAdmin,
+      payload: {
+        ...rev,
+        indicacao: { ...rev.indicacao, pontos: rev.indicacao.pontos.filter((p) => p.carga > 0) },
+        versao: rev.versao,
+      },
+    })
+    expect(apagada.statusCode, apagada.body).toBe(200)
+    expect(apagada.json().pendencias.join('\n')).toMatch(FALTA_ZERO)
   })
 })
 

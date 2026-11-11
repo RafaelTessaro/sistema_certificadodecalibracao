@@ -9,6 +9,7 @@ import {
   PERMISSOES,
   pode,
   podeAutorizar,
+  pedidoSemQuemAutorize,
   podeDevolver,
   QUEM_ESCOLHEU_NAO_AUTORIZA,
   quemDefineOTecnico,
@@ -116,7 +117,16 @@ describe('emitir e autorizar (Configurações → "Exigir revisão por outra pes
     // Com o pedido para ela (enviado antes da troca, ou de antes da 1.0.6), também não
     const comPedido = { ...k('bia', 'REVISAO', pedido('ana')), tecnicoDefinidoPorId: 'ana' }
     expect(impedimentoParaEmitir(true, comPedido, ana)).toBe(QUEM_ESCOLHEU_NAO_AUTORIZA)
-    expect(podeDevolver(comPedido, ana)).toBe(false)
+    // Mas devolve (não é autorizar): o pedido parado com ela volta para rascunho e vai para outro signatário
+    expect(podeDevolver(comPedido, ana)).toBe(true)
+    expect(podeDevolver(comPedido, caio)).toBe(false)
+    expect(podeDevolver({ ...comPedido, status: 'RASCUNHO' as const }, ana)).toBe(false)
+    expect(podeDevolver(comPedido, { ...ana, signatario: false })).toBe(false)
+    // A tela avisa quem abre: quem recebeu o pedido não pode autorizar
+    expect(pedidoSemQuemAutorize(comPedido)).toBe('ESCOLHEU')
+    expect(pedidoSemQuemAutorize(k('bia', 'REVISAO', pedido('ana')))).toBeNull()
+    expect(pedidoSemQuemAutorize({ ...comPedido, status: 'RASCUNHO' as const })).toBeNull()
+    expect(pedidoSemQuemAutorize(k('ana', 'REVISAO', pedido('ana')))).toBe('TECNICO')
     // A enviada para revisão antes da 1.0.5 (sem o pedido): qualquer outro signatário
     const antiga = { ...k('bia', 'REVISAO'), tecnicoDefinidoPorId: 'ana' }
     expect(impedimentoParaEmitir(true, antiga, ana)).toBe(QUEM_ESCOLHEU_NAO_AUTORIZA)
@@ -221,7 +231,7 @@ describe('as listas de técnicos e signatários', () => {
     }
     const aguardando = { status: 'REVISAO' as const, autorizacao: pedido }
     expect(impedimentoDaTrocaDoTecnico(aguardando, 'mauricio', 'fabio')).toBe(
-      'Você recebeu o pedido de autorização: quem troca o técnico não autoriza. Para trocar, volte para rascunho e envie para outro signatário.',
+      'Você recebeu o pedido de autorização: quem troca o técnico não autoriza. Para trocar, clique em Devolver (volta para rascunho), troque e envie para outro signatário.',
     )
     // Qualquer troca, mesmo sem dizer para quem (a tela trava a lista)
     expect(impedimentoDaTrocaDoTecnico(aguardando, '', 'fabio')).not.toBeNull()

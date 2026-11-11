@@ -119,6 +119,18 @@ describe('planoDaFolha', () => {
     )
   })
 
+  it('o plano do rascunho sem a linha do zero (o copiado na 1.0.5, ou a linha apagada): a folha a traz no começo', () => {
+    const d = folhaPlataforma()
+    const k = d.calibracao!
+    const semZero = { ...k, indicacao: { ...k.indicacao, pontos: k.indicacao.pontos.filter((p) => p.carga > 0) } }
+    expect(semZero.indicacao.pontos.map((p) => p.carga)).toEqual([1, 10, 25, 100, 150, 200, 300])
+    const p = planoDaFolha(semZero, d.balanca!, d.padroes, '2026-10-22')
+    expect(p.origem).toBe('RASCUNHO')
+    expect(p.pontos.map((x) => x.carga)).toEqual([0, 1, 10, 25, 100, 150, 200, 300])
+    // Com a linha: o mesmo plano
+    expect(plano(d).pontos.map((x) => x.carga)).toEqual([0, 1, 10, 25, 100, 150, 200, 300])
+  })
+
   it('a folha da calibração com a folha impressa antes da 1.0.5: as cargas em que o EMA muda continuam, como no papel', () => {
     const d = folhaMultiIntervalo()
     const semPedido = { ...d.calibracao!, conformidade: { ...d.calibracao!.conformidade, solicitada: false } }
@@ -453,9 +465,11 @@ describe('planoDaFolha', () => {
     // Etapa de 10 t (20 × 500 kg): 15 t com 1 substituição = 10 t por baixo + 10 × 500 kg por cima
     d.calibracao = { ...k, indicacao: { ...k.indicacao, pontos: [ponto('a', 15_000, 1), ponto('b', 15_000, 2)] } }
     const p = plano(d)
-    expect(p.pontos[0]).toMatchObject({ pesos: '10 × 500 kg', falta: 0, excesso: 0, nivelSubstituicao: 1 })
+    // Sem a linha do zero no rascunho: a folha a traz no começo
+    expect(p.pontos.map((x) => x.carga)).toEqual([0, 15_000, 15_000])
+    expect(p.pontos[1]).toMatchObject({ pesos: '10 × 500 kg', falta: 0, excesso: 0, nivelSubstituicao: 1 })
     // 2 etapas já somam 20 t: passa 5 t da carga, e a folha avisa (o cálculo usaria a soma)
-    expect(p.pontos[1]).toMatchObject({ pesos: '', falta: 0, excesso: 5_000, nivelSubstituicao: 2 })
+    expect(p.pontos[2]).toMatchObject({ pesos: '', falta: 0, excesso: 5_000, nivelSubstituicao: 2 })
     expect(p.avisos.join(' ')).toMatch(/Ponto de 15\s000 kg: 2 substituições de 10\s000 kg somam 20\s000 kg/)
   })
 })

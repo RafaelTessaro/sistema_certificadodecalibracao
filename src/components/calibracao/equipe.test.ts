@@ -101,7 +101,32 @@ describe('o que a emissão oferece', () => {
     }
     expect(estadoDaEmissao(true, enviada, eu(FABIO), EQUIPE)).toMatchObject({ modo: 'autorizar', podeDevolver: true })
     for (const m of [RAFAEL, LIZI, MAURICIO])
-      expect(estadoDaEmissao(true, enviada, eu(m), EQUIPE)).toMatchObject({ modo: 'aguardando', podeDevolver: false })
+      expect(estadoDaEmissao(true, enviada, eu(m), EQUIPE)).toMatchObject({
+        modo: 'aguardando',
+        podeDevolver: false,
+        semQuemAutorize: null,
+      })
+  })
+
+  it('enviada na 1.0.5 a Rafael, que escolheu o técnico: ele não autoriza, mas devolve; os outros ficam sabendo', () => {
+    const parada = {
+      tecnicoId: 'mauricio',
+      tecnicoDefinidoPorId: 'rafael',
+      status: 'REVISAO' as const,
+      autorizacao: { signatarioId: 'rafael', signatarioNome: 'Rafael', porId: 'lizi', por: 'Lizi', em: '' },
+    }
+    expect(estadoDaEmissao(true, parada, eu(RAFAEL), EQUIPE)).toMatchObject({
+      modo: 'aguardando',
+      podeDevolver: true,
+      impedimento: QUEM_ESCOLHEU_NAO_AUTORIZA,
+      semQuemAutorize: 'ESCOLHEU',
+    })
+    for (const m of [FABIO, LIZI, MAURICIO])
+      expect(estadoDaEmissao(true, parada, eu(m), EQUIPE)).toMatchObject({
+        modo: 'aguardando',
+        podeDevolver: false,
+        semQuemAutorize: 'ESCOLHEU',
+      })
   })
 })
 
@@ -136,6 +161,29 @@ describe('o alto de "Revisão e emissão"', () => {
     })
     // Sem o nome (não deveria acontecer): genérico
     expect(cabecalhoDaRevisao({ ...base, modo: 'aguardando' }).titulo).toBe('Aguardando autorização')
+  })
+
+  it('o pedido parado com quem não pode autorizar (enviado na 1.0.5 a quem escolheu o técnico): o que fazer', () => {
+    const parado = { ...base, modo: 'aguardando' as const, aguardandoDe: 'Rafael', semQuemAutorize: 'ESCOLHEU' as const }
+    expect(cabecalhoDaRevisao({ ...parado, pedidoParaVoce: true })).toEqual({
+      titulo: 'Você não pode autorizar esta calibração',
+      descricao:
+        'Você escolheu o técnico, e quem escolhe o técnico não autoriza. Clique em Devolver: ela volta para rascunho e vai para outro signatário.',
+      aguardando: false,
+      parado: true,
+    })
+    expect(cabecalhoDaRevisao({ ...parado, pedidoParaVoce: false })).toEqual({
+      titulo: 'Rafael não pode autorizar esta calibração',
+      descricao:
+        'Rafael escolheu o técnico, e quem escolhe o técnico não autoriza (o pedido é de antes da atualização). Volte para rascunho e envie para outro signatário.',
+      aguardando: false,
+      parado: true,
+    })
+    expect(cabecalhoDaRevisao({ ...parado, semQuemAutorize: 'TECNICO', pedidoParaVoce: false }).descricao).toBe(
+      'Rafael executou esta calibração e não autoriza o próprio certificado. Volte para rascunho e envie para outro signatário.',
+    )
+    // Com pendências, o que falta vem antes (voltar para rascunho resolve as duas coisas)
+    expect(cabecalhoDaRevisao({ ...parado, pronto: false, pedidoParaVoce: false }).titulo).toBe('Falta completar')
   })
 
   it('com pendências: o que falta para a ação de quem está usando, e o convite a clicar', () => {

@@ -662,6 +662,14 @@ export interface Calibracao {
    */
   pressaoComoAviso?: boolean
   /**
+   * Calibração em andamento que já tinha leituras, ou a folha de campo impressa sem a linha do zero, quando a leitura do
+   * zero passou a ser uma das cargas obrigatórias do erro de indicação (atualização para a 1.0.6, migração 22), e a
+   * correção de um certificado emitido sem ela: a visita já aconteceu (ou vai acontecer com a folha sem a linha), e a
+   * falta da leitura do zero fica só como aviso (POP 7.7). O resto das regras continua. Quem define é o servidor;
+   * ausente = não.
+   */
+  zeroComoAviso?: boolean
+  /**
    * Calibração em andamento com a folha de campo impressa antes da 1.0.5 com as cargas em que o EMA muda (migração 20,
    * ou a folha avulsa de antes ligada depois): até a 1.0.4 as sugestões sempre as traziam e a folha em branco mandava
    * aplicá-las; a folha do rascunho com pontos saía com os pontos dele, e por isso só é marcada quando os pontos não

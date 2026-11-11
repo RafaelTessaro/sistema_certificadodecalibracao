@@ -131,13 +131,31 @@ export function impedimentoParaEmitir(
 
 /**
  * Pode devolver a calibração enviada para autorização, sem autorizar (com a nota do que ver): quem poderia autorizá-la
- * com a revisão por outra pessoa ligada (`impedimentoParaEmitir`).
+ * com a revisão por outra pessoa ligada (`impedimentoParaEmitir`) e o signatário que recebeu o pedido mesmo sem poder
+ * autorizar (o pedido enviado na 1.0.5 para quem escolheu o técnico): devolver não é autorizar, e o pedido não fica
+ * parado com ele.
  */
 export function podeDevolver(
   k: Pick<Calibracao, 'tecnicoId' | 'tecnicoDefinidoPorId' | 'status' | 'autorizacao'>,
   usuario: Pick<UsuarioSessao, 'id' | 'signatario'> | null | undefined,
 ): boolean {
-  return k.status === 'REVISAO' && !impedimentoParaEmitir(true, k, usuario)
+  if (k.status !== 'REVISAO') return false
+  if (usuario?.signatario && k.autorizacao?.signatarioId === usuario.id) return true
+  return !impedimentoParaEmitir(true, k, usuario)
+}
+
+/**
+ * Por que quem recebeu o pedido de autorização não pode autorizar a calibração (executou, ou escolheu o técnico: o pedido
+ * enviado na 1.0.5, que deixava), ou null. A tela avisa quem abre a calibração; ele devolve, ou quem enviou volta para
+ * rascunho e envia para outro signatário.
+ */
+export function pedidoSemQuemAutorize(
+  k: Pick<Calibracao, 'tecnicoId' | 'tecnicoDefinidoPorId' | 'status' | 'autorizacao'>,
+): 'TECNICO' | 'ESCOLHEU' | null {
+  const pedido = k.status === 'REVISAO' ? k.autorizacao : null
+  if (!pedido) return null
+  if (k.tecnicoId && k.tecnicoId === pedido.signatarioId) return 'TECNICO'
+  return escolheuOTecnico(k, pedido.signatarioId) ? 'ESCOLHEU' : null
 }
 
 type Membro = Pick<Usuario, 'id' | 'nome'> & Partial<Pick<Usuario, 'tecnico' | 'signatario' | 'ativo'>>
@@ -170,7 +188,7 @@ export function impedimentoDaTrocaDoTecnico(
   const pedido = k.status === 'REVISAO' ? k.autorizacao : null
   if (!pedido) return null
   if (autorId && autorId === pedido.signatarioId)
-    return 'Você recebeu o pedido de autorização: quem troca o técnico não autoriza. Para trocar, volte para rascunho e envie para outro signatário.'
+    return 'Você recebeu o pedido de autorização: quem troca o técnico não autoriza. Para trocar, clique em Devolver (volta para rascunho), troque e envie para outro signatário.'
   if (!tecnicoId || tecnicoId !== pedido.signatarioId) return null
   return `${pedido.signatarioNome} recebeu o pedido de autorização e não pode ser o técnico desta calibração. Para trocar, volte para rascunho e escolha outro signatário.`
 }
