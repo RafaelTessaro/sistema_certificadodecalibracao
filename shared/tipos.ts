@@ -792,6 +792,8 @@ export interface VersaoCertificado {
   corrigidaPor?: string
   /** O motivo da correção que gerou esta versão (só no sistema); '' na primeira. */
   motivo: string
+  /** Emitida e ainda não assinada digitalmente (1.0.7): o PDF não sai até assinar. */
+  aguardandoAssinatura?: boolean
 }
 
 /**

@@ -76,8 +76,12 @@ const ONDE = 'Configurações → Certificado digital'
 /** Faixas dos avisos de vencimento (dias antes): um registro no log e um e-mail por faixa. */
 export const FAIXAS_VENCIMENTO = [30, 15, 7, 1] as const
 
-/** A faixa já avisada de cada certificado (`<sha256>|<faixa>`), na tabela meta. */
+/**
+ * A faixa já avisada de cada certificado (`<sha256>|<faixa>`), na tabela meta; com `|email` no fim, o e-mail dela ainda
+ * não saiu (o envio falhou ou foi interrompido) e é tentado de novo na verificação seguinte.
+ */
 export const META_AVISO_VENCIMENTO = 'certificado_digital_aviso'
+const EMAIL_PENDENTE = 'email'
 
 /** O arquivo do certificado não está na pasta de dados, mas o banco diz que há um instalado (não foi removido pela tela). */
 export const MSG_SEM_ARQUIVO =
@@ -156,7 +160,10 @@ export interface ServicoCertificadoDigitalCompleto extends ServicoCertificadoDig
   remover(autor: AutorCertificado, agora?: Date): Promise<DadosCertificadoDigital | null>
   /** Os certificados já instalados (o instalado primeiro). */
   historico(): RegistroCertificadoDigital[]
-  /** O aviso de vencimento da faixa em que o certificado entrou (30, 15, 7 e 1 dia), uma vez por faixa. */
+  /**
+   * O aviso de vencimento da faixa em que o certificado entrou (30, 15, 7 e 1 dia): o registro, uma vez por faixa; o
+   * e-mail, até sair (a falha tenta de novo na verificação seguinte). null: nenhuma faixa nova.
+   */
   verificarVencimento(agora?: Date): Promise<{ faixa: number; dias: number } | null>
 }
 
@@ -529,18 +536,28 @@ export function criarServicoCertificadoDigital(
     const dias = diasParaVencer(ate, agora)
     const faixa = [...FAIXAS_VENCIMENTO].reverse().find((f) => dias <= f)
     if (faixa === undefined) return null
-    const [sha, avisada] = (lerMeta(ctx.db, META_AVISO_VENCIMENTO) ?? '').split('|')
-    if (sha === p.dados.sha256 && Number(avisada) <= faixa) return null
-    gravarMeta(ctx.db, META_AVISO_VENCIMENTO, `${p.dados.sha256}|${faixa}`)
-    const texto = avisoVencimento(ate, agora) ?? ''
-    // "… às 20:59 (TITULAR, série X)." — o ponto final do aviso vai para depois do parêntese
-    ctx.usuarios.registrar('CERTIFICADO_DIGITAL', {
-      detalhe: `${texto.replace(/\.$/, '')} (${p.dados.titular}, série ${p.dados.serie}).`,
-    })
-    ctx.log.warn(`[certificado digital] ${texto}`)
+    const [sha, avisada, pendente] = (lerMeta(ctx.db, META_AVISO_VENCIMENTO) ?? '').split('|')
+    const jaAvisada = sha === p.dados.sha256 && Number(avisada) <= faixa
+    // A faixa já avisada: só o e-mail dela que não saiu é tentado de novo (uma vez por verificação)
+    if (jaAvisada && pendente !== EMAIL_PENDENTE) return null
+    const marca = `${p.dados.sha256}|${jaAvisada ? avisada : faixa}`
+    if (!jaAvisada) {
+      gravarMeta(ctx.db, META_AVISO_VENCIMENTO, marca)
+      const texto = avisoVencimento(ate, agora) ?? ''
+      // "… às 20:59 (TITULAR, série X)." — o ponto final do aviso vai para depois do parêntese
+      ctx.usuarios.registrar('CERTIFICADO_DIGITAL', {
+        detalhe: `${texto.replace(/\.$/, '')} (${p.dados.titular}, série ${p.dados.serie}).`,
+      })
+      ctx.log.warn(`[certificado digital] ${texto}`)
+    }
     const para = ctx.repo.obterConfig().empresa.email.trim()
-    if (opcoes.enviarEmail && emailValido(para) && configPublica(lerConfigEmail(ctx)).configurado) {
+    // Sem o SMTP (ou sem o e-mail da empresa), a faixa fica só com o registro: não há o que tentar de novo
+    if (!opcoes.enviarEmail || !emailValido(para) || !configPublica(lerConfigEmail(ctx)).configurado) {
+      if (jaAvisada) gravarMeta(ctx.db, META_AVISO_VENCIMENTO, marca)
+    } else {
       const quando = dias <= 0 ? 'hoje' : dias === 1 ? 'amanhã' : `em ${dias} dias`
+      // Marcado como enviado só depois de sair: a falha (ou a queda no meio) tenta de novo na verificação seguinte
+      gravarMeta(ctx.db, META_AVISO_VENCIMENTO, `${marca}|${EMAIL_PENDENTE}`)
       try {
         await opcoes.enviarEmail({
           para: [para],
@@ -554,11 +571,15 @@ export function criarServicoCertificadoDigital(
           ].join('\n'),
           anexos: [],
         })
+        gravarMeta(ctx.db, META_AVISO_VENCIMENTO, marca)
       } catch (e) {
-        ctx.log.warn({ err: e }, '[certificado digital] não foi possível enviar o aviso de vencimento por e-mail')
+        ctx.log.warn(
+          { err: e },
+          '[certificado digital] não foi possível enviar o aviso de vencimento por e-mail (tenta de novo na próxima verificação)',
+        )
       }
     }
-    return { faixa, dias }
+    return jaAvisada ? null : { faixa, dias }
   }
 
   return {
@@ -787,7 +808,8 @@ export async function rotasCertificadoDigital(
       const novo = `${certificado.titular} (série ${certificado.serie}, válido até ${dataBr(new Date(certificado.validoAte!))})`
       req.detalheAuditoria = anterior ? `trocado: ${novo}; o anterior era a série ${anterior.serie}` : `instalado: ${novo}`
       ctx.aoInstalar?.().catch((e) => req.log.warn({ err: e }, '[certificado digital] falha ao assinar os pendentes'))
-      return { certificado, historico: servico.historico() }
+      // `trocado`: era outro certificado (o aviso da tela diz "trocado", como o registro de atividades)
+      return { certificado, historico: servico.historico(), trocado: !!anterior }
     } catch (e) {
       traduzir(e, req.log)
     }

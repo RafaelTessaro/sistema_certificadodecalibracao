@@ -8,6 +8,8 @@ import {
   impressaoCurta,
   seloDaSituacao,
   avisoAoRemover,
+  botaoDeTrocar,
+  tituloAoInstalar,
   revisaoAntesDaEmissao,
   TEXTOS_INSTALAR,
   textoAguardandoAssinatura,
@@ -101,6 +103,29 @@ describe('os textos do certificado digital', () => {
     expect(seloDaSituacao({ situacao: 'CNPJ_DIFERENTE' }).texto).toBe('CNPJ diferente do da empresa')
     // O CNPJ da empresa em branco não é "diferente"
     expect(seloDaSituacao({ situacao: 'EMPRESA_SEM_CNPJ' })).toEqual({ texto: 'CNPJ da empresa em branco', tom: 'danger' })
+  })
+
+  it('o certificado que não abre neste servidor: o botão principal é enviá-lo de novo (o mesmo caminho da troca)', () => {
+    const enviarDeNovo = {
+      rotulo: 'Enviar o certificado de novo',
+      titulo: 'Enviar o certificado digital de novo',
+      principal: true,
+    }
+    const troca = { rotulo: 'Trocar certificado', titulo: 'Trocar o certificado digital', principal: false }
+    expect(botaoDeTrocar({ situacao: 'NAO_ABRE' })).toEqual(enviarDeNovo)
+    expect(botaoDeTrocar({ situacao: 'NAO_ABRE', diasParaVencer: 200 })).toEqual(enviarDeNovo)
+    expect(botaoDeTrocar({ situacao: 'NAO_ABRE', diasParaVencer: 0 })).toEqual(enviarDeNovo)
+    // Também vencido: o mesmo arquivo seria recusado ("venceu... escolha o renovado"), e o cartão manda instalar o novo
+    expect(botaoDeTrocar({ situacao: 'NAO_ABRE', diasParaVencer: -1 })).toEqual(troca)
+    for (const situacao of ['OK', 'VENCENDO', 'VENCIDO', 'AINDA_NAO_VALE', 'CNPJ_DIFERENTE', 'EMPRESA_SEM_CNPJ'] as const)
+      expect(botaoDeTrocar({ situacao }), situacao).toEqual(troca)
+  })
+
+  it('o aviso depois de instalar diz o que o servidor fez: instalou, instalou o mesmo de novo ou trocou por outro', () => {
+    expect(tituloAoInstalar({ havia: false, trocado: false })).toBe('Certificado digital instalado')
+    expect(tituloAoInstalar({ havia: true, trocado: false })).toBe('Certificado digital instalado de novo')
+    // Pelo "Enviar o certificado de novo" também: outro arquivo (o renovado) é troca, como no registro de atividades
+    expect(tituloAoInstalar({ havia: true, trocado: true })).toBe('Certificado digital trocado')
   })
 
   it('a impressão digital abreviada e os dias restantes', () => {

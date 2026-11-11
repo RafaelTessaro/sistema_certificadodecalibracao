@@ -1678,6 +1678,8 @@ export class Repositorio {
       // Quem abriu a correção (pode não ser quem a emitiu ou autorizou)
       ...(i > 0 ? { corrigidaPor: v.criadoPor ?? '' } : {}),
       motivo: i > 0 ? v.motivoRevisao : '',
+      // Emitida e ainda não assinada digitalmente: a lista não oferece o PDF (o servidor não o entrega até assinar)
+      ...(v.status === 'EMITIDO' && v.emissao?.assinaturaDigital && !v.emissao.hashPdf ? { aguardandoAssinatura: true } : {}),
     }))
   }
 

@@ -7,11 +7,14 @@ import {
   Hourglass,
   Loader2,
   Send,
+  ShieldAlert,
   ShieldCheck,
   TriangleAlert,
   Undo2,
+  type LucideIcon,
 } from 'lucide-react'
 import { useState } from 'react'
+import { pendenciaDoCertificadoDigital } from '#shared/dominio.ts'
 import type { Calibracao, NumeroReservado } from '#shared/tipos.ts'
 import { folhaPropriaDa } from '../../lib/folhaCampo'
 import { dataHora, hojeISO } from '../../lib/format'
@@ -39,7 +42,7 @@ export function EtapaRevisao({
   gravada,
   numeroReservado = null,
   numeroRevisao = null,
-  pendencias,
+  pendencias: todas,
   destinoDe,
   avisos: avisosServidor = [],
   salvando,
@@ -97,12 +100,31 @@ export function EtapaRevisao({
   // A numeração segue o ano da emissão (hoje). Sem exemplo: com a sequência 1, parecia o nº que o certificado vai receber
   const anoEmissao = hojeISO().slice(0, 4)
   const avisos = [...(r?.avisos ?? []), ...(calc?.comoEncontrado?.avisos ?? [])].filter((a) => a.nivel !== 'info')
+  // O certificado digital da empresa que não pode assinar impede só a emissão (o servidor não o confere no envio para
+  // autorização): é pendência de quem emite; para quem envia ou aguarda a autorização de outro, fica como aviso
+  const emite = modo === 'emitir' || modo === 'autorizar' || (modo === 'escolher' && !!signatarioId && signatarioId === eu)
+  const pendencias = emite ? todas : todas.filter((p) => !pendenciaDoCertificadoDigital(p))
+  const bloqueioDaEmissao = emite ? [] : todas.filter(pendenciaDoCertificadoDigital)
   const pronto = pendencias.length === 0
   const bloqueado = !pronto || salvando || emitindo
   // Ao lado de "Enviar para autorização" desativado: o que falta
   const motivoEnvio =
     modo === 'escolher' && signatarioId !== eu
       ? motivoDoEnvioDesativado({ pronto, signatarioId, semSignatarios: signatarios.length === 0, salvando })
+      : null
+  // As pendências que levam a algum lugar (a etapa, ou Configurações para o administrador); as outras, só as do
+  // administrador (o certificado digital da empresa, o POP), que para o operador não levam a nada
+  const clicaveis = pendencias.filter((p) => !!destinoDe?.(p)).length
+  // Só o certificado digital da empresa impede a emissão (não falta nada na calibração)
+  const soCertificadoDigital = !pronto && pendencias.every(pendenciaDoCertificadoDigital)
+  // Ao lado de "Emitir certificado" ou "Autorizar e emitir" desativado só por isso: por quê (quem abre Configurações, o
+  // administrador, resolve ali; o operador espera por ele)
+  const itensAcima = pendencias.length > 1 ? 'os itens' : 'o item'
+  const motivoEmissao =
+    emite && soCertificadoDigital
+      ? clicaveis > 0
+        ? `Resolva ${itensAcima} acima em Configurações para liberar a emissão.`
+        : `A emissão fica bloqueada até o administrador resolver ${itensAcima} acima.`
       : null
   // Quem vai assinar como "Autorizado por" (ligada) ou quem emite (desligada: fica só registrado). Antes da emissão, o
   // rótulo fica no presente ("Quem autoriza", "Quem emite"): "Autorizado por" pareceria já autorizado
@@ -113,9 +135,6 @@ export function EtapaRevisao({
         ? (pedido?.signatarioNome ?? 'Um signatário')
         : (escolhido?.nome ?? '—')
   // O alto da etapa diz o que quem está usando pode fazer (emitir, autorizar, enviar ou só aguardar)
-  // As pendências que levam a algum lugar (a etapa, ou Configurações para o administrador); as outras, só as do
-  // administrador (o certificado digital da empresa, o POP), que para o operador não levam a nada
-  const clicaveis = pendencias.filter((p) => !!destinoDe?.(p)).length
   const cabecalho = cabecalhoDaRevisao({
     modo,
     pronto,
@@ -123,6 +142,7 @@ export function EtapaRevisao({
     aguardandoDe: pedido?.signatarioNome || null,
     irParaItens: clicaveis > 0,
     soDoAdministrador: !pronto && clicaveis === 0 && pendencias.every(pendenciaDoAdministrador),
+    soCertificadoDigital: soCertificadoDigital && clicaveis > 0,
     itens: pendencias.length,
     semQuemAutorize: estado.semQuemAutorize,
     pedidoParaVoce: !!pedido && pedido.signatarioId === eu,
@@ -156,36 +176,24 @@ export function EtapaRevisao({
         />
         {!pronto && (
           <ul className="flex flex-col gap-2 px-5 pb-5">
-            {pendencias.map((p) => {
+            {pendencias.map((p) => (
               // Cada pendência leva à etapa dela e, quando dá, ao campo
-              const destino = destinoDe?.(p) ?? null
-              return (
-                <li key={p}>
-                  {destino ? (
-                    <button
-                      type="button"
-                      onClick={destino.ir}
-                      title={`Ir para ${destino.titulo}`}
-                      className="group flex w-full cursor-pointer items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-left text-[13px] font-medium text-warning transition-[filter] hover:brightness-[0.97] dark:hover:brightness-125"
-                    >
-                      <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-                      <span className="min-w-0 flex-1">{p}</span>
-                      <span className="mt-px inline-flex shrink-0 items-center gap-1 text-xs font-semibold whitespace-nowrap underline-offset-2 group-hover:underline max-sm:hidden">
-                        {destino.titulo}
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      </span>
-                      <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 sm:hidden" />
-                    </button>
-                  ) : (
-                    <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] font-medium text-warning">
-                      <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-                      {p}
-                    </p>
-                  )}
-                </li>
-              )
-            })}
+              <ItemPendencia key={p} p={p} destino={destinoDe?.(p) ?? null} />
+            ))}
           </ul>
+        )}
+        {/* Quem só envia (ou aguarda) não emite: o certificado digital da empresa que não pode assinar fica como aviso */}
+        {bloqueioDaEmissao.length > 0 && (
+          <div className="flex flex-col gap-2 px-5 pb-5">
+            <p className="text-xs font-semibold text-muted">
+              {modo === 'aguardando' ? 'Não impede o pedido de autorização' : 'Não impede o envio para autorização'}
+            </p>
+            <ul className="flex flex-col gap-2">
+              {bloqueioDaEmissao.map((p) => (
+                <ItemPendencia key={p} p={p} destino={destinoDe?.(p) ?? null} icone={ShieldAlert} />
+              ))}
+            </ul>
+          </div>
         )}
         {/* A folha do cliente ainda não ligada: se foi ela a usada, o nº da etiqueta é o dela (não impede a emissão) */}
         <AvisoFolhasNaoLigadas
@@ -351,27 +359,18 @@ export function EtapaRevisao({
                 Devolver
               </Button>
             )}
-            {modo === 'emitir' && (
-              <Button
-                variante="primary"
-                icone={emitindo ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                disabled={bloqueado}
-                onClick={() => void emitir()}
-                className="sm:ml-auto"
-              >
-                Emitir certificado
-              </Button>
-            )}
-            {(modo === 'autorizar' || (modo === 'escolher' && !!signatarioId && signatarioId === eu)) && (
-              <Button
-                variante="primary"
-                icone={emitindo ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                disabled={bloqueado}
-                onClick={() => void emitir()}
-                className="sm:ml-auto"
-              >
-                Autorizar e emitir
-              </Button>
+            {emite && (
+              <div className="flex flex-col gap-1.5 sm:ml-auto sm:flex-row sm:items-center sm:gap-3">
+                {motivoEmissao && <p className="text-[13px] text-muted sm:order-first sm:text-right">{motivoEmissao}</p>}
+                <Button
+                  variante="primary"
+                  icone={emitindo ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                  disabled={bloqueado}
+                  onClick={() => void emitir()}
+                >
+                  {modo === 'emitir' ? 'Emitir certificado' : 'Autorizar e emitir'}
+                </Button>
+              </div>
             )}
             {modo === 'escolher' && signatarioId !== eu && (
               <div className="flex flex-col gap-1.5 sm:ml-auto sm:flex-row sm:items-center sm:gap-3">
@@ -436,5 +435,42 @@ export function EtapaRevisao({
         </div>
       </Card>
     </div>
+  )
+}
+
+/** Uma pendência da revisão: com destino, leva até ele (a etapa e o campo, ou Configurações); sem, só o texto. */
+function ItemPendencia({
+  p,
+  destino,
+  icone: Icone = CircleAlert,
+}: {
+  p: string
+  destino: { titulo: string; ir: () => void } | null
+  icone?: LucideIcon
+}) {
+  return (
+    <li>
+      {destino ? (
+        <button
+          type="button"
+          onClick={destino.ir}
+          title={`Ir para ${destino.titulo}`}
+          className="group flex w-full cursor-pointer items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-left text-[13px] font-medium text-warning transition-[filter] hover:brightness-[0.97] dark:hover:brightness-125"
+        >
+          <Icone className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1">{p}</span>
+          <span className="mt-px inline-flex shrink-0 items-center gap-1 text-xs font-semibold whitespace-nowrap underline-offset-2 group-hover:underline max-sm:hidden">
+            {destino.titulo}
+            <ArrowRight className="h-3.5 w-3.5" />
+          </span>
+          <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 sm:hidden" />
+        </button>
+      ) : (
+        <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] font-medium text-warning">
+          <Icone className="mt-0.5 h-4 w-4 shrink-0" />
+          {p}
+        </p>
+      )}
+    </li>
   )
 }

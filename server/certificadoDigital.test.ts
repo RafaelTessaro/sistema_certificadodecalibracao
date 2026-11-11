@@ -24,7 +24,7 @@ import {
   type ServicoCertificadoDigitalCompleto,
 } from './certificadoDigital.ts'
 import { abrirBanco, lerMeta } from './db.ts'
-import { gravarConfigEmail } from './email.ts'
+import { apagarConfigEmail, gravarConfigEmail } from './email.ts'
 import type { ErroApi } from './erros.ts'
 import { passarCertificadosDigitais, transplantarRegistros } from './usuarios.ts'
 
@@ -331,6 +331,63 @@ describe('os avisos de vencimento (30, 15, 7 e 1 dia)', () => {
     expect(enviados[0].texto).not.toContain(SENHA)
   })
 
+  it('o e-mail da faixa só conta depois de sair: a falha tenta de novo na verificação seguinte; sem o SMTP, não tenta', async () => {
+    const t = await app()
+    let falhar = true
+    const tentativas: string[] = []
+    const s = reiniciar(t, {
+      enviarEmail: async (m) => {
+        tentativas.push(m.assunto)
+        if (falhar) throw new Error('o servidor de e-mail não respondeu')
+      },
+    })
+    await s.instalar(pfx(), SENHA, ADMIN, cnpj(t))
+    const registros = () => t.usuarios.listarAuditoria({ limite: 50 }).filter((r) => r.acao === 'CERTIFICADO_DIGITAL')
+    const smtp = () =>
+      gravarConfigEmail(t.ctx, {
+        servidor: 'smtp.empresa.com.br',
+        porta: 587,
+        seguranca: 'STARTTLS',
+        usuario: 'avisos@empresa.com.br',
+        senha: 'x',
+        remetenteNome: 'Empresa',
+        remetenteEmail: 'avisos@empresa.com.br',
+      })
+    // Sem o SMTP na faixa dos 30 dias: só o registro; configurado depois, a faixa não manda o e-mail (não tenta de novo)
+    expect(await s.verificarVencimento(dia('2046-12-01'))).toEqual({ faixa: 30, dias: 30 })
+    smtp()
+    expect(await s.verificarVencimento(dia('2046-12-02'))).toBeNull()
+    expect(tentativas).toEqual([])
+    // Na faixa dos 15 dias, o envio falha: o registro fica (um só) e a próxima verificação tenta de novo, uma vez cada
+    expect(await s.verificarVencimento(dia('2046-12-17'))).toEqual({ faixa: 15, dias: 14 })
+    expect(tentativas).toHaveLength(1)
+    expect(lerMeta(t.ctx.db, META_AVISO_VENCIMENTO)).not.toBe(`${SHA_ECNPJ}|15`)
+    expect(await s.verificarVencimento(dia('2046-12-17'))).toBeNull()
+    expect(tentativas).toHaveLength(2)
+    falhar = false
+    expect(await s.verificarVencimento(dia('2046-12-18'))).toBeNull()
+    expect(tentativas).toEqual([
+      'O certificado digital da empresa vence em 14 dias — BC Calibração',
+      'O certificado digital da empresa vence em 14 dias — BC Calibração',
+      'O certificado digital da empresa vence em 13 dias — BC Calibração',
+    ])
+    expect(lerMeta(t.ctx.db, META_AVISO_VENCIMENTO)).toBe(`${SHA_ECNPJ}|15`)
+    // Enviado: não manda de novo na mesma faixa
+    expect(await s.verificarVencimento(dia('2046-12-19'))).toBeNull()
+    expect(tentativas).toHaveLength(3)
+    expect(registros()).toHaveLength(2)
+    // A falha na faixa dos 7 dias e o SMTP desconfigurado em seguida: não tenta mais
+    falhar = true
+    expect(await s.verificarVencimento(dia('2046-12-28'))).toEqual({ faixa: 7, dias: 3 })
+    expect(tentativas).toHaveLength(4)
+    apagarConfigEmail(t.ctx)
+    expect(await s.verificarVencimento(dia('2046-12-29'))).toBeNull()
+    expect(await s.verificarVencimento(dia('2046-12-29'))).toBeNull()
+    expect(tentativas).toHaveLength(4)
+    expect(lerMeta(t.ctx.db, META_AVISO_VENCIMENTO)).toBe(`${SHA_ECNPJ}|7`)
+    expect(registros()).toHaveLength(3)
+  })
+
   it('o rascunho segue o relógio do serviço (o mesmo da emissão): aviso de vence em N dias e, vencido, pendência', async () => {
     let agora = dia('2046-12-10')
     const t = await app({ agora: () => agora })
@@ -426,6 +483,7 @@ describe('as rotas', () => {
     expect(instalado.statusCode, instalado.body).toBe(200)
     expect(instalado.json().certificado).toMatchObject({ situacao: 'OK', instaladoPor: 'Admin Teste (admin)' })
     expect(instalado.json().historico).toHaveLength(1)
+    expect(instalado.json().trocado).toBe(false)
     expect(servico(t).paraAssinar(cnpj(t))?.dados.sha256).toBe(SHA_ECNPJ)
     // O comum: só a situação, o titular e a validade
     expect((await t.chamar('GET', '/api/certificado-digital', { cookie: t.cookieComum })).json()).toEqual({
@@ -457,6 +515,28 @@ describe('as rotas', () => {
       acao: 'CERTIFICADO_DIGITAL',
       detalhe: expect.stringMatching(/^DELETE \/api\/certificado-digital \| removido: BALANÇAS TESTE LTDA/),
     })
+  })
+
+  it('a resposta diz se foi troca (outro certificado), como o registro de atividades, para o aviso da tela', async () => {
+    const t = await app()
+    const instalar = async (arquivo?: string) => {
+      const r = await t.chamar('POST', '/api/certificado-digital', {
+        cookie: t.cookieAdmin,
+        payload: await pacote(t, conteudoPfx({ arquivo })),
+      })
+      expect(r.statusCode, r.body).toBe(200)
+      return r.json().trocado
+    }
+    expect(await instalar()).toBe(false)
+    // O mesmo arquivo de novo (o "Enviar o certificado de novo" do que não abre): não é troca
+    expect(await instalar()).toBe(false)
+    // Outro (o renovado): troca
+    expect(await instalar('ses')).toBe(true)
+    const detalhes = t.usuarios
+      .listarAuditoria({ limite: 50 })
+      .filter((r) => r.detalhe.startsWith('POST /api/certificado-digital |'))
+      .map((r) => r.detalhe.split(' | ')[1].split(':')[0])
+    expect(detalhes).toEqual(['trocado', 'instalado', 'instalado'])
   })
 
   it('instalar de novo assina logo os que aguardavam a assinatura (sem esperar a tentativa automática); a lista deles', async () => {

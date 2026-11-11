@@ -11,11 +11,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import nodemailer from 'nodemailer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { pendenciaDoCertificadoDigital } from '#shared/dominio.ts'
 import type { Calibracao, EmissaoCertificado, PartesAssinaturaPdf } from '#shared/tipos.ts'
 import { CNPJ_EMPRESA } from './assinatura/__fixtures__/pki.ts'
 import { a1Teste, type ServicoFalso, servicoCertificadoFalso } from './assinatura/__fixtures__/servicoFalso.ts'
 import { type AppComLogin, cenarioCalibracao, criarAppComLogin } from './auxiliaresTeste.ts'
-import { avisoPdfNaoAssinado, gerarPdf, tentarPdfsPendentes } from './certificados.ts'
+import { avisoPdfNaoAssinado, CERTIFICADO_DIGITAL_BLOQUEADO, gerarPdf, tentarPdfsPendentes } from './certificados.ts'
 import { gravarConfigEmail } from './email.ts'
 import { conferirPdfAssinado } from './pdf/assinaturaPdf.ts'
 import { textoPdf } from './pdf/carimbo.ts'
@@ -298,6 +299,13 @@ describe('emissão com o certificado digital instalado', () => {
     const ok = await emitir(obter(k.id))
     expect(ok.statusCode, ok.body).toBe(200)
     expect(ok.json().calibracao.emissao.assinatura).toBeTruthy()
+  })
+
+  it('a tela reconhece todo bloqueio do certificado digital (só tira a pendência do envio, como o servidor)', () => {
+    const textos = Object.values(CERTIFICADO_DIGITAL_BLOQUEADO)
+    expect(textos).toHaveLength(5)
+    for (const p of textos) expect(pendenciaDoCertificadoDigital(p), p).toBe(true)
+    expect(pendenciaDoCertificadoDigital('Registre a pressão.')).toBe(false)
   })
 
   it('prévia: nunca assinada; com o certificado instalado, diz que a emissão sairá assinada', async () => {
@@ -629,6 +637,23 @@ describe('correção e cancelamento de um certificado assinado', () => {
     expect(copia.rawPayload.subarray(0, entregue.length).equals(entregue)).toBe(true)
     expect(copia.rawPayload.subarray(entregue.length).toString('latin1')).toContain(`(${textoPdf('SUBSTITUÍDO')}) Tj`)
     expect(readFileSync(caminhoDo(original)).equals(entregue)).toBe(true)
+  })
+
+  it('a correção que aguarda a assinatura: a lista de versões a marca (a tela não oferece o PDF dela)', async () => {
+    const original = await emitido()
+    const rev = await c.criar(`/api/calibracoes/${original.id}/revisar`, { motivo: 'Correção do endereço' })
+    cert.naoAbre('O certificado digital não abre no servidor.', 2)
+    expect((await emitir(rev.calibracao)).json().aviso).toBeTruthy()
+    const versoes = async () =>
+      (await t.chamar('GET', `/api/calibracoes/${rev.calibracao.id}`, { cookie: t.cookieAdmin })).json().versoes
+    expect(await versoes()).toMatchObject([
+      { versao: 1, status: 'SUBSTITUIDO' },
+      { versao: 2, status: 'EMITIDO', aguardandoAssinatura: true },
+    ])
+    expect((await versoes())[0]).not.toHaveProperty('aguardandoAssinatura')
+    cert.naoAbre(null)
+    expect(await tentarPdfsPendentes(t.ctx)).toEqual({ gravados: [cc(1)], falhas: [] })
+    expect((await versoes())[1]).not.toHaveProperty('aguardandoAssinatura')
   })
 
   it('cancelado: a cópia é o assinado com a marca d’água (sem erro do carimbo); arquivo e hash como estão', async () => {

@@ -28,6 +28,30 @@ export function seloDaSituacao(c: Pick<CertificadoDigitalPublico, 'situacao' | '
 }
 
 /**
+ * O botão de trocar o certificado instalado. O que não abre neste servidor (guardado em outro servidor, Windows
+ * reinstalado, arquivo sumido) se resolve enviando o .pfx de novo, pelo mesmo caminho da troca: é o botão principal. Se
+ * também venceu, o mesmo arquivo é recusado: o caminho é a troca pelo renovado (o que o aviso do cartão diz).
+ */
+export function botaoDeTrocar(c: Pick<CertificadoDigitalPublico, 'situacao' | 'diasParaVencer'>) {
+  const venceu = c.diasParaVencer !== undefined && c.diasParaVencer < 0
+  return c.situacao === 'NAO_ABRE' && !venceu
+    ? { rotulo: 'Enviar o certificado de novo', titulo: 'Enviar o certificado digital de novo', principal: true }
+    : { rotulo: 'Trocar certificado', titulo: 'Trocar o certificado digital', principal: false }
+}
+
+/**
+ * O aviso depois de instalar, pelo que o servidor fez (`trocado`: era outro certificado, como diz o registro de
+ * atividades); `havia`: já havia um instalado (o mesmo arquivo enviado de novo).
+ */
+export function tituloAoInstalar(o: { havia: boolean; trocado: boolean }) {
+  return o.trocado
+    ? 'Certificado digital trocado'
+    : o.havia
+      ? 'Certificado digital instalado de novo'
+      : 'Certificado digital instalado'
+}
+
+/**
  * Configurações → Empresa, com o certificado digital instalado: o CNPJ digitado que faria o sistema parar de emitir (em
  * branco, ou de outra empresa: a raiz de 8 posições diferente; o de outro estabelecimento da mesma empresa só avisa no
  * cartão do certificado). null = nada a avisar.

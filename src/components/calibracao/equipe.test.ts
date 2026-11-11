@@ -206,6 +206,24 @@ describe('o alto de "Revisão e emissão"', () => {
       'Quem resolve o item abaixo é o administrador. Até lá, o certificado não pode ser emitido.',
     )
   })
+
+  it('só o certificado digital da empresa, para quem abre Configurações: não falta nada na calibração', () => {
+    const certificado = { ...base, pronto: false, irParaItens: true, soCertificadoDigital: true }
+    expect(cabecalhoDaRevisao({ ...certificado, modo: 'autorizar' })).toEqual({
+      titulo: 'Emissão bloqueada',
+      descricao:
+        'Não falta nada na calibração: o que impede a emissão é o certificado digital da empresa. Resolva o item abaixo em Configurações para poder autorizar e emitir o certificado. Clique num item para ir até ele.',
+      aguardando: false,
+    })
+    expect(cabecalhoDaRevisao({ ...certificado, modo: 'escolher', autorizaVoce: true }).titulo).toBe('Emissão bloqueada')
+    expect(cabecalhoDaRevisao({ ...certificado, modo: 'emitir', itens: 2 }).descricao).toBe(
+      'Não falta nada na calibração: o que impede a emissão é o certificado digital da empresa. Resolva os itens abaixo em Configurações para poder emitir o certificado. Clique num item para ir até ele.',
+    )
+    // Para quem não abre Configurações, é com o administrador
+    expect(cabecalhoDaRevisao({ ...certificado, irParaItens: false, soDoAdministrador: true, modo: 'emitir' }).titulo).toBe(
+      'Depende do administrador',
+    )
+  })
 })
 
 describe('o aviso do Painel das calibrações para autorizar', () => {

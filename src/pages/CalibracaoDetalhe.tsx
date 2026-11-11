@@ -172,32 +172,13 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
         }
         acoes={
           <>
-            {/* Aguardando a assinatura digital: o servidor não entrega o PDF (o motivo aparece no lugar dele, embaixo) */}
-            {aguardandoAssinatura ? (
-              <Button icone={<Download className="h-4 w-4" />} disabled title={SEM_PDF_ATE_ASSINAR}>
-                Baixar PDF
-              </Button>
-            ) : (
-              <a href={api.urlPdf(k.id, true)} download>
-                <Button icone={<Download className="h-4 w-4" />} tabIndex={-1}>
-                  Baixar PDF
-                </Button>
-              </a>
-            )}
-            <Button
-              icone={<Printer className="h-4 w-4" />}
-              onClick={() => imprimir(urlPdf)}
-              disabled={aguardandoAssinatura}
-              title={aguardandoAssinatura ? SEM_PDF_ATE_ASSINAR : undefined}
-              className="hidden sm:inline-flex"
-            >
-              Imprimir
-            </Button>
-            {emitido && (
-              <Button variante="primary" icone={<Send className="h-4 w-4" />} onClick={() => setEnviando(true)}>
-                Enviar por e-mail
-              </Button>
-            )}
+            <AcoesDoPdf
+              emitido={emitido}
+              aguardandoAssinatura={aguardandoAssinatura}
+              urlBaixar={api.urlPdf(k.id, true)}
+              aoImprimir={() => imprimir(urlPdf)}
+              aoEnviar={() => setEnviando(true)}
+            />
             <Menu
               gatilho={(props) => (
                 <Button tamanho="icon" {...props} aria-label="Mais ações" disabled={criando}>
@@ -506,14 +487,7 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
               titulo="Envios por e-mail"
               acoes={
                 emitido ? (
-                  <Button
-                    tamanho="sm"
-                    variante="ghost"
-                    icone={<Send className="h-3.5 w-3.5" />}
-                    onClick={() => setEnviando(true)}
-                  >
-                    Enviar
-                  </Button>
+                  <BotaoEnviarDosEnvios aguardandoAssinatura={aguardandoAssinatura} aoEnviar={() => setEnviando(true)} />
                 ) : undefined
               }
             />
@@ -603,7 +577,88 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
 }
 
 /** O título dos botões do PDF enquanto o certificado aguarda a assinatura digital. */
-const SEM_PDF_ATE_ASSINAR = 'Aguardando a assinatura digital: o PDF ainda não pode ser baixado nem impresso.'
+const SEM_PDF_ATE_ASSINAR = 'Aguardando a assinatura digital: o PDF ainda não pode ser baixado, impresso nem enviado por e-mail.'
+
+/**
+ * Baixar, imprimir e enviar por e-mail o PDF (o envio, só do emitido). Aguardando a assinatura digital, o servidor não
+ * entrega o PDF nem o anexa ao e-mail: os três ficam desativados, com o motivo no título (na página, a pílula "Aguardando
+ * assinatura", o cartão da emissão e, no lugar do PDF, a tentativa de assinar e "Tentar de novo").
+ */
+export function AcoesDoPdf({
+  emitido,
+  aguardandoAssinatura,
+  urlBaixar,
+  aoImprimir,
+  aoEnviar,
+}: {
+  emitido: boolean
+  aguardandoAssinatura: boolean
+  urlBaixar: string
+  aoImprimir: () => void
+  aoEnviar: () => void
+}) {
+  const sem = aguardandoAssinatura ? SEM_PDF_ATE_ASSINAR : undefined
+  return (
+    <>
+      {aguardandoAssinatura ? (
+        <Button icone={<Download className="h-4 w-4" />} disabled title={sem}>
+          Baixar PDF
+        </Button>
+      ) : (
+        <a href={urlBaixar} download>
+          <Button icone={<Download className="h-4 w-4" />} tabIndex={-1}>
+            Baixar PDF
+          </Button>
+        </a>
+      )}
+      <Button
+        icone={<Printer className="h-4 w-4" />}
+        onClick={aoImprimir}
+        disabled={aguardandoAssinatura}
+        title={sem}
+        className="hidden sm:inline-flex"
+      >
+        Imprimir
+      </Button>
+      {emitido && (
+        <Button
+          variante="primary"
+          icone={<Send className="h-4 w-4" />}
+          onClick={aoEnviar}
+          disabled={aguardandoAssinatura}
+          title={sem}
+        >
+          Enviar por e-mail
+        </Button>
+      )}
+    </>
+  )
+}
+
+/**
+ * O "Enviar" do cartão "Envios por e-mail" (só do emitido): como o "Enviar por e-mail" do alto, desativado com o motivo
+ * enquanto aguarda a assinatura digital (o modal pediria os anexos, e o servidor recusa).
+ */
+export function BotaoEnviarDosEnvios({
+  aguardandoAssinatura,
+  aoEnviar,
+}: {
+  aguardandoAssinatura: boolean
+  aoEnviar: () => void
+}) {
+  return (
+    <Button
+      tamanho="sm"
+      variante="ghost"
+      icone={<Send className="h-3.5 w-3.5" />}
+      onClick={aoEnviar}
+      disabled={aguardandoAssinatura}
+      title={aguardandoAssinatura ? SEM_PDF_ATE_ASSINAR : undefined}
+    >
+      Enviar
+    </Button>
+  )
+}
 
 /**
  * Imprime o PDF sem sair da tela (num quadro escondido); se o navegador bloquear, abre numa aba. A resposta que não é um

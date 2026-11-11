@@ -383,6 +383,11 @@ describe('pendências da tela', () => {
     // A revisão de um certificado cancelado também (nunca "Tudo pronto" para uma revisão que o servidor recusa)
     for (const p of [PENDENCIA_REVISADO_CANCELADO, PENDENCIA_REVISADO_NAO_EMITIDO])
       expect(pendenciasDaTela({ ...base, servidor: [p, 'Antiga.'], emDia: false })).toEqual(['Local A.', p])
+    // O certificado digital da empresa que não pode assinar não depende do que está na tela: vale sempre (a tela não
+    // libera "Emitir" que o servidor recusa)
+    const vencido =
+      'O certificado digital da empresa venceu: a emissão fica bloqueada até o administrador resolver em Configurações → Certificado digital.'
+    expect(pendenciasDaTela({ ...base, servidor: [vencido, 'Antiga.'], emDia: false })).toEqual(['Local A.', vencido])
   })
 
   it('o POP quem diz é a consulta ao vivo (registrado em outra aba, a do servidor ficou velha)', () => {

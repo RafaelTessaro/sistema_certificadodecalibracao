@@ -32,7 +32,15 @@ import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Field } from '../ui/Form'
 import { Modal } from '../ui/Modal'
-import { avisoAoRemover, diasRestantes, impressaoCurta, seloDaSituacao, TEXTOS_INSTALAR } from './textos'
+import {
+  avisoAoRemover,
+  botaoDeTrocar,
+  diasRestantes,
+  impressaoCurta,
+  seloDaSituacao,
+  TEXTOS_INSTALAR,
+  tituloAoInstalar,
+} from './textos'
 
 const TOM_AVISO = {
   aviso: 'border-warning/25 bg-warning-soft text-warning',
@@ -119,6 +127,7 @@ export function SecaoCertificadoDigital() {
   const noServidor = dados?.noServidor ?? false
   const anteriores = ehAdmin(dados) ? dados.historico.filter((h) => h.removidoEm) : []
   const selo = c && c.situacao !== 'SEM_CERTIFICADO' ? seloDaSituacao(c) : null
+  const trocar = botaoDeTrocar(c ?? { situacao: 'SEM_CERTIFICADO' })
 
   return (
     <>
@@ -180,8 +189,12 @@ export function SecaoCertificadoDigital() {
                 </Aviso>
               )}
               <div className="flex flex-wrap gap-2">
-                <Button icone={<FileUp className="h-4 w-4" />} onClick={() => setInstalando(true)}>
-                  Trocar certificado
+                <Button
+                  variante={trocar.principal ? 'primary' : 'secondary'}
+                  icone={<FileUp className="h-4 w-4" />}
+                  onClick={() => setInstalando(true)}
+                >
+                  {trocar.rotulo}
                 </Button>
                 <Button variante="ghost" icone={<Trash2 className="h-4 w-4" />} onClick={() => setRemovendo(true)}>
                   Remover
@@ -222,7 +235,7 @@ export function SecaoCertificadoDigital() {
 
       <ModalInstalar
         aberto={instalando}
-        trocar={!!c && c.situacao !== 'SEM_CERTIFICADO'}
+        trocar={!!c && c.situacao !== 'SEM_CERTIFICADO' ? trocar : null}
         noServidor={noServidor}
         aoFechar={() => setInstalando(false)}
         aoInstalar={(r) => {
@@ -295,7 +308,8 @@ function ModalInstalar({
   aoInstalar,
 }: {
   aberto: boolean
-  trocar: boolean
+  /** Com um certificado instalado: o título da troca (no que não abre, enviar de novo); null: instalar o primeiro. */
+  trocar: Pick<ReturnType<typeof botaoDeTrocar>, 'titulo'> | null
   noServidor: boolean
   aoFechar: () => void
   aoInstalar: (r: CertificadoDigitalAdmin) => void
@@ -364,9 +378,9 @@ function ModalInstalar({
     setOcupado('instalar')
     setErro('')
     try {
-      const r = await api.instalarCertificadoDigital(await pacote())
+      const { trocado, ...r } = await api.instalarCertificadoDigital(await pacote())
       toast.sucesso(
-        trocar ? 'Certificado digital trocado' : 'Certificado digital instalado',
+        tituloAoInstalar({ havia: !!trocar, trocado }),
         'A partir de agora, todo certificado emitido sai assinado digitalmente com este certificado.',
       )
       limpar()
@@ -385,7 +399,7 @@ function ModalInstalar({
       aoFechar={fechar}
       largura="max-w-xl"
       icone={<FileKey2 className="h-5 w-5" />}
-      titulo={trocar ? 'Trocar o certificado digital' : 'Instalar o certificado digital'}
+      titulo={trocar?.titulo ?? 'Instalar o certificado digital'}
       descricao={conferido ? 'Confira os dados. Se estiverem certos, instale.' : TEXTOS_INSTALAR.descricao}
       rodape={
         conferido ? (

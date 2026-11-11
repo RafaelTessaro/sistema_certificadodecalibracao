@@ -1,4 +1,4 @@
-import { ExternalLink, History } from 'lucide-react'
+import { ExternalLink, FileClock, History } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { VersaoCertificado } from '#shared/tipos.ts'
 import { api } from '../lib/api'
@@ -41,16 +41,27 @@ export function HistoricoVersoes({ versoes, atualId }: { versoes: VersaoCertific
                     {substituida ? 'substituída' : cancelada ? 'cancelada' : 'atual'}
                   </span>
                 </p>
-                <a
-                  href={api.urlPdf(v.id)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-brand-ink hover:underline"
-                  title={substituida ? 'Abre com a marca “substituído”' : undefined}
-                >
-                  PDF
-                  <ExternalLink className="h-3 w-3" />
-                </a>
+                {/* Aguardando a assinatura digital: o servidor não entrega o PDF (a ficha dela tenta assinar ao abrir) */}
+                {v.aguardandoAssinatura ? (
+                  <span
+                    title="Aguardando a assinatura digital: o PDF ainda não pode ser aberto."
+                    className="inline-flex shrink-0 cursor-not-allowed items-center gap-1 text-xs font-medium text-muted"
+                  >
+                    PDF
+                    <FileClock className="h-3 w-3" />
+                  </span>
+                ) : (
+                  <a
+                    href={api.urlPdf(v.id)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-brand-ink hover:underline"
+                    title={substituida ? 'Abre com a marca “substituído”' : undefined}
+                  >
+                    PDF
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
               </div>
               <p className="text-muted">
                 {v.versao === 1 ? (

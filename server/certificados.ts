@@ -181,9 +181,11 @@ const BLOQUEADA = `a emissão fica bloqueada até o administrador resolver em ${
 
 /**
  * O que impede o certificado digital instalado de assinar (a emissão é recusada até resolver), como pendência: quem vê
- * pode ser o operador, que não abre Configurações; o texto diz que é com o administrador.
+ * pode ser o operador, que não abre Configurações; o texto diz que é com o administrador. Não impede o envio para
+ * autorização: a tela os reconhece pelo texto (shared/dominio.ts, `pendenciaDoCertificadoDigital`) e os mostra como aviso
+ * a quem só envia.
  */
-const CERTIFICADO_DIGITAL_BLOQUEADO: Partial<Record<SituacaoCertificadoDigital, string>> = {
+export const CERTIFICADO_DIGITAL_BLOQUEADO: Partial<Record<SituacaoCertificadoDigital, string>> = {
   VENCIDO: `O certificado digital da empresa venceu: ${BLOQUEADA}`,
   AINDA_NAO_VALE: `O certificado digital da empresa ainda não vale (confira a data e a hora do servidor): ${BLOQUEADA}`,
   NAO_ABRE: `O certificado digital da empresa não abre no servidor: ${BLOQUEADA}`,

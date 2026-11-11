@@ -155,7 +155,8 @@ export function motivoDoEnvioDesativado(o: {
  * signatário (`escolher`) ou só aguardar a autorização pedida (`aguardando`; `aguardandoDe`: o nome do escolhido). O
  * pedido parado com quem não pode autorizar (`semQuemAutorize`; `pedidoParaVoce`: é quem está usando) diz o que fazer
  * (`parado`). Com só pendências que o administrador resolve, para quem não abre Configurações (`soDoAdministrador`; `itens`:
- * quantas), o alto não manda resolver nem clicar: diz que é com ele.
+ * quantas), o alto não manda resolver nem clicar: diz que é com ele. Com só as do certificado digital da empresa, para
+ * quem abre Configurações (`soCertificadoDigital`), não falta nada na calibração: diz o que impede a emissão e onde resolver.
  */
 export function cabecalhoDaRevisao(o: {
   modo: ModoEmissao
@@ -167,6 +168,8 @@ export function cabecalhoDaRevisao(o: {
   semQuemAutorize?: 'TECNICO' | 'ESCOLHEU' | null
   pedidoParaVoce?: boolean
   soDoAdministrador?: boolean
+  /** Só as pendências do certificado digital da empresa (e quem usa a tela abre Configurações para resolver). */
+  soCertificadoDigital?: boolean
   itens?: number
 }): { titulo: string; descricao: string; aguardando: boolean; parado?: boolean } {
   const acao =
@@ -190,6 +193,14 @@ export function cabecalhoDaRevisao(o: {
               ? 'não dá para autorizar e emitir o certificado'
               : 'não dá para emitir o certificado'
       }.`,
+      aguardando: false,
+    }
+  if (!o.pronto && o.soCertificadoDigital)
+    return {
+      titulo: 'Emissão bloqueada',
+      descricao: `Não falta nada na calibração: o que impede a emissão é o certificado digital da empresa. Resolva ${
+        (o.itens ?? 1) > 1 ? 'os itens' : 'o item'
+      } abaixo em Configurações para poder ${acao === 'autorizar' ? 'autorizar e emitir' : 'emitir'} o certificado.${clique}`,
       aguardando: false,
     }
   if (!o.pronto)

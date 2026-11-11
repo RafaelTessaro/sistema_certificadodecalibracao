@@ -7,6 +7,7 @@ import {
   minimosDoPopComoAviso,
   padroesDaCalibracao,
   PENDENCIAS_SO_DO_SERVIDOR,
+  pendenciaDoCertificadoDigital,
   pendenciasAmbiente,
   pressaoComoAviso,
 } from '#shared/dominio.ts'
@@ -99,8 +100,8 @@ export const podeRecomporCargas = (padroesIds: string[], selecionados: Pick<Padr
  * As pendências que a tela mostra (e que ligam ou desligam a emissão): as da emissão calculadas aqui na hora, as do
  * cálculo e, com tudo gravado (`emDia`), também as do servidor, que confere de novo ao emitir: a tela nunca diz "Tudo
  * pronto" quando o servidor recusa. Com alteração por gravar, as do servidor são da versão anterior e ficam de fora;
- * as que só o servidor sabe (o técnico excluído, o certificado revisado cancelado) valem sempre, e a do POP quem diz
- * é a consulta ao vivo (`semPop`).
+ * as que só o servidor sabe (o técnico excluído, o certificado revisado cancelado, o certificado digital da empresa que
+ * não pode assinar) valem sempre, e a do POP quem diz é a consulta ao vivo (`semPop`).
  */
 export function pendenciasDaTela(a: {
   locais: string[]
@@ -113,7 +114,7 @@ export function pendenciasDaTela(a: {
     ...new Set([
       ...a.locais,
       ...(a.semPop ? [PENDENCIA_POP] : []),
-      ...a.servidor.filter((p) => PENDENCIAS_SO_DO_SERVIDOR.includes(p)),
+      ...a.servidor.filter((p) => PENDENCIAS_SO_DO_SERVIDOR.includes(p) || pendenciaDoCertificadoDigital(p)),
       ...(a.calc?.resultado.pendencias ?? []),
       ...(a.calc?.comoEncontrado?.pendencias.map((p) => `Como encontrado: ${p}`) ?? []),
       ...(a.emDia ? a.servidor.filter((p) => p !== PENDENCIA_POP) : []),

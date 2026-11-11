@@ -2336,6 +2336,22 @@ export const PENDENCIA_REVISADO_CANCELADO =
 export const PENDENCIA_REVISADO_NAO_EMITIDO =
   'O certificado desta correção não está mais emitido: a correção não pode ser emitida. Exclua-a.'
 
+/**
+ * A pendência do certificado digital da empresa que não pode assinar (server/certificados.ts,
+ * `bloqueioDoCertificadoDigital`): resolve em Configurações → Certificado digital.
+ */
+export const PENDENCIA_CERTIFICADO_DIGITAL = /^O certificado digital da empresa .*Configurações → Certificado digital\.$/
+/** A do CNPJ da empresa em branco, que é conferido com o do certificado digital (resolve em Configurações → Empresa). */
+export const PENDENCIA_EMPRESA_SEM_CNPJ = /^O CNPJ da empresa não está preenchido em Configurações → Empresa, e ele é conferido/
+
+/**
+ * A pendência do certificado digital da empresa que não pode assinar (ou do CNPJ da empresa em branco, conferido com o
+ * dele): impede só a emissão. O envio para autorização continua (o servidor não a confere nele: rotas/calibracoes.ts),
+ * e ela não depende do que está na tela (`pendenciasDaTela`).
+ */
+export const pendenciaDoCertificadoDigital = (p: string) =>
+  PENDENCIA_CERTIFICADO_DIGITAL.test(p) || PENDENCIA_EMPRESA_SEM_CNPJ.test(p)
+
 /** As pendências que só o servidor sabe e que valem mesmo com alteração por gravar na tela (`pendenciasDaTela`). */
 export const PENDENCIAS_SO_DO_SERVIDOR: readonly string[] = [
   PENDENCIA_TECNICO_EXCLUIDO,

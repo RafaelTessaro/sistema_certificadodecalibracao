@@ -4,7 +4,10 @@
 import { PENDENCIA_POP } from '#shared/arquivos.ts'
 import {
   camposObrigatoriosEmissao,
+  PENDENCIA_CERTIFICADO_DIGITAL,
+  PENDENCIA_EMPRESA_SEM_CNPJ,
   PENDENCIA_TECNICO_EXCLUIDO,
+  pendenciaDoCertificadoDigital,
   type CampoEmissao,
   type CampoObrigatorio,
 } from '#shared/dominio.ts'
@@ -100,17 +103,11 @@ export function destinoDaPendencia(p: string, campos: CampoObrigatorio[]): Desti
   return regra ? { etapa: regra[1], ...(regra[2] ? { alvo: regra[2] } : {}) } : null
 }
 
-/** A pendência do certificado digital da empresa que não pode assinar (server/certificados.ts, `bloqueioDoCertificadoDigital`). */
-const PENDENCIA_CERTIFICADO_DIGITAL = /^O certificado digital da empresa .*Configurações → Certificado digital\.$/
-/** A do CNPJ da empresa em branco, que é conferido com o do certificado digital (resolve em Configurações → Empresa). */
-const PENDENCIA_EMPRESA_SEM_CNPJ = /^O CNPJ da empresa não está preenchido em Configurações → Empresa, e ele é conferido/
-
 /**
  * A pendência que só o administrador resolve, fora da calibração (o POP sem registro, o certificado digital da empresa que
  * não pode assinar, o CNPJ da empresa em branco): o texto dela já diz que é com ele.
  */
-export const pendenciaDoAdministrador = (p: string) =>
-  p === PENDENCIA_POP || PENDENCIA_CERTIFICADO_DIGITAL.test(p) || PENDENCIA_EMPRESA_SEM_CNPJ.test(p)
+export const pendenciaDoAdministrador = (p: string) => p === PENDENCIA_POP || pendenciaDoCertificadoDigital(p)
 
 /**
  * A pendência que se resolve fora da calibração: o POP sem registro, em Configurações → Certificado; o certificado

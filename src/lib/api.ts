@@ -565,8 +565,9 @@ export const api = {
     ),
   conferirCertificadoDigital: (pacote: PacoteCifrado) =>
     requisitar<{ certificado: CertificadoDigitalPublico }>('POST', '/api/certificado-digital/conferir', pacote, 90_000),
+  /** `trocado`: o instalado era outro certificado (o mesmo enviado de novo não é troca). */
   instalarCertificadoDigital: (pacote: PacoteCifrado) =>
-    requisitar<CertificadoDigitalAdmin>('POST', '/api/certificado-digital', pacote, 120_000),
+    requisitar<CertificadoDigitalAdmin & { trocado: boolean }>('POST', '/api/certificado-digital', pacote, 120_000),
   removerCertificadoDigital: (pacote: PacoteCifrado) =>
     requisitar<CertificadoDigitalAdmin>('DELETE', '/api/certificado-digital', pacote, 60_000),
 

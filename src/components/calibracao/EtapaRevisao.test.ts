@@ -5,7 +5,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { calibracaoVazia, CONFIG_PADRAO } from '#shared/dominio.ts'
+import { calibracaoVazia, CONFIG_PADRAO, pendenciaDoCertificadoDigital } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, FolhaNaoLigada, PedidoAutorizacao } from '#shared/tipos.ts'
 import type { MembroEquipe } from '../../lib/api'
 import type { ContextoEtapa } from './contexto'
@@ -64,6 +64,8 @@ function etapa(
     equipe?: MembroEquipe[]
     correcao?: { substituiId: string; numeroRevisao: string | null }
     pendencias?: string[]
+    /** O destino de cada pendência (o administrador vai a Configurações). */
+    destinoDe?: (p: string) => { titulo: string; ir: () => void } | null
     folhasNaoLigadas?: FolhaNaoLigada[]
     /** A folha da calibração e o nº reservado (o da etiqueta). */
     folhaCampo?: { numero: string; avulsa?: boolean }
@@ -92,6 +94,7 @@ function etapa(
       numeroRevisao: o.correcao?.numeroRevisao ?? null,
       numeroReservado: o.numeroReservado ?? null,
       pendencias: o.pendencias ?? [],
+      destinoDe: o.destinoDe,
       salvando: false,
       aoVisualizar: () => {},
       aoPedirAutorizacao: () => {},
@@ -452,5 +455,97 @@ describe('o que sai no certificado de quem executou e de quem autorizou', () => 
     expect(textoAssinaturasDaEmissao(true, true)).toBe(
       'O certificado sai com os nomes de quem executou e de quem autorizou, sem as imagens das assinaturas, e assinado digitalmente pela empresa.',
     )
+  })
+})
+
+describe('o certificado digital da empresa que não pode assinar: impede só a emissão (como o servidor)', () => {
+  const VENCIDO =
+    'O certificado digital da empresa venceu: a emissão fica bloqueada até o administrador resolver em Configurações → Certificado digital.'
+  /** O botão com o rótulo está desativado? */
+  const desativado = (html: string, rotulo: string) => {
+    const b = html.match(new RegExp(`<button([^>]*)>(?:(?!</button>)[\\s\\S])*?${rotulo}`))
+    if (!b) throw new Error(`sem o botão "${rotulo}"`)
+    return /\sdisabled=""/.test(b[1])
+  }
+  const texto = (html: string) =>
+    html
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+  it('quem envia para autorização envia, e a etapa avisa que a emissão fica bloqueada', () => {
+    usando(BIA)
+    const html = etapa({ tecnicoId: 'bia', equipe: [ANA, BIA], pendencias: [VENCIDO], bruto: true })
+    expect(desativado(html, 'Enviar para autorização')).toBe(false)
+    const t = texto(html)
+    expect(t).toContain('Tudo pronto para enviar para autorização')
+    expect(t).not.toContain('Falta completar')
+    expect(t).not.toContain('Depende do administrador')
+    expect(t).toContain(`Não impede o envio para autorização ${VENCIDO}`)
+    // Com o que falta na calibração, o envio espera só por isso (o certificado digital continua no aviso)
+    const falta = etapa({ tecnicoId: 'bia', equipe: [ANA, BIA], pendencias: ['Registre a pressão.', VENCIDO], bruto: true })
+    expect(desativado(falta, 'Enviar para autorização')).toBe(true)
+    expect(texto(falta)).toContain('Falta completar')
+    expect(texto(falta)).toContain('Resolva os itens abaixo para poder enviar para autorização.')
+    expect(texto(falta)).toContain('Resolva os itens de “Falta completar” para enviar.')
+    expect(texto(falta)).toContain(`Não impede o envio para autorização ${VENCIDO}`)
+  })
+
+  it('enviada e aguardando outra pessoa: o pedido fica, e o aviso diz que a emissão está bloqueada', () => {
+    usando(BIA)
+    const t = etapa({ gravada: { status: 'REVISAO', autorizacao: pedidoPara(ANA) }, pendencias: [VENCIDO] })
+    expect(t).toContain('Aguardando autorização de Ana Signatária')
+    expect(t).not.toContain('Falta completar')
+    expect(t).not.toContain('Depende do administrador')
+    expect(t).toContain(`Não impede o pedido de autorização ${VENCIDO}`)
+  })
+
+  it('quem emite ou autoriza e emite: o botão fica desativado, com o motivo', () => {
+    // A revisão desligada: emitir
+    usando(BIA)
+    const emitir = etapa({ exigirRevisor: false, pendencias: [VENCIDO], bruto: true })
+    expect(desativado(emitir, 'Emitir certificado')).toBe(true)
+    expect(texto(emitir)).toContain('Depende do administrador')
+    expect(texto(emitir)).toContain('A emissão fica bloqueada até o administrador resolver o item acima.')
+    expect(texto(emitir)).not.toContain('Não impede')
+    // O signatário que se escolhe e o que recebeu o pedido: autorizar e emitir
+    usando(ANA)
+    for (const o of [
+      { tecnicoId: 'bia', definidoPor: 'bia' },
+      { gravada: { status: 'REVISAO' as const, autorizacao: pedidoPara(ANA) } },
+    ]) {
+      const html = etapa({ ...o, pendencias: [VENCIDO], bruto: true })
+      expect(desativado(html, 'Autorizar e emitir')).toBe(true)
+      expect(texto(html)).toContain('A emissão fica bloqueada até o administrador resolver o item acima.')
+      expect(texto(html)).not.toContain('Não impede')
+    }
+    // Sem o certificado digital no caminho, o motivo não aparece
+    expect(texto(etapa({ exigirRevisor: false, pendencias: ['Registre a pressão.'], bruto: true }))).not.toContain(
+      'A emissão fica bloqueada',
+    )
+  })
+
+  it('o administrador que emite (ou autoriza e emite): o alto diz o que impede e onde resolver, sem esperar por ele mesmo', () => {
+    const configuracoes = (p: string) => (pendenciaDoCertificadoDigital(p) ? { titulo: 'Configurações', ir: () => {} } : null)
+    usando(ANA)
+    for (const [o, rotulo] of [
+      [{ tecnicoId: 'bia', definidoPor: 'bia' }, 'Autorizar e emitir'],
+      [{ gravada: { status: 'REVISAO' as const, autorizacao: pedidoPara(ANA) } }, 'Autorizar e emitir'],
+      [{ exigirRevisor: false }, 'Emitir certificado'],
+    ] as const) {
+      const html = etapa({ ...o, pendencias: [VENCIDO], destinoDe: configuracoes, bruto: true })
+      expect(desativado(html, rotulo), rotulo).toBe(true)
+      const t = texto(html)
+      expect(t).toContain('Emissão bloqueada Não falta nada na calibração')
+      expect(t).not.toContain('Falta completar')
+      expect(t).not.toContain('até o administrador resolver o item acima')
+      expect(t).toContain('Resolva o item acima em Configurações para liberar a emissão.')
+    }
+    // Com o que falta na calibração também, é "Falta completar" (o motivo do botão não aparece)
+    const falta = texto(
+      etapa({ exigirRevisor: false, pendencias: ['Registre a pressão.', VENCIDO], destinoDe: configuracoes, bruto: true }),
+    )
+    expect(falta).toContain('Falta completar')
+    expect(falta).not.toContain('liberar a emissão')
   })
 })
