@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="format-detection" content="telephone=no" />
+    <title>BC Calibração</title>
+    <script>
+      // Checagem do WebView, em ES5 (roda até num WebView antigo): o app usa recursos do Chrome 98 ou mais novo.
+      ;(function () {
+        var velho = typeof structuredClone !== 'function' || !Array.prototype.at || typeof Object.hasOwn !== 'function'
+        if (!velho) return
+        document.addEventListener('DOMContentLoaded', function () {
+          document.body.innerHTML =
+            '<div style="font-family:sans-serif;padding:32px 24px;line-height:1.5;color:#16181b">' +
+            '<h1 style="font-size:22px">Atualize o WebView</h1>' +
+            '<p style="font-size:17px">Este celular tem uma versão antiga do <b>Android System WebView</b>. ' +
+            'Abra a Play Store, procure por "Android System WebView" e toque em Atualizar. Depois, abra o BC Calibração de novo.</p>' +
+            '</div>'
+        })
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="raiz"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

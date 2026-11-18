@@ -39,3 +39,18 @@ __pycache__/
 pacotes/
 /node/
 /pacote.json
+
+# App do celular (app-campo/): dependências, build da interface e do Android, e as chaves de assinatura do APK (que
+# ficam só nos segredos do CI e no cofre da empresa, nunca no repositório)
+app-campo/node_modules/
+app-campo/dist/
+app-campo/android/app/build/
+app-campo/android/build/
+app-campo/android/.gradle/
+app-campo/android/local.properties
+*.jks
+*.keystore
+keystore.properties
+# APKs e pacotes do Android: só saem do build (o instalador os leva em pacotes/, fora do git)
+*.apk
+*.aab

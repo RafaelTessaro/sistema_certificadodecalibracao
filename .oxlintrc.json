@@ -1,9 +1,34 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["react", "typescript", "oxc"],
-  "ignorePatterns": [".claude/**", "dist/**", "dados/**"],
+  "ignorePatterns": [
+    ".claude/**",
+    "dist/**",
+    "dados/**",
+    "app-campo/android/**",
+    "app-campo/dist/**",
+    "app-campo/node_modules/**"
+  ],
   "rules": {
     "react/rules-of-hooks": "error",
     "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["app-campo/src/**/*.ts", "app-campo/src/**/*.tsx"],
+      "rules": {
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "fetch",
+            "message": "No app do celular, todo HTTP sai pelo CapacitorHttp.request com prazos (app-campo/src/plataforma/http.ts)."
+          },
+          {
+            "name": "XMLHttpRequest",
+            "message": "No app do celular, todo HTTP sai pelo CapacitorHttp.request com prazos (app-campo/src/plataforma/http.ts)."
+          }
+        ]
+      }
+    }
+  ]
 }

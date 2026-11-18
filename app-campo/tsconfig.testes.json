@@ -1,0 +1,9 @@
+{
+  "//": "Os testes do núcleo rodam no vitest da raiz (com o node:); confira os tipos com: npx tsc -p app-campo/tsconfig.testes.json (a partir da raiz)",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/nucleo"],
+  "exclude": []
+}

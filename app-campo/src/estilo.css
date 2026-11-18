@@ -1,0 +1,215 @@
+@import 'tailwindcss';
+
+/* Inter, a mesma do sistema, DENTRO do app (o celular trabalha sem internet) — só os alfabetos do português */
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./assets/fonts/inter-latin-ext-wght-normal.woff2') format('woff2-variations');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./assets/fonts/inter-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+    U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* ------------------------------------------------------------------------
+ * Tokens: os do sistema (src/index.css), com os ajustes do celular (04-interface §3.1): bordas de campo e de tecla
+ * mais fortes (≥ 3:1 no sol) e o texto do aviso âmbar mais escuro (≥ 4,5:1). Nunca cores soltas nos componentes.
+ * --------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --bg: #f5f6f7;
+  --surface: #ffffff;
+  --surface-2: #f4f5f7;
+  --surface-3: #eceef1;
+  --border: #e7e9ec;
+  --border-strong: #d5d9de;
+  --border-campo: #767c85;
+  --ink: #16181b;
+  --ink-2: #4b5059;
+  --muted: #6b717a;
+
+  --brand: #078541;
+  --brand-hover: #066f37;
+  --brand-ink: #067a3b;
+  --brand-soft: #e6f4ec;
+  --on-brand: #ffffff;
+  --logo-anel: #58585a;
+  --logo-verde: #019f42;
+  --ring: rgb(7 133 65 / 0.3);
+
+  --warning: #a86200;
+  --warning-ink: #8a4b00;
+  --warning-soft: #fdf3e0;
+  --danger: #c93636;
+  --danger-soft: #fcecec;
+  --neutral: #5d636c;
+  --neutral-soft: #eff1f3;
+
+  /* A área de assinar é sempre clara, como papel (também no escuro) */
+  --papel: #ffffff;
+  --tinta: #0b0f0d;
+
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.04);
+  --shadow-lg: 0 24px 48px -12px rgb(16 24 40 / 0.18), 0 8px 16px -8px rgb(16 24 40 / 0.08);
+
+  --topo: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --base: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0e1012;
+  --surface: #16181b;
+  --surface-2: #1c1f23;
+  --surface-3: #24282d;
+  --border: #262a2f;
+  --border-strong: #343940;
+  --border-campo: #8b929c;
+  --ink: #f1f3f5;
+  --ink-2: #b3b9c2;
+  --muted: #9aa1ab;
+
+  --brand: #19b862;
+  --brand-hover: #2cc672;
+  --brand-ink: #5bd795;
+  --brand-soft: rgb(25 184 98 / 0.14);
+  --on-brand: #04170c;
+  --logo-anel: #d9dadb;
+  --logo-verde: #1fb45c;
+  --ring: rgb(25 184 98 / 0.4);
+
+  --warning: #f2b64a;
+  --warning-ink: #f2b64a;
+  --warning-soft: rgb(242 182 74 / 0.13);
+  --danger: #f07474;
+  --danger-soft: rgb(240 116 116 / 0.13);
+  --neutral: #a2a8b1;
+  --neutral-soft: rgb(162 168 177 / 0.12);
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 24px 48px -12px rgb(0 0 0 / 0.6);
+}
+
+@theme inline {
+  --font-sans: 'Inter Variable', system-ui, sans-serif;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-campo: var(--border-campo);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-soft: var(--brand-soft);
+  --color-on-brand: var(--on-brand);
+
+  --color-warning: var(--warning);
+  --color-warning-ink: var(--warning-ink);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-neutral: var(--neutral);
+  --color-neutral-soft: var(--neutral-soft);
+  --color-papel: var(--papel);
+  --color-tinta: var(--tinta);
+
+  --shadow-xs: var(--shadow-sm);
+  --shadow-float: var(--shadow-lg);
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    -webkit-tap-highlight-color: transparent;
+    /* O tamanho de fonte do Android vale (rem); as teclas mantêm o tamanho e o texto cresce dentro delas */
+    font-size: 100%;
+  }
+  html,
+  body,
+  #raiz {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01';
+    overscroll-behavior: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  input,
+  textarea {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+  button {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  button:disabled {
+    cursor: default;
+  }
+}
+
+/* Lendo o QR: a câmera fica ATRÁS do WebView; o app fica transparente e mostra só a moldura */
+body.lendo-qr,
+body.lendo-qr #raiz,
+body.lendo-qr .fundo-app {
+  background: transparent !important;
+}
+
+/* Número de folha e de certificado: o zero cortado, como no sistema */
+.numero-fc {
+  font-variant-numeric: tabular-nums slashed-zero;
+  letter-spacing: 0.01em;
+}
+
+@keyframes subir {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.entra {
+  animation: subir 0.12s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "bc-calibracao-celular",
+  "private": true,
+  "version": "1.1.0",
+  "description": "App BC Calibração (celular): a folha de campo FOR-CAL-01 no celular do técnico",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "cap:sync": "cap sync android",
+    "apk:debug": "vite build && cap sync android && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor-community/sqlite": "8.1.1",
+    "@capacitor-mlkit/barcode-scanning": "8.2.2",
+    "@capacitor/android": "8.6.0",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.6.0",
+    "@capacitor/device": "8.0.3",
+    "@capacitor/local-notifications": "8.3.1",
+    "@capacitor/preferences": "8.0.1",
+    "@capacitor/screen-orientation": "8.0.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "signature_pad": "5.1.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3",
+    "vite": "8.3.4"
+  }
+}

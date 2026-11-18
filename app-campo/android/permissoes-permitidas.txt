@@ -1,0 +1,18 @@
+# Permissões do APK do BC Calibração (celular), uma por linha, em ordem. O CI compara esta lista com a do APK
+# (scripts/conferir-permissoes.sh, pelo aapt2): uma permissão nova de um plugin faz o build falhar até alguém conferir e
+# acrescentar aqui (ou remover no AndroidManifest.xml com tools:node="remove").
+#
+# ACCESS_NETWORK_STATE ......... ML Kit (leitura do QR): estado da rede
+# CAMERA ....................... ler o QR do computador (pareamento e endereço do servidor)
+# INTERNET ..................... falar com o servidor da empresa (HTTP na rede interna)
+# POST_NOTIFICATIONS ........... o lembrete do fim do expediente (folhas para entregar)
+# RECEIVE_BOOT_COMPLETED ....... o lembrete continua agendado depois de reiniciar o celular
+# WAKE_LOCK .................... o lembrete toca com a tela apagada
+# DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION ... interna do AndroidX (só o próprio app)
+android.permission.ACCESS_NETWORK_STATE
+android.permission.CAMERA
+android.permission.INTERNET
+android.permission.POST_NOTIFICATIONS
+android.permission.RECEIVE_BOOT_COMPLETED
+android.permission.WAKE_LOCK
+br.com.balancas.calibracao.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION

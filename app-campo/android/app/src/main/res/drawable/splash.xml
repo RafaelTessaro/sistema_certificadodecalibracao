@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Abertura do app (Android 10 e 11; do 12 em diante, a tela de abertura do sistema com o ícone): o fundo do tema e o
+     símbolo no meio. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/fundo_abertura" />
+    <item android:width="120dp" android:height="120dp" android:gravity="center" android:drawable="@drawable/logo_abertura" />
+</layer-list>

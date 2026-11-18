@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- O símbolo da abertura do app (acompanha o tema claro e o escuro: values/colors.xml e values-night/colors.xml). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="120dp" android:height="120dp" android:viewportWidth="200" android:viewportHeight="200">
+    <group android:translateX="100" android:translateY="100">
+        <!-- O símbolo da Balanças.com (o "b" e o "q" dentro do anel), o mesmo de src/components/Logo.tsx: o anel com o
+             furo e a folga em volta das letras pintados na cor do fundo (o que no SVG é a máscara) -->
+        <path android:fillColor="@color/logo_anel" android:pathData="M-100,0 A100,100 0 1,0 100,0 A100,100 0 1,0 -100,0 Z" />
+        <path android:fillColor="@color/fundo_abertura" android:pathData="M-34,0 A34,34 0 1,0 34,0 A34,34 0 1,0 -34,0 Z" />
+        <path android:strokeColor="@color/fundo_abertura" android:strokeWidth="8" android:strokeLineJoin="round" android:pathData="M-30,-91.2 L-30,0 A30,30 0 0,0 26,15 L26,56.3 A62,62 0 0,1 -62,0 L-62,-73.3 A96,96 0 0,1 -30,-91.2 Z" />
+        <path android:strokeColor="@color/fundo_abertura" android:strokeWidth="8" android:strokeLineJoin="round" android:pathData="M30,91.2 L30,0 A30,30 0 0,0 -26,-15 L-26,-56.3 A62,62 0 0,1 62,0 L62,73.3 A96,96 0 0,1 30,91.2 Z" />
+        <path android:fillColor="@color/logo_verde" android:pathData="M-30,-91.2 L-30,0 A30,30 0 0,0 26,15 L26,56.3 A62,62 0 0,1 -62,0 L-62,-73.3 A96,96 0 0,1 -30,-91.2 Z" />
+        <path android:fillColor="@color/logo_verde" android:pathData="M30,91.2 L30,0 A30,30 0 0,0 -26,-15 L-26,-56.3 A62,62 0 0,1 62,0 L62,73.3 A96,96 0 0,1 30,91.2 Z" />
+    </group>
+</vector>

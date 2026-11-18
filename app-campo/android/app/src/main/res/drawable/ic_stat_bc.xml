@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ícone pequeno da notificação (o lembrete do fim do expediente): branco, só a forma do "b" e do "q". -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <group android:translateX="12" android:translateY="12" android:scaleX="0.11" android:scaleY="0.11">
+        <path android:fillColor="#FFFFFFFF" android:pathData="M-30,-91.2 L-30,0 A30,30 0 0,0 26,15 L26,56.3 A62,62 0 0,1 -62,0 L-62,-73.3 A96,96 0 0,1 -30,-91.2 Z" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M30,91.2 L30,0 A30,30 0 0,0 -26,-15 L-26,-56.3 A62,62 0 0,1 62,0 L62,73.3 A96,96 0 0,1 30,91.2 Z" />
+    </group>
+</vector>

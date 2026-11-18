@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- BC Calibração: o servidor da empresa é HTTP puro na rede interna (porta 4850), como o resto do sistema, e o
+     network_security_config não aceita faixas de IP. O app só fala com o endereço gravado no pareamento (o QR do
+     computador), conferido pelo GET /api/saude (o mesmo id do servidor). -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

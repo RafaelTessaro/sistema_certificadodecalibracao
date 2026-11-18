@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tema escuro (o do Android): as cores escuras do sistema. -->
+<resources>
+    <color name="fundo_abertura">#0E1012</color>
+    <color name="logo_anel">#D9DADB</color>
+    <color name="logo_verde">#1FB45C</color>
+</resources>

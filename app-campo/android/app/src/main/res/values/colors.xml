@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cores da abertura e do símbolo: as do sistema (src/index.css), tema claro. -->
+<resources>
+    <color name="fundo_abertura">#F5F6F7</color>
+    <color name="logo_anel">#58585A</color>
+    <color name="logo_verde">#019F42</color>
+    <color name="colorPrimary">#078541</color>
+    <color name="colorPrimaryDark">#066F37</color>
+    <color name="colorAccent">#078541</color>
+</resources>
