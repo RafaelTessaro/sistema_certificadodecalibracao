@@ -37,6 +37,13 @@ Numa instalação nova, antes da tela "Tipo de instalação", o setup procura um
 | Atalhos          | Área de Trabalho e Menu Iniciar (todos os usuários): "BC Calibração" (`http://localhost:PORTA`), "Redefinir senha do BC Calibração" (pede permissão de administrador) e "Pasta dos certificados e backups"                                                                                                                                                                                                                                                                                                                                          |
 | Página final     | Como os outros computadores acessam (instalar a estação ou abrir `http://NOMEDOCOMPUTADOR:PORTA` e os IPs no navegador) e a opção de abrir o sistema. **No primeiro acesso, abra o sistema no próprio servidor**: ele pede para criar o administrador                                                                                                                                                                                                                                                                                               |
 
+**Depois de atualizar para a 1.1.1:**
+
+1. **"Importar do celular do técnico":** é o novo nome do antigo "Puxar dados do campo" (o botão, a janela, os avisos e o registro de atividades). Nada mais muda no uso.
+2. **O papel continua valendo, visita a visita:** com **A folha do celular**, a folha que o escritório só imprime (o cliente pede papel, o técnico está sem celular, o celular deu problema) é digitada como sempre, sem trava. Só a folha enviada ao celular fica travada até voltar.
+3. **POP-CAL-01 rev. 01:** traz a seção 11 (registro da calibração no celular) e o Anexo A (piloto de 3 calibrações). Quando ela entrar em vigor, registre a revisão em Configurações → Certificado → **POP — Procedimento Operacional Padrão**: os certificados e as folhas novas passam a citar a rev. 01.
+4. **App do celular 1.1.1:** depois de atualizar o servidor, os celulares mostram "Há uma versão nova" e instalam por cima, sem perder as folhas (entregue antes as começadas).
+
 **Depois de atualizar para a 1.1.0:**
 
 1. **App do celular (BC Calibração):** a folha de campo (FOR-CAL-01) pode ir para o celular do técnico. No computador, use **Enviar para o técnico** na calibração, na página da balança ou na folha em branco (Certificados e Nova calibração). O técnico preenche no cliente, sem internet, e assina com o PIN e o dedo. Quem acompanhou pelo cliente assina com nome, função e o dedo, vendo só as condições do serviço (nunca as leituras nem os resultados). A folha tranca. De volta ao Wi-Fi da empresa, o celular entrega a folha ao servidor. O nº da folha (FC-AAAA-NNNNN) é o que liga o celular ao computador: não existe outro código. Instalação, cadastro e cuidados: veja [App do celular](#app-do-celular-bc-calibração).
@@ -191,9 +198,9 @@ O app do técnico de campo, para Android. O escritório manda a folha de campo p
 - **Pelo navegador do celular** (o mais fácil): no Wi-Fi da empresa, leia com a câmera o QR do endereço do app, ou digite `http://IP-DO-SERVIDOR:4850/api/campo/apk` no navegador. O Android avisa "download inseguro", porque o sistema usa HTTP na rede interna: é o app da própria empresa, servido pelo servidor. Toque em **Baixar mesmo assim**, abra o arquivo e toque em **Instalar**. Se pedir, permita "instalar apps desconhecidos" para o navegador. Se o Play Protect perguntar se quer enviar o app para análise, pode recusar.
 - **Pelo cabo (adb):** no computador, baixe o "Android SDK Platform-Tools" (developer.android.com/tools/releases/platform-tools; é só descompactar). No celular: Configurações → Sobre o telefone → toque 7 vezes em "Número da versão" e, em Opções do desenvolvedor, ligue a **Depuração USB**. Ligue o celular pelo cabo, aceite "Permitir depuração USB" e rode, na pasta do Platform-Tools:
   ```
-  adb install -r "C:\Program Files\BC Calibracao\campo\BC-Calibracao-1.1.0.apk"
+  adb install -r "C:\Program Files\BC Calibracao\campo\BC-Calibracao-1.1.1.apk"
   ```
-  (num computador que não é o servidor, use o APK do Release, `BC-Calibracao-App-1.1.0.apk`). Depois, desligue a Depuração USB.
+  (num computador que não é o servidor, use o APK do Release, `BC-Calibracao-App-1.1.1.apk`). Depois, desligue a Depuração USB.
 
 **Cadastrar (parear) o celular** (só o administrador): em **Usuários → Celulares dos técnicos → Cadastrar celular**, escolha o técnico (ativo, com a marca Técnico). Aparece um QR com o endereço do servidor e um código de 6 dígitos (os dois também em texto, para digitar se a câmera falhar). O código vale por 10 minutos e uma vez só; 5 códigos errados invalidam o que está aberto. Se o servidor tiver mais de um IP, escolha na tela o da rede do Wi-Fi. No celular, o técnico abre o app, toca em **Ler o QR do computador** e cria o PIN dele (6 dígitos). Pronto: a lista mostra o celular, o técnico e quando ele conversou com o servidor pela última vez ("visto às 07:55 · 192.168.0.23"). O celular guarda só uma chave aleatória, e o servidor só o resumo (sha256) dela.
 

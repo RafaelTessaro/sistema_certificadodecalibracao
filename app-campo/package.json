@@ -1,7 +1,7 @@
 {
   "name": "bc-calibracao-celular",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "App BC Calibração (celular): a folha de campo FOR-CAL-01 no celular do técnico",
   "type": "module",
   "scripts": {
