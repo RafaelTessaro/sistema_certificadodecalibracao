@@ -412,7 +412,7 @@ function ConfiguracaoCampoCard() {
       const ok = await confirmar({
         titulo: 'O celular passa a ser o registro original?',
         descricao:
-          'Faça isso só depois do piloto validado (o protocolo assinado e a revisão do formulário e do POP em vigor). A partir daí, enquanto a folha estiver no celular, as leituras ficam só para leitura no computador, e “Importar do celular do técnico” preenche o rascunho.',
+          'Faça isso só depois do piloto validado (3 calibrações conferidas, o Anexo A do POP-CAL-01 rev. 01 assinado). A partir daí, enquanto a folha estiver no celular, as leituras ficam só para leitura no computador, e “Importar do celular do técnico” preenche o rascunho.',
         confirmar: 'Passar para o celular',
       })
       if (!ok) return
