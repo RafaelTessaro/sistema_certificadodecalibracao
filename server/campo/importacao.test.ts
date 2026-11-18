@@ -1,5 +1,5 @@
 // O escritório leva o registro de campo à calibração (1.1.0; server/campo/importacao.ts), com o servidor de verdade
-// (app.inject): "Comparar com o campo" no piloto (nada no rascunho), "Puxar dados do campo" com o registro original no
+// (app.inject): "Comparar com o campo" no piloto (nada no rascunho), "Importar do celular do técnico" com o registro original no
 // celular (o técnico que assinou fica sendo quem o definiu), "Criar calibração com os dados do campo" (a folha avulsa da
 // balança e a só do cliente, depois de cadastrar a balança), a justificativa das diferenças depois de puxar (pendência
 // de emissão até existir) e o bloco congelado na emissão, que não muda o PDF do certificado.
@@ -166,7 +166,7 @@ describe('piloto (registro original no papel): comparar', () => {
 })
 
 describe('registro original no celular: puxar, justificar e emitir', () => {
-  it('"Puxar dados do campo": fica o do celular; o técnico que assinou é quem o definiu; versão conferida', async () => {
+  it('"Importar do celular do técnico": fica o do celular; o técnico que assinou é quem o definiu; versão conferida', async () => {
     await configurar('CELULAR')
     const { k } = await folhaQueVoltou({ mudar: { c: '30,00' } })
     const campo = await campoDe(k.id)

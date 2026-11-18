@@ -307,7 +307,7 @@ export const ROTULO_ACAO_AUDITORIA: Record<AcaoAuditoria, string> = {
   FOLHA_DEVOLVIDA_CELULAR: 'Uma folha de campo voltou do celular',
   REGISTRO_CAMPO_SITUACAO: 'Mudou a situação de um registro de campo',
   CAMPO_CONFIGURADO: 'Alterou a configuração do app do celular',
-  DADOS_PUXADOS_DO_CAMPO: 'Puxou os dados do campo para uma calibração',
+  DADOS_PUXADOS_DO_CAMPO: 'Importou os dados do celular do técnico para uma calibração',
   CAMPO_COMPARADO: 'Comparou uma calibração com o campo',
   ALTERACAO: 'Alterou os dados',
 }

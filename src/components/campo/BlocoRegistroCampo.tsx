@@ -1,5 +1,5 @@
 // O bloco "Registro de campo" de "Revisão e emissão" e da autorização (1.1.0): a folha que voltou do celular (FC, quando
-// chegou, o técnico, as marcas, o desfecho), os avisos vistos no local e, depois de "Puxar dados do campo", as diferenças
+// chegou, o técnico, as marcas, o desfecho), os avisos vistos no local e, depois de "Importar do celular do técnico", as diferenças
 // dos dados brutos com o celular e a justificativa (um texto só): sem ela, a emissão fica pendente. Na emissão, as
 // diferenças e a justificativa ficam congeladas no certificado (só dado: o PDF não muda).
 
@@ -134,13 +134,13 @@ export function BlocoRegistroCampo({
           <div className="flex flex-col gap-3">
             {diferencas.length === 0 ? (
               <p className="flex items-center gap-2 text-[13px] text-success">
-                <Check className="h-4 w-4" /> Os dados brutos continuam iguais aos do celular desde que foram puxados.
+                <Check className="h-4 w-4" /> Os dados brutos continuam iguais aos do celular desde que foram importados.
               </p>
             ) : (
               <>
                 <p className={cn('text-[13px] font-medium', pendente ? 'text-warning' : 'text-ink-2')}>
-                  {diferencas.length} {diferencas.length === 1 ? 'dado bruto mudou' : 'dados brutos mudaram'} depois de puxar os
-                  dados do celular. {pendente ? 'Escreva uma justificativa para emitir.' : ''}
+                  {diferencas.length} {diferencas.length === 1 ? 'dado bruto mudou' : 'dados brutos mudaram'} depois de importar
+                  os dados do celular. {pendente ? 'Escreva uma justificativa para emitir.' : ''}
                 </p>
                 <div className="scroll-fino max-h-56 overflow-auto rounded-xl border border-line">
                   <table className="w-full text-[13px]">

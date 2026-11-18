@@ -21,7 +21,7 @@ export function CampoDaEmissaoCard({ campo }: { campo: CampoDaEmissao }) {
             <span className="tnum font-medium whitespace-nowrap text-ink-2">{campo.numero}</span>
           </span>
         }
-        descricao="Os dados foram puxados do celular. Congelado na emissão (não sai no certificado)."
+        descricao="Os dados foram importados do celular do técnico. Congelado na emissão (não sai no certificado)."
         acoes={
           <Button tamanho="sm" icone={<Eye className="h-3.5 w-3.5" />} onClick={() => setAberto(true)}>
             Ver registro

@@ -469,7 +469,7 @@ function Detalhe({
           <ul className="flex flex-col gap-1 text-[13px] text-ink-2">
             {d.importacoes.map((i) => (
               <li key={i.id}>
-                {i.tipo === 'PUXAR' ? 'Dados puxados' : 'Comparado'} em {dataHora(i.feitoEm)} por {i.feitoPor}
+                {i.tipo === 'PUXAR' ? 'Importado do celular' : 'Comparado'} em {dataHora(i.feitoEm)} por {i.feitoPor}
                 {i.observacao ? `: ${i.observacao}` : ''}
               </li>
             ))}
@@ -525,7 +525,7 @@ function UsarNaCalibracao({ d, aoFechar }: { d: RegistroCampoDetalhe; aoFechar: 
   if (calibracaoId)
     return (
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-line p-4 text-[13px] text-ink-2">
-        <span className="flex-1">A folha {numero} é de uma calibração: compare ou puxe os dados por ela.</span>
+        <span className="flex-1">A folha {numero} é de uma calibração: compare ou importe os dados por ela.</span>
         <Button tamanho="sm" icone={<ExternalLink className="h-3.5 w-3.5" />} onClick={() => abrir(calibracaoId)}>
           Abrir a calibração
         </Button>

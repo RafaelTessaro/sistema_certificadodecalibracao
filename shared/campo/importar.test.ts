@@ -1,6 +1,6 @@
 // Levar o registro de campo para a calibração: o registro como rascunho (texto → número sem perder casas, os horários
 // da aclimatação, o ambiente e o ΔT que valem, a data real, as correções depois da assinatura), a tabela de diferenças
-// (os casos de 03-codigo.md §9.7 que continuam valendo depois de 05-ajustes-finais), "Puxar dados do campo" e a regra
+// (os casos de 03-codigo.md §9.7 que continuam valendo depois de 05-ajustes-finais), "Importar do celular do técnico" e a regra
 // da justificativa na emissão.
 
 import { describe, expect, it } from 'vitest'
@@ -652,10 +652,10 @@ describe('comparar e puxar (03-codigo.md §9.7)', () => {
     const k = { ...structuredClone(p.entrada), ambiente: { ...p.entrada.ambiente, pressao: 950 } }
     const c = diferencasDoCampo(k, r, p)
     expect(c.avisos).toContain(
-      'Folha encerrada sem completar: Não medido: barômetro com defeito. Puxe o que existe; o resto fica pendente.',
+      'Folha encerrada sem completar: Não medido: barômetro com defeito. Importe o que existe; o resto fica pendente.',
     )
     expect(c.avisos).toContain(
-      'Uma tentativa anterior dos ensaios ficou só para consulta (a balança precisou de manutenção): não é puxada.',
+      'Uma tentativa anterior dos ensaios ficou só para consulta (a balança precisou de manutenção): não é importada.',
     )
     // A pressão que só o rascunho tem fica
     expect(item(c.itens, 'ambiente.pressao')).toMatchObject({ situacao: 'VAZIO_NO_CELULAR', sugestao: 'RASCUNHO' })
@@ -755,7 +755,7 @@ describe('justificativa na emissão (uma só, 05-ajustes-finais §10)', () => {
     })
     const pendencia = pendenciaJustificativaCampo(d, '  ')!
     expect(pendencia).toBe(
-      'Dados do campo mudados depois de puxados (3 diferenças com o registro do celular): escreva a justificativa antes de emitir.',
+      'Dados do celular mudados depois de importados (3 diferenças com o registro do celular): escreva a justificativa antes de emitir.',
     )
     expect(pendencia.startsWith(PENDENCIA_JUSTIFICATIVA_CAMPO)).toBe(true)
     expect(pendenciaJustificativaCampo(d, 'Leitura refeita no laboratório.')).toBeNull()

@@ -702,7 +702,7 @@ export interface Calibracao {
    */
   padroesCongelados?: Padrao[]
   /**
-   * A justificativa (um texto só) das diferenças com o registro de campo depois de "Puxar dados do campo" (1.1.0;
+   * A justificativa (um texto só) das diferenças com o registro de campo depois de "Importar do celular do técnico" (1.1.0;
    * 05-ajustes-finais §10): sem ela, um dado bruto mudado depois de puxar é pendência de emissão. Gravada pela rota da
    * justificativa (nunca pelo PUT do rascunho); na emissão, vai congelada em `emissao.campo`. Ausente = nenhuma.
    */
@@ -952,7 +952,7 @@ export interface EmissaoCertificado {
    */
   assinatura?: PartesAssinaturaPdf
   /**
-   * A calibração recebeu "Puxar dados do campo" (1.1.0, o registro original é o celular): o registro de campo, as
+   * A calibração recebeu "Importar do celular do técnico" (1.1.0, o registro original é o celular): o registro de campo, as
    * diferenças dos dados brutos com ele na hora da emissão e a justificativa (um texto só), congelados. Só dado: o PDF do
    * certificado não o usa e sai byte a byte igual. Ausente = sem dados puxados do celular.
    */
@@ -1609,7 +1609,7 @@ export interface SituacaoPareamento {
 
 /** Configuração do app do celular (só o administrador muda). */
 export interface ConfiguracaoCampo {
-  /** PAPEL (padrão, piloto): sem trava, a folha de papel é o registro original. CELULAR: trava e "Puxar dados do campo". */
+  /** PAPEL (padrão, piloto): sem trava, a folha de papel é o registro original. CELULAR: trava e "Importar do celular do técnico". */
   registroOriginal: RegistroOriginal
 }
 
@@ -1674,7 +1674,7 @@ export interface RegistroCampoListado {
   importado: boolean
 }
 
-/** Uma importação de um registro para a calibração ("Puxar dados do campo" ou "Comparar com o campo"). */
+/** Uma importação de um registro para a calibração ("Importar do celular do técnico" ou "Comparar com o campo"). */
 export interface ImportacaoCampo {
   id: ID
   registroId: ID
@@ -1726,7 +1726,7 @@ export interface JustificativaCampo {
 
 /**
  * GET /api/calibracoes/:id/campo: o celular e o registro de campo da folha da calibração, para o editor (a faixa "No
- * celular de Carlos desde 08:12", a trava, "Comparar com o campo" / "Puxar dados do campo") e para "Revisão e emissão"
+ * celular de Carlos desde 08:12", a trava, "Comparar com o campo" / "Importar do celular do técnico") e para "Revisão e emissão"
  * (o bloco "Registro de campo", as diferenças depois de puxar e a justificativa).
  */
 export interface CampoDaCalibracao {
@@ -1743,7 +1743,7 @@ export interface CampoDaCalibracao {
   registroId: string
   /** As importações desta calibração (PUXAR e COMPARACAO), da mais antiga para a mais nova. */
   importacoes: ImportacaoCampo[]
-  /** A calibração recebeu um "Puxar dados do campo". */
+  /** A calibração recebeu um "Importar do celular do técnico". */
   puxado: boolean
   /** Depois de puxar: os dados brutos da calibração gravada diferentes do registro VALIDO mais novo. */
   divergencias: DivergenciaCampo[]

@@ -1409,7 +1409,7 @@ export class Repositorio {
     entrada: unknown,
     autor: { id: string },
     /**
-     * `tecnicoConfirmado` (1.1.0, "Puxar dados do campo"): o técnico que assinou a folha no celular confirmou que a
+     * `tecnicoConfirmado` (1.1.0, "Importar do celular do técnico"): o técnico que assinou a folha no celular confirmou que a
      * executou; com ele como técnico, ele passa a ser quem o definiu (como quando grava a calibração dele), e quem puxou
      * os dados não fica impedido de autorizar (`quemDefineOTecnico`).
      */

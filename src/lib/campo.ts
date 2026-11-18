@@ -185,7 +185,7 @@ export function seloDoCelular(c: CelularDaFolha, agora = new Date()): SeloCelula
       rotulo: 'Voltou do campo',
       tom: 'success',
       detalhe: `${c.tecnico || 'Técnico'} · ${quando(c.em, agora)}`,
-      dica: `A folha voltou do ${celularDe(c.tecnico)}: compare ou puxe os dados na calibração.`,
+      dica: `A folha voltou do ${celularDe(c.tecnico)}: compare ou importe os dados na calibração.`,
     }
   if ((c.situacao === 'ENVIADA' || c.situacao === 'NO_CELULAR') && c.recolherPedido)
     return {
@@ -219,7 +219,7 @@ export function seloDoCelular(c: CelularDaFolha, agora = new Date()): SeloCelula
         rotulo: 'Registro de campo',
         tom: 'neutral',
         detalhe: `${c.tecnico || 'Técnico'} · ${quando(c.em, agora)}`,
-        dica: 'A folha voltou do celular e os dados já foram comparados ou puxados.',
+        dica: 'A folha voltou do celular e os dados já foram comparados ou importados.',
       }
     default:
       return {
@@ -288,7 +288,7 @@ export function textoPareamento(s: Pick<SituacaoPareamento, 'situacao' | 'celula
  * shared/campo/importar.ts; um teste confere): repetido aqui para a tela reconhecer a pendência sem levar a lógica da
  * importação para o bloco principal da interface.
  */
-export const PENDENCIA_JUSTIFICATIVA = 'Dados do campo mudados depois de puxados'
+export const PENDENCIA_JUSTIFICATIVA = 'Dados do celular mudados depois de importados'
 
 // ---- O registro ----------------------------------------------------------------------------------------------
 
@@ -298,7 +298,7 @@ const ehLeitura = (v: unknown): v is LeituraCampo =>
 const lista = <T>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : [])
 
 /**
- * Quantas leituras, horários e anotações o registro tem (o resumo de "Puxar dados do campo" no rascunho vazio). Tolerante
+ * Quantas leituras, horários e anotações o registro tem (o resumo de "Importar do celular do técnico" no rascunho vazio). Tolerante
  * ao registro com a marca FORMATO (campos faltando contam zero). As tentativas descartadas não contam.
  */
 export function contagemDoRegistro(r: RegistroCampo): { leituras: number; horarios: number; anotacoes: number } {
@@ -441,6 +441,6 @@ export function textoVoltou(r: { numero: string; ligadoA: string; tecnico: strin
     titulo: `${r.ligadoA || r.numero || 'Uma folha'} voltou do campo${nome ? ` (${nome})` : ''}`,
     descricao: r.marcas.includes('ORFAO')
       ? 'Chegou sem envio conhecido: ligue à folha certa ou descarte (Folhas de campo).'
-      : 'Abra a calibração para comparar ou puxar os dados.',
+      : 'Abra a calibração para comparar ou importar os dados.',
   }
 }

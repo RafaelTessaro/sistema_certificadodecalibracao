@@ -12,7 +12,7 @@ essencial, as decisões e as fontes principais. Onde o plano e os ajustes finais
 
 A folha de campo FOR-CAL-01 vai para o celular Android do técnico. Ele preenche no cliente, sem internet, colhe as duas
 assinaturas com o dedo e, de volta ao Wi-Fi da empresa, o celular entrega a folha ao servidor. O escritório compara
-(piloto) ou puxa (depois do piloto) os dados para a calibração.
+(piloto) ou importa (depois do piloto, “Importar do celular do técnico”) os dados para a calibração.
 
 Decisões do dono:
 
@@ -127,7 +127,7 @@ tiraram do plano:
 | Teste do aparelho em etapas | Teste de 1 minuto (abrir `http://IP:4850` no navegador do celular) + emulador no CI, informativo |
 
 Ficaram: o piloto `registroOriginal` = `PAPEL` (padrão; "Comparar com o campo", nada vai para o rascunho) ou `CELULAR`
-(trava no computador, "Puxar dados do campo"); receber um registro sempre grava (com marcas `ORFAO`, `APARELHO_REVOGADO`,
+(trava no computador, "Importar do celular do técnico"); receber um registro sempre grava (com marcas `ORFAO`, `APARELHO_REVOGADO`,
 `APOS_RECOLHER`, `FORMATO`, `RELOGIO`, `PILOTO`), e o celular revogado como "roubado" é recusado; a folha só sai do celular
 com o recibo do servidor; o APK no instalador; sem a chave de assinatura no GitHub, o release do sistema sai sem o app.
 

@@ -1,4 +1,4 @@
-// "Comparar com o campo" (piloto: o papel é o registro original) e "Puxar dados do campo" (o registro original é o
+// "Comparar com o campo" (piloto: o papel é o registro original) e "Importar do celular do técnico" (o registro original é o
 // celular), na calibração. A tabela Campo | Celular | Rascunho, calculada aqui com shared/campo/importar.ts sobre o
 // rascunho da tela (o servidor recalcula com o gravado e nunca confia nesta prévia): o que é igual fica escondido ("38
 // iguais"), as diferenças em destaque. No piloto, nada vai para o rascunho e a observação é opcional. Com o celular, cada
@@ -77,7 +77,7 @@ export function CompararCampoModal({
       aoFechar={aoFechar}
       largura="max-w-5xl"
       icone={puxar ? <ArrowDownToLine className="h-5 w-5" /> : <GitCompareArrows className="h-5 w-5" />}
-      titulo={puxar ? 'Puxar dados do campo' : 'Comparar com o campo'}
+      titulo={puxar ? 'Importar do celular do técnico' : 'Comparar com o campo'}
       descricao={
         puxar
           ? 'O que o técnico anotou no celular vai para o rascunho. Em cada diferença, escolha o que fica: o do celular vem marcado.'
@@ -209,7 +209,7 @@ function Conteudo({
       }
       aoFechar()
     } catch (e) {
-      avisarErro(puxar ? 'Não foi possível puxar os dados' : 'Não foi possível registrar a comparação', e)
+      avisarErro(puxar ? 'Não foi possível importar os dados' : 'Não foi possível registrar a comparação', e)
       if (e instanceof ErroApi && e.dados.codigo === 'CONFLITO') aoFechar()
     } finally {
       setSalvando(false)
@@ -416,7 +416,7 @@ function Conteudo({
             }
             onClick={() => void concluir()}
           >
-            {puxar ? (semLeituras ? 'Puxar todos os dados' : 'Puxar dados do campo') : 'Registrar comparação'}
+            {puxar ? (semLeituras ? 'Importar todos os dados' : 'Importar do celular do técnico') : 'Registrar comparação'}
           </Button>
         </div>
       </div>

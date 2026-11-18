@@ -1,5 +1,5 @@
 // Levar o registro de campo (o que o técnico anotou no celular) para a calibração. Puro: usado pelo servidor (gravar),
-// pelas telas do computador (a prévia "Comparar com o campo" / "Puxar dados do campo") e pelo app do celular (os avisos e
+// pelas telas do computador (a prévia "Comparar com o campo" / "Importar do celular do técnico") e pelo app do celular (os avisos e
 // o "Falta para assinar" rodam as regras do sistema sobre o rascunho que o registro daria).
 //
 //   registroParaRascunho   o registro como um rascunho (`CalibracaoInput`): texto → número sem perder casas; os minutos da
@@ -8,7 +8,7 @@
 //   diferencasDoCampo      a tabela Campo | Celular | Rascunho: os pontos casam pelo id e, sem id, pela carga (com
 //                          tolerância); o que sobra é "do celular, sem par"; as tentativas descartadas e as anotações
 //                          nunca entram (as anotações aparecem ao lado, para o escritório copiar);
-//   aplicarDoCampo         "Puxar dados do campo" (registro original = CELULAR): escreve no rascunho o que foi escolhido;
+//   aplicarDoCampo         "Importar do celular do técnico" (registro original = CELULAR): escreve no rascunho o que foi escolhido;
 //   divergenciasParaEmissao a regra de uma justificativa só (05-ajustes-finais §10): os dados brutos da calibração que
 //                          ficaram diferentes do registro depois de puxar.
 //
@@ -1343,7 +1343,7 @@ function compararInterno(
   const avisos: string[] = []
   const motivo = registro.motivoDesfecho.trim().replace(/[.\s]+$/, '') || 'sem motivo'
   if (registro.desfecho === 'INCOMPLETA')
-    avisos.push(`Folha encerrada sem completar: ${motivo}. Puxe o que existe; o resto fica pendente.`)
+    avisos.push(`Folha encerrada sem completar: ${motivo}. Importe o que existe; o resto fica pendente.`)
   if (registro.desfecho === 'NAO_CALIBRADA')
     avisos.push(`Balança não calibrada: ${motivo}. O nº do certificado pode ir para "não utilizado".`)
   if (convertido)
@@ -1352,7 +1352,7 @@ function compararInterno(
     )
   if (registro.tentativas.length)
     avisos.push(
-      `${registro.tentativas.length === 1 ? 'Uma tentativa anterior dos ensaios ficou' : `${registro.tentativas.length} tentativas anteriores dos ensaios ficaram`} só para consulta (a balança precisou de manutenção): não é puxada.`,
+      `${registro.tentativas.length === 1 ? 'Uma tentativa anterior dos ensaios ficou' : `${registro.tentativas.length} tentativas anteriores dos ensaios ficaram`} só para consulta (a balança precisou de manutenção): não é importada.`,
     )
   if (cadastroDiferente.some((c) => c.metrologico))
     avisos.push(
@@ -1375,7 +1375,7 @@ function compararInterno(
 const semAplicar = ({ aplicar: _a, ...resto }: ItemInterno): DiferencaCampo => resto
 
 /**
- * "Comparar com o campo" (piloto) e a prévia de "Puxar dados do campo": a tabela Campo | Celular | Rascunho, com todos os
+ * "Comparar com o campo" (piloto) e a prévia de "Importar do celular do técnico": a tabela Campo | Celular | Rascunho, com todos os
  * dados comparados (os iguais também; a tela os esconde), as anotações ao lado, os dados impressos vistos diferentes e as
  * frases da tela. Não muda nada.
  */
@@ -1408,7 +1408,7 @@ export interface ResumoImportacao {
 }
 
 /**
- * "Puxar dados do campo" (registro original = CELULAR): o rascunho com o que foi escolhido em cada diferença (sem
+ * "Importar do celular do técnico" (registro original = CELULAR): o rascunho com o que foi escolhido em cada diferença (sem
  * escolha, a sugestão: o do celular, salvo onde só o rascunho tem o dado). Nunca escreve as anotações nas observações,
  * nem as tentativas descartadas, nem o que só o escritório preenche (conformidade, próxima calibração, opções). A data
  * real substitui a prevista e a próxima calibração acompanha. O rascunho continua editável.
@@ -1490,7 +1490,7 @@ export function divergenciasParaEmissao(
 }
 
 /** O começo da pendência da justificativa (o servidor e a tela a reconhecem por ele). */
-export const PENDENCIA_JUSTIFICATIVA_CAMPO = 'Dados do campo mudados depois de puxados'
+export const PENDENCIA_JUSTIFICATIVA_CAMPO = 'Dados do celular mudados depois de importados'
 
 /** A pendência de emissão da regra da justificativa: com divergências e sem a justificativa; null quando não pende. */
 export function pendenciaJustificativaCampo(divergencias: readonly DivergenciaCampo[], justificativa: string): string | null {

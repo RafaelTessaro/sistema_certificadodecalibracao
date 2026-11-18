@@ -2,7 +2,7 @@
 // celular, os passos de medição ficam só para leitura: "Recolher do celular" e "Vou digitar do papel"); no piloto, só o
 // aviso de que a folha foi para o celular; com o pedido de recolher em aberto, o administrador pode "Recolher à força" (o
 // celular perdido ou descadastrado nunca responde); quando a folha volta, "Voltou do campo" com "Comparar com o campo"
-// (piloto) ou "Puxar dados do campo".
+// (piloto) ou "Importar do celular do técnico".
 
 import { ArrowDownToLine, ClipboardList, Eye, GitCompareArrows, Lock, Smartphone, TriangleAlert, Undo2 } from 'lucide-react'
 import type { ReactNode } from 'react'
@@ -62,11 +62,11 @@ export function FaixaCampo({
           </p>
           <p className="mt-0.5 text-[12.5px] opacity-90">
             {ultima
-              ? `${ultima.tipo === 'PUXAR' ? 'Dados puxados' : 'Comparado com o campo'} em ${dataHora(ultima.feitoEm)} por ${ultima.feitoPor}.`
+              ? `${ultima.tipo === 'PUXAR' ? 'Importado do celular' : 'Comparado com o campo'} em ${dataHora(ultima.feitoEm)} por ${ultima.feitoPor}.`
               : puxar
-                ? 'Leve os dados do celular para o rascunho com “Puxar dados do campo”.'
+                ? 'Leve os dados do celular para o rascunho com “Importar do celular do técnico”.'
                 : 'Piloto: compare com o que foi digitado do papel. Nada vai para o rascunho.'}
-            {campo.versaoNova && ' Chegou uma versão nova da folha depois de puxar: confira as diferenças.'}
+            {campo.versaoNova && ' Chegou uma versão nova da folha depois de importar: confira as diferenças.'}
           </p>
           {selos.length > 0 && (
             <span className="mt-1.5 flex flex-wrap gap-1">
@@ -92,7 +92,7 @@ export function FaixaCampo({
                 icone={<ArrowDownToLine className="h-3.5 w-3.5" />}
                 onClick={aoPuxar}
               >
-                {jaPuxado ? 'Puxar de novo' : 'Puxar dados do campo'}
+                {jaPuxado ? 'Importar de novo' : 'Importar do celular do técnico'}
               </Button>
             ) : (
               <Button

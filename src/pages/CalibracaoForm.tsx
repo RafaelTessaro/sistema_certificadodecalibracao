@@ -1186,7 +1186,7 @@ function EditorCalibracao({ id }: { id: string }) {
     if (await salvar()) setComparando(true)
   }
 
-  // "Puxar dados do campo" gravou o rascunho com os dados do celular: a tela fica com o gravado (e a versão nova)
+  // "Importar do celular do técnico" gravou o rascunho com os dados do celular: a tela fica com o gravado (e a versão nova)
   const aposPuxar = (r: { calibracao: Calibracao; pendencias: string[]; avisos: string[] }) => {
     versao.current = r.calibracao.versao
     sujo.current = false

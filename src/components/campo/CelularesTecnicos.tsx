@@ -412,7 +412,7 @@ function ConfiguracaoCampoCard() {
       const ok = await confirmar({
         titulo: 'O celular passa a ser o registro original?',
         descricao:
-          'Faça isso só depois do piloto validado (o protocolo assinado e a revisão do formulário e do POP em vigor). A partir daí, enquanto a folha estiver no celular, as leituras ficam só para leitura no computador, e “Puxar dados do campo” preenche o rascunho.',
+          'Faça isso só depois do piloto validado (o protocolo assinado e a revisão do formulário e do POP em vigor). A partir daí, enquanto a folha estiver no celular, as leituras ficam só para leitura no computador, e “Importar do celular do técnico” preenche o rascunho.',
         confirmar: 'Passar para o celular',
       })
       if (!ok) return
@@ -459,7 +459,7 @@ function ConfiguracaoCampoCard() {
               aoEscolher={() => void escolher('CELULAR')}
               desabilitada={salvando}
               titulo="A folha do celular"
-              texto="Enquanto a folha está no celular, as leituras ficam só para leitura aqui. Quando ela volta, “Puxar dados do campo” preenche o rascunho, e o que mudar depois pede uma justificativa na emissão."
+              texto="Enquanto a folha está no celular, as leituras ficam só para leitura aqui. Quando ela volta, “Importar do celular do técnico” preenche o rascunho, e o que mudar depois pede uma justificativa na emissão."
             />
           </GrupoEscolha>
         ) : (

@@ -1,5 +1,5 @@
 // As janelas maiores do app do celular (1.1.0) baixam na primeira vez que abrem: o registro de campo (os 8 passos) e
-// "Comparar com o campo" / "Puxar dados do campo" (com a lógica de shared/campo/importar.ts). O bloco principal da
+// "Comparar com o campo" / "Importar do celular do técnico" (com a lógica de shared/campo/importar.ts). O bloco principal da
 // interface continua do tamanho de antes.
 
 import { type ComponentProps, lazy, Suspense } from 'react'
@@ -20,7 +20,7 @@ export function RegistroCampo(props: PropsRegistro) {
   )
 }
 
-/** "Comparar com o campo" / "Puxar dados do campo", baixado na primeira abertura. */
+/** "Comparar com o campo" / "Importar do celular do técnico", baixado na primeira abertura. */
 export function CompararCampo(props: PropsComparar) {
   if (!props.aberto) return null
   return (

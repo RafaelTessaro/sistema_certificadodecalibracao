@@ -39,7 +39,7 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
   preenche no cliente, sem internet, com avisos na hora; assina com o PIN e o dedo, e quem acompanhou assina com nome,
   função e o dedo. De volta ao Wi-Fi da empresa, o celular entrega a folha: o registro fica guardado como chegou, com a
   folha impressa assinada em PDF. No piloto o papel continua sendo o registro original (**Comparar com o campo**); depois,
-  **Puxar dados do campo** preenche o rascunho. O nº FC liga o celular ao computador. Instalação e cuidados em
+  **Importar do celular do técnico** preenche o rascunho. O nº FC liga o celular ao computador. Instalação e cuidados em
   [`instalador/LEIA-ME.md`](instalador/LEIA-ME.md) e a página do técnico em
   [`instalador/GUIA-DO-TECNICO.md`](instalador/GUIA-DO-TECNICO.md).
 - **Certificado em PDF** enxuto (2 páginas; 3 com ajuste e "como encontrado" ou muitos ensaios), com:

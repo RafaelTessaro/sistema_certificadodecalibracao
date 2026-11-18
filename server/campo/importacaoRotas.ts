@@ -1,5 +1,5 @@
 // As rotas do escritório para levar o registro de campo à calibração (1.1.0; server/campo/importacao.ts): o que o editor
-// precisa saber do celular e do registro, "Comparar com o campo" (piloto), "Puxar dados do campo", "Criar calibração com
+// precisa saber do celular e do registro, "Comparar com o campo" (piloto), "Importar do celular do técnico", "Criar calibração com
 // os dados do campo", a justificativa das diferenças depois de puxar, os técnicos que podem receber uma folha no celular
 // e as folhas de uma balança que foram para o celular. Todas com o cookie da sessão (quem imprime a folha).
 
@@ -45,7 +45,7 @@ export async function rotasImportacaoCampo(app: FastifyInstance, ctx: Contexto) 
     return r
   })
 
-  /** "Puxar dados do campo" (registro original = CELULAR): `{registroId, escolhas, versao}`. */
+  /** "Importar do celular do técnico" (registro original = CELULAR): `{registroId, escolhas, versao}`. */
   app.post('/api/calibracoes/:id/puxar-campo', async (req: ComId) => {
     const u = quem(req)
     const r = puxarDoCampo(ctx, req.params.id, req.body, u)

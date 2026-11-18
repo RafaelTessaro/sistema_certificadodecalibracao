@@ -4,7 +4,7 @@
 //
 // - Piloto (registro original = PAPEL): "Comparar com o campo" grava a comparação (campo_importacoes, COMPARACAO), com a
 //   observação opcional, e NÃO escreve nada no rascunho.
-// - Registro original = CELULAR: "Puxar dados do campo" aplica no rascunho o que foi escolhido em cada diferença (sem
+// - Registro original = CELULAR: "Importar do celular do técnico" aplica no rascunho o que foi escolhido em cada diferença (sem
 //   escolha, o do celular), com a conferência da versão (409 CONFLITO). O técnico que assinou no celular fica sendo o
 //   técnico e quem o definiu (`tecnicoConfirmado`): quem puxa os dados não fica impedido de autorizar. Só vale o técnico
 //   que é o dono do celular que entregou ou aquele a quem a folha foi enviada (o id do registro é o que o celular diz).
@@ -250,7 +250,7 @@ export function avisosDoCampo(ctx: Contexto, k: Calibracao): string[] {
   const atual = vigente(registrosDaFolha(campo, numero))
   if (!atual || atual.id === ultimo.registroId) return []
   return [
-    `Chegou uma versão nova da folha ${folhaDoRegistro(atual)} do celular depois de puxar os dados: confira as diferenças em “Registro de campo”.`,
+    `Chegou uma versão nova da folha ${folhaDoRegistro(atual)} do celular depois de importar os dados: confira as diferenças em “Registro de campo”.`,
   ]
 }
 
@@ -413,7 +413,7 @@ function aplicarEGravar(
   } catch (erro) {
     throw new ErroApi(
       409,
-      `O registro chegou com problema de formato e não pôde ser puxado (${erro instanceof Error ? erro.message : String(erro)}).`,
+      `O registro chegou com problema de formato e não pôde ser importado (${erro instanceof Error ? erro.message : String(erro)}).`,
       { codigo: 'FORMATO' },
     )
   }
@@ -439,7 +439,7 @@ function aplicarEGravar(
 }
 
 /**
- * "Puxar dados do campo" (só com o registro original = CELULAR): `{registroId, escolhas, versao}`. O rascunho recebe o
+ * "Importar do celular do técnico" (só com o registro original = CELULAR): `{registroId, escolhas, versao}`. O rascunho recebe o
  * que foi escolhido (sem escolha, a sugestão: o do celular); o técnico que assinou no celular fica sendo o técnico.
  */
 export function puxarDoCampo(
@@ -515,7 +515,7 @@ export function criarCalibracaoDoCampo(
     throw new ErroApi(
       409,
       daFolha.status === 'RASCUNHO' || daFolha.status === 'REVISAO'
-        ? `A folha ${numero} já tem uma calibração em andamento: puxe os dados por ela.`
+        ? `A folha ${numero} já tem uma calibração em andamento: importe os dados por ela.`
         : `A folha ${numero} já está num certificado (${daFolha.numero || 'emitido'}).`,
       { codigo: 'TEM_CALIBRACAO', calibracaoId: daFolha.id },
     )

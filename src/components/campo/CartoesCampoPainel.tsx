@@ -29,7 +29,7 @@ export function CartoesCampoPainel({ campo }: { campo: ResumoCampoPainel | undef
           <CardHeader
             icone={<ClipboardCheck className="h-4 w-4" />}
             titulo={`Voltaram do campo (${campo.voltaram.length})`}
-            descricao="Compare ou puxe os dados na calibração"
+            descricao="Compare ou importe os dados na calibração"
           />
           <ul className="divide-y divide-line border-t border-line">
             {campo.voltaram.slice(0, 6).map((f) => (

@@ -126,7 +126,7 @@ async function campoDe(k: Pick<Calibracao, 'id'>): Promise<CampoDaCalibracao> {
   return r.json()
 }
 
-/** "Puxar dados do campo" (registro original = CELULAR) do registro que vale para a calibração. */
+/** "Importar do celular do técnico" (registro original = CELULAR) do registro que vale para a calibração. */
 async function puxar(k: Pick<Calibracao, 'id'>, escolhas: Record<string, 'CELULAR' | 'RASCUNHO'> = {}) {
   const atual = t.ctx.repo.obterCalibracao(k.id)!
   const { registroId } = await campoDe(k)
@@ -360,7 +360,7 @@ describe('um dia de campo, de ponta a ponta', () => {
     expect(itens.find((x) => x.chave === 'indicacao.pontos.c.crescente')).toMatchObject({ celular: '30,02', rascunho: '30,01' })
     expect(t.ctx.repo.obterCalibracao(k.id)!.versao).toBe(versaoAntes)
 
-    // O celular passa a ser o registro original: "Puxar dados do campo" leva as leituras ao rascunho. O rascunho foi
+    // O celular passa a ser o registro original: "Importar do celular do técnico" leva as leituras ao rascunho. O rascunho foi
     // digitado do papel no piloto, com a descida no zero e em Max, que o celular não anota (como a folha impressa): o
     // escritório escolhe "Fica: o do celular" nas duas
     await configurar('CELULAR')

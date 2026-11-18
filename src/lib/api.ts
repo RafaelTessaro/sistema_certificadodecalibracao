@@ -653,7 +653,7 @@ export const api = {
       `/api/calibracoes/${enc(id)}/comparar-campo`,
       { registroId, observacao },
     ),
-  /** "Puxar dados do campo" (registro original no celular): o rascunho com o escolhido; a versão sobe. */
+  /** "Importar do celular do técnico" (registro original no celular): o rascunho com o escolhido; a versão sobe. */
   puxarDoCampo: (id: string, dados: { registroId: string; escolhas: EscolhasCampo; versao?: number }) =>
     requisitar<{
       calibracao: Calibracao
