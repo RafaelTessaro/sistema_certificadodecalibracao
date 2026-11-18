@@ -1,0 +1,53 @@
+name: App do celular no Android simulado
+
+# Teste de fumaça do app BC Calibração (celular): liga um Android simulado (API 34, x86_64, com KVM), instala o APK de
+# debug do artefato app-celular-debug (gerado pelo app-celular.yml na mesma execução), abre o app, espera e confere que
+# ele continua aberto e sem FATAL EXCEPTION no logcat (scripts/testar-app-no-emulador.sh). A captura da tela, o logcat
+# e o resultado ficam no artefato app-celular-emulador.
+# INFORMATIVO: o job tem continue-on-error e ninguém depende dele (o setup.exe e o Release não esperam por ele).
+# Não testa câmera, assinatura com o dedo nem o servidor: isso é no celular de verdade.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  emulador:
+    name: Abre o app no Android simulado (informativo)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: app-celular-debug
+          path: apk
+
+      # Aceleração do emulador nos runners Linux do GitHub (regra do udev documentada pelo android-emulator-runner)
+      - name: Liga o KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # O "script" do android-emulator-runner roda cada linha separada (sh -c): a lógica fica no script do repositório
+      - name: Instala, abre e confere o app
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash scripts/testar-app-no-emulador.sh apk saida-emulador
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: app-celular-emulador
+          path: saida-emulador/
+          if-no-files-found: warn
+          retention-days: 14

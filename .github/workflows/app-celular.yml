@@ -1,0 +1,267 @@
+name: App do celular
+
+# Compila o app BC Calibração (celular), em app-campo/ (ver app-campo/LEIA-ME.md e docs/APP-CHAVE.md):
+#   - SEMPRE o APK de debug (com o x86_64 do Android simulado; chave de debug, sem segredos), para conferir que compila
+#     e para o teste no emulador (app-celular-emulador.yml);
+#   - o APK de release, assinado com a chave da empresa, SÓ quando os 4 segredos existem (Settings → Secrets and
+#     variables → Actions): BC_APP_KEYSTORE_B64, BC_APP_KEYSTORE_SENHA, BC_APP_CHAVE_ALIAS e BC_APP_CHAVE_SENHA.
+#     Sem eles nada falha: o release do sistema sai sem o APK, e as notas dizem isso (instalador-windows.yml).
+#   - Variável opcional (não secreta) BC_APP_CERT_SHA256: a impressão SHA-256 do certificado da chave da empresa. Com
+#     ela, o CI recusa um APK assinado com outra chave (os celulares não atualizariam).
+# Versão do app = versão do sistema (package.json da raiz, igual ao app-campo/package.json):
+#   versionName "1.1.0", versionCode a·1 000 000 + b·10 000 + c·100 (+ correção) = 1010000.
+# Quando roda:
+#   - chamado pelo instalador-windows.yml (workflow_call), antes de gerar o setup.exe;
+#   - em push (branches) e pull request que mexam no app ou em shared/ (APKs nos artefatos da execução; pull request
+#     de fork não tem os segredos e gera só o de debug);
+#   - "Run workflow" na aba Actions: os APKs ficam nos artefatos (piloto e correções pelo cabo). "correcao" = 1 gera
+#     a 1.1.0+1 (versionCode 1010001), para corrigir só o app sem lançar o sistema.
+on:
+  workflow_call:
+    inputs:
+      correcao:
+        description: 'Correção só do app sobre a versão do sistema (0 a 99; 0 = normal)'
+        type: number
+        default: 0
+      sem_emulador:
+        description: 'Não roda o teste no Android simulado (quem chama roda à parte)'
+        type: boolean
+        default: false
+    outputs:
+      assinado:
+        description: '"true" quando o APK de release assinado foi gerado e conferido (artefato app-celular-release)'
+        value: ${{ jobs.apk.outputs.assinado }}
+      versao:
+        description: 'versionName do app (ex.: 1.1.0 ou 1.1.0+1)'
+        value: ${{ jobs.apk.outputs.versao }}
+    secrets:
+      BC_APP_KEYSTORE_B64:
+        required: false
+      BC_APP_KEYSTORE_SENHA:
+        required: false
+      BC_APP_CHAVE_ALIAS:
+        required: false
+      BC_APP_CHAVE_SENHA:
+        required: false
+  push:
+    branches: ['**']
+    paths:
+      - 'app-campo/**'
+      - 'shared/**'
+      - 'package.json'
+      - 'scripts/conferir-apk-celular.sh'
+      - 'scripts/testar-app-no-emulador.sh'
+      - '.github/workflows/app-celular.yml'
+      - '.github/workflows/app-celular-emulador.yml'
+  pull_request:
+    paths:
+      - 'app-campo/**'
+      - 'shared/**'
+      - 'package.json'
+      - 'scripts/conferir-apk-celular.sh'
+      - 'scripts/testar-app-no-emulador.sh'
+      - '.github/workflows/app-celular.yml'
+      - '.github/workflows/app-celular-emulador.yml'
+  workflow_dispatch:
+    inputs:
+      correcao:
+        description: 'Correção só do app (1 a 99): 1.1.0 → 1.1.0+1. Deixe 0 no normal.'
+        type: number
+        default: 0
+      sem_emulador:
+        description: 'Pular o teste no Android simulado'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  nucleo:
+    name: Testes do núcleo do app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      # Os testes do núcleo (app-campo/src/nucleo) e de shared/campo rodam no Vitest da raiz, com o node:http
+      - name: npm ci, testes e tipos do núcleo
+        run: |
+          npm ci --no-audit --no-fund
+          npx vitest run app-campo/src/nucleo shared/campo
+          npx tsc -p app-campo/tsconfig.testes.json
+
+  apk:
+    name: APK (debug e release)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      assinado: ${{ steps.conferir.outputs.assinado }}
+      versao: ${{ steps.versao.outputs.nome }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app-campo/package-lock.json
+
+      - name: Versão (a mesma do sistema)
+        id: versao
+        env:
+          CORRECAO: ${{ inputs.correcao }}
+        run: |
+          versao="$(node -p "require('./package.json').version")"
+          versao_app="$(node -p "require('./app-campo/package.json').version")"
+          if [ "$versao" != "$versao_app" ]; then
+            echo "::error::A versão do app-campo/package.json ($versao_app) tem de ser a do package.json da raiz ($versao)."
+            exit 1
+          fi
+          if [[ ! "$versao" =~ ^([0-9]{1,3})\.([0-9]{1,2})\.([0-9]{1,2})$ ]]; then
+            echo "::error::A versão do app precisa ser X.Y.Z, com Y e Z até 99 (está '$versao')."
+            exit 1
+          fi
+          a=$((10#${BASH_REMATCH[1]})); b=$((10#${BASH_REMATCH[2]})); c=$((10#${BASH_REMATCH[3]}))
+          correcao="${CORRECAO:-0}"
+          if [[ ! "$correcao" =~ ^[0-9]{1,2}$ ]]; then
+            echo "::error::A correção precisa ser de 0 a 99 (está '$correcao')."
+            exit 1
+          fi
+          correcao=$((10#$correcao))
+          nome="$versao"
+          if [ "$correcao" -gt 0 ]; then nome="$versao+$correcao"; fi
+          codigo=$((a * 1000000 + b * 10000 + c * 100 + correcao))
+          echo "App BC Calibração $nome (versionCode $codigo)"
+          echo "nome=$nome" >> "$GITHUB_OUTPUT"
+          echo "codigo=$codigo" >> "$GITHUB_OUTPUT"
+          # Lidas pelo android/app/build.gradle (versionName e versionCode) e pelo vite.config.ts do app
+          echo "BC_APP_VERSAO=$nome" >> "$GITHUB_ENV"
+          echo "BC_APP_VERSION_CODE=$codigo" >> "$GITHUB_ENV"
+
+      - name: Chave de assinatura (segredos)
+        id: chave
+        env:
+          KS_B64: ${{ secrets.BC_APP_KEYSTORE_B64 }}
+          KS_SENHA: ${{ secrets.BC_APP_KEYSTORE_SENHA }}
+          CHAVE_ALIAS: ${{ secrets.BC_APP_CHAVE_ALIAS }}
+          CHAVE_SENHA: ${{ secrets.BC_APP_CHAVE_SENHA }}
+        run: |
+          faltam=""
+          [ -n "$KS_B64" ] || faltam="$faltam BC_APP_KEYSTORE_B64"
+          [ -n "$KS_SENHA" ] || faltam="$faltam BC_APP_KEYSTORE_SENHA"
+          [ -n "$CHAVE_ALIAS" ] || faltam="$faltam BC_APP_CHAVE_ALIAS"
+          [ -n "$CHAVE_SENHA" ] || faltam="$faltam BC_APP_CHAVE_SENHA"
+          if [ -z "$faltam" ]; then
+            echo "assinar=true" >> "$GITHUB_OUTPUT"
+            echo "Com a chave da empresa: gera também o APK de release assinado."
+          else
+            echo "assinar=false" >> "$GITHUB_OUTPUT"
+            if [ "$faltam" = " BC_APP_KEYSTORE_B64 BC_APP_KEYSTORE_SENHA BC_APP_CHAVE_ALIAS BC_APP_CHAVE_SENHA" ]; then
+              echo "::notice::Sem a chave de assinatura nos segredos (docs/APP-CHAVE.md): só o APK de debug. O release do sistema sai sem o app do celular."
+            else
+              echo "::warning::Faltam segredos da chave de assinatura:$faltam (docs/APP-CHAVE.md). Só o APK de debug."
+            fi
+          fi
+
+      - name: Dependências, tipos e interface (app-campo)
+        working-directory: app-campo
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm run build
+          npx cap sync android
+
+      # O runner ubuntu-24.04 já traz o Android SDK (ANDROID_HOME, plataforma 36, build-tools 35) e o JDK 21
+      # (JAVA_HOME_21_X64; o padrão é o 17, e o Capacitor 8 pede o 21). O wrapper baixa o Gradle 8.14.3.
+      - name: APK de debug (sem segredos)
+        working-directory: app-campo/android
+        run: |
+          if [ -z "${JAVA_HOME_21_X64:-}" ] || [ ! -d "$JAVA_HOME_21_X64" ]; then
+            echo "::error::O runner não tem o JDK 21 (JAVA_HOME_21_X64)."
+            exit 1
+          fi
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --console=plain
+
+      - name: APK de release (assinado com a chave da empresa)
+        if: steps.chave.outputs.assinar == 'true'
+        working-directory: app-campo/android
+        env:
+          KS_B64: ${{ secrets.BC_APP_KEYSTORE_B64 }}
+          BC_APP_KEYSTORE_SENHA: ${{ secrets.BC_APP_KEYSTORE_SENHA }}
+          BC_APP_CHAVE_ALIAS: ${{ secrets.BC_APP_CHAVE_ALIAS }}
+          BC_APP_CHAVE_SENHA: ${{ secrets.BC_APP_CHAVE_SENHA }}
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export BC_APP_KEYSTORE_FILE="$RUNNER_TEMP/bc-calibracao-app.jks"
+          # O keystore só existe durante este passo, num arquivo temporário legível só por este usuário
+          trap 'rm -f "$BC_APP_KEYSTORE_FILE"' EXIT
+          umask 077
+          if ! printf '%s' "$KS_B64" | tr -d ' \r\n' | base64 -d > "$BC_APP_KEYSTORE_FILE" || [ ! -s "$BC_APP_KEYSTORE_FILE" ]; then
+            echo "::error::O segredo BC_APP_KEYSTORE_B64 não é um base64 válido (docs/APP-CHAVE.md)."
+            exit 1
+          fi
+          if ! "$JAVA_HOME/bin/keytool" -list -keystore "$BC_APP_KEYSTORE_FILE" -storepass:env BC_APP_KEYSTORE_SENHA \
+              -alias "$BC_APP_CHAVE_ALIAS" > /dev/null 2>&1; then
+            echo "::error::O keystore não abre com a BC_APP_KEYSTORE_SENHA ou não tem o alias BC_APP_CHAVE_ALIAS (docs/APP-CHAVE.md)."
+            exit 1
+          fi
+          ./gradlew assembleRelease --no-daemon --console=plain
+
+      - name: Confere os APKs (versão, assinatura, permissões, minSdk 29, targetSdk 36)
+        id: conferir
+        env:
+          ASSINAR: ${{ steps.chave.outputs.assinar }}
+          NOME: ${{ steps.versao.outputs.nome }}
+          CODIGO: ${{ steps.versao.outputs.codigo }}
+          CERT_ESPERADO: ${{ vars.BC_APP_CERT_SHA256 }}
+        run: |
+          saidas=app-campo/android/app/build/outputs/apk
+          mkdir -p saida/debug saida/release
+          bash scripts/conferir-apk-celular.sh "$saidas/debug/app-debug.apk" "$NOME" "$CODIGO" debug
+          debug="BC-Calibracao-App-$NOME-debug.apk"
+          cp "$saidas/debug/app-debug.apk" "saida/debug/$debug"
+          (cd saida/debug && sha256sum "$debug" > "$debug.sha256")
+          if [ "$ASSINAR" = true ]; then
+            bash scripts/conferir-apk-celular.sh "$saidas/release/app-release.apk" "$NOME" "$CODIGO" release
+            release="BC-Calibracao-App-$NOME.apk"
+            cp "$saidas/release/app-release.apk" "saida/release/$release"
+            (cd saida/release && sha256sum "$release" > "$release.sha256")
+            echo "assinado=true" >> "$GITHUB_OUTPUT"
+            echo "APK de release: $release ($(du -h "saida/release/$release" | cut -f1)), SHA-256 $(cut -d' ' -f1 "saida/release/$release.sha256")"
+          else
+            echo "assinado=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-celular-debug
+          path: |
+            saida/debug/*.apk
+            saida/debug/*.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        if: steps.conferir.outputs.assinado == 'true'
+        with:
+          name: app-celular-release
+          path: |
+            saida/release/*.apk
+            saida/release/*.apk.sha256
+          if-no-files-found: error
+
+  # Abre o APK de debug num Android simulado (informativo: falhar aqui não impede nada). Quando o instalador-windows.yml
+  # chama este workflow, ele roda o mesmo teste à parte, para o setup.exe não esperar o emulador.
+  emulador:
+    name: Android simulado
+    needs: apk
+    if: ${{ !inputs.sem_emulador }}
+    uses: ./.github/workflows/app-celular-emulador.yml

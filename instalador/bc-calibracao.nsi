@@ -26,6 +26,9 @@
 ;    ferramentas\ (redefinir-senha.bat/.ps1, auxiliar-instalador.ps1, copiar-banco-antes.mjs,
 ;                  protecao-windows.ps1: o DPAPI do cofre do certificado digital, server/assinatura/cofre.ts)
 ;    estacao\BC Calibracao.exe, estacao\descobrir-servidor.ps1   <- só para as estações
+;    campo\ (opcional): BC-Calibracao-<versão>.apk, o .sha256 e o app.json  <- o app do
+;                  celular, que o servidor entrega pela rede (server/campo/apk.ts); o setup
+;                  gerado sem a chave de assinatura do app não traz a pasta
 ;
 ;  O que o setup faz no SERVIDOR:
 ;    1. instala o programa em C:\Program Files\BC Calibracao (sem cedilha nem
@@ -276,6 +279,7 @@ VIAddVersionKey /LANG=${LANG_PORTUGUESEBR} "LegalCopyright"  "© ${EMPRESA}"
   RMDir /r "$INSTDIR\node"
   RMDir /r "$INSTDIR\servico"
   RMDir /r "$INSTDIR\ferramentas"
+  RMDir /r "$INSTDIR\campo"
   Delete "$INSTDIR\package.json"
   Delete "$INSTDIR\package-lock.json"
   Delete "$INSTDIR\.env.exemplo"
@@ -963,6 +967,13 @@ Section "${APP_NOME}" SecPrincipal
   SetOutPath "$INSTDIR\servico"
   File "/oname=${SERVICO}.exe" "${PAYLOAD}\servico\WinSW.NET461.exe"
   File "${PAYLOAD}\servico\LICENSE-WinSW.txt"
+  ; O app do celular (APK), que o servidor entrega aos celulares pela rede interna
+  ; (GET /api/campo/apk). Só quando o payload o traz: sem ele (setup gerado sem a chave de
+  ; assinatura do app), a pasta antiga já saiu no passo 4 e o servidor avisa que falta o app
+!if /FileExists "${PAYLOAD}\campo\app.json"
+  SetOutPath "$INSTDIR\campo"
+  File /r "${PAYLOAD}\campo\*.*"
+!endif
   SetOutPath "$INSTDIR"
   StrCpy $AUXILIAR "$INSTDIR\ferramentas\auxiliar-instalador.ps1"
 

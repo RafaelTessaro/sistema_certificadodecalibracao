@@ -35,6 +35,13 @@ Roda num computador da empresa e é usado pelo navegador por quem está na **red
   - certificado emitido só reimprime a folha que a calibração teve (nenhum nº novo depois da emissão), e a revisão de um certificado feito sem folha também não ganha nº novo (é a mesma visita);
   - rodoviária já cadastrada (o cadastro novo não a oferece, e o POP não a cobre) sem cargas de substituição no plano: a folha sugere as etapas (os pesos previstos em cada uma) e o nº de substituições de cada ponto, como o cálculo soma; pontos e etapas que não cabem juntos na página do título do passo 5: os pontos ficam nela e as etapas vão para a seguinte;
   - enxuta: 2 páginas (frente e verso), também a folha em branco; por último, depois das assinaturas (passo 8), o quadro Anotações, com linhas até o pé da última página (pelo menos 3).
+- **App do celular** (BC Calibração, Android): **Enviar para o técnico** manda a folha de campo para o celular dele. Ele
+  preenche no cliente, sem internet, com avisos na hora; assina com o PIN e o dedo, e quem acompanhou assina com nome,
+  função e o dedo. De volta ao Wi-Fi da empresa, o celular entrega a folha: o registro fica guardado como chegou, com a
+  folha impressa assinada em PDF. No piloto o papel continua sendo o registro original (**Comparar com o campo**); depois,
+  **Puxar dados do campo** preenche o rascunho. O nº FC liga o celular ao computador. Instalação e cuidados em
+  [`instalador/LEIA-ME.md`](instalador/LEIA-ME.md) e a página do técnico em
+  [`instalador/GUIA-DO-TECNICO.md`](instalador/GUIA-DO-TECNICO.md).
 - **Certificado em PDF** enxuto (2 páginas; 3 com ajuste e "como encontrado" ou muitos ensaios), com:
   - número único, o POP, "Página X de Y" em toda página e "Fim do certificado" (as assinaturas nunca ficam sozinhas na última página: vão com a última declaração);
   - a cláusula de reprodução (só na íntegra) no rodapé de toda página;
@@ -137,9 +144,32 @@ empacotador não leva para o instalador; fora disso, as variáveis são ignorada
 
 ```bash
 scripts/empacotar-windows.sh
+APK_CAMPO=/caminho/BC-Calibracao-App-1.1.0.apk scripts/empacotar-windows.sh   # com o app do celular
 ```
 
-No GitHub, o workflow **Instalador Windows** também gera o instalador.
+No GitHub, o workflow **Instalador Windows** também gera o instalador, já com o APK assinado do app do celular quando a
+chave de assinatura está nos segredos ([`docs/APP-CHAVE.md`](docs/APP-CHAVE.md)).
+
+### App do celular (`app-campo/`)
+
+O app BC Calibração do técnico de campo, para Android (Capacitor 8 + React + Vite + Tailwind), com `package.json` próprio.
+A versão do app é sempre a do sistema (`app-campo/package.json` = `package.json`). Detalhes em
+[`app-campo/LEIA-ME.md`](app-campo/LEIA-ME.md).
+
+```bash
+npm test                                      # da raiz: também os testes do núcleo do app (app-campo/src/nucleo)
+npx tsc -p app-campo/tsconfig.testes.json     # da raiz: os tipos dos testes do núcleo
+cd app-campo
+npm ci && npm run typecheck && npm run build  # interface do app em app-campo/dist
+npx cap sync android
+cd android && ./gradlew assembleDebug         # APK de debug: app/build/outputs/apk/debug/app-debug.apk
+```
+
+Precisa do JDK 21 e do Android SDK (plataforma 36, build-tools 35) em `ANDROID_HOME`. O APK de release só sai assinado
+com a chave da empresa, pelas variáveis `BC_APP_KEYSTORE_FILE`, `BC_APP_KEYSTORE_SENHA`, `BC_APP_CHAVE_ALIAS` e
+`BC_APP_CHAVE_SENHA`; `scripts/conferir-apk-celular.sh <apk> <versão> <versionCode>` confere a versão, a assinatura e as
+permissões. No GitHub, o workflow **App do celular** compila o APK de debug em todo push que mexe em `app-campo/` ou
+`shared/`, o de release quando a chave está nos segredos, e abre o app num Android simulado (informativo).
 
 ### Organização do código
 
@@ -149,7 +179,8 @@ No GitHub, o workflow **Instalador Windows** também gera o instalador.
 | `server/`        | Fastify + SQLite embutido do Node (`node:sqlite`), geração do PDF (`server/pdf`), e-mail, backup, consultas de CNPJ/CEP e controle de acesso        |
 | `src/`           | Interface em React + Tailwind                                                                                                                       |
 | `instalador/`    | Script do NSIS, serviço (WinSW), ferramentas do instalador e o programa das estações (`instalador/estacao`)                                         |
-| `docs/pesquisa/` | Pesquisa que embasou o sistema, com as fontes: normas, cálculo de incerteza, modelos de certificado, design e instalador                            |
+| `app-campo/`     | App do celular do técnico (Android): a folha de campo FOR-CAL-01 preenchida no cliente e entregue ao servidor pela rede da empresa                  |
+| `docs/pesquisa/` | Pesquisa que embasou o sistema, com as fontes: normas, cálculo de incerteza, modelos de certificado, design, instalador e o app do celular          |
 
 ## Sobre o certificado (não RBC)
 

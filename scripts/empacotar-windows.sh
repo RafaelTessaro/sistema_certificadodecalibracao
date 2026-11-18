@@ -22,7 +22,15 @@
 #      (instalador/estacao/lancador.nsi -> payload/estacao/BC Calibracao.exe), depois o setup, e grava
 #      o .exe e o .sha256 em pacotes/.
 #
+# O app do celular (opcional): com APK_CAMPO, o APK assinado vai para payload/campo/ como
+# BC-Calibracao-<versão>.apk (o nome que o servidor procura: server/campo/apk.ts, servido em GET /api/campo/apk),
+# com o .sha256 e o app.json (versão, versionCode, tamanho, sha256). Sem APK_CAMPO, o setup sai sem o app do
+# celular e o servidor responde "O instalador desta versão não trouxe o app do celular".
+#
 # Variáveis:
+#   APK_CAMPO=/caminho     o APK de release ASSINADO do app do celular (o do CI: BC-Calibracao-App-<versão>.apk;
+#                          se houver o <APK>.sha256 ao lado, ele é conferido)
+#   APK_CAMPO_VERSAO=X.Y.Z versão do APK (padrão: a do package.json; numa correção só do app, 1.1.0+1)
 #   PULAR_BUILD=1          não roda npm ci/npm run build e põe no pacote uma interface PROVISÓRIA
 #                          (só para testar o instalador enquanto o código está em obras). O arquivo
 #                          sai como BC-Calibracao-Setup-<versão>-teste.exe
@@ -100,9 +108,34 @@ if [[ ! "$versao" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.]+)?$ ]]; then
   falhar "versão do package.json fora do formato X.Y.Z (ou X.Y.Z-algo): '$versao'."
 fi
 versao_num="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}.0"   # propriedades do .exe
+versao_sistema="$versao"
 if [ "$pular_build" = 1 ]; then versao="$versao-teste"; fi
 saida="$pacotes/BC-Calibracao-Setup-$versao.exe"
 echo "BC Calibração $versao (NSIS $versao_nsis, Node.js $NODE_VERSAO, WinSW $WINSW_VERSAO)"
+
+# ---- App do celular (opcional): confere antes de compilar qualquer coisa ---------------------------------------
+apk_campo="${APK_CAMPO:-}"
+if [ -n "$apk_campo" ]; then
+  [ -f "$apk_campo" ] && [ -s "$apk_campo" ] || falhar "APK_CAMPO não encontrado (ou vazio): $apk_campo"
+  # O nome no servidor leva a versão do app (server/campo/apk.ts): X.Y.Z ou X.Y.Z+N, com Y e Z até 99
+  apk_versao="${APK_CAMPO_VERSAO:-$versao_sistema}"
+  if [[ ! "$apk_versao" =~ ^([0-9]{1,3})\.([0-9]{1,2})\.([0-9]{1,2})(\+([0-9]{1,2}))?$ ]]; then
+    falhar "versão do APK fora do formato X.Y.Z (ou X.Y.Z+N): '$apk_versao'. Use APK_CAMPO_VERSAO."
+  fi
+  apk_codigo=$((10#${BASH_REMATCH[1]} * 1000000 + 10#${BASH_REMATCH[2]} * 10000 + 10#${BASH_REMATCH[3]} * 100 + 10#${BASH_REMATCH[5]:-0}))
+  # Um APK é um zip ("PK" no começo)
+  [ "$(head -c 2 "$apk_campo")" = "PK" ] || falhar "APK_CAMPO não é um APK (não começa como um zip): $apk_campo"
+  apk_sha256="$(sha256 "$apk_campo")"
+  if [ -f "$apk_campo.sha256" ]; then
+    apk_sha_informado="$(cut -d' ' -f1 "$apk_campo.sha256" | tr 'A-F' 'a-f')"
+    [ "$apk_sha_informado" = "$apk_sha256" ] ||
+      falhar "SHA-256 do APK não confere com $(basename "$apk_campo").sha256: esperado $apk_sha_informado, obtido $apk_sha256."
+  fi
+  apk_nome="BC-Calibracao-$apk_versao.apk"
+  echo "App do celular: $(basename "$apk_campo") -> campo/$apk_nome (versão $apk_versao, versionCode $apk_codigo, SHA-256 $apk_sha256)"
+else
+  echo "Sem APK_CAMPO: o setup sai sem o app do celular."
+fi
 
 # ---- 1. Interface --------------------------------------------------------------------------------
 if [ "$pular_build" = 1 ]; then
@@ -180,6 +213,28 @@ cp "$raiz/instalador/bc-calibracao.ico" "$payload/"
 # Estação: o script que acha o servidor (o BC Calibracao.exe é compilado no passo 6)
 cp "$raiz/instalador/estacao/descobrir-servidor.ps1" "$payload/estacao/"
 
+# App do celular: payload/campo/ vira <instalação>\campo\, onde o servidor procura o APK (server/campo/apk.ts). O
+# setup só instala a pasta quando há o app.json (instalador/bc-calibracao.nsi)
+app_celular=null
+if [ -n "$apk_campo" ]; then
+  mkdir -p "$payload/campo"
+  cp "$apk_campo" "$payload/campo/$apk_nome"
+  [ "$(sha256 "$payload/campo/$apk_nome")" = "$apk_sha256" ] || falhar "a cópia do APK em payload/campo/ não confere."
+  (cd "$payload/campo" && echo "$apk_sha256  $apk_nome" >"$apk_nome.sha256")
+  cat >"$payload/campo/app.json" <<EOF
+{
+  "app": "BC Calibração (celular)",
+  "pacote": "br.com.balancas.calibracao",
+  "versao": "$apk_versao",
+  "versionCode": $apk_codigo,
+  "arquivo": "$apk_nome",
+  "tamanho": $(wc -c <"$apk_campo" | tr -d ' '),
+  "sha256": "$apk_sha256"
+}
+EOF
+  app_celular="\"$apk_versao\""
+fi
+
 commit="${GITHUB_SHA:-$(git -C "$raiz" rev-parse HEAD 2>/dev/null || echo desconhecido)}"
 alteracoes=false
 if [ -n "$(git -C "$raiz" status --porcelain 2>/dev/null || true)" ]; then alteracoes=true; fi
@@ -191,6 +246,7 @@ cat >"$payload/pacote.json" <<EOF
   "commit": "$commit",
   "alteracoesNaoCommitadas": $alteracoes,
   "interfaceProvisoria": $interface_provisoria,
+  "appCelular": $app_celular,
   "node": "$NODE_VERSAO",
   "winsw": "$WINSW_VERSAO",
   "nsis": "$versao_nsis",
@@ -257,10 +313,22 @@ for _ in $(seq 1 40); do
   kill -0 "$pid_servidor" 2>/dev/null || break
   sleep 0.5
 done
+# O servidor do pacote acha o APK em campo/? (GET /api/campo/apk/info, pública; ver server/campo/apk.ts)
+info_apk=""
+if [ "$servidor_ok" = 1 ]; then
+  info_apk="$(curl -fsS -m 10 "http://127.0.0.1:$porta_teste/api/campo/apk/info" 2>/dev/null || true)"
+fi
 kill "$pid_servidor" 2>/dev/null || true
 wait "$pid_servidor" 2>/dev/null || true
 if [ "$servidor_ok" = 1 ]; then
   echo "Servidor do pacote respondeu (/api/saude e a página inicial)."
+  if [ -n "$apk_campo" ]; then
+    if [[ "$info_apk" == *'"disponivel":true'* ]] && [[ "$info_apk" == *"\"sha256\":\"$apk_sha256\""* ]]; then
+      echo "O servidor do pacote oferece o app do celular (/api/campo/apk/info: versão $apk_versao)."
+    else
+      falhar "o servidor do pacote não achou o APK em campo/ (/api/campo/apk/info respondeu: ${info_apk:-nada})."
+    fi
+  fi
 else
   echo "--- registro do servidor ---" >&2
   tail -n 40 "$dados_teste/servidor.log" >&2 || true
@@ -297,6 +365,11 @@ LC_ALL="$locale_utf8" "$makensis" -V2 -WX -INPUTCHARSET UTF8 \
 echo
 echo "Instalador gerado: $saida ($(du -h "$saida" | cut -f1))"
 echo "SHA-256: $(cut -d' ' -f1 "$saida.sha256")"
+if [ -n "$apk_campo" ]; then
+  echo "Com o app do celular: campo\\$apk_nome (versão $apk_versao)."
+else
+  echo "Sem o app do celular (APK_CAMPO não informado)."
+fi
 if [ "$pular_build" = 1 ]; then
   echo "ATENÇÃO: pacote de TESTE, com interface provisória. Não entregue este arquivo."
 fi

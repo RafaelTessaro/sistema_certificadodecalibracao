@@ -1,7 +1,12 @@
 name: Instalador Windows
 
-# Roda os testes, gera o instalador único do Windows (BC-Calibracao-Setup-<versão>.exe, ver
-# scripts/empacotar-windows.sh e instalador/LEIA-ME.md) e publica na página de versões (Releases).
+# Roda os testes, compila o app do celular (app-celular.yml), gera o instalador único do Windows
+# (BC-Calibracao-Setup-<versão>.exe, ver scripts/empacotar-windows.sh e instalador/LEIA-ME.md) e publica na página de
+# versões (Releases).
+#   - o APK assinado do app do celular (BC-Calibracao-App-<versão>.apk) vai dentro do setup (pasta campo\ do servidor)
+#     e no Release. Sem a chave de assinatura nos segredos (docs/APP-CHAVE.md), ou se o app não compilar, o setup sai
+#     sem ele e as notas do Release dizem isso: uma correção do servidor nunca fica presa ao app;
+#   - o teste do app no Android simulado (app-celular-emulador.yml) é só informativo: nada espera por ele.
 #   - tag v* (ex.: v1.2.0, igual à versão do package.json): gera e publica no Release da tag;
 #   - "Run workflow" na aba Actions: gera e deixa o .exe nos artefatos da execução; marcando
 #     "publicar", publica também no Release v<versão do package.json>.
@@ -58,9 +63,29 @@ jobs:
           npm ci --no-audit --no-fund
           npx vitest run server/assinatura/cofreDpapi.test.ts
 
+  # O app do celular: APK de debug sempre; de release (assinado) só com os 4 segredos BC_APP_* (docs/APP-CHAVE.md)
+  app:
+    name: App do celular
+    uses: ./.github/workflows/app-celular.yml
+    with:
+      sem_emulador: true
+    secrets:
+      BC_APP_KEYSTORE_B64: ${{ secrets.BC_APP_KEYSTORE_B64 }}
+      BC_APP_KEYSTORE_SENHA: ${{ secrets.BC_APP_KEYSTORE_SENHA }}
+      BC_APP_CHAVE_ALIAS: ${{ secrets.BC_APP_CHAVE_ALIAS }}
+      BC_APP_CHAVE_SENHA: ${{ secrets.BC_APP_CHAVE_SENHA }}
+
+  # Informativo, em paralelo com o setup: ninguém depende deste job
+  emulador:
+    name: App no Android simulado
+    needs: app
+    uses: ./.github/workflows/app-celular-emulador.yml
+
   instalador:
     name: Gera o setup.exe
-    needs: [testes, dpapi-windows]
+    needs: [testes, dpapi-windows, app]
+    # Os testes e o DPAPI precisam passar; o app não: sem o APK assinado, o setup sai sem ele
+    if: ${{ !cancelled() && needs.testes.result == 'success' && needs.dpapi-windows.result == 'success' }}
     runs-on: ubuntu-latest
     # O apt do Ubuntu traz o NSIS 3.09, que tem falhas de elevação de privilégio (CVE-2025-43715,
     # CVE-2026-42171). O Debian testing traz o 3.12 ou mais novo; o script recusa versões anteriores.
@@ -87,8 +112,30 @@ jobs:
             exit 1
           fi
 
+      # pacotes/ fica fora do git (.gitignore): o pacote.json do setup não acusa "alterações não commitadas"
+      - name: Baixa o APK assinado do app do celular
+        if: needs.app.outputs.assinado == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: app-celular-release
+          path: pacotes/app-celular
+
       - name: Gera o instalador
-        run: scripts/empacotar-windows.sh
+        env:
+          APP_ASSINADO: ${{ needs.app.outputs.assinado }}
+          APP_VERSAO: ${{ needs.app.outputs.versao }}
+        run: |
+          if [ "$APP_ASSINADO" = true ]; then
+            apk="$PWD/pacotes/app-celular/BC-Calibracao-App-$APP_VERSAO.apk"
+            test -s "$apk" || { echo "::error::O artefato app-celular-release não tem $(basename "$apk")."; exit 1; }
+            export APK_CAMPO="$apk" APK_CAMPO_VERSAO="$APP_VERSAO"
+          else
+            echo "::warning::Sem o APK assinado do app do celular: o setup sai sem ele (as notas do Release dizem isso)."
+          fi
+          scripts/empacotar-windows.sh
+          if [ -n "${APK_CAMPO:-}" ]; then
+            cp "$APK_CAMPO" "$APK_CAMPO.sha256" pacotes/
+          fi
 
       - uses: actions/upload-artifact@v7
         with:
@@ -96,12 +143,14 @@ jobs:
           path: |
             pacotes/BC-Calibracao-Setup-*.exe
             pacotes/BC-Calibracao-Setup-*.exe.sha256
+            pacotes/BC-Calibracao-App-*.apk
+            pacotes/BC-Calibracao-App-*.apk.sha256
           if-no-files-found: error
 
   publicar:
     name: Publica no Release
-    needs: instalador
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publicar)
+    needs: [instalador, app]
+    if: ${{ !cancelled() && needs.instalador.result == 'success' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publicar)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -113,15 +162,29 @@ jobs:
           name: instalador-windows
           path: pacotes
 
-      - name: Publica o .exe com o GITHUB_TOKEN
+      - name: Publica o .exe (e o APK do app do celular) com o GITHUB_TOKEN
         env:
           GH_TOKEN: ${{ github.token }}
+          APP_RESULTADO: ${{ needs.app.result }}
+          APP_ASSINADO: ${{ needs.app.outputs.assinado }}
+          APP_VERSAO: ${{ needs.app.outputs.versao }}
         run: |
           versao="$(node -p "require('./package.json').version")"
           tag="v$versao"
           arquivo="pacotes/BC-Calibracao-Setup-$versao.exe"
           test -f "$arquivo" || { echo "::error::$arquivo não foi gerado."; exit 1; }
           sha="$(cut -d' ' -f1 "$arquivo.sha256")"
+          arquivos=("$arquivo" "$arquivo.sha256")
+          apk="pacotes/BC-Calibracao-App-$APP_VERSAO.apk"
+          if [ "$APP_ASSINADO" = true ] && [ -f "$apk" ] && [ -f "$apk.sha256" ]; then
+            arquivos+=("$apk" "$apk.sha256")
+            sha_apk="$(cut -d' ' -f1 "$apk.sha256")"
+            app_notas="**App do celular (BC Calibração):** $(basename "$apk"), para Android 10 ou mais novo. Ele já vem dentro do setup: depois de atualizar o servidor, os celulares mostram \"Há uma versão nova\" e instalam por cima, sem perder as folhas. Primeira instalação e pareamento: \"App do celular\" em instalador/LEIA-ME.md (pelo cabo, \`adb install -r\`, ou pelo navegador do celular). Nunca desinstale o app para atualizar: desinstalar apaga as folhas não entregues. SHA-256 do APK: \`$sha_apk\`."
+          elif [ "$APP_RESULTADO" = success ]; then
+            app_notas="**App do celular:** esta versão saiu sem o app do celular, porque a chave de assinatura do app não está nos segredos do GitHub (docs/APP-CHAVE.md). O sistema funciona normalmente, e o app já instalado nos celulares continua funcionando."
+          else
+            app_notas="**App do celular:** esta versão saiu sem o app do celular, porque a compilação do app falhou (veja o job \"App do celular\" desta execução). O sistema funciona normalmente, e o app já instalado nos celulares continua funcionando."
+          fi
           notas="$(cat <<EOF
           Instalador único para o servidor Windows (Windows 10/11 ou Windows Server 2016 em diante, 64 bits). Já traz tudo: não precisa instalar o Node.js nem outro programa.
 
@@ -133,13 +196,15 @@ jobs:
 
           Linha de comando, instalação silenciosa: \`BC-Calibracao-Setup-$versao.exe /S /PORTA=4850 /REDES=192.168.20.0/24\`. Detalhes em instalador/LEIA-ME.md.
 
+          $app_notas
+
           SHA-256: \`$sha\`
           Gerado a partir do commit ${GITHUB_SHA::7}.
           EOF
           )"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "$arquivo" "$arquivo.sha256" --clobber
+            gh release upload "$tag" "${arquivos[@]}" --clobber
             gh release edit "$tag" --notes "$notas"
           else
-            gh release create "$tag" "$arquivo" "$arquivo.sha256" --target "$GITHUB_SHA" --title "BC Calibração $versao" --notes "$notas"
+            gh release create "$tag" "${arquivos[@]}" --target "$GITHUB_SHA" --title "BC Calibração $versao" --notes "$notas"
           fi
