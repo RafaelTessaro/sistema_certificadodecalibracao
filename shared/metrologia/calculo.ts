@@ -279,10 +279,18 @@ function repetibilidadeNaCarga(carga: number, ctx: Contexto): { s: number; nu: n
   return { s: escolhido.s, nu: escolhido.nu, carga: escolhido.carga }
 }
 
-/** Leituras mínimas de um ensaio de repetibilidade (POP 7.9, Tabela 4): 10 na classe I; 5, ou 3 com carga ≥ 100 kg. */
+/**
+ * Leituras mínimas de um ensaio de repetibilidade (POP 7.9, Tabela 4): 10 na classe I; 5, ou 3 com carga ≥ 100 kg. A
+ * carga na unidade da balança. O cálculo e os avisos na hora do app do celular (shared/campo/avisos.ts) usam esta.
+ */
+export function minimoLeiturasRepetibilidade(carga: number, instrumento: Pick<InstrumentoCalculo, 'classe' | 'unidade'>): number {
+  if (instrumento.classe === 'I') return 10
+  return converterMassa(carga, instrumento.unidade, 'kg') >= 100 * (1 - TOL) ? 3 : 5
+}
+
+/** Leituras mínimas de um ensaio de repetibilidade no cálculo (`minimoLeiturasRepetibilidade`). */
 function leiturasMinimasRepetibilidade(carga: number, ctx: Contexto): number {
-  if (ctx.entrada.instrumento.classe === 'I') return 10
-  return converterMassa(carga, ctx.entrada.instrumento.unidade, 'kg') >= 100 * (1 - TOL) ? 3 : 5
+  return minimoLeiturasRepetibilidade(carga, ctx.entrada.instrumento)
 }
 
 // ---- Excentricidade (cg-18 6.3 e 7.1.1.4) --------------------------------------------------------
@@ -474,13 +482,45 @@ function componentesMassa(pecas: readonly PecaCalculo[], ctx: Contexto): Massa {
 // ---- Indicação e orçamento (cg-18 7.1.1, 7.1.3, 7.2, 7.3) -----------------------------------------
 
 /**
+ * d com que uma leitura é lida: a divisão de teste (`divisaoTeste` > 0); no multi-intervalo, o do intervalo da indicação;
+ * nas múltiplas faixas, o da menor que comporta `cargaFaixa` (a carga; na descida sem descarregar, a maior carga
+ * aplicada: `cargaDaFaixaDecrescente`). O cálculo e os avisos na hora do app do celular usam esta.
+ */
+export function divisaoDaLeitura(
+  indicacao: number,
+  instrumento: Pick<InstrumentoCalculo, 'tipoFaixas' | 'faixas'>,
+  divisaoTeste: number,
+  cargaFaixa: number,
+): number {
+  if (divisaoTeste > 0) return divisaoTeste
+  return faixaDoValor(instrumento.tipoFaixas === 'MULTI_INTERVALO' ? indicacao : cargaFaixa, instrumento).d
+}
+
+/**
+ * A leitura não é múltipla da divisão `d` com que foi lida (a balança indica mais fino que o d cadastrado, ou um dígito a
+ * mais digitado)? Sem d (≤ 0), não. Tolera só o ruído do binário (4,998 / 0,002 = 2499,0000000000005).
+ */
+export function leituraForaDaDivisao(leitura: number, d: number): boolean {
+  if (!Number.isFinite(leitura) || !(d > 0)) return false
+  const n = leitura / d
+  return Math.abs(n - Math.round(n)) > 1e-9 * Math.max(1, Math.abs(n))
+}
+
+/**
+ * A leitura foi escrita com menos casas decimais que a divisão `d` ("150,0" com d = 0,05)? O papel pede a leitura "com
+ * todos os dígitos"; escrita assim, uma leitura incompleta parece completa. `casasEscritas`: as casas como foram
+ * digitadas (o número não guarda os zeros do fim). Sem d (≤ 0), não.
+ */
+export function casasAbaixoDaDivisao(casasEscritas: number, d: number): boolean {
+  return d > 0 && casasEscritas < casasDecimais(d)
+}
+
+/**
  * d da indicação: divisão de teste; multi-intervalo pelo intervalo da indicação; múltiplas faixas pela menor que
  * comporta `cargaFaixa` (a carga; na descida sem descarregar, a maior carga aplicada: ver `cargaDaFaixaDescida`).
  */
 function divisaoNaCarga(indicacao: number, carga: number, ctx: Contexto, cargaFaixa = carga): number {
-  if (ctx.opcoes.divisaoTeste > 0) return ctx.opcoes.divisaoTeste
-  const instrumento = ctx.entrada.instrumento
-  return faixaDoValor(instrumento.tipoFaixas === 'MULTI_INTERVALO' ? indicacao : cargaFaixa, instrumento).d
+  return divisaoDaLeitura(indicacao, ctx.entrada.instrumento, ctx.opcoes.divisaoTeste, cargaFaixa)
 }
 
 const ehZero = (carga: number, ctx: Contexto) => Math.abs(carga) <= ctx.tol
@@ -611,10 +651,7 @@ function leiturasForaDaDivisao(entrada: EntradaCalculo, ctx: Contexto): boolean 
     const l = lida(leitura)
     if (l === null) return false
     const d = ehZero(carga, ctx) && ehZero(l, ctx) ? ctx.d0 : divisaoNaCarga(l, carga, ctx, cargaFaixa)
-    if (!(d > 0)) return false
-    const n = l / d
-    // Só o ruído do binário (4,998 / 0,002 = 2499,0000000000005)
-    return Math.abs(n - Math.round(n)) > 1e-9 * Math.max(1, Math.abs(n))
+    return leituraForaDaDivisao(l, d)
   }
   const exc = entrada.excentricidade
   return (

@@ -149,8 +149,11 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
 
   app.put('/api/calibracoes/:id', async (req: ComId) => {
     const u = autor(req)
-    const antes = repo.obterCalibracao(req.params.id)?.tecnicoId
+    const lida = repo.obterCalibracao(req.params.id)
+    const antes = lida?.tecnicoId
     if (antes !== undefined) conferirTecnico(texto(corpo(req).tecnicoId, 100), antes)
+    // O registro original é o celular e a folha está nele (1.1.0): os passos de medição ficam só para leitura (409 NO_CELULAR)
+    if (lida) ctx.campo?.repo.conferirTrava(lida, req.body)
     const k = repo.atualizarCalibracao(req.params.id, req.body, u)
     // A troca do técnico fica no registro de atividades
     if (antes !== undefined && antes !== k.tecnicoId)
@@ -267,7 +270,7 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
     const c = corpo(req)
     const reservado = repo.numeroReservadoDa(req.params.id)
     const antes = repo.obterCalibracao(req.params.id)
-    const { calibracao: k, aviso } = await emitirCertificado(ctx, req.params.id, u, { versao: versaoDe(c) })
+    const { calibracao: k, aviso, recolhidas } = await emitirCertificado(ctx, req.params.id, u, { versao: versaoDe(c) })
     // Com o nº reservado na impressão da folha de campo, o registro diz de qual folha; e se o PDF ficou para depois
     req.detalheAuditoria = [
       // Com a revisão por outra pessoa: quem autorizou (quem emitiu) e quem pediu
@@ -288,6 +291,8 @@ export async function rotasCalibracoes(app: FastifyInstance, ctx: Contexto, emai
       aviso && !(k.emissao?.assinaturaDigital && !k.emissao.assinatura)
         ? 'o PDF não foi gravado na emissão (é gerado ao abrir)'
         : '',
+      // A folha ainda estava no celular (1.1.0): o pedido de recolher que a emissão criou
+      recolhidas ?? '',
     ]
       .filter(Boolean)
       .join('; ')

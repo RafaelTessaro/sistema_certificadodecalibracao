@@ -33,6 +33,7 @@ import { pode } from '#shared/permissoes.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Cliente, Padrao } from '#shared/tipos.ts'
 import { padroesDa, popDaCalibracao } from '../certificados.ts'
 import type { Contexto } from '../contexto.ts'
+import { textoDasRecolhidas } from '../campo/repositorio.ts'
 import { ErroApi } from '../erros.ts'
 import { entradaDe, rascunhoInicial } from '../rascunhos.ts'
 import { type DadosFolhaCampo, gerarFolhaCampoPdf, nomeArquivoFolhaCampo } from '../pdf/folhaCampo.ts'
@@ -105,50 +106,166 @@ export function comBarometrosAtivos(daCalibracao: Padrao[], cadastro: Padrao[]):
 export const REVISAO_SEM_FOLHA =
   'O certificado corrigido foi feito sem folha de campo impressa pelo sistema: a correção é da mesma visita, e um nº novo agora não seria o registro dela. Se houve nova visita com uma folha avulsa, ligue o nº dela.'
 
-export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
-  const { repo } = ctx
-  const quem = (req: FastifyRequest) => {
-    if (!req.usuario) throw new ErroApi(401, 'Sua sessão terminou. Entre de novo para continuar.', { codigo: 'SEM_SESSAO' })
-    return req.usuario
-  }
+/** O que monta uma folha de campo (o PDF e, a partir da 1.1.0, os dados impressos congelados e o pacote do celular). */
+export interface EntradaFolha {
+  chave: string
+  calibracao: CalibracaoInput | null
+  calibracaoId?: string
+  nova?: boolean
+  cliente: Cliente | null
+  balanca: Balanca | null
+  padroes: DadosFolhaCampo['padroes']
+  tecnico: string
+  /**
+   * POP de referência no rodapé: o texto e a revisão registrada (null = nenhuma), que fica guardada com a folha
+   * e o certificado da calibração cita (`popDaCalibracao`).
+   */
+  procedimento: string
+  popId: number | null
+  /** Folha avulsa: a OS impressa (fica com a folha) e a data prevista da visita, sem rascunho. */
+  ordemServico?: string
+  dataPrevista?: string
+}
 
-  async function gerar(
-    req: FastifyRequest,
-    e: {
-      chave: string
-      calibracao: CalibracaoInput | null
-      calibracaoId?: string
-      nova?: boolean
-      cliente: Cliente | null
-      balanca: Balanca | null
-      padroes: DadosFolhaCampo['padroes']
-      tecnico: string
-      /**
-       * POP de referência no rodapé: o texto e a revisão registrada (null = nenhuma), que fica guardada com a folha
-       * e o certificado da calibração cita (`popDaCalibracao`).
-       */
-      procedimento: string
-      popId: number | null
-      /** Folha avulsa: a OS impressa (fica com a folha) e a data prevista da visita, sem rascunho. */
-      ordemServico?: string
-      dataPrevista?: string
-    },
-  ) {
-    const u = quem(req)
-    const folha = repo.reservarFolhaCampo({
-      chave: e.chave,
-      calibracaoId: e.calibracaoId,
-      nova: e.nova,
-      balancaId: e.balanca?.id,
-      clienteId: e.cliente?.id,
-      ordemServico: e.ordemServico,
-      dataPrevista: e.dataPrevista,
-      por: u.nome,
-    })
-    if (folha.substituiu.length) req.detalheAuditoria = detalheDaTroca(folha.numero, [], folha.substituiu, folha.liberadas)
-    registrarNumeros(ctx, req, folha.eventos)
-    // Reimpressão: o arquivo da primeira impressão
-    if (folha.pdf) return { pdf: folha.pdf, numero: folha.numero }
+/** Os dados impressos de uma folha (o DadosFolhaCampo, com o nº do certificado reservado): congelados a partir da 1.1.0. */
+export type DadosImpressos = DadosFolhaCampo & { numeroCertificado?: string }
+
+/** Aviso do envio de uma folha impressa antes da 1.1.0 (sem os dados impressos congelados). */
+export const AVISO_FOLHA_ANTES_DA_11 =
+  'Esta folha foi impressa antes da versão 1.1: confira se o papel bate com o que foi para o celular (ou use uma folha nova).'
+
+const quemDaRequisicao = (req: FastifyRequest) => {
+  if (!req.usuario) throw new ErroApi(401, 'Sua sessão terminou. Entre de novo para continuar.', { codigo: 'SEM_SESSAO' })
+  return req.usuario
+}
+
+/**
+ * A folha de uma calibração (rascunho, em revisão ou já emitida); `nova`: a chave da folha nova (nº novo). Recusa (409)
+ * a folha nova de uma calibração concluída, a de um certificado concluído sem folha e a de uma revisão de um certificado
+ * feito sem folha.
+ */
+export function entradaFolhaDaCalibracao(ctx: Contexto, k: Calibracao, nova: string): EntradaFolha {
+  const { repo } = ctx
+  if (nova && k.status !== 'RASCUNHO' && k.status !== 'REVISAO')
+    throw new ErroApi(409, 'Folha nova só para uma calibração em andamento (rascunho ou em revisão).')
+  // Certificado emitido, cancelado ou substituído sem folha: um nº reservado agora, depois da emissão,
+  // passaria por registro de dados brutos de uma calibração que não o usou (ISO/IEC 17025, 7.5). A revisão
+  // é a mesma visita do certificado revisado: sem folha nele, também não há folha para ela
+  const semFolha = !repo.folhaCampoDaCalibracao(k.id)
+  if (semFolha && k.status !== 'RASCUNHO' && k.status !== 'REVISAO')
+    throw new ErroApi(
+      409,
+      'Esta calibração foi concluída sem folha de campo impressa pelo sistema: não há folha para reimprimir.',
+    )
+  if (semFolha && k.substituiId) throw new ErroApi(409, REVISAO_SEM_FOLHA)
+  // Emitida: os cadastros como estavam na emissão (os mesmos do certificado). Em andamento: os da calibração e os
+  // barômetros ativos, que a folha lista para levar quando ela não tem nenhum (o rascunho das classes III e IIII ou sem
+  // classe criado antes da 1.0.5; `planoDaFolha`): a pressão é obrigatória em toda calibração (POP 7.5)
+  const cliente = k.emissao?.cliente ?? repo.obterCliente(k.clienteId) ?? null
+  const balanca = k.emissao?.balanca ?? repo.obterBalanca(k.balancaId) ?? null
+  const padroes = k.emissao?.padroes ?? comBarometrosAtivos(padroesDa(ctx, k), repo.listarPadroes())
+  // O técnico previsto, só se tiver a marca de técnico (quem criou sem a marca não é sugerido)
+  const previsto = ctx.usuarios.obter(k.tecnicoId)
+  const tecnico = k.emissao?.tecnico.nome ?? (previsto?.tecnico ? previsto.nome : '')
+  // Emitida: o POP do certificado. Em andamento: o que o certificado vai citar (`popDaCalibracao`; numa revisão, o
+  // do certificado revisado). A primeira impressão e a folha nova (que fica no lugar da de antes) vão a campo agora:
+  // o que vale na data da calibração ou, se ela já passou (o rascunho nasce com a data do dia em que foi criado),
+  // no dia da impressão. A reimpressão é o PDF guardado (com a revisão de quando saiu)
+  const pop = k.emissao
+    ? { procedimento: k.emissao.textos.procedimento, pop: k.emissao.pop ?? null }
+    : popDaCalibracao(ctx, k, { semFolha: !!nova, dataMinima: hojeLocalIso(repo.agora()) })
+  return {
+    chave: nova ? `calibracao:${k.id}:${nova}` : `calibracao:${k.id}`,
+    calibracao: entradaDe(k),
+    calibracaoId: k.id,
+    nova: !!nova,
+    cliente,
+    balanca,
+    padroes,
+    tecnico,
+    procedimento: pop?.procedimento ?? '',
+    popId: pop?.pop?.id ?? null,
+  }
+}
+
+/**
+ * Folha sem calibração: `balancaId` (o cliente é o dono da balança), só `clienteId` (balança em branco) ou nada (em
+ * branco). `chave` (opcional, até 64 letras, números e hífens): o mesmo nº a cada pedido. `os` e `data` (AAAA-MM-DD;
+ * opcionais): a OS e a data prevista da visita. `usuarioId`: quem pede (o rascunho que a folha da balança teria).
+ */
+export function entradaFolhaAvulsa(ctx: Contexto, q: Record<string, unknown>, usuarioId: string): EntradaFolha {
+  const { repo } = ctx
+  const texto = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+  const balancaId = texto(q.balancaId)
+  const clienteId = texto(q.clienteId)
+  const chave = texto(q.chave)
+  if (chave && !/^[A-Za-z0-9-]{8,64}$/.test(chave)) throw new ErroApi(400, 'Chave da folha inválida.')
+  const balanca = balancaId ? repo.obterBalanca(balancaId) : undefined
+  if (balancaId && !balanca) throw new ErroApi(404, 'Balança não encontrada.')
+  if (balanca && clienteId && clienteId !== balanca.clienteId) throw new ErroApi(400, 'Esta balança não é deste cliente.')
+  const idCliente = balanca?.clienteId || clienteId
+  const cliente = idCliente ? repo.obterCliente(idCliente) : undefined
+  if (idCliente && !cliente) throw new ErroApi(404, 'Cliente não encontrado.')
+  const { ordemServico, data } = osEDataDaFolha(q)
+  // Com a balança, o plano é o que o rascunho teria (pontos e padrões da última calibração dela), com a OS e a data
+  const calibracao = balanca
+    ? rascunhoInicial(
+        ctx,
+        { balancaId: balanca.id, ...(ordemServico ? { ordemServico } : {}), ...(data ? { dataCalibracao: data } : {}) },
+        usuarioId,
+      )
+    : null
+  const padroes = calibracao ? padroesDa(ctx, calibracao) : repo.listarPadroes()
+  // O POP vigente (a folha vai a campo agora)
+  const pop = repo.popVigente()
+  return {
+    chave: `avulsa:${chave || randomUUID()}`,
+    calibracao,
+    cliente: cliente ?? null,
+    balanca: balanca ?? null,
+    padroes,
+    // O técnico da visita ainda não está definido: a folha sai com a linha para escrever
+    tecnico: '',
+    procedimento: pop ? textoPop(pop) : '',
+    popId: pop?.id ?? null,
+    ordemServico,
+    dataPrevista: data,
+  }
+}
+
+/**
+ * Reserva a folha (`reservarFolhaCampo`) e, na primeira vez, gera e guarda o PDF e congela os dados impressos (1.1.0).
+ * A reimpressão devolve o PDF guardado. `paraEnvio` ("Enviar para o técnico"): não conta impressão e devolve sempre os
+ * dados impressos congelados (os da primeira impressão; na folha impressa antes da 1.1.0, os de agora, com `aviso`).
+ */
+export async function gerarFolha(
+  ctx: Contexto,
+  req: FastifyRequest,
+  e: EntradaFolha,
+  o: { paraEnvio?: boolean } = {},
+): Promise<{
+  pdf: Buffer
+  numero: string
+  dados: DadosImpressos | null
+  dadosSha256: string
+  aviso?: string
+}> {
+  const { repo } = ctx
+  const u = quemDaRequisicao(req)
+  const folha = repo.reservarFolhaCampo({
+    chave: e.chave,
+    calibracaoId: e.calibracaoId,
+    nova: e.nova,
+    balancaId: e.balanca?.id,
+    clienteId: e.cliente?.id,
+    ordemServico: e.ordemServico,
+    dataPrevista: e.dataPrevista,
+    por: u.nome,
+    ...(o.paraEnvio ? { contarImpressao: false } : {}),
+  })
+  if (folha.substituiu.length) req.detalheAuditoria = detalheDaTroca(folha.numero, [], folha.substituiu, folha.liberadas)
+  registrarNumeros(ctx, req, folha.eventos)
+  const montarDados = (): DadosImpressos => {
     const config = repo.obterConfig()
     // A folha nova (da 1.0.5) no lugar da de antes: sem as marcas que saíram (`marcasRetiradas`)
     const retiradas = folha.marcasRetiradas
@@ -161,7 +278,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
             ...(retiradas.zeroComoAviso === false ? { zeroComoAviso: undefined } : {}),
           }
         : e.calibracao
-    const dados: DadosFolhaCampo & { numeroCertificado?: string } = {
+    return {
       numero: folha.numero,
       empresa: config.empresa,
       cliente: e.cliente,
@@ -180,9 +297,32 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       ...(e.ordemServico ? { ordemServico: e.ordemServico } : {}),
       ...(e.dataPrevista ? { dataPrevista: e.dataPrevista } : {}),
     }
-    const pdf = await gerarFolhaCampoPdf(dados)
-    return { pdf: repo.guardarPdfFolhaCampo(folha.numero, pdf, e.popId), numero: folha.numero }
   }
+  // Reimpressão: o arquivo da primeira impressão
+  if (folha.pdf) {
+    if (!o.paraEnvio) return { pdf: folha.pdf, numero: folha.numero, dados: null, dadosSha256: '' }
+    const congelados = repo.dadosImpressos<DadosImpressos>(folha.numero)
+    if (congelados) return { pdf: folha.pdf, numero: folha.numero, dados: congelados.dados, dadosSha256: congelados.sha256 }
+    // Impressa antes da 1.1.0: os dados de agora (a tela avisa para conferir o papel)
+    const agora = repo.congelarDadosImpressos(folha.numero, montarDados())
+    return { pdf: folha.pdf, numero: folha.numero, dados: agora.dados, dadosSha256: agora.sha256, aviso: AVISO_FOLHA_ANTES_DA_11 }
+  }
+  const dados = montarDados()
+  const pdf = repo.guardarPdfFolhaCampo(folha.numero, await gerarFolhaCampoPdf(dados), e.popId)
+  // Os dados que desenharam o papel ficam congelados (o pacote do celular é montado com eles)
+  let congelados: { dados: DadosImpressos; sha256: string } | null = null
+  try {
+    congelados = repo.congelarDadosImpressos(folha.numero, dados)
+  } catch (erro) {
+    if (o.paraEnvio) throw erro
+    ctx.log.warn(`[folhas de campo] não foi possível congelar os dados impressos da ${folha.numero}: ${String(erro)}`)
+  }
+  return { pdf, numero: folha.numero, dados: congelados?.dados ?? dados, dadosSha256: congelados?.sha256 ?? '' }
+}
+
+export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
+  const { repo } = ctx
+  const quem = quemDaRequisicao
 
   /** Folha de uma calibração (rascunho, em revisão ou já emitida); `?nova=<chave>`: folha nova (nº novo). */
   app.get('/api/calibracoes/:id/folha-campo', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
@@ -191,46 +331,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     const q = req.query as Record<string, unknown>
     const nova = typeof q.nova === 'string' ? q.nova.trim() : ''
     if (nova && !/^[A-Za-z0-9-]{8,64}$/.test(nova)) throw new ErroApi(400, 'Chave da folha inválida.')
-    if (nova && k.status !== 'RASCUNHO' && k.status !== 'REVISAO')
-      throw new ErroApi(409, 'Folha nova só para uma calibração em andamento (rascunho ou em revisão).')
-    // Certificado emitido, cancelado ou substituído sem folha: um nº reservado agora, depois da emissão,
-    // passaria por registro de dados brutos de uma calibração que não o usou (ISO/IEC 17025, 7.5). A revisão
-    // é a mesma visita do certificado revisado: sem folha nele, também não há folha para ela
-    const semFolha = !repo.folhaCampoDaCalibracao(k.id)
-    if (semFolha && k.status !== 'RASCUNHO' && k.status !== 'REVISAO')
-      throw new ErroApi(
-        409,
-        'Esta calibração foi concluída sem folha de campo impressa pelo sistema: não há folha para reimprimir.',
-      )
-    if (semFolha && k.substituiId) throw new ErroApi(409, REVISAO_SEM_FOLHA)
-    // Emitida: os cadastros como estavam na emissão (os mesmos do certificado). Em andamento: os da calibração e os
-    // barômetros ativos, que a folha lista para levar quando ela não tem nenhum (o rascunho das classes III e IIII ou sem
-    // classe criado antes da 1.0.5; `planoDaFolha`): a pressão é obrigatória em toda calibração (POP 7.5)
-    const cliente = k.emissao?.cliente ?? repo.obterCliente(k.clienteId) ?? null
-    const balanca = k.emissao?.balanca ?? repo.obterBalanca(k.balancaId) ?? null
-    const padroes = k.emissao?.padroes ?? comBarometrosAtivos(padroesDa(ctx, k), repo.listarPadroes())
-    // O técnico previsto, só se tiver a marca de técnico (quem criou sem a marca não é sugerido)
-    const previsto = ctx.usuarios.obter(k.tecnicoId)
-    const tecnico = k.emissao?.tecnico.nome ?? (previsto?.tecnico ? previsto.nome : '')
-    // Emitida: o POP do certificado. Em andamento: o que o certificado vai citar (`popDaCalibracao`; numa revisão, o
-    // do certificado revisado). A primeira impressão e a folha nova (que fica no lugar da de antes) vão a campo agora:
-    // o que vale na data da calibração ou, se ela já passou (o rascunho nasce com a data do dia em que foi criado),
-    // no dia da impressão. A reimpressão é o PDF guardado (com a revisão de quando saiu)
-    const pop = k.emissao
-      ? { procedimento: k.emissao.textos.procedimento, pop: k.emissao.pop ?? null }
-      : popDaCalibracao(ctx, k, { semFolha: !!nova, dataMinima: hojeLocalIso(repo.agora()) })
-    const { pdf, numero } = await gerar(req, {
-      chave: nova ? `calibracao:${k.id}:${nova}` : `calibracao:${k.id}`,
-      calibracao: entradaDe(k),
-      calibracaoId: k.id,
-      nova: !!nova,
-      cliente,
-      balanca,
-      padroes,
-      tecnico,
-      procedimento: pop?.procedimento ?? '',
-      popId: pop?.pop?.id ?? null,
-    })
+    const { pdf, numero } = await gerarFolha(ctx, req, entradaFolhaDaCalibracao(ctx, k, nova))
     return enviarPdf(reply, pdf, nomeArquivoDaFolha(k.ordemServico, numero), numero)
   })
 
@@ -267,8 +368,23 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       podeCancelado: pode(u.nivel, 'cancelarCertificado'),
       por: u.nome,
     })
-    req.detalheAuditoria = detalheDaTroca(numero, notas, substituiu, liberadas)
+    // Outra folha de papel no lugar da que está no celular (1.1.0): o papel passa a ser a origem, e o celular devolve a
+    // folha (pedido de recolher; na hora, se ele ainda não baixou). Uma falha aqui não desfaz a ligação
+    let recolhidas = ''
+    try {
+      recolhidas = textoDasRecolhidas(
+        ctx.campo?.repo.recolherDaCalibracao(k.id, {
+          exceto: folhaCampo.numero,
+          motivo: `Ligada a folha de papel ${folhaCampo.numero}: o escritório digita do papel`,
+          por: u.nome,
+        }) ?? [],
+      )
+    } catch (e) {
+      req.log.warn(e, 'a folha ligada não recolheu a do celular')
+    }
+    req.detalheAuditoria = [detalheDaTroca(numero, notas, substituiu, liberadas), recolhidas].filter(Boolean).join('; ')
     registrarNumeros(ctx, req, eventos)
+    // `recolhidas`: a folha que estava no celular e foi pedida de volta (ou recolhida na hora), em texto; '' sem nenhuma.
     // `numeroDaFolha`: o nº de certificado impresso na avulsa, que passou para a calibração (`usado`) ou ficou
     // não utilizado (ela já tinha nº, ou é revisão): a tela avisa para corrigir a etiqueta. `ordemServico`: a OS
     // impressa na avulsa, que passou para a calibração sem OS (`aplicada`; a `versao` dela subiu) ou não (a calibração
@@ -293,6 +409,7 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
       marcasRetiradas,
       barometrosDevolvidos,
       versao: ligada.versao,
+      ...(recolhidas ? { recolhidas } : {}),
     }
   })
 
@@ -304,44 +421,10 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
    */
   app.get('/api/folha-campo', async (req, reply) => {
     const q = req.query as Record<string, unknown>
-    const texto = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
-    const balancaId = texto(q.balancaId)
-    const clienteId = texto(q.clienteId)
-    const chave = texto(q.chave)
-    if (chave && !/^[A-Za-z0-9-]{8,64}$/.test(chave)) throw new ErroApi(400, 'Chave da folha inválida.')
-    const balanca = balancaId ? repo.obterBalanca(balancaId) : undefined
-    if (balancaId && !balanca) throw new ErroApi(404, 'Balança não encontrada.')
-    if (balanca && clienteId && clienteId !== balanca.clienteId) throw new ErroApi(400, 'Esta balança não é deste cliente.')
-    const idCliente = balanca?.clienteId || clienteId
-    const cliente = idCliente ? repo.obterCliente(idCliente) : undefined
-    if (idCliente && !cliente) throw new ErroApi(404, 'Cliente não encontrado.')
-    const { ordemServico, data } = osEDataDaFolha(q)
     const u = quem(req)
-    // Com a balança, o plano é o que o rascunho teria (pontos e padrões da última calibração dela), com a OS e a data
-    const calibracao = balanca
-      ? rascunhoInicial(
-          ctx,
-          { balancaId: balanca.id, ...(ordemServico ? { ordemServico } : {}), ...(data ? { dataCalibracao: data } : {}) },
-          u.id,
-        )
-      : null
-    const padroes = calibracao ? padroesDa(ctx, calibracao) : repo.listarPadroes()
-    // O POP vigente (a folha vai a campo agora)
-    const pop = repo.popVigente()
-    const { pdf, numero } = await gerar(req, {
-      chave: `avulsa:${chave || randomUUID()}`,
-      calibracao,
-      cliente: cliente ?? null,
-      balanca: balanca ?? null,
-      padroes,
-      // O técnico da visita ainda não está definido: a folha sai com a linha para escrever
-      tecnico: '',
-      procedimento: pop ? textoPop(pop) : '',
-      popId: pop?.id ?? null,
-      ordemServico,
-      dataPrevista: data,
-    })
-    return enviarPdf(reply, pdf, nomeArquivoDaFolha(ordemServico, numero), numero)
+    const e = entradaFolhaAvulsa(ctx, q, u.id)
+    const { pdf, numero } = await gerarFolha(ctx, req, e)
+    return enviarPdf(reply, pdf, nomeArquivoDaFolha(e.ordemServico ?? '', numero), numero)
   })
 
   /**
@@ -356,7 +439,10 @@ export async function rotasFolhaCampo(app: FastifyInstance, ctx: Contexto) {
     const texto = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
     const situacao = texto(q.situacao).toUpperCase()
     return repo.listarFolhasCampo({
-      situacao: situacao === 'NAO_LIGADAS' || situacao === 'LIGADAS' || situacao === 'NAO_USADAS' ? situacao : '',
+      situacao:
+        situacao === 'NAO_LIGADAS' || situacao === 'LIGADAS' || situacao === 'NAO_USADAS' || situacao === 'CELULAR'
+          ? situacao
+          : '',
       busca: texto(q.busca).slice(0, 200),
       de: texto(q.de),
       ate: texto(q.ate),

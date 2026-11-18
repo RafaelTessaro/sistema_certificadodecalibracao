@@ -3,10 +3,16 @@ import Fastify, { type FastifyError } from 'fastify'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { isIP } from 'node:net'
-import { hostname } from 'node:os'
+import { hostname, type NetworkInterfaceInfo } from 'node:os'
 import { join, resolve } from 'node:path'
+import { MENSAGENS_ERRO_CAMPO, ROTAS_CAMPO } from '#shared/campo/protocolo.ts'
 import { instalarAcesso, ipDe, nomeCookieSessao } from './acesso.ts'
 import { BackupsAutomaticos } from './backup.ts'
+import { ApkDoCampo } from './campo/apk.ts'
+import { autenticarCelular } from './campo/autenticacao.ts'
+import { rotasImportacaoCampo } from './campo/importacaoRotas.ts'
+import { Pareamentos } from './campo/pareamento.ts'
+import { RepositorioCampo } from './campo/repositorio.ts'
 import { criarServicoCertificadoDigital, type OpcoesCertificadoDigital, rotasCertificadoDigital } from './certificadoDigital.ts'
 import { iniciarTentativaPdfsPendentes, tentarPdfsPendentes } from './certificados.ts'
 import type { Contexto } from './contexto.ts'
@@ -19,6 +25,8 @@ import { Repositorio } from './repositorio.ts'
 import { rotasArquivos } from './rotas/arquivos.ts'
 import { rotasCadastros } from './rotas/cadastros.ts'
 import { rotasCalibracoes } from './rotas/calibracoes.ts'
+import { rotasCampo } from './rotas/campo.ts'
+import { rotasCelulares } from './rotas/celulares.ts'
 import { rotasConsultas } from './rotas/consultas.ts'
 import { rotasFolhaCampo } from './rotas/folhaCampo.ts'
 import { rotasGeral } from './rotas/geral.ts'
@@ -145,7 +153,20 @@ export interface OpcoesApp {
    * memória.
    */
   certificadoDigital?: Omit<OpcoesCertificadoDigital, 'enviarEmail'>
+  /**
+   * O app do celular (1.1.0): a pasta do APK que veio no instalador (padrão: <instalação>/campo) e as placas de rede de
+   * onde sai o endereço do QR do pareamento (os testes trocam).
+   */
+  pastaApk?: string
+  placasDeRede?: () => NodeJS.Dict<NetworkInterfaceInfo[]>
 }
+
+/** As rotas do app do celular que recebem corpo (o erro de leitura do corpo responde com o código do protocolo). */
+const ROTAS_DO_CELULAR_COM_CORPO = new Set(
+  Object.values(ROTAS_CAMPO)
+    .filter((r) => r.metodo !== 'GET')
+    .map((r) => `${r.metodo} ${r.caminho}`),
+)
 
 /** Varredura das sessões vencidas e do limite de tentativas. */
 const VARREDURA_MS = 60_000
@@ -237,7 +258,14 @@ export async function criarApp(opcoes: OpcoesApp) {
     { db, repo, usuarios, pastaDados, log: app.log },
     { ...opcoes.certificadoDigital, enviarEmail: (m) => email.enviar(m) },
   )
-  const ctx: Contexto = { db, repo, usuarios, tempoReal, backups, pastaDados, log: app.log, certificadoDigital }
+  // O app do celular do técnico (1.1.0): os celulares, os envios das folhas, os registros que voltam e o APK
+  const idInstalacao = idDaInstalacao(pastaDados, (mensagem) => app.log.warn(mensagem))
+  const campo = {
+    repo: new RepositorioCampo(db, repo, { servidor: { id: idInstalacao, nome: hostname() } }),
+    pareamentos: new Pareamentos({ porta: opcoes.porta, placas: opcoes.placasDeRede }),
+    apk: new ApkDoCampo(opcoes.pastaApk),
+  }
+  const ctx: Contexto = { db, repo, usuarios, tempoReal, backups, pastaDados, log: app.log, certificadoDigital, campo }
   const nomeCookie = nomeCookieSessao(opcoes.porta)
   const email = criarModuloEmail(ctx, opcoes.transporteEmail)
 
@@ -285,7 +313,11 @@ export async function criarApp(opcoes: OpcoesApp) {
   })
 
   // Quem é, e se pode: sessão, troca de senha pendente e permissões (depois do Host e do CSRF)
-  instalarAcesso(app, { usuarios, tempoReal }, { acessoLivreParaTestes: opcoes.acessoLivreParaTestes, nomeCookie })
+  instalarAcesso(
+    app,
+    { usuarios, tempoReal, autenticarCelular: (req, regra) => autenticarCelular(campo.repo, usuarios, req, regra) },
+    { acessoLivreParaTestes: opcoes.acessoLivreParaTestes, nomeCookie },
+  )
 
   app.setErrorHandler((erro: FastifyError | ErroApi, req, reply) => {
     if (erro instanceof ErroApi) {
@@ -298,7 +330,24 @@ export async function criarApp(opcoes: OpcoesApp) {
       req.log.error(erro)
       return reply.code(500).send({ erro: 'Erro interno do servidor. Tente novamente.' })
     }
-    if (status === 413) return reply.code(413).send({ erro: 'Arquivo muito grande.' })
+    // As rotas do app do celular respondem com o código do protocolo (shared/campo/protocolo.ts)
+    const chave = req.routeOptions?.config?.chaveAcesso ?? ''
+    const doCelular = ROTAS_DO_CELULAR_COM_CORPO.has(chave)
+    const entrega = chave === `PUT ${ROTAS_CAMPO.registro.caminho}`
+    if (status === 413)
+      return reply
+        .code(413)
+        .send(
+          entrega ? { erro: MENSAGENS_ERRO_CAMPO.REGISTRO_GRANDE, codigo: 'REGISTRO_GRANDE' } : { erro: 'Arquivo muito grande.' },
+        )
+    if (status === 400 && doCelular)
+      return reply
+        .code(400)
+        .send(
+          entrega
+            ? { erro: MENSAGENS_ERRO_CAMPO.REGISTRO_ILEGIVEL, codigo: 'REGISTRO_ILEGIVEL' }
+            : { erro: MENSAGENS_ERRO_CAMPO.PEDIDO_INVALIDO, codigo: 'PEDIDO_INVALIDO' },
+        )
     return reply.code(status).send({ erro: 'Requisição inválida.' })
   })
 
@@ -306,7 +355,6 @@ export async function criarApp(opcoes: OpcoesApp) {
   // Para o programa das estações achar o servidor (ver identidade.ts): `nome` (nome do computador, já
   // público na rede pelo NetBIOS/LLMNR e aceito no cabeçalho Host) dá um endereço que sobrevive a uma
   // troca de IP; `id` e `instancia` distinguem este servidor de outro com o mesmo nome.
-  const idInstalacao = idDaInstalacao(pastaDados, (mensagem) => app.log.warn(mensagem))
   const instancia = novaInstancia()
   app.get('/api/saude', async (req) =>
     ehLoopback(ipDe(req))
@@ -358,6 +406,9 @@ export async function criarApp(opcoes: OpcoesApp) {
   await rotasGeral(app, ctx)
   await rotasCalibracoes(app, ctx, email)
   await rotasFolhaCampo(app, ctx)
+  await rotasCampo(app, ctx, campo, { id: idInstalacao })
+  await rotasCelulares(app, ctx, campo)
+  await rotasImportacaoCampo(app, ctx)
   await rotasNumeros(app, ctx)
   await rotasConsultas(app, ctx)
   await email.rotas(app)

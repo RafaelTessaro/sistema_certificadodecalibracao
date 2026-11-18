@@ -46,6 +46,8 @@ import type {
   VersaoPop,
 } from '#shared/tipos.ts'
 import { type A1ParaAssinar, ErroAssinaturaPdf, ErroCertificadoDigital } from './assinatura/contrato.ts'
+import { avisosDoCampo, campoParaEmissao, pendenciasDoCampo } from './campo/importacao.ts'
+import { textoDasRecolhidas } from './campo/repositorio.ts'
 import { dataHoraBr, DIAS_AVISO_VENCIMENTO, diasParaVencer, quandoVence } from './assinatura/pfx.ts'
 import type { Contexto } from './contexto.ts'
 import { PROCEDIMENTO_EXEMPLO_ANTIGO } from './db.ts'
@@ -172,6 +174,8 @@ export function avisosDa(ctx: Contexto, k: Calibracao): string[] {
     ...(balanca ? avisosEmissao(k, { padroes: padroesDa(ctx, k), classe: balanca.classe }) : []),
     ...(cargas ? [cargas] : []),
     ...avisoDoCertificadoDigital(ctx),
+    // Chegou uma versão nova do registro de campo depois de puxar os dados (1.1.0)
+    ...avisosDoCampo(ctx, k),
   ]
 }
 
@@ -276,6 +280,8 @@ export function pendenciasDa(ctx: Contexto, k: Calibracao, o: { certificadoDigit
     if (status !== 'EMITIDO') p.unshift(status === 'CANCELADO' ? PENDENCIA_REVISADO_CANCELADO : PENDENCIA_REVISADO_NAO_EMITIDO)
   }
   if (!popDaCalibracao(ctx, k)) p.push(PENDENCIA_POP)
+  // Os dados puxados do celular mudados depois, sem a justificativa (1.1.0; 05-ajustes-finais §10)
+  p.push(...pendenciasDoCampo(ctx, k))
   // O certificado digital da empresa que não pode assinar agora: nenhum certificado sai sem a assinatura (`certificadoDigital:
   // false`: a emissão, que o confere à parte, em `certificadoParaAssinar`)
   if (o.certificadoDigital !== false) p.push(...bloqueioDoCertificadoDigital(ctx))
@@ -617,7 +623,7 @@ export async function emitirCertificado(
   id: string,
   autor: { id: string; nome: string; signatario: boolean },
   entrada: { versao?: number },
-): Promise<{ calibracao: Calibracao; aviso?: string }> {
+): Promise<{ calibracao: Calibracao; aviso?: string; recolhidas?: string }> {
   const config = ctx.repo.obterConfig()
   const atual = ctx.repo.obterCalibracao(id)
   if (!atual) throw new ErroApi(404, 'Calibração não encontrada.')
@@ -644,13 +650,17 @@ export async function emitirCertificado(
       const gravada = ctx.repo.obterCalibracao(id)
       const agora = gravada && impedimentoParaEmitir(config.exigirRevisor, gravada, autor)
       if (agora) throw new ErroApi(409, agora)
-      return montarEmissao(ctx, k, config, {
+      const emissao = montarEmissao(ctx, k, config, {
         numero: n.numero,
         codigo: n.codigo,
         emitidoPor: autor.nome,
         signatarioId,
         assinaturaDigital,
       })
+      // Os dados puxados do celular (1.1.0): o registro, as diferenças e a justificativa, congelados (só dado: o PDF do
+      // certificado não os usa)
+      const campo = campoParaEmissao(ctx, k)
+      return campo ? { ...emissao, campo } : emissao
     },
     {
       versao: entrada.versao,
@@ -659,19 +669,44 @@ export async function emitirCertificado(
       por: autor.nome,
     },
   )
+  // A folha ainda no celular volta para o escritório: o papel (os dados do computador) é a origem do certificado
+  const recolhidas = recolherAoEmitir(ctx, emitida, autor.nome)
+  const comRecolhidas = recolhidas ? { recolhidas } : {}
   try {
     await salvarPdf(ctx, emitida)
   } catch (e) {
     if (e instanceof ErroAssinaturaPendente) {
       ctx.log.warn(`[certificados] o certificado ${emitida.numero} foi emitido, mas ainda não foi assinado: ${e.motivo}`)
-      return { calibracao: ctx.repo.obterCalibracao(id)!, aviso: avisoPdfNaoAssinado(e.motivo, e.depois) }
+      return { calibracao: ctx.repo.obterCalibracao(id)!, aviso: avisoPdfNaoAssinado(e.motivo, e.depois), ...comRecolhidas }
     }
     ctx.log.warn(
       `[certificados] o certificado ${emitida.numero} foi emitido, mas o PDF não foi gravado: ${(e as Error)?.message ?? e}`,
     )
-    return { calibracao: ctx.repo.obterCalibracao(id)!, aviso: AVISO_PDF_NAO_GRAVADO }
+    return { calibracao: ctx.repo.obterCalibracao(id)!, aviso: AVISO_PDF_NAO_GRAVADO, ...comRecolhidas }
   }
-  return { calibracao: ctx.repo.obterCalibracao(id)! }
+  return { calibracao: ctx.repo.obterCalibracao(id)!, ...comRecolhidas }
+}
+
+/** O motivo do pedido de recolher criado pela emissão (o mesmo que a tela usa). */
+export const MOTIVO_RECOLHER_AO_EMITIR = 'Certificado emitido com os dados digitados no computador'
+
+/**
+ * A folha da calibração ainda enviada ao celular (1.1.0): o certificado saiu com os dados digitados no computador, então
+ * o celular devolve a folha (`RepositorioCampo.recolherDaCalibracao`: pedido de recolher, ou na hora se ele ainda não
+ * baixou). A tela já pergunta e recolhe antes de emitir; aqui fica garantido. Uma falha aqui não desfaz a emissão (fica
+ * no log). Devolve o texto para o registro de atividades ('' sem folha no celular).
+ */
+function recolherAoEmitir(ctx: Contexto, k: Calibracao, por: string): string {
+  if (!ctx.campo) return ''
+  try {
+    const numero = ctx.repo.folhaCampoDaCalibracao(k.id)?.numero ?? ''
+    return textoDasRecolhidas(ctx.campo.repo.recolherDaCalibracao(k.id, { numero, motivo: MOTIVO_RECOLHER_AO_EMITIR, por }))
+  } catch (e) {
+    ctx.log.warn(
+      `[certificados] o certificado ${k.numero} foi emitido, mas a folha não foi recolhida do celular: ${(e as Error)?.message ?? e}`,
+    )
+    return ''
+  }
 }
 
 /**

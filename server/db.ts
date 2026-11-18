@@ -336,7 +336,147 @@ const MIGRACOES: Migracao[] = [
     motivo        TEXT NOT NULL DEFAULT ''    -- SUBSTITUIDO | REMOVIDO
   );
   `,
+
+  // 25: o app do celular do técnico (app BC Calibração, celular; shared/campo). (a) Os celulares cadastrados
+  // (`dispositivos`: o id é o do aparelho, o mesmo ao parear de novo; só o sha256 do token, nunca o token; sem chave
+  // estrangeira para `usuarios`, que o transplante apaga e refaz). (b) Os envios das folhas de campo para o celular
+  // (`folhas_campo_envios`: quatro situações, no máximo um envio vivo por folha, o pacote congelado). (c) Os registros
+  // de campo que voltam do celular (`registros_campo`: guardados como chegaram, protegidos contra alteração; só a
+  // situação, as marcas e a ligação de um órfão mudam). (d) O que o escritório levou de cada registro para a calibração
+  // (`campo_importacoes`). (e) Os dados impressos de cada folha de campo, congelados na primeira impressão ou no primeiro
+  // envio (`folhas_campo.dados_impressos`, com o sha256): o pacote do celular é montado com eles. Repetível. 1.1.0.
+  campoDoCelular,
 ]
+
+/** Migração 25 (ver acima). Repetível: só cria o que falta. */
+function campoDoCelular(db: Banco) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dispositivos (
+      id              TEXT PRIMARY KEY,               -- aparelhoId (UUID gerado no celular; o mesmo ao parear de novo)
+      usuario_id      TEXT NOT NULL,                  -- o técnico dono do celular (sem chave estrangeira: transplante)
+      nome            TEXT NOT NULL,                  -- "Celular do Maurício"
+      modelo          TEXT NOT NULL DEFAULT '',
+      token_sha256    TEXT NOT NULL DEFAULT '',       -- sha256 (hex) do token; o token nunca é guardado
+      pareado_em      TEXT NOT NULL,
+      pareamentos     INTEGER NOT NULL DEFAULT 1,
+      versao_app      TEXT NOT NULL DEFAULT '',
+      criado_em       TEXT NOT NULL,
+      criado_por      TEXT NOT NULL DEFAULT '',
+      ultimo_contato  TEXT NOT NULL DEFAULT '',       -- "visto às 07:55" (ISO)
+      ultimo_ip       TEXT NOT NULL DEFAULT '',
+      revogado_em     TEXT NOT NULL DEFAULT '',       -- '' = vale
+      revogado_por    TEXT NOT NULL DEFAULT '',
+      revogado_motivo TEXT NOT NULL DEFAULT '' CHECK (revogado_motivo IN
+                      ('', 'PERDIDO', 'ROUBADO', 'TROCA', 'DESLIGAMENTO', 'ENGANO')),
+      revogado_texto  TEXT NOT NULL DEFAULT ''
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS dispositivos_token ON dispositivos(token_sha256) WHERE token_sha256 <> '';
+    CREATE INDEX IF NOT EXISTS dispositivos_usuario ON dispositivos(usuario_id);
+
+    CREATE TABLE IF NOT EXISTS folhas_campo_envios (
+      id                      TEXT PRIMARY KEY,
+      numero                  TEXT NOT NULL,                  -- FC-AAAA-NNNNN
+      usuario_id              TEXT NOT NULL,                  -- o técnico
+      dispositivo_id          TEXT NOT NULL DEFAULT '',       -- '' até um celular do técnico confirmar o recebimento
+      situacao                TEXT NOT NULL CHECK (situacao IN ('ENVIADA', 'NO_CELULAR', 'DEVOLVIDA', 'RECOLHIDA')),
+      pacote                  TEXT NOT NULL,                  -- JSON canônico (o que o celular baixa)
+      pacote_sha256           TEXT NOT NULL,
+      contrato                INTEGER NOT NULL,
+      piloto                  INTEGER NOT NULL DEFAULT 0,     -- registro original = papel no envio
+      calibracao_id           TEXT NOT NULL DEFAULT '',       -- a calibração da folha no envio ('' = avulsa)
+      tipo                    TEXT NOT NULL DEFAULT '',       -- calibracao | balanca | cliente | branco (o do pacote)
+      cliente                 TEXT NOT NULL DEFAULT '',       -- o resumo do pacote, para as listas (sem abrir o pacote)
+      balanca                 TEXT NOT NULL DEFAULT '',
+      data_prevista           TEXT NOT NULL DEFAULT '',       -- a do pacote (AAAA-MM-DD ou '')
+      recado                  TEXT NOT NULL DEFAULT '',
+      enviado_em              TEXT NOT NULL,
+      enviado_por             TEXT NOT NULL,
+      baixado_em              TEXT NOT NULL DEFAULT '',       -- 1º GET do pacote: daí em diante, recolher vira pedido
+      recebido_em             TEXT NOT NULL DEFAULT '',       -- o celular confirmou (NO_CELULAR)
+      estado_celular          TEXT NOT NULL DEFAULT '',       -- o último estado que o celular informou no olá
+      estado_celular_em       TEXT NOT NULL DEFAULT '',
+      recolher_pedido_em      TEXT NOT NULL DEFAULT '',
+      recolher_pedido_por     TEXT NOT NULL DEFAULT '',
+      recolher_motivo         TEXT NOT NULL DEFAULT '',
+      recolher_resposta       TEXT NOT NULL DEFAULT '',       -- '' | JA_COMECEI (o celular não apagou)
+      recolher_resposta_em    TEXT NOT NULL DEFAULT '',
+      recolhido_em            TEXT NOT NULL DEFAULT '',
+      recolhido_por           TEXT NOT NULL DEFAULT '',
+      forcado                 INTEGER NOT NULL DEFAULT 0,
+      devolvido_em            TEXT NOT NULL DEFAULT '',
+      devolvida_apos_recolher INTEGER NOT NULL DEFAULT 0
+    );
+    -- No máximo um envio vivo por folha; só transições da própria linha ativa chegam a DEVOLVIDA
+    CREATE UNIQUE INDEX IF NOT EXISTS folhas_campo_envios_ativo ON folhas_campo_envios(numero)
+      WHERE situacao IN ('ENVIADA', 'NO_CELULAR', 'DEVOLVIDA');
+    CREATE INDEX IF NOT EXISTS folhas_campo_envios_tecnico ON folhas_campo_envios(usuario_id, situacao);
+    CREATE INDEX IF NOT EXISTS folhas_campo_envios_numero ON folhas_campo_envios(numero);
+    -- O pacote é o que o celular baixou e confirmou: não muda depois de criado
+    CREATE TRIGGER IF NOT EXISTS folhas_campo_envios_pacote_fixo
+      BEFORE UPDATE OF pacote, pacote_sha256, numero, usuario_id, enviado_em ON folhas_campo_envios
+      BEGIN SELECT RAISE(ABORT, 'O pacote enviado ao celular não pode ser alterado.'); END;
+
+    CREATE TABLE IF NOT EXISTS registros_campo (
+      id                  TEXT PRIMARY KEY,
+      envio_id            TEXT NOT NULL,                  -- o do caminho da entrega (pode não existir: órfão)
+      numero              TEXT NOT NULL,                  -- FC-AAAA-NNNNN (o do envio; sem envio, o do registro)
+      usuario_id          TEXT NOT NULL,                  -- o técnico dono do celular que entregou
+      dispositivo_id      TEXT NOT NULL,
+      formato             INTEGER NOT NULL DEFAULT 0,
+      contrato            INTEGER NOT NULL DEFAULT 0,
+      piloto              INTEGER NOT NULL DEFAULT 0,
+      conteudo            TEXT NOT NULL,                  -- o JSON exatamente como chegou (com as assinaturas)
+      sha256              TEXT NOT NULL UNIQUE,           -- do JSON canônico do registro inteiro (interno)
+      conteudo_sha256     TEXT NOT NULL DEFAULT '',       -- do conteúdo que as assinaturas amarram (interno)
+      revisao_local       INTEGER NOT NULL DEFAULT 0,     -- quantas vezes a folha foi reaberta no celular
+      anterior_sha256     TEXT NOT NULL DEFAULT '',       -- o da versão antes da última reabertura
+      desfecho            TEXT NOT NULL DEFAULT '' CHECK (desfecho IN ('', 'COMPLETA', 'INCOMPLETA', 'NAO_CALIBRADA')),
+      recebido_em         TEXT NOT NULL,
+      ip                  TEXT NOT NULL DEFAULT '',
+      relogio_diferenca_s INTEGER,                        -- celular − servidor na entrega (s); NULL = hora ilegível
+      -- metadados (mudam; não fazem parte do registro)
+      situacao            TEXT NOT NULL DEFAULT 'VALIDO' CHECK (situacao IN ('VALIDO', 'SUPERADO', 'DESCARTADO')),
+      marcas              TEXT NOT NULL DEFAULT '[]',     -- ORFAO, APARELHO_REVOGADO, APOS_RECOLHER, FORMATO, RELOGIO, PILOTO
+      problemas           TEXT NOT NULL DEFAULT '[]',     -- o que a conferência achou (marca FORMATO)
+      ligado_a            TEXT NOT NULL DEFAULT '',       -- a folha escolhida pelo escritório para um órfão
+      situacao_motivo     TEXT NOT NULL DEFAULT '',
+      situacao_por        TEXT NOT NULL DEFAULT '',
+      situacao_em         TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS registros_campo_envio ON registros_campo(envio_id);
+    CREATE INDEX IF NOT EXISTS registros_campo_numero ON registros_campo(numero);
+    CREATE TRIGGER IF NOT EXISTS registros_campo_protegido
+      BEFORE UPDATE OF conteudo, sha256, conteudo_sha256, envio_id, numero, usuario_id, dispositivo_id, formato, contrato,
+                       piloto, revisao_local, anterior_sha256, desfecho, recebido_em, ip, relogio_diferenca_s
+      ON registros_campo BEGIN SELECT RAISE(ABORT, 'O registro de campo não pode ser alterado.'); END;
+
+    CREATE TABLE IF NOT EXISTS campo_importacoes (
+      id            TEXT PRIMARY KEY,
+      registro_id   TEXT NOT NULL,
+      calibracao_id TEXT NOT NULL,
+      tipo          TEXT NOT NULL CHECK (tipo IN ('PUXAR', 'COMPARACAO')),
+      versao_antes  INTEGER NOT NULL,
+      versao_depois INTEGER NOT NULL,
+      feito_em      TEXT NOT NULL,
+      feito_por     TEXT NOT NULL,
+      resumo        TEXT NOT NULL DEFAULT '{}',          -- JSON: campos, diferenças, escolhas
+      observacao    TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS campo_importacoes_registro ON campo_importacoes(registro_id);
+    CREATE INDEX IF NOT EXISTS campo_importacoes_calibracao ON campo_importacoes(calibracao_id);
+  `)
+  // Os dados impressos da folha (o DadosFolhaCampo inteiro, JSON canônico) e o sha256 deles: congelados na primeira
+  // impressão ou no primeiro envio ('' nas folhas impressas antes)
+  acrescentarColuna(db, 'folhas_campo', 'dados_impressos', "TEXT NOT NULL DEFAULT ''")
+  acrescentarColuna(db, 'folhas_campo', 'dados_sha256', "TEXT NOT NULL DEFAULT ''")
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS folhas_campo_dados_fixos
+      BEFORE UPDATE OF dados_impressos, dados_sha256 ON folhas_campo
+      WHEN OLD.dados_sha256 <> ''
+        AND (NEW.dados_impressos IS NOT OLD.dados_impressos OR NEW.dados_sha256 IS NOT OLD.dados_sha256)
+      BEGIN SELECT RAISE(ABORT, 'Os dados impressos da folha de campo não podem ser alterados.'); END;
+  `)
+}
 
 /** Migração 23 (ver acima). Repetível: só troca a mensagem igual à padrão de antes (configuração ilegível fica como está). */
 function emailComAssinaturaDigital(db: Banco) {

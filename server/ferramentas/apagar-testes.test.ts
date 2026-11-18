@@ -17,6 +17,7 @@ import { autorDoRegistro, descreverRegistro } from '../../src/components/usuario
 import { nomeCookieSessao } from '../acesso.ts'
 import { criarApp } from '../app.ts'
 import { ARQUIVOS_TESTE, cenarioCalibracao, criarAppComLogin, H, SENHA_ADMIN, type AppComLogin } from '../auxiliaresTeste.ts'
+import { baixarEConfirmar, enviarCalibracao, entregar, parearCelular, registroDoPacote } from '../campo/auxiliaresTesteCampo.ts'
 import { abrirBanco, type Banco } from '../db.ts'
 import { gravarConfigEmail } from '../email.ts'
 import { TABELAS_APAGADAS, TABELAS_MANTIDAS } from '../limpezaTestes.ts'
@@ -185,6 +186,20 @@ async function montar(completo: boolean) {
   // Rascunho com a folha impressa (nº reservado)
   const k4 = await c.calibracaoPronta()
   await ok(t.chamar('GET', `/api/calibracoes/${k4.id}/folha-campo`, admin))
+  // A mesma folha no celular do técnico (1.1.0): enviada, devolvida com o registro de campo e comparada com o rascunho
+  const { token } = await parearCelular(t)
+  const { envio } = await enviarCalibracao(t, k4.id)
+  const pacote = await baixarEConfirmar(t, token, envio.id)
+  await ok(entregar(t, token, envio.id, registroDoPacote(pacote, { tecnico: { id: t.comumId, nome: 'Comum Teste' } })))
+  t.ctx.campo!.repo.registrarImportacao({
+    registroId: t.ctx.campo!.repo.listarRegistros()[0].id,
+    calibracaoId: k4.id,
+    tipo: 'COMPARACAO',
+    versaoAntes: 1,
+    versaoDepois: 1,
+    por: 'Teste',
+    resumo: {},
+  })
   // Folha avulsa (nº reservado sem calibração)
   await ok(t.chamar('GET', '/api/folha-campo?chave=chave-0001-teste', { cookie: t.cookieComum }))
   // Rascunho com folha, excluído, e o nº dele registrado como não utilizado

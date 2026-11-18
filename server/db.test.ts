@@ -20,6 +20,7 @@
 // de ela ser obrigatória (1.0.6) fica com a falta dela como aviso.
 // Migração 23: a mensagem padrão do e-mail do certificado, sem mudança, ganha a marca {assinaturaDigital} (1.0.7).
 // Migração 24: a tabela dos certificados digitais da empresa, só com os dados públicos (1.0.7).
+// Migração 25: o app do celular do técnico (celulares, envios, registros de campo, importações e dados impressos) (1.1.0).
 
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
@@ -43,7 +44,7 @@ import { detalheTrocaIndicador, lerMeta, migrar } from './db.ts'
 
 const EM = '2026-10-01T12:00:00.000Z'
 /** Versão do esquema depois de todas as migrações. */
-const ULTIMA = 24
+const ULTIMA = 25
 
 /** Banco na versão 1 (antes da troca), com um cliente. */
 function bancoV1() {
@@ -2020,5 +2021,87 @@ describe('migração 24: os certificados digitais da empresa (só os dados públ
     db.exec('PRAGMA user_version = 23')
     migrar(db)
     expect(db.prepare('SELECT COUNT(*) AS n FROM certificados_digitais').get()).toEqual({ n: 1 })
+  })
+})
+
+describe('migração 25: o app do celular do técnico (1.1.0)', () => {
+  const tabelas = (db: DatabaseSync) =>
+    (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>).map(
+      (t) => t.name,
+    )
+
+  it('num banco da versão 24: as tabelas novas, as colunas dos dados impressos (vazias nas folhas de antes); repetível', () => {
+    const db = new DatabaseSync(':memory:')
+    migrar(db, 24)
+    db.prepare(
+      "INSERT INTO folhas_campo (numero, ano, sequencia, chave, impressa_em, ultima_em) VALUES ('FC-2026-00001', 2026, 1, 'avulsa:x', ?, ?)",
+    ).run(EM, EM)
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+    expect(tabelas(db)).toEqual(
+      expect.arrayContaining(['dispositivos', 'folhas_campo_envios', 'registros_campo', 'campo_importacoes']),
+    )
+    expect(db.prepare('SELECT dados_impressos, dados_sha256 FROM folhas_campo').get()).toEqual({
+      dados_impressos: '',
+      dados_sha256: '',
+    })
+    db.exec('PRAGMA user_version = 24')
+    migrar(db)
+    expect(versao(db)).toBe(ULTIMA)
+  })
+
+  it('num banco novo: os gatilhos protegem o pacote, o registro e os dados impressos congelados', () => {
+    const db = new DatabaseSync(':memory:')
+    migrar(db)
+    db.prepare(
+      "INSERT INTO folhas_campo (numero, ano, sequencia, chave, impressa_em, ultima_em) VALUES ('FC-2026-00001', 2026, 1, 'avulsa:x', ?, ?)",
+    ).run(EM, EM)
+    // Os dados impressos: gravados uma vez (a primeira impressão), depois não mudam
+    db.prepare("UPDATE folhas_campo SET dados_impressos = '{\"a\":1}', dados_sha256 = 'ab' WHERE numero = 'FC-2026-00001'").run()
+    expect(() =>
+      db.prepare("UPDATE folhas_campo SET dados_impressos = '{\"a\":2}' WHERE numero = 'FC-2026-00001'").run(),
+    ).toThrow(/não podem ser alterados/)
+    // Outras colunas da folha continuam mudando
+    db.prepare("UPDATE folhas_campo SET impressoes = 2 WHERE numero = 'FC-2026-00001'").run()
+    // O envio: um vivo por folha, o pacote fixo
+    const envio = db.prepare(
+      `INSERT INTO folhas_campo_envios (id, numero, usuario_id, situacao, pacote, pacote_sha256, contrato, enviado_em, enviado_por)
+       VALUES (?, 'FC-2026-00001', 'u1', ?, '{}', 'x', 1, ?, 'Ana')`,
+    )
+    envio.run('e1', 'NO_CELULAR', EM)
+    expect(() => envio.run('e2', 'ENVIADA', EM)).toThrow(/UNIQUE/)
+    envio.run('e3', 'RECOLHIDA', EM)
+    expect(() => db.prepare("UPDATE folhas_campo_envios SET pacote = '{\"b\":1}' WHERE id = 'e1'").run()).toThrow(
+      /não pode ser alterado/,
+    )
+    db.prepare("UPDATE folhas_campo_envios SET situacao = 'DEVOLVIDA' WHERE id = 'e1'").run()
+    expect(() => db.prepare("UPDATE folhas_campo_envios SET situacao = 'APAGADA' WHERE id = 'e1'").run()).toThrow(/CHECK/)
+    // O registro: o conteúdo não muda; a situação muda
+    db.prepare(
+      `INSERT INTO registros_campo (id, envio_id, numero, usuario_id, dispositivo_id, conteudo, sha256, recebido_em)
+       VALUES ('r1', 'e1', 'FC-2026-00001', 'u1', 'd1', '{}', 'aa', ?)`,
+    ).run(EM)
+    expect(() => db.prepare("UPDATE registros_campo SET conteudo = '{\"x\":1}' WHERE id = 'r1'").run()).toThrow(
+      /não pode ser alterado/,
+    )
+    db.prepare("UPDATE registros_campo SET situacao = 'DESCARTADO', situacao_motivo = 'teste' WHERE id = 'r1'").run()
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO registros_campo (id, envio_id, numero, usuario_id, dispositivo_id, conteudo, sha256, recebido_em)
+           VALUES ('r2', 'e1', 'FC-2026-00001', 'u1', 'd1', '{}', 'aa', ?)`,
+        )
+        .run(EM),
+    ).toThrow(/UNIQUE/)
+    // O celular: o motivo da revogação é uma lista fechada; o sha256 do token, único
+    const cel = db.prepare(
+      `INSERT INTO dispositivos (id, usuario_id, nome, token_sha256, pareado_em, criado_em, revogado_motivo) VALUES (?, 'u1', 'C', ?, ?, ?, ?)`,
+    )
+    cel.run('d1', 't1', EM, EM, '')
+    expect(() => cel.run('d2', 't2', EM, EM, 'SUMIU')).toThrow(/CHECK/)
+    expect(() => cel.run('d3', 't1', EM, EM, '')).toThrow(/UNIQUE/)
+    // Sem token (revogado e limpo) não conflita
+    cel.run('d4', '', EM, EM, 'PERDIDO')
+    cel.run('d5', '', EM, EM, 'ROUBADO')
   })
 })

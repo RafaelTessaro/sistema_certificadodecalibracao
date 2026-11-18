@@ -10,8 +10,12 @@ import { hashToken } from './senha.ts'
 import type { TempoReal } from './tempoReal.ts'
 import type { ServicoUsuarios } from './usuarios.ts'
 
-/** `publico`: sem sessão; `logado`: os dois níveis; uma Permissao: só quem a tem (shared/permissoes.ts). */
-export type RegraAcesso = 'publico' | 'logado' | Permissao
+/**
+ * `publico`: sem sessão; `logado`: os dois níveis; uma Permissao: só quem a tem (shared/permissoes.ts). `celular` e
+ * `celular-entrega`: as rotas do app do celular do técnico (1.1.0), com o token do celular no lugar do cookie
+ * (server/campo/autenticacao.ts; o cookie não vale nelas, e o token do celular não vale nas outras).
+ */
+export type RegraAcesso = 'publico' | 'logado' | Permissao | 'celular' | 'celular-entrega'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -146,7 +150,57 @@ export const TABELA_ACESSO: Record<string, RegraAcesso> = {
   // rotas/consultas.ts
   'GET /api/consultas/cnpj/:cnpj': 'logado',
   'GET /api/consultas/cep/:cep': 'logado',
+
+  // rotas/campo.ts: o app do celular do técnico (1.1.0; shared/campo/protocolo.ts, ROTAS_CAMPO). O pareamento e o APK são
+  // públicos na rede interna, com limite de tentativas por IP; as outras, só com o token de um celular cadastrado
+  // (`celular`: receber folhas e mudar estados; `celular-entrega`: entregar, mesmo revogado, salvo o motivo "roubado")
+  'POST /api/campo/parear': 'publico',
+  'POST /api/campo/ola': 'celular', // só leitura para o registro de atividades: grava o "visto às…" e o estado das folhas
+  'GET /api/campo/envios/:envioId/pacote': 'celular',
+  'POST /api/campo/envios/:envioId/recebida': 'celular',
+  'POST /api/campo/envios/:envioId/recolhimento': 'celular',
+  'PUT /api/campo/registros/:envioId': 'celular-entrega',
+  'GET /api/campo/apk': 'publico', // a primeira instalação, pelo navegador do celular
+  'GET /api/campo/apk/info': 'publico',
+
+  // rotas/celulares.ts: os celulares dos técnicos (só o administrador), o envio e o recolhimento das folhas (quem
+  // imprime a folha; recolher à força, só o administrador, conferido na rota), os registros que voltam do campo e a
+  // configuração do app do celular (o registro original: só o administrador muda)
+  'GET /api/celulares': 'usuarios',
+  'POST /api/celulares/pareamento': 'usuarios', // "Cadastrar celular": o código e o QR (só na memória)
+  'GET /api/celulares/pareamento/:id': 'usuarios', // a tela acompanha: "Aguardando o celular…" → "Pareado"
+  'DELETE /api/celulares/pareamento/:id': 'usuarios',
+  'GET /api/celulares/endereco': 'usuarios', // o QR só com o endereço do servidor
+  'PUT /api/celulares/:id': 'usuarios', // renomear
+  'POST /api/celulares/:id/revogar': 'usuarios',
+  'POST /api/celulares/:id/parear-de-novo': 'usuarios',
+  'GET /api/campo/configuracao': 'logado',
+  'PUT /api/campo/configuracao': 'configuracoes',
+  'POST /api/calibracoes/:id/enviar-tecnico': 'logado',
+  'POST /api/folha-campo/enviar-tecnico': 'logado',
+  'POST /api/folhas-campo/:numero/enviar-tecnico': 'logado',
+  'POST /api/folhas-campo/:numero/recolher': 'logado',
+  'GET /api/folhas-campo/:numero/campo': 'logado',
+  'GET /api/campo/registros': 'logado',
+  'GET /api/campo/registros/:id': 'logado',
+  'GET /api/campo/registros/:id/pdf': 'logado', // a folha impressa assinada, gerada na hora
+  'POST /api/campo/registros/:id/descartar': 'logado',
+  'POST /api/campo/registros/:id/ligar': 'logado',
+
+  // campo/importacaoRotas.ts: levar o registro de campo à calibração (quem imprime a folha): o que o editor precisa,
+  // comparar (piloto), puxar, criar a calibração com os dados do campo, a justificativa, os técnicos com celular e as
+  // folhas de uma balança que foram para o celular
+  'GET /api/calibracoes/:id/campo': 'logado',
+  'POST /api/calibracoes/:id/comparar-campo': 'logado',
+  'POST /api/calibracoes/:id/puxar-campo': 'logado',
+  'POST /api/calibracoes/:id/justificativa-campo': 'logado',
+  'POST /api/campo/registros/:id/criar-calibracao': 'logado',
+  'GET /api/campo/tecnicos': 'logado',
+  'GET /api/balancas/:id/campo': 'logado',
 }
+
+/** As regras das rotas do app do celular (token do celular, nunca o cookie). */
+export const REGRAS_DO_CELULAR: ReadonlySet<RegraAcesso> = new Set(['celular', 'celular-entrega'])
 
 /** Usuário fictício dos testes antigos (`acessoLivreParaTestes`): administrador. */
 export const USUARIO_TESTE: UsuarioSessao = {
@@ -209,6 +263,11 @@ export function ipDe(req: FastifyRequest): string {
 export interface DependenciasAcesso {
   usuarios: ServicoUsuarios
   tempoReal: TempoReal
+  /**
+   * Autentica o celular nas rotas `celular` e `celular-entrega` (server/campo/autenticacao.ts): preenche
+   * `req.dispositivo` ou lança ErroApi 401. Sem ela, essas rotas são recusadas.
+   */
+  autenticarCelular?: (req: FastifyRequest, regra: 'celular' | 'celular-entrega') => void
 }
 
 export interface OpcoesAcesso {
@@ -233,6 +292,19 @@ const ACAO_DA_ROTA: Record<string, AcaoAuditoria> = {
   // Instalado, trocado ou removido (o detalhe diz qual, com o titular e a série; nunca a senha)
   'POST /api/certificado-digital': 'CERTIFICADO_DIGITAL',
   'DELETE /api/certificado-digital': 'CERTIFICADO_DIGITAL',
+  // O app do celular do técnico (1.1.0): o detalhe traz o nº da folha, o técnico ou o celular (nunca o token)
+  'PUT /api/celulares/:id': 'CELULAR_RENOMEADO',
+  'POST /api/celulares/:id/revogar': 'CELULAR_REVOGADO',
+  'PUT /api/campo/configuracao': 'CAMPO_CONFIGURADO',
+  'POST /api/calibracoes/:id/enviar-tecnico': 'FOLHA_ENVIADA_TECNICO',
+  'POST /api/folha-campo/enviar-tecnico': 'FOLHA_ENVIADA_TECNICO',
+  'POST /api/folhas-campo/:numero/enviar-tecnico': 'FOLHA_ENVIADA_TECNICO',
+  'POST /api/folhas-campo/:numero/recolher': 'FOLHA_RECOLHIDA',
+  'POST /api/campo/registros/:id/descartar': 'REGISTRO_CAMPO_SITUACAO',
+  'POST /api/campo/registros/:id/ligar': 'REGISTRO_CAMPO_SITUACAO',
+  'POST /api/calibracoes/:id/comparar-campo': 'CAMPO_COMPARADO',
+  'POST /api/calibracoes/:id/puxar-campo': 'DADOS_PUXADOS_DO_CAMPO',
+  'POST /api/campo/registros/:id/criar-calibracao': 'DADOS_PUXADOS_DO_CAMPO',
 }
 
 /** Rotas que só calculam ou geram prévia (POST sem gravar dados): fora da auditoria. */
@@ -240,6 +312,22 @@ const SO_LEITURA = new Set([
   'POST /api/calibracoes/:id/previa',
   'POST /api/primeiro-acesso',
   'POST /api/certificado-digital/conferir',
+  // O olá do celular (a cada abertura do app): grava só o "visto às…" e o estado das folhas, sem inchar o registro
+  'POST /api/campo/ola',
+  // O código do pareamento fica só na memória: o registro vem quando o celular pareia (CELULAR_CADASTRADO, com quem pediu)
+  'POST /api/celulares/pareamento',
+  'POST /api/celulares/:id/parear-de-novo',
+  'DELETE /api/celulares/pareamento/:id',
+])
+
+/**
+ * Rotas que gravam o próprio registro de atividades (só quando algo muda de fato: a confirmação repetida do celular não
+ * gera outra linha), em vez da linha automática do `onResponse`.
+ */
+const AUDITORIA_NA_ROTA = new Set([
+  'POST /api/campo/envios/:envioId/recebida',
+  'POST /api/campo/envios/:envioId/recolhimento',
+  'PUT /api/campo/registros/:envioId',
 ])
 
 type Bruto = Record<string, unknown>
@@ -253,7 +341,11 @@ const idDaRota = (req: FastifyRequest) => {
  * Instala o controle de acesso. Chamar logo depois do gancho de Host e CSRF e antes de registrar
  * qualquer rota (o onRoute classifica as rotas na hora do registro).
  */
-export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal }: DependenciasAcesso, opcoes: OpcoesAcesso) {
+export function instalarAcesso(
+  app: FastifyInstance,
+  { usuarios, tempoReal, autenticarCelular }: DependenciasAcesso,
+  opcoes: OpcoesAcesso,
+) {
   const { nomeCookie } = opcoes
   const livre = !!opcoes.acessoLivreParaTestes
   const registradas = new Set<string>()
@@ -264,6 +356,7 @@ export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal }: De
   app.decorateRequest('sessaoId', null)
   app.decorateRequest('sessaoPersistente', false)
   app.decorateRequest('detalheAuditoria', '')
+  app.decorateRequest('dispositivo', null)
 
   app.addHook('onRoute', (rota) => {
     const url = rota.url ?? ''
@@ -306,6 +399,13 @@ export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal }: De
     const { acesso, chaveAcesso } = req.routeOptions.config ?? {}
     if (chaveAcesso === undefined) return // fora de /api: interface compilada
     if (acesso === undefined) throw new ErroApi(403, 'Requisição bloqueada.')
+
+    // As rotas do app do celular: só o token do celular (o cookie nem é lido, e o acesso livre dos testes não vale)
+    if (acesso === 'celular' || acesso === 'celular-entrega') {
+      if (!autenticarCelular) throw new ErroApi(403, 'Requisição bloqueada.')
+      autenticarCelular(req, acesso)
+      return
+    }
 
     const uso =
       (req.method !== 'GET' && req.method !== 'HEAD') ||
@@ -356,6 +456,7 @@ export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal }: De
     const chave = req.routeOptions.config?.chaveAcesso
     if (!chave) return
     const url = chave.slice(chave.indexOf(' ') + 1)
+    if (AUDITORIA_NA_ROTA.has(chave)) return
     let acao = ACAO_DA_ROTA[chave]
     if (acao === 'BACKUP_BAIXADO' && req.method === 'HEAD') return
     let detalhe = chave

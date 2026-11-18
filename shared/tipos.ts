@@ -1,5 +1,20 @@
 // Tipos do domínio, compartilhados entre o servidor (Node) e a interface (navegador).
 
+import type { CampoDaEmissao, DivergenciaCampo } from './campo/importar.ts'
+import type {
+  AvisoConferidoCampo,
+  Desfecho,
+  EstadoFolhaCelular,
+  MarcaRegistro,
+  PacoteCampo,
+  ProblemaRegistro,
+  RegistroCampo,
+  RegistroOriginal,
+  SituacaoEnvio,
+  SituacaoRegistro,
+  TipoFolhaCampo,
+} from './campo/tipos.ts'
+
 export type ID = string
 
 /** Tom dos selos (badges) e avisos na interface. */
@@ -686,6 +701,12 @@ export interface Calibracao {
    * `padroesDaCalibracao` em dominio.ts). Quem define é o servidor, ao criar a revisão; ausente = não é revisão.
    */
   padroesCongelados?: Padrao[]
+  /**
+   * A justificativa (um texto só) das diferenças com o registro de campo depois de "Puxar dados do campo" (1.1.0;
+   * 05-ajustes-finais §10): sem ela, um dado bruto mudado depois de puxar é pendência de emissão. Gravada pela rota da
+   * justificativa (nunca pelo PUT do rascunho); na emissão, vai congelada em `emissao.campo`. Ausente = nenhuma.
+   */
+  campoJustificativa?: JustificativaCampo
   /** Cancelamento: motivo, quem e quando. */
   cancelamento: { motivo: string; por: string; em: string } | null
   /** Ao emitir: dados congelados (o certificado sai sempre igual) e o código de autenticidade. */
@@ -705,6 +726,7 @@ export type CalibracaoInput = Omit<
   | 'sequencia'
   | 'revisao'
   | 'tecnicoDefinidoPorId'
+  | 'campoJustificativa'
   | 'autorizacao'
   | 'devolucao'
   | 'emissao'
@@ -929,6 +951,12 @@ export interface EmissaoCertificado {
    * que sumir é remontado idêntico, sem a chave privada. Ausente = ainda não assinado, ou sem `assinaturaDigital`.
    */
   assinatura?: PartesAssinaturaPdf
+  /**
+   * A calibração recebeu "Puxar dados do campo" (1.1.0, o registro original é o celular): o registro de campo, as
+   * diferenças dos dados brutos com ele na hora da emissão e a justificativa (um texto só), congelados. Só dado: o PDF do
+   * certificado não o usa e sai byte a byte igual. Ausente = sem dados puxados do celular.
+   */
+  campo?: CampoDaEmissao
 }
 
 /** Quem assina digitalmente o certificado emitido (o titular do certificado ICP-Brasil da empresa). */
@@ -1104,6 +1132,36 @@ export interface ResumoPainel {
    * a todos, com o caminho até a lista deles (Certificados, "Aguardando assinatura").
    */
   aguardandoAssinatura?: number
+  /** O app do celular (1.1.0): os cartões "Voltaram do campo" e "Ainda no celular". */
+  campo?: ResumoCampoPainel
+}
+
+/** Uma folha nos cartões do Painel sobre o celular. */
+export interface FolhaCampoNoPainel {
+  numero: string
+  envioId: ID
+  /** O cliente e a balança como o pacote os mostra ('' na folha em branco / sem balança cadastrada). */
+  cliente: string
+  balanca: string
+  tecnico: string
+  dataPrevista: string
+  situacao: SituacaoEnvio
+  estadoCelular: EstadoFolhaCelular | ''
+  /** Quando o celular informou o estado (ISO; a tela mostra só o dia: "informado ontem"). */
+  estadoCelularEm: string
+  /** A calibração da folha, se houver. */
+  calibracaoId?: ID
+  /** Voltou do campo: o registro, quando chegou e as marcas. */
+  registroId?: ID
+  recebidoEm?: string
+  marcas?: MarcaRegistro[]
+}
+
+export interface ResumoCampoPainel {
+  /** Registros VALIDOS ainda não puxados nem comparados, do mais novo para o mais antigo. */
+  voltaram: FolhaCampoNoPainel[]
+  /** Envios NO_CELULAR com a data prevista já passada. */
+  aindaNoCelular: FolhaCampoNoPainel[]
 }
 
 export interface Vencimento {
@@ -1213,6 +1271,38 @@ export interface FolhaCampoListada {
   motivo?: string
   descartadaEm?: string
   descartadaPor?: string
+  /** A folha foi enviada para o celular de um técnico (1.1.0): o envio mais recente e o registro que voltou. */
+  celular?: CelularDaFolha
+}
+
+/** O envio mais recente de uma folha para o celular (a aba "Folhas de campo", a calibração e o Painel). */
+export interface CelularDaFolha {
+  envioId: ID
+  situacao: SituacaoEnvio
+  /** Nome do técnico (e o id). */
+  tecnico: string
+  tecnicoId: ID
+  /** Quando a situação mudou pela última vez (ISO): enviada, no celular, devolvida ou recolhida. */
+  em: string
+  /** O último estado que o celular informou ('' = ainda nenhum) e quando. */
+  estadoCelular: EstadoFolhaCelular | ''
+  estadoCelularEm: string
+  /** Data prevista da visita (AAAA-MM-DD; '' = sem data). */
+  dataPrevista: string
+  /** Pedido de recolher em aberto (o celular ainda não respondeu). */
+  recolherPedido?: boolean
+  /** O celular respondeu ao pedido de recolher que já tinha começado a folha (ela volta preenchida). */
+  jaComecei?: boolean
+  /** Piloto: o registro original é o papel. */
+  piloto: boolean
+  /** Há um registro VALIDO desta folha ainda não puxado nem comparado ("Voltou do campo"). */
+  voltou?: boolean
+  /** As marcas do registro mais novo que voltou (vazio sem registro). */
+  marcas: MarcaRegistro[]
+  /** O registro mais novo que voltou, se houver. */
+  registroId?: ID
+  /** O registro mais novo foi encerrado sem completar (incompleta ou não calibrada); ausente na completa. */
+  desfecho?: Desfecho
 }
 
 /**
@@ -1412,9 +1502,21 @@ export type AcaoAuditoria =
   | 'NUMERO_RESERVADO'
   | 'NUMERO_NAO_UTILIZADO'
   | 'CERTIFICADO_DIGITAL'
+  | 'CELULAR_CADASTRADO'
+  | 'CELULAR_PAREADO_DE_NOVO'
+  | 'CELULAR_RENOMEADO'
+  | 'CELULAR_REVOGADO'
+  | 'FOLHA_ENVIADA_TECNICO'
+  | 'FOLHA_RECEBIDA_CELULAR'
+  | 'FOLHA_RECOLHIDA'
+  | 'FOLHA_DEVOLVIDA_CELULAR'
+  | 'REGISTRO_CAMPO_SITUACAO'
+  | 'CAMPO_CONFIGURADO'
+  | 'DADOS_PUXADOS_DO_CAMPO'
+  | 'CAMPO_COMPARADO'
   | 'ALTERACAO'
 
-export type GrupoAuditoria = 'acessos' | 'usuarios' | 'certificados' | 'dados' | 'alteracoes'
+export type GrupoAuditoria = 'acessos' | 'usuarios' | 'certificados' | 'campo' | 'dados' | 'alteracoes'
 
 export interface RegistroAuditoria {
   id: number
@@ -1437,4 +1539,236 @@ export interface MensagemTempoReal {
   revisao: number
   tipo: 'cliente' | 'balanca' | 'padrao' | 'calibracao' | 'config' | 'tudo'
   id?: ID
+}
+
+// ---- App do celular do técnico (1.1.0): o que as telas do computador recebem ------------------------------------
+
+/** Motivo da revogação de um celular. */
+export type MotivoRevogacao = 'PERDIDO' | 'ROUBADO' | 'TROCA' | 'DESLIGAMENTO' | 'ENGANO'
+export const MOTIVOS_REVOGACAO: readonly MotivoRevogacao[] = ['PERDIDO', 'ROUBADO', 'TROCA', 'DESLIGAMENTO', 'ENGANO']
+export const ROTULO_MOTIVO_REVOGACAO: Record<MotivoRevogacao, string> = {
+  PERDIDO: 'Perdido',
+  ROUBADO: 'Roubado',
+  TROCA: 'Troca de aparelho',
+  DESLIGAMENTO: 'Desligamento do técnico',
+  ENGANO: 'Cadastrado por engano',
+}
+
+/** Um celular cadastrado (Usuários → Celulares dos técnicos; só o administrador). */
+export interface CelularListado {
+  /** O id do aparelho (o mesmo ao parear de novo). */
+  id: ID
+  nome: string
+  modelo: string
+  versaoApp: string
+  tecnicoId: ID
+  /** '' = o usuário foi excluído. */
+  tecnicoNome: string
+  tecnicoAtivo: boolean
+  pareadoEm: string
+  pareamentos: number
+  criadoEm: string
+  criadoPor: string
+  /** Para "visto às 07:55 · 192.168.0.23" ('' = nunca apareceu). */
+  ultimoContato: string
+  ultimoIp: string
+  /** Folhas no celular agora (envios NO_CELULAR confirmados por ele). */
+  folhasNoCelular: number
+  revogado: boolean
+  revogadoEm: string
+  revogadoPor: string
+  revogadoMotivo: MotivoRevogacao | ''
+  revogadoTexto: string
+}
+
+/** "Cadastrar celular" ou "Parear de novo": o código de 6 dígitos (10 min, uso único) e o QR. */
+export interface PareamentoIniciado {
+  /** Id do pareamento (para acompanhar: GET /api/celulares/pareamento/:id). */
+  id: string
+  codigo: string
+  /** ISO. */
+  expiraEm: string
+  /** O endereço que vai no QR ("http://192.168.0.10:4850") e os outros endereços deste servidor na rede. */
+  endereco: string
+  enderecos: string[]
+  /** O texto do QR ("BCCAL1|http://192.168.0.10:4850|123456"): `formatarQrPareamento` (shared/campo/protocolo.ts). */
+  qr: string
+  tecnico: { id: ID; nome: string }
+  /** Parear de novo: o aparelho (o mesmo id). */
+  aparelhoId?: ID
+}
+
+/** Acompanhamento do pareamento pela tela do computador ("Aguardando o celular…" → "Pareado"). */
+export interface SituacaoPareamento {
+  id: string
+  situacao: 'AGUARDANDO' | 'PAREADO' | 'EXPIRADO' | 'INVALIDADO' | 'CANCELADO'
+  expiraEm: string
+  /** Pareado: o celular. */
+  celular?: CelularListado
+}
+
+/** Configuração do app do celular (só o administrador muda). */
+export interface ConfiguracaoCampo {
+  /** PAPEL (padrão, piloto): sem trava, a folha de papel é o registro original. CELULAR: trava e "Puxar dados do campo". */
+  registroOriginal: RegistroOriginal
+}
+
+/** Um envio de uma folha para o celular (metadados, sem o pacote). */
+export interface EnvioCampoListado {
+  id: ID
+  numero: string
+  tecnicoId: ID
+  tecnico: string
+  dispositivoId: ID
+  situacao: SituacaoEnvio
+  tipo: TipoFolhaCampo
+  cliente: string
+  balanca: string
+  piloto: boolean
+  calibracaoId: ID
+  dataPrevista: string
+  recado: string
+  enviadoEm: string
+  enviadoPor: string
+  baixadoEm: string
+  recebidoEm: string
+  estadoCelular: EstadoFolhaCelular | ''
+  estadoCelularEm: string
+  recolherPedidoEm: string
+  recolherPedidoPor: string
+  recolherMotivo: string
+  /** O celular respondeu ao pedido de recolher que já tinha começado a folha. */
+  recolherResposta: '' | 'JA_COMECEI'
+  recolherRespostaEm: string
+  recolhidoEm: string
+  recolhidoPor: string
+  forcado: boolean
+  devolvidoEm: string
+  devolvidaAposRecolher: boolean
+}
+
+/** Um registro de campo guardado (metadados, sem o conteúdo). O sha256 é interno: não vem para a tela. */
+export interface RegistroCampoListado {
+  id: ID
+  envioId: ID
+  numero: string
+  /** O órfão ligado pelo escritório a uma folha ('' = nenhum). */
+  ligadoA: string
+  tecnicoId: ID
+  tecnico: string
+  dispositivoId: ID
+  celular: string
+  piloto: boolean
+  desfecho: Desfecho | ''
+  revisaoLocal: number
+  recebidoEm: string
+  /** Celular − servidor na entrega (segundos); null = a hora do celular não veio legível. */
+  relogioDiferencaS: number | null
+  situacao: SituacaoRegistro
+  marcas: MarcaRegistro[]
+  problemas: ProblemaRegistro[]
+  situacaoMotivo: string
+  situacaoPor: string
+  situacaoEm: string
+  /** Já foi puxado ou comparado com uma calibração. */
+  importado: boolean
+}
+
+/** Uma importação de um registro para a calibração ("Puxar dados do campo" ou "Comparar com o campo"). */
+export interface ImportacaoCampo {
+  id: ID
+  registroId: ID
+  calibracaoId: ID
+  tipo: 'PUXAR' | 'COMPARACAO'
+  versaoAntes: number
+  versaoDepois: number
+  feitoEm: string
+  feitoPor: string
+  resumo: unknown
+  observacao: string
+}
+
+/** GET /api/campo/registros/:id: o registro como chegou, o pacote do envio (se existir) e os metadados. */
+export interface RegistroCampoDetalhe {
+  registro: RegistroCampoListado
+  /** O conteúdo como chegou (pode ter problemas de formato: ver `registro.problemas`). */
+  conteudo: RegistroCampo
+  pacote: PacoteCampo | null
+  envio: EnvioCampoListado | null
+  importacoes: ImportacaoCampo[]
+}
+
+/** GET /api/folhas-campo/:numero/campo: os envios e os registros de uma folha (metadados). */
+export interface CampoDaFolha {
+  numero: string
+  envios: EnvioCampoListado[]
+  registros: RegistroCampoListado[]
+  /** Os dados impressos estão congelados (a folha foi impressa ou enviada a partir da 1.1.0). */
+  dadosCongelados: boolean
+}
+
+/** Resposta de "Enviar para o técnico". */
+export interface ResultadoEnvioCampo {
+  envio: EnvioCampoListado
+  /** A folha foi impressa antes da 1.1.0 (sem os dados congelados): a tela avisa para conferir o papel. */
+  aviso?: string
+  /** A versão nova da calibração (o envio incrementa a versão); ausente na folha avulsa. */
+  versao?: number
+}
+
+/** A justificativa das diferenças com o registro de campo depois de puxar (um texto só, com quem e quando). */
+export interface JustificativaCampo {
+  texto: string
+  por: string
+  porId: ID
+  em: string
+}
+
+/**
+ * GET /api/calibracoes/:id/campo: o celular e o registro de campo da folha da calibração, para o editor (a faixa "No
+ * celular do Maurício desde 08:12", a trava, "Comparar com o campo" / "Puxar dados do campo") e para "Revisão e emissão"
+ * (o bloco "Registro de campo", as diferenças depois de puxar e a justificativa).
+ */
+export interface CampoDaCalibracao {
+  registroOriginal: RegistroOriginal
+  /** A folha de campo da calibração ('' = nenhuma ligada). */
+  numero: string
+  /** O envio mais recente da folha (qualquer situação), ou null. */
+  envio: EnvioCampoListado | null
+  /** Registro original = CELULAR e a folha está no celular (sem pedido de recolher): os passos de medição só leitura. */
+  travada: boolean
+  /** Os registros que voltaram para a folha, do mais novo para o mais antigo. */
+  registros: RegistroCampoListado[]
+  /** O registro VALIDO mais novo da folha (o que "Comparar" e "Puxar" usam); '' = nenhum. */
+  registroId: string
+  /** As importações desta calibração (PUXAR e COMPARACAO), da mais antiga para a mais nova. */
+  importacoes: ImportacaoCampo[]
+  /** A calibração recebeu um "Puxar dados do campo". */
+  puxado: boolean
+  /** Depois de puxar: os dados brutos da calibração gravada diferentes do registro VALIDO mais novo. */
+  divergencias: DivergenciaCampo[]
+  justificativa: JustificativaCampo | null
+  /** Chegou uma versão nova do registro (reaberto e entregue de novo) depois de puxar. */
+  versaoNova: boolean
+  /** Do registro VALIDO mais novo: os avisos vistos no local, o desfecho e o motivo. */
+  avisosConferidos: AvisoConferidoCampo[]
+  desfecho: Desfecho | ''
+  motivoDesfecho: string
+  /** O registro não pôde ser comparado (formato com problema): a frase. */
+  problema?: string
+}
+
+/** Um técnico que pode receber a folha no celular ("Enviar para o técnico"). */
+export interface TecnicoParaEnvio {
+  id: ID
+  nome: string
+  /** Os celulares que valem (sem os revogados); vazio = sem celular cadastrado. */
+  celulares: Array<{ id: ID; nome: string; modelo: string; versaoApp: string; ultimoContato?: string }>
+}
+
+/** Uma folha de campo de uma balança com envio ou registro de campo (a ficha da balança). */
+export interface FolhaCampoDaBalanca {
+  numero: string
+  calibracaoId: ID
+  celular: CelularDaFolha
 }

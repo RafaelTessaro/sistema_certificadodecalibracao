@@ -548,6 +548,8 @@ export class ServicoUsuarios {
           id,
         )
       const encerradas = mudouNivel || (mudouAtivo && !ativo) ? this.apagarSessoes(id) : []
+      // Desativado: os celulares dele deixam de receber folhas (as começadas ainda são entregues)
+      const celulares = mudouAtivo && !ativo ? this.revogarCelulares(id, autor, 'usuário desativado') : 0
       const detalhe = [
         mudouNome ? `nome: ${atual.nome} → ${nome}` : '',
         mudouLogin ? `login: ${atual.login} → ${login}` : '',
@@ -556,6 +558,7 @@ export class ServicoUsuarios {
         mudouTecnico ? (tecnico ? 'passou a ser técnico' : 'deixou de ser técnico') : '',
         mudouSignatario ? (signatario ? 'passou a ser signatário' : 'deixou de ser signatário') : '',
         mudouDadosAssinatura ? 'cargo, registro ou assinatura' : '',
+        celulares ? `${celulares} ${celulares === 1 ? 'celular descadastrado' : 'celulares descadastrados'}` : '',
       ]
         .filter(Boolean)
         .join('; ')
@@ -629,7 +632,16 @@ export class ServicoUsuarios {
       this.verificarUltimoAdmin(atual, false)
       const sessoesEncerradas = this.idsSessoes(id)
       this.db.prepare('DELETE FROM usuarios WHERE id = ?').run(id)
-      this.registrar('USUARIO_EXCLUIDO', { usuario: autor, ip, alvo: id, detalhe: `${atual.login} (${atual.nome})` })
+      // Os celulares dele deixam de receber folhas (as começadas ainda são entregues, e ficam guardadas)
+      const celulares = this.revogarCelulares(id, autor, 'usuário excluído')
+      this.registrar('USUARIO_EXCLUIDO', {
+        usuario: autor,
+        ip,
+        alvo: id,
+        detalhe: `${atual.login} (${atual.nome})${
+          celulares ? `; ${celulares} ${celulares === 1 ? 'celular descadastrado' : 'celulares descadastrados'}` : ''
+        }`,
+      })
       return { sessoesEncerradas }
     })
   }
@@ -941,6 +953,22 @@ export class ServicoUsuarios {
     return ids
   }
 
+  /**
+   * Os celulares do técnico desativado ou excluído (1.1.0) são revogados com o motivo DESLIGAMENTO: deixam de receber
+   * folhas; a entrega das já começadas continua aceita. Devolve quantos.
+   */
+  private revogarCelulares(usuarioId: string, autor: Pick<UsuarioSessao, 'nome'>, texto: string): number {
+    if (!temTabela(this.db, 'dispositivos')) return 0
+    return Number(
+      this.db
+        .prepare(
+          `UPDATE dispositivos SET revogado_em = ?, revogado_por = ?, revogado_motivo = 'DESLIGAMENTO', revogado_texto = ?
+            WHERE usuario_id = ? AND revogado_em = ''`,
+        )
+        .run(new Date(this.agora()).toISOString(), autor.nome.slice(0, 120), texto, usuarioId).changes,
+    )
+  }
+
   /** Login livre e abaixo do limite de usuários. */
   private verificarCadastro(login: string) {
     if (this.linhaPorLogin(login)) throw new ErroApi(409, MENSAGENS.loginExistente, { codigo: 'LOGIN_EXISTENTE' })
@@ -986,8 +1014,130 @@ export function transplantarUsuarios(origem: Banco, destino: Banco): { usuarios:
     )
     for (const a of auditoria) inserirRegistro.run(a.id, a.em, a.usuario_id, a.login, a.ip, a.acao, a.alvo, a.detalhe)
     gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe: 'as contas e senhas atuais foram mantidas' })
+    // Os celulares dos técnicos, como as contas: os atuais substituem os da cópia (uma cópia antiga não traz de volta um
+    // celular revogado, e os pareados depois da cópia continuam funcionando)
+    transplantarDispositivos(origem, destino)
   })
   return { usuarios: usuarios.length, auditoria: auditoria.length }
+}
+
+/**
+ * Restauração de uma cópia .db: os celulares cadastrados (`dispositivos`, 1.1.0) de `origem` (o banco atual) substituem
+ * os de `destino` (a cópia que vai voltar), como as contas: só o sha256 dos tokens vai junto (os celulares continuam
+ * funcionando), e um celular revogado depois da cópia continua revogado. Dentro da transação de quem chama, se houver.
+ */
+export function transplantarDispositivos(origem: Banco, destino: Banco): number {
+  if (!temTabela(origem, 'dispositivos') || !temTabela(destino, 'dispositivos')) return 0
+  const comuns = colunasComuns(origem, destino, 'dispositivos')
+  const linhas = origem.prepare(`SELECT ${comuns.join(', ')} FROM dispositivos`).all() as LinhaBanco[]
+  transacao(destino, () => {
+    destino.exec('DELETE FROM dispositivos')
+    const inserir = destino.prepare(
+      `INSERT INTO dispositivos (${comuns.join(', ')}) VALUES (${comuns.map(() => '?').join(', ')})`,
+    )
+    for (const l of linhas) inserir.run(...comuns.map((c) => l[c] ?? null))
+  })
+  return linhas.length
+}
+
+/** Envios vivos (no máximo um por folha). */
+const ENVIO_VIVO = new Set(['ENVIADA', 'NO_CELULAR', 'DEVOLVIDA'])
+
+/**
+ * Restauração de uma cópia .db: o que veio do app do celular (1.1.0) depois da cópia passa de `origem` (o banco atual)
+ * para `destino` (a cópia que vai voltar), como as folhas impressas: os dados impressos congelados das folhas que a cópia
+ * já tinha, os envios (como no banco atual: o celular está com eles; um envio só da cópia que ficaria vivo junto com o
+ * vivo do banco atual é encerrado), os registros de campo (os que faltam; os que existem nas duas ficam com a situação do
+ * banco atual, e o conteúdo nunca muda) e as importações para as calibrações. Dentro da transação de quem chama.
+ */
+export function passarCampo(origem: Banco, destino: Banco): { envios: number; registros: number; importacoes: number } {
+  const r = { envios: 0, registros: 0, importacoes: 0 }
+  const tabelas = ['folhas_campo_envios', 'registros_campo', 'campo_importacoes']
+  if (!tabelas.every((t) => temTabela(origem, t) && temTabela(destino, t))) return r
+  transacao(destino, () => {
+    const agora = new Date().toISOString()
+    // Os dados impressos congelados depois da cópia (a folha que a cópia já tinha, ainda sem eles)
+    const doFolhas = colunasComuns(origem, destino, 'folhas_campo')
+    if (doFolhas.includes('dados_sha256') && doFolhas.includes('dados_impressos')) {
+      const congelar = destino.prepare(
+        "UPDATE folhas_campo SET dados_impressos = ?, dados_sha256 = ? WHERE numero = ? AND dados_sha256 = ''",
+      )
+      for (const f of origem
+        .prepare("SELECT numero, dados_impressos, dados_sha256 FROM folhas_campo WHERE dados_sha256 <> ''")
+        .all() as Array<{ numero: string; dados_impressos: string; dados_sha256: string }>)
+        congelar.run(f.dados_impressos, f.dados_sha256, f.numero)
+    }
+
+    // Os envios: os do banco atual valem
+    const colEnvios = colunasComuns(origem, destino, 'folhas_campo_envios')
+    const envios = origem.prepare(`SELECT ${colEnvios.join(', ')} FROM folhas_campo_envios`).all() as LinhaBanco[]
+    const idsAtuais = new Set(envios.map((e) => String(e.id)))
+    const vivosAtuais = new Set(envios.filter((e) => ENVIO_VIVO.has(String(e.situacao))).map((e) => String(e.numero)))
+    const encerrar = destino.prepare(
+      `UPDATE folhas_campo_envios SET situacao = 'RECOLHIDA', recolhido_em = ?, recolhido_por = 'cópia restaurada',
+              recolher_motivo = CASE WHEN recolher_motivo = '' THEN 'cópia restaurada' ELSE recolher_motivo END WHERE id = ?`,
+    )
+    for (const d of destino.prepare('SELECT id, numero, situacao FROM folhas_campo_envios').all() as Array<{
+      id: string
+      numero: string
+      situacao: string
+    }>)
+      if (!idsAtuais.has(d.id) && ENVIO_VIVO.has(d.situacao) && vivosAtuais.has(d.numero)) encerrar.run(agora, d.id)
+    const apagarEnvio = destino.prepare('DELETE FROM folhas_campo_envios WHERE id = ?')
+    const naCopia = destino.prepare(`SELECT ${colEnvios.join(', ')} FROM folhas_campo_envios WHERE id = ?`)
+    const inserirEnvio = destino.prepare(
+      `INSERT INTO folhas_campo_envios (${colEnvios.join(', ')}) VALUES (${colEnvios.map(() => '?').join(', ')})`,
+    )
+    const valores = (l: LinhaBanco | undefined) => (l ? JSON.stringify(colEnvios.map((c) => l[c] ?? null)) : '')
+    // Os que mudaram depois da cópia (ou que ela não tinha) contam; primeiro saem as versões da cópia (um envio vivo lá
+    // pode estar encerrado aqui, e outro, vivo, para a mesma folha)
+    const mudaram = envios.filter((e) => valores(naCopia.get(e.id) as LinhaBanco | undefined) !== valores(e))
+    for (const e of mudaram) apagarEnvio.run(e.id)
+    for (const e of mudaram) inserirEnvio.run(...colEnvios.map((c) => e[c] ?? null))
+    r.envios = mudaram.length
+
+    // Os registros: os que faltam passam; os das duas ficam com a situação (e a ligação do órfão) do banco atual
+    const colRegistros = colunasComuns(origem, destino, 'registros_campo')
+    const registros = origem.prepare(`SELECT ${colRegistros.join(', ')} FROM registros_campo`).all() as LinhaBanco[]
+    const existeRegistro = destino.prepare('SELECT 1 FROM registros_campo WHERE id = ? OR sha256 = ?')
+    const inserirRegistro = destino.prepare(
+      `INSERT INTO registros_campo (${colRegistros.join(', ')}) VALUES (${colRegistros.map(() => '?').join(', ')})`,
+    )
+    const metadados = ['situacao', 'marcas', 'problemas', 'ligado_a', 'situacao_motivo', 'situacao_por', 'situacao_em'].filter(
+      (c) => colRegistros.includes(c),
+    )
+    const atualizarRegistro = metadados.length
+      ? destino.prepare(`UPDATE registros_campo SET ${metadados.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`)
+      : null
+    for (const g of registros) {
+      if (existeRegistro.get(g.id, g.sha256)) {
+        atualizarRegistro?.run(...metadados.map((c) => g[c] ?? null), g.id)
+        continue
+      }
+      inserirRegistro.run(...colRegistros.map((c) => g[c] ?? null))
+      r.registros++
+    }
+
+    // As importações que faltam
+    const colImportacoes = colunasComuns(origem, destino, 'campo_importacoes')
+    const inserirImportacao = destino.prepare(
+      `INSERT OR IGNORE INTO campo_importacoes (${colImportacoes.join(', ')}) VALUES (${colImportacoes.map(() => '?').join(', ')})`,
+    )
+    for (const i of origem.prepare(`SELECT ${colImportacoes.join(', ')} FROM campo_importacoes`).all() as LinhaBanco[])
+      r.importacoes += Number(inserirImportacao.run(...colImportacoes.map((c) => i[c] ?? null)).changes)
+
+    const partes = [
+      r.registros ? `${r.registros} ${r.registros === 1 ? 'registro de campo' : 'registros de campo'} do celular` : '',
+      r.envios ? `${r.envios} ${r.envios === 1 ? 'envio de folha' : 'envios de folhas'} para o celular` : '',
+      r.importacoes ? `${r.importacoes} ${r.importacoes === 1 ? 'importação' : 'importações'} do campo` : '',
+    ].filter(Boolean)
+    if (partes.length)
+      gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', {
+        ip: 'local',
+        detalhe: `continuam registrados, como no banco atual: ${partes.join(', ')}`.slice(0, 300),
+      })
+  })
+  return r
 }
 
 /**
@@ -1027,6 +1177,8 @@ export function transplantarRegistros(origem: Banco, destino: Banco): { folhasCa
     certificados = transplantarCertificados(origem, destino).length
     folhasCampo = passarFolhasCampo(origem, destino)
     passarCertificadosDigitais(origem, destino)
+    // O que veio do app do celular (1.1.0), depois das folhas
+    passarCampo(origem, destino)
   })
   return { folhasCampo, certificados }
 }

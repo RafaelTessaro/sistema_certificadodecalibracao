@@ -1,6 +1,26 @@
 import { novoId } from '#shared/id.ts'
 import type { FinalidadeArquivo } from '#shared/arquivos.ts'
-import type { CertificadoDigitalPublico, RegistroCertificadoDigital } from '#shared/tipos.ts'
+import type { EscolhasCampo, ResumoImportacao } from '#shared/campo/importar.ts'
+import type { InfoApk } from '#shared/campo/protocolo.ts'
+import type { SituacaoRegistro } from '#shared/campo/tipos.ts'
+import type {
+  CampoDaCalibracao,
+  CampoDaFolha,
+  FolhaCampoDaBalanca,
+  ImportacaoCampo,
+  TecnicoParaEnvio,
+  CelularListado,
+  CertificadoDigitalPublico,
+  ConfiguracaoCampo,
+  EnvioCampoListado,
+  MotivoRevogacao,
+  PareamentoIniciado,
+  RegistroCampoDetalhe,
+  RegistroCampoListado,
+  RegistroCertificadoDigital,
+  ResultadoEnvioCampo,
+  SituacaoPareamento,
+} from '#shared/tipos.ts'
 import type { PacoteCifrado } from './cifraPacote'
 import type {
   AlteracaoUsuario,
@@ -201,6 +221,11 @@ export interface FolhaLigada {
   folhasNaoLigadas?: FolhaNaoLigada[]
   /** A versão da calibração depois da ligação (a tela grava com ela). */
   versao?: number
+  /**
+   * A folha desta calibração que estava no celular do técnico (1.1.0) e foi pedida de volta (ou recolhida na hora),
+   * porque a folha de papel ligada passou a ser a origem. Ausente quando não havia folha no celular.
+   */
+  recolhidas?: string
 }
 
 /** GET /api/pop */
@@ -540,6 +565,120 @@ export const api = {
     requisitar<{ versao: VersaoPop }>('POST', '/api/pop', e),
   anexarArquivoPop: (id: number, arquivo: string) =>
     requisitar<{ versao: VersaoPop }>('PUT', `/api/pop/${id}/arquivo`, { arquivo }),
+
+  // ---- App do celular do técnico (1.1.0) ----
+  /** Usuários → Celulares dos técnicos (só o administrador). */
+  celulares: () => requisitar<{ celulares: CelularListado[] }>('GET', '/api/celulares'),
+  /** "Cadastrar celular": o código de 6 dígitos (10 min, uso único) e o QR; `endereco`: outro endereço do servidor no QR. */
+  iniciarPareamento: (usuarioId: string, endereco?: string) =>
+    requisitar<{ pareamento: PareamentoIniciado }>('POST', '/api/celulares/pareamento', {
+      usuarioId,
+      ...(endereco ? { endereco } : {}),
+    }),
+  /** A tela acompanha o pareamento a cada poucos segundos ("Aguardando o celular…" → "Pareado"). */
+  situacaoPareamento: (id: string) =>
+    requisitar<{ pareamento: SituacaoPareamento }>('GET', `/api/celulares/pareamento/${enc(id)}`),
+  /** Fechar a janela: o código deixa de valer. */
+  cancelarPareamento: (id: string) => requisitar<void>('DELETE', `/api/celulares/pareamento/${enc(id)}`),
+  /** O QR só com o endereço do servidor (o celular já pareado que precisa do endereço novo). */
+  enderecoServidor: (endereco?: string) =>
+    requisitar<{ endereco: string; enderecos: string[]; qr: string }>('GET', `/api/celulares/endereco${consulta({ endereco })}`),
+  renomearCelular: (id: string, nome: string) =>
+    requisitar<{ celular: CelularListado }>('PUT', `/api/celulares/${enc(id)}`, { nome }),
+  revogarCelular: (id: string, motivo: MotivoRevogacao, texto = '') =>
+    requisitar<{ celular: CelularListado }>('POST', `/api/celulares/${enc(id)}/revogar`, { motivo, texto }),
+  /** "Parear de novo": código novo para o mesmo aparelho (token novo; as folhas do celular ficam). */
+  parearDeNovo: (id: string, endereco?: string) =>
+    requisitar<{ pareamento: PareamentoIniciado }>(
+      'POST',
+      `/api/celulares/${enc(id)}/parear-de-novo`,
+      endereco ? { endereco } : {},
+    ),
+  configuracaoCampo: () => requisitar<{ config: ConfiguracaoCampo }>('GET', '/api/campo/configuracao'),
+  /** Só o administrador: o registro original (PAPEL, o piloto; CELULAR). */
+  salvarConfiguracaoCampo: (config: ConfiguracaoCampo) =>
+    requisitar<{ config: ConfiguracaoCampo }>('PUT', '/api/campo/configuracao', config),
+  /** "Enviar para o técnico" a folha da calibração em andamento (a versão dela sobe: a tela fica com `versao`). */
+  enviarParaTecnico: (
+    calibracaoId: string,
+    dados: { tecnicoId: string; dataPrevista?: string; recado?: string; versao?: number },
+  ) => requisitar<ResultadoEnvioCampo>('POST', `/api/calibracoes/${enc(calibracaoId)}/enviar-tecnico`, dados, 60_000),
+  /** A folha avulsa (da balança, só do cliente ou em branco), com a mesma `chave` da impressão (`chaveFolhaAvulsa`). */
+  enviarFolhaAvulsaParaTecnico: (dados: {
+    tecnicoId: string
+    dataPrevista?: string
+    recado?: string
+    balancaId?: string
+    clienteId?: string
+    os?: string
+    data?: string
+    chave?: string
+  }) => requisitar<ResultadoEnvioCampo>('POST', '/api/folha-campo/enviar-tecnico', dados, 60_000),
+  /** Uma folha já impressa, pelo nº (reenviar depois de recolhida, ou a avulsa impressa). */
+  enviarFolhaParaTecnico: (numero: string, dados: { tecnicoId: string; dataPrevista?: string; recado?: string }) =>
+    requisitar<ResultadoEnvioCampo>('POST', `/api/folhas-campo/${enc(numero)}/enviar-tecnico`, dados, 60_000),
+  /** Recolher do celular: na hora (não baixada), pedido (já baixada) ou, só o administrador, à força. */
+  recolherFolha: (numero: string, motivo: string, forcar = false) =>
+    requisitar<{ envio: EnvioCampoListado; imediato: boolean }>('POST', `/api/folhas-campo/${enc(numero)}/recolher`, {
+      motivo,
+      forcar,
+    }),
+  /** Os envios e os registros de uma folha. */
+  campoDaFolha: (numero: string) => requisitar<CampoDaFolha>('GET', `/api/folhas-campo/${enc(numero)}/campo`),
+  registrosCampo: (f: { numero?: string; situacao?: SituacaoRegistro; orfaos?: boolean; limite?: number } = {}) =>
+    requisitar<{ registros: RegistroCampoListado[] }>(
+      'GET',
+      `/api/campo/registros${consulta({ numero: f.numero, situacao: f.situacao, orfaos: f.orfaos ? 1 : '', limite: f.limite })}`,
+    ),
+  /** O registro como chegou do celular, com o pacote e os metadados. */
+  registroCampo: (id: string) => requisitar<RegistroCampoDetalhe>('GET', `/api/campo/registros/${enc(id)}`),
+  /** A folha impressa assinada (PDF gerado na hora). */
+  urlPdfRegistroCampo: (id: string) => `/api/campo/registros/${enc(id)}/pdf`,
+  descartarRegistroCampo: (id: string, motivo: string) =>
+    requisitar<{ registro: RegistroCampoListado }>('POST', `/api/campo/registros/${enc(id)}/descartar`, { motivo }),
+  /** Liga um registro órfão (envio desconhecido) a uma folha. */
+  ligarRegistroCampo: (id: string, numero: string, motivo = '') =>
+    requisitar<{ registro: RegistroCampoListado }>('POST', `/api/campo/registros/${enc(id)}/ligar`, { numero, motivo }),
+  /** O APK que veio no instalador (para a primeira instalação pelo navegador do celular). */
+  infoApk: () => requisitar<InfoApk>('GET', '/api/campo/apk/info'),
+  urlApk: () => '/api/campo/apk',
+  /** Os técnicos ativos e os celulares que valem ("Enviar para o técnico"; a hora do celular, só para quem cuida dos usuários). */
+  tecnicosParaEnvio: () => requisitar<{ tecnicos: TecnicoParaEnvio[] }>('GET', '/api/campo/tecnicos'),
+  /** O celular e o registro de campo da folha da calibração (a faixa do editor, a trava, comparar/puxar, a justificativa). */
+  campoDaCalibracao: (id: string) => requisitar<CampoDaCalibracao>('GET', `/api/calibracoes/${enc(id)}/campo`),
+  /** "Comparar com o campo": grava a comparação (com a observação opcional), sem mudar a calibração. */
+  compararComCampo: (id: string, registroId: string, observacao = '') =>
+    requisitar<{ importacao: ImportacaoCampo; iguais: number; diferentes: number }>(
+      'POST',
+      `/api/calibracoes/${enc(id)}/comparar-campo`,
+      { registroId, observacao },
+    ),
+  /** "Puxar dados do campo" (registro original no celular): o rascunho com o escolhido; a versão sobe. */
+  puxarDoCampo: (id: string, dados: { registroId: string; escolhas: EscolhasCampo; versao?: number }) =>
+    requisitar<{
+      calibracao: Calibracao
+      resumo: ResumoImportacao
+      importacao: ImportacaoCampo
+      pendencias: string[]
+      avisos: string[]
+    }>('POST', `/api/calibracoes/${enc(id)}/puxar-campo`, dados, 60_000),
+  /** A justificativa (um texto só) das diferenças com o celular depois de puxar; '' tira. */
+  justificarCampo: (id: string, texto: string, versao?: number) =>
+    requisitar<{ calibracao: Calibracao; pendencias: string[]; avisos: string[] }>(
+      'POST',
+      `/api/calibracoes/${enc(id)}/justificativa-campo`,
+      { texto, versao },
+    ),
+  /** "Criar calibração com os dados do campo" (a folha sem rascunho; `balancaId`: a balança cadastrada com os dados do campo). */
+  criarCalibracaoDoCampo: (registroId: string, balancaId?: string) =>
+    requisitar<{ calibracao: Calibracao; resumo: ResumoImportacao; importacao: ImportacaoCampo }>(
+      'POST',
+      `/api/campo/registros/${enc(registroId)}/criar-calibracao`,
+      balancaId ? { balancaId } : {},
+      60_000,
+    ),
+  /** As folhas de uma balança que foram para o celular ou têm registro de campo. */
+  folhasCampoDaBalanca: (id: string) => requisitar<{ folhas: FolhaCampoDaBalanca[] }>('GET', `/api/balancas/${enc(id)}/campo`),
 
   // ---- Geral ----
   config: () => requisitar<{ config: Configuracoes }>('GET', '/api/config'),

@@ -42,11 +42,25 @@ export const TABELAS_MANTIDAS = [
   'arquivos',
   'pop_versoes',
   'certificados_digitais',
+  // Os celulares dos técnicos (1.1.0): ficam cadastrados, como os usuários
+  'dispositivos',
   'sqlite_sequence',
 ] as const
 
-/** Tabelas esvaziadas, nesta ordem (as que dependem das calibrações antes delas). */
-export const TABELAS_APAGADAS = ['folhas_campo_passagens', 'folhas_campo', 'numeros_reservados', 'envios', 'calibracoes'] as const
+/**
+ * Tabelas esvaziadas, nesta ordem (as que dependem das calibrações antes delas). As do app do celular (1.1.0: os
+ * registros de campo, as importações e os envios) saem antes das folhas: são da folha de teste.
+ */
+export const TABELAS_APAGADAS = [
+  'campo_importacoes',
+  'registros_campo',
+  'folhas_campo_envios',
+  'folhas_campo_passagens',
+  'folhas_campo',
+  'numeros_reservados',
+  'envios',
+  'calibracoes',
+] as const
 
 export type TabelaApagada = (typeof TABELAS_APAGADAS)[number]
 
@@ -163,6 +177,29 @@ function conferirTabelas(db: Banco) {
     )
 }
 
+/**
+ * As folhas de campo que um celular já baixou e ainda não devolveu (1.1.0: o envio ENVIADA já baixado, ou NO_CELULAR).
+ * A limpeza recusa enquanto houver alguma: o celular a entregaria depois como órfã, de uma folha que não existe mais.
+ */
+export function folhasNoCelular(db: Banco): string[] {
+  return (
+    db
+      .prepare(
+        `SELECT numero FROM folhas_campo_envios
+          WHERE situacao = 'NO_CELULAR' OR (situacao = 'ENVIADA' AND baixado_em <> '') ORDER BY numero`,
+      )
+      .all() as Array<{ numero: string }>
+  ).map((x) => x.numero)
+}
+
+function conferirCelulares(db: Banco) {
+  const noCelular = folhasNoCelular(db)
+  if (noCelular.length)
+    throw new ErroLimpeza(
+      `Há folhas de campo no celular de um técnico (${noCelular.join(', ')}). Recolha as folhas ou espere a entrega antes de apagar os testes. Nada foi apagado.`,
+    )
+}
+
 export interface ArquivosDaPasta {
   pdfs: number
   outros: number
@@ -216,6 +253,8 @@ export interface Levantamento {
   ficam: { usuarios: number; clientes: number; balancas: number; padroes: number; pops: number }
   /** Quando os testes já foram apagados antes (ISO), ou ''. */
   apagadosEm: string
+  /** Registros de campo que voltaram do celular (1.1.0); ausente = nenhum. */
+  registrosCampo?: number
   /** Os nºs que saem depois da limpeza (pela numeração das configurações, no ano de hoje). */
   proximoCertificado: string
   proximaFolha: string
@@ -224,9 +263,13 @@ export interface Levantamento {
 const contar = (db: Banco, sql: string, ...params: string[]) =>
   Number((db.prepare(sql).get(...params) as { n: number | null }).n ?? 0)
 
-/** O que a limpeza apaga (e o que fica), sem mexer em nada. Recusa um banco com tabelas que ela não conhece. */
+/**
+ * O que a limpeza apaga (e o que fica), sem mexer em nada. Recusa um banco com tabelas que ela não conhece, e enquanto
+ * houver folha de campo no celular de um técnico (1.1.0).
+ */
 export function levantar(db: Banco, pastaDados: string, agora = new Date()): Levantamento {
   conferirTabelas(db)
+  conferirCelulares(db)
   const linhas = Object.fromEntries(TABELAS_APAGADAS.map((t) => [t, contar(db, `SELECT COUNT(*) AS n FROM ${t}`)])) as Record<
     TabelaApagada,
     number
@@ -252,6 +295,7 @@ export function levantar(db: Banco, pastaDados: string, agora = new Date()): Lev
   }
   const ano = agora.getFullYear()
   return {
+    ...(linhas.registros_campo ? { registrosCampo: linhas.registros_campo } : {}),
     linhas,
     emitidos: status('EMITIDO'),
     cancelados: status('CANCELADO'),
@@ -327,6 +371,7 @@ export function textoLevantamento(l: Levantamento): string[] {
       ? qtd(l.numeros, 'nº de certificado reservado ou não utilizado', 'nºs de certificado reservados ou não utilizados')
       : '',
     l.envios ? qtd(l.envios, 'registro de e-mail enviado', 'registros de e-mails enviados') : '',
+    l.registrosCampo ? qtd(l.registrosCampo, 'registro de campo do celular', 'registros de campo do celular') : '',
   ].filter(Boolean)
   // Algo das tabelas que não entra nas contas acima (ex.: nº já emitido sem o certificado)
   if (!itens.length && Object.values(l.linhas).some((n) => n > 0)) itens.push('registros internos dos certificados')

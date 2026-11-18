@@ -354,7 +354,16 @@ describe('falhas no meio da limpeza', () => {
 
 describe('textos', () => {
   const base: Levantamento = {
-    linhas: { folhas_campo_passagens: 0, folhas_campo: 1, numeros_reservados: 1, envios: 1, calibracoes: 4 },
+    linhas: {
+      campo_importacoes: 0,
+      registros_campo: 0,
+      folhas_campo_envios: 0,
+      folhas_campo_passagens: 0,
+      folhas_campo: 1,
+      numeros_reservados: 1,
+      envios: 1,
+      calibracoes: 4,
+    },
     emitidos: 1,
     cancelados: 1,
     substituidos: 1,

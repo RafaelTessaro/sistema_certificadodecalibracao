@@ -1,6 +1,9 @@
 import type { FastifyBaseLogger } from 'fastify'
 import type { ServicoCertificadoDigital } from './assinatura/contrato.ts'
 import type { BackupsAutomaticos } from './backup.ts'
+import type { ApkDoCampo } from './campo/apk.ts'
+import type { Pareamentos } from './campo/pareamento.ts'
+import type { RepositorioCampo } from './campo/repositorio.ts'
 import type { Banco } from './db.ts'
 import type { Repositorio } from './repositorio.ts'
 import type { TempoReal } from './tempoReal.ts'
@@ -22,4 +25,13 @@ export interface Contexto {
    * cria (criarApp), com conferir, instalar, remover e o histórico além do contrato (ServicoCertificadoDigitalCompleto).
    */
   certificadoDigital?: ServicoCertificadoDigital
+  /** O app do celular do técnico (1.1.0, server/campo/): os celulares, os envios, os registros e o APK. */
+  campo?: ServicosCampo
+}
+
+/** Os serviços do app do celular do técnico. */
+export interface ServicosCampo {
+  repo: RepositorioCampo
+  pareamentos: Pareamentos
+  apk: ApkDoCampo
 }

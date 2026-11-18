@@ -50,6 +50,7 @@ import {
   TIPOS_DA_FINALIDADE,
   type FinalidadeArquivo,
 } from '#shared/arquivos.ts'
+import { jsonCanonico } from '#shared/campo/canonico.ts'
 import { somenteDigitos, normalizarCnpj } from '#shared/documentos.ts'
 import { MARCA_FOLHA_REGRAS_105, MARCA_FOLHA_REGRAS_106, numeroDaFolha } from '#shared/folhaCampo.ts'
 import { novoId } from '#shared/id.ts'
@@ -86,6 +87,7 @@ import { type Banco, gravarMeta, lerMeta, temLeituraMedida, transacao } from './
 import { ErroApi } from './erros.ts'
 import type { RegistroCertificadoDigital } from '#shared/tipos.ts'
 import type { DadosCertificadoDigital, PublicoParaRemontar } from './assinatura/contrato.ts'
+import { celularDasFolhas, resumoCampoPainel } from './campo/repositorio.ts'
 
 interface LinhaCertificadoDigital {
   sha256: string
@@ -436,7 +438,8 @@ export interface FiltroCalibracoes {
  * substituídas e as que não vão ser usadas. `de`/`ate` (AAAA-MM-DD): o dia da primeira impressão, no horário daqui.
  */
 export interface FiltroFolhasCampo {
-  situacao?: '' | 'NAO_LIGADAS' | 'LIGADAS' | 'NAO_USADAS'
+  /** `CELULAR` (1.1.0): as folhas enviadas a um celular ou com registro de campo. */
+  situacao?: '' | 'NAO_LIGADAS' | 'LIGADAS' | 'NAO_USADAS' | 'CELULAR'
   busca?: string
   de?: string
   ate?: string
@@ -1401,7 +1404,17 @@ export class Repositorio {
    * a calibração dele também (confere que foi ele: com a revisão por outra pessoa, quem a digitou pode emitir). Ver
    * `quemDefineOTecnico`: quem escolheu o técnico não autoriza.
    */
-  atualizarCalibracao(id: string, entrada: unknown, autor: { id: string }): Calibracao {
+  atualizarCalibracao(
+    id: string,
+    entrada: unknown,
+    autor: { id: string },
+    /**
+     * `tecnicoConfirmado` (1.1.0, "Puxar dados do campo"): o técnico que assinou a folha no celular confirmou que a
+     * executou; com ele como técnico, ele passa a ser quem o definiu (como quando grava a calibração dele), e quem puxou
+     * os dados não fica impedido de autorizar (`quemDefineOTecnico`).
+     */
+    opcoes: { tecnicoConfirmado?: string } = {},
+  ): Calibracao {
     const valor = validar(normalizarCalibracao(entrada))
     return transacao(this.db, () => {
       const atual = this.obterCalibracao(id)
@@ -1428,13 +1441,56 @@ export class Repositorio {
         // A data de emissão é dada na emissão
         dataEmissao: '',
         tecnicoId,
-        tecnicoDefinidoPorId: quemDefineOTecnico(atual, tecnicoId, autor.id),
+        tecnicoDefinidoPorId:
+          opcoes.tecnicoConfirmado && tecnicoId === opcoes.tecnicoConfirmado
+            ? opcoes.tecnicoConfirmado
+            : quemDefineOTecnico(atual, tecnicoId, autor.id),
         versao: atual.versao + 1,
         atualizadoEm: this.agora().toISOString(),
       }
       this.gravarCalibracao(k, false)
       this.mudou('calibracao', id)
       return k
+    })
+  }
+
+  /**
+   * A justificativa das diferenças com o registro de campo depois de puxar (1.1.0; um texto só, com quem e quando; null
+   * tira). Só na calibração em andamento, com a conferência da versão (409 CONFLITO); a versão sobe.
+   */
+  gravarJustificativaCampo(id: string, justificativa: Calibracao['campoJustificativa'] | null, versao?: number): Calibracao {
+    return transacao(this.db, () => {
+      const atual = this.obterCalibracao(id)
+      if (!atual) throw new ErroApi(404, 'Calibração não encontrada.')
+      if (atual.status !== 'RASCUNHO' && atual.status !== 'REVISAO')
+        throw new ErroApi(409, 'Este certificado já foi emitido e não pode mais ser alterado.')
+      if (versao !== undefined && versao !== atual.versao) throw conflito('esta calibração')
+      const { campoJustificativa: _antes, ...resto } = atual
+      const k: Calibracao = {
+        ...resto,
+        ...(justificativa ? { campoJustificativa: justificativa } : {}),
+        versao: atual.versao + 1,
+        atualizadoEm: this.agora().toISOString(),
+      }
+      this.gravarCalibracao(k, false)
+      this.mudou('calibracao', id)
+      return k
+    })
+  }
+
+  /**
+   * A versão da calibração em andamento sobe sem mudar os dados (o envio da folha ao celular, 1.1.0): o editor aberto
+   * antes recebe 409 CONFLITO na próxima gravação e recarrega. Devolve a versão nova (a do certificado concluído não muda).
+   */
+  incrementarVersao(id: string): number {
+    return transacao(this.db, () => {
+      const atual = this.obterCalibracao(id)
+      if (!atual) throw new ErroApi(404, 'Calibração não encontrada.')
+      if (atual.status !== 'RASCUNHO' && atual.status !== 'REVISAO') return atual.versao
+      const k: Calibracao = { ...atual, versao: atual.versao + 1, atualizadoEm: this.agora().toISOString() }
+      this.gravarCalibracao(k, false)
+      this.mudou('calibracao', id)
+      return k.versao
     })
   }
 
@@ -1832,6 +1888,8 @@ export class Repositorio {
    * impressão; '' = nenhum. `eventos`: os nºs reservados agora, para o registro de atividades. `ordemServico` e
    * `dataPrevista`: a OS e a data prevista da visita impressas na folha avulsa (passam para a calibração a que ela for
    * ligada; ver `vincularFolhaCampo`).
+   * `contarImpressao: false`: "Enviar para o técnico" (1.1.0) reserva a mesma folha sem contar uma impressão (a folha
+   * nova nasce com 0 impressões; a já impressa não ganha mais uma).
    */
   reservarFolhaCampo(e: {
     chave: string
@@ -1842,6 +1900,7 @@ export class Repositorio {
     dataPrevista?: string
     por: string
     nova?: boolean
+    contarImpressao?: boolean
   }): FolhaCampoImpressa & {
     nova: boolean
     pdf: Buffer | null
@@ -1874,10 +1933,12 @@ export class Repositorio {
           )
       }
       const existente = (e.nova ? null : atual) ?? porChave
+      const contar = e.contarImpressao !== false
       if (existente) {
-        this.db
-          .prepare('UPDATE folhas_campo SET impressoes = impressoes + 1, ultima_em = ? WHERE numero = ?')
-          .run(agora, existente.numero)
+        if (contar)
+          this.db
+            .prepare('UPDATE folhas_campo SET impressoes = impressoes + 1, ultima_em = ? WHERE numero = ?')
+            .run(agora, existente.numero)
         // A folha desta calibração que ficou sem dono (a versão anterior soltava a substituída): volta a ser dela
         if (e.calibracaoId && !atual)
           this.db
@@ -1909,8 +1970,8 @@ export class Repositorio {
       const numero = `FC-${ano}-${String(sequencia).padStart(5, '0')}`
       this.db
         .prepare(
-          `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, ordem_servico, data_prevista, impressa_por, impressa_em, ultima_em)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO folhas_campo (numero, ano, sequencia, chave, calibracao_id, balanca_id, cliente_id, ordem_servico, data_prevista, impressa_por, impressa_em, ultima_em, impressoes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           numero,
@@ -1927,6 +1988,7 @@ export class Repositorio {
           e.por.slice(0, 120),
           agora,
           agora,
+          contar ? 1 : 0,
         )
       // Folha nova: a que a calibração tinha fica registrada como substituída por esta (não usada)
       const troca = e.nova && e.calibracaoId ? this.substituirFolhas(e.calibracaoId, numero, agora) : semTroca()
@@ -2744,6 +2806,65 @@ export class Repositorio {
    * a do certificado revisado (`herdada`); null: sem folha, folha impressa sem POP registrado ou antes de o sistema
    * guardar isso, ou a revisão não existe mais neste banco (cópia de segurança antiga).
    */
+  /** A linha da folha (para o envio ao celular de uma folha já impressa, pelo nº), ou undefined. */
+  linhaDaFolha(numero: string):
+    | {
+        numero: string
+        chave: string
+        calibracao_id: string
+        balanca_id: string
+        cliente_id: string
+        ordem_servico: string
+        data_prevista: string
+        substituida_por: string
+      }
+    | undefined {
+    return this.db
+      .prepare(
+        `SELECT numero, chave, calibracao_id, balanca_id, cliente_id, ordem_servico, data_prevista, substituida_por
+           FROM folhas_campo WHERE numero = ?`,
+      )
+      .get(numero) as ReturnType<Repositorio['linhaDaFolha']>
+  }
+
+  /** A folha de uma `chave` (a avulsa pedida de novo com a mesma chave), ou undefined. */
+  linhaDaFolhaPorChave(chave: string): ReturnType<Repositorio['linhaDaFolha']> {
+    const l = this.db.prepare('SELECT numero FROM folhas_campo WHERE chave = ?').get(chave) as { numero: string } | undefined
+    return l ? this.linhaDaFolha(l.numero) : undefined
+  }
+
+  /**
+   * Os dados impressos congelados da folha (1.1.0: o DadosFolhaCampo da primeira impressão ou do primeiro envio, em JSON
+   * canônico, com o sha256), ou null na folha impressa antes (ou ainda sem eles).
+   */
+  dadosImpressos<T = unknown>(numero: string): { dados: T; sha256: string } | null {
+    const l = this.db.prepare('SELECT dados_impressos, dados_sha256 FROM folhas_campo WHERE numero = ?').get(numero) as
+      { dados_impressos: string; dados_sha256: string } | undefined
+    if (!l || !l.dados_sha256 || !l.dados_impressos) return null
+    try {
+      return { dados: JSON.parse(l.dados_impressos) as T, sha256: l.dados_sha256 }
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Congela os dados impressos da folha, se ainda não estão (a primeira impressão ou o primeiro envio; um gatilho impede
+   * mudá-los depois). Devolve os congelados (os de agora ou os de antes).
+   */
+  congelarDadosImpressos<T>(numero: string, dados: T): { dados: T; sha256: string } {
+    return transacao(this.db, () => {
+      const antes = this.dadosImpressos<T>(numero)
+      if (antes) return antes
+      const texto = jsonCanonico(dados)
+      const sha256 = createHash('sha256').update(texto, 'utf8').digest('hex')
+      this.db
+        .prepare("UPDATE folhas_campo SET dados_impressos = ?, dados_sha256 = ? WHERE numero = ? AND dados_sha256 = ''")
+        .run(texto, sha256, numero)
+      return this.dadosImpressos<T>(numero) ?? { dados: JSON.parse(texto) as T, sha256 }
+    })
+  }
+
   popDaFolhaDaCalibracao(calibracaoId: string): { pop: VersaoPop; herdada: boolean } | null {
     const folha = this.folhaCampoDaCalibracao(calibracaoId)
     if (!folha) return null
@@ -3384,6 +3505,12 @@ export class Repositorio {
       condicoes.push(`x.situacao_folha IN (${daSituacao.map(() => '?').join(', ')})`)
       params.push(...daSituacao)
     }
+    // As folhas que foram para um celular (algum envio) ou que têm registro de campo (também o órfão ligado a ela)
+    if (filtro.situacao === 'CELULAR')
+      condicoes.push(
+        `(x.numero IN (SELECT numero FROM folhas_campo_envios)
+          OR x.numero IN (SELECT CASE WHEN ligado_a <> '' THEN ligado_a ELSE numero END FROM registros_campo))`,
+      )
     // O dia da impressão no horário daqui (a data gravada é ISO, em UTC)
     const inicioDoDia = (d: string) => new Date(`${d}T00:00:00`).toISOString()
     if (dataIsoValida(filtro.de)) {
@@ -3482,6 +3609,12 @@ export class Repositorio {
       .all(...params, limite, (pagina - 1) * limite) as Array<Record<string, string | number | null>>
     const texto = (v: string | number | null | undefined) => (v === null || v === undefined ? '' : String(v))
     const { exigirRevisor } = this.obterConfig()
+    // O celular de cada folha (1.1.0): o envio mais recente e o registro que voltou
+    const celulares = celularDasFolhas(
+      this.db,
+      linhas.map((l) => texto(l.numero)),
+      this.nomesUsuarios(),
+    )
     return {
       total,
       itens: linhas.map((l): FolhaCampoListada => {
@@ -3504,7 +3637,8 @@ export class Repositorio {
           ...(l.n_situacao ? { situacaoNumero: texto(l.n_situacao) as SituacaoNumero } : {}),
           impressaEm: texto(l.impressa_em),
           impressaPor: texto(l.impressa_por),
-          impressoes: Number(l.impressoes) || 1,
+          // A folha que só foi enviada ao celular (1.1.0) tem 0 impressões; a de antes sem o número, 1
+          impressoes: l.impressoes === null || l.impressoes === undefined ? 1 : Number(l.impressoes),
           // A primeira impressão não terminou (sem o PDF): não há o que reimprimir
           ...(l.sem_pdf && this.impressaoInterrompida(texto(l.impressa_em)) ? { impressaoInterrompida: true } : {}),
           situacao,
@@ -3527,6 +3661,7 @@ export class Repositorio {
           ...(situacao === 'descartada'
             ? { motivo: texto(l.n_motivo), descartadaEm: texto(l.n_situacao_em), descartadaPor: texto(l.n_situacao_por) }
             : {}),
+          ...(celulares.has(texto(l.numero)) ? { celular: celulares.get(texto(l.numero))! } : {}),
         }
       }),
     }
@@ -3825,6 +3960,8 @@ export class Repositorio {
       clientes: contar('SELECT COUNT(*) AS n FROM clientes WHERE ativo = 1'),
       balancas: contar('SELECT COUNT(*) AS n FROM balancas WHERE ativo = 1'),
       aguardandoAssinatura: contar(`SELECT COUNT(*) AS n FROM calibracoes k WHERE ${ASSINATURA_PENDENTE}`),
+      // O app do celular (1.1.0): o que voltou do campo e o que passou da data e ainda está no celular
+      campo: resumoCampoPainel(this.db, hoje, this.nomesUsuarios()),
     }
   }
 }
