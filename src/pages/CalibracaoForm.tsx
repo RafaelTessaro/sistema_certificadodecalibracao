@@ -1177,7 +1177,7 @@ function EditorCalibracao({ id }: { id: string }) {
     return recolher('Certificado emitido com os dados digitados no computador', {
       titulo: `A folha ${campo.envio.numero} ainda está no ${celularDe(nomeTecnicoCampo)}`,
       descricao:
-        'Para emitir, o sistema pede ao celular para recolher a folha. Se o técnico já tiver começado, ela volta preenchida e fica guardada, marcada como “depois de recolhida”.',
+        'Para emitir, o sistema pede ao celular para recolher a folha. Se o técnico já tiver começado, ela volta preenchida quando o celular entregar e fica guardada com o certificado, para comparar (nada muda nele).',
       confirmar: 'Recolher e continuar',
     })
   }

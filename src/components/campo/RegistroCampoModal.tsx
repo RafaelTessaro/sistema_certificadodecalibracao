@@ -34,7 +34,7 @@ import { LOCAIS } from '#shared/dominio.ts'
 import type { Balanca, RegistroCampoDetalhe } from '#shared/tipos.ts'
 import { BalancaFormModal } from '../BalancaFormModal'
 import { api, ErroApi } from '../../lib/api'
-import { MARCA_REGISTRO, quando, rotuloDoCampo, rotuloDoDesfecho, selosDasMarcas } from '../../lib/campo'
+import { celularDe, MARCA_REGISTRO, quando, rotuloDoCampo, rotuloDoDesfecho, selosDasMarcas } from '../../lib/campo'
 import { cn } from '../../lib/cn'
 import { dataHora } from '../../lib/format'
 import { useTempoReal } from '../../store/tempoReal'
@@ -89,7 +89,7 @@ export function RegistroCampoModal({
       }
       descricao={
         atual
-          ? `Voltou do celular de ${atual.registro.tecnico || 'técnico'} ${quando(atual.registro.recebidoEm)}${
+          ? `Voltou do ${celularDe(atual.registro.tecnico)} ${quando(atual.registro.recebidoEm)}${
               atual.registro.celular ? ` · ${atual.registro.celular}` : ''
             }`
           : 'Carregando…'

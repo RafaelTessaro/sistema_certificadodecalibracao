@@ -75,7 +75,9 @@ export function PassoIndicacao({ f, foco, aoFocar }: PropsPasso) {
     return null
   }
 
-  const acrescentarPonto = () => {
+  // O foco vai para a carga do ponto novo pelo `selecionar` da tabela, que antes grava a leitura digitada e ainda não
+  // confirmada (como o toque noutra célula): acrescentar um ponto nunca descarta o que estava no teclado
+  const acrescentarPonto = (ctx: ContextoTabela) => {
     const id = `cel-${novoId()}`
     void gravar(
       (x) =>
@@ -90,7 +92,7 @@ export function PassoIndicacao({ f, foco, aoFocar }: PropsPasso) {
           crescente: null,
           decrescente: null,
         }),
-    ).then((nova) => nova && aoFocar(`indicacao.pontos.${id}.cargaAplicada`))
+    ).then((nova) => nova && ctx.selecionar(`indicacao.pontos.${id}.cargaAplicada`))
   }
 
   const linhaPonto = (p: PontoCampo, n: number, ctx: ContextoTabela) => (
@@ -203,7 +205,7 @@ export function PassoIndicacao({ f, foco, aoFocar }: PropsPasso) {
           </tbody>
         </table>
         <div className="px-4 pt-3">
-          <Botao onClick={acrescentarPonto}>+ Acrescentar ponto</Botao>
+          <Botao onClick={() => acrescentarPonto(ctx)}>+ Acrescentar ponto</Botao>
         </div>
       </div>
     )

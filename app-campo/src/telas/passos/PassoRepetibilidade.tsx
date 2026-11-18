@@ -129,10 +129,11 @@ export function PassoRepetibilidade({ f, foco, aoFocar }: PropsPasso) {
       {!pacote?.plano && (
         <Botao
           onClick={() => {
+            // Pelo `selecionar`: a leitura digitada e ainda não confirmada é gravada antes de o foco ir para o ensaio novo
             const id = `cel-${novoId()}`
             void gravar(
               (x) => void x.passos.repetibilidade.push({ id, cargaPrevista: '', cargaAplicada: null, leituras: [] }),
-            ).then((nova) => nova && aoFocar(`repetibilidade.${id}.cargaAplicada`))
+            ).then((nova) => nova && ctx.selecionar(`repetibilidade.${id}.cargaAplicada`))
           }}
         >
           + Acrescentar ensaio

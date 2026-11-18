@@ -244,6 +244,14 @@ export function acoesDeRecolher(
   return { recolher: ativo && !c.recolherPedido, forcar: ativo && admin }
 }
 
+/**
+ * "Enviar de novo": a folha recolhida que não voltou com dados vai outra vez para um celular, a mesma folha, com o mesmo
+ * nº (a avulsa não tem editor para isso). O servidor recusa a substituída, a que já está num celular e a que voltou.
+ */
+export function podeEnviarDeNovo(c: Pick<CelularDaFolha, 'situacao' | 'registroId'>): boolean {
+  return c.situacao === 'RECOLHIDA' && !c.registroId
+}
+
 /** O aviso de "Enviar para o técnico", pelo registro original. */
 export function avisoDoEnvio(registroOriginal: RegistroOriginal): string {
   return registroOriginal === 'PAPEL'

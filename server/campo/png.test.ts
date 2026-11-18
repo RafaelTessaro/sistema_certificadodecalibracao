@@ -10,6 +10,7 @@ import {
   ihdrPng,
   linhasPng,
   pngDeBlocos,
+  pngRgbaComTextoGrande,
   pngRgbaFiltroInvalido,
   pngRgbaIdatQueNaoEZlib,
   pngRgbaValido,
@@ -53,7 +54,18 @@ describe('pngDecodificavel', () => {
     expect(pngDecodificavel(pngDeBlocos([ihdr, blocoPng('tEXt', Buffer.alloc(4), 4000), idat(80, 30, 4)]))).toBe(false)
   })
 
-  it('só o PNG simples: 8 bits, sem entrelaçamento, a paleta no tipo 3 e o tRNS onde ele vale', () => {
+  it('tEXt grande não passa (o png-js estoura a pilha ao ler o texto); o pequeno, sim', () => {
+    const grande = pngRgbaComTextoGrande()
+    expect(validarPng(grande)).toBeNull()
+    expect(pngDecodificavel(grande)).toBe(false)
+    // Sem o NUL, a chave fica com o bloco quase inteiro: o limite é o mesmo
+    const semNul = blocoPng('tEXt', Buffer.alloc(200_000, 0x61))
+    expect(pngDecodificavel(pngDeBlocos([ihdrPng({ largura: 80, altura: 30 }), semNul, idat(80, 30, 4)]))).toBe(false)
+    const pequeno = blocoPng('tEXt', Buffer.from('k\0abc', 'latin1'))
+    expect(pngDecodificavel(pngDeBlocos([ihdrPng({ largura: 80, altura: 30 }), pequeno, idat(80, 30, 4)]))).toBe(true)
+  })
+
+  it('só o PNG simples: 8 bits, sem entrelaçamento, a paleta e o tRNS só no tipo 3', () => {
     const corpo = idat(80, 30, 4)
     expect(pngDecodificavel(pngDeBlocos([ihdrPng({ largura: 80, altura: 30, entrelacamento: 1 }), corpo]))).toBe(false)
     expect(pngDecodificavel(pngDeBlocos([ihdrPng({ largura: 80, altura: 30, bits: 16 }), corpo]))).toBe(false)
@@ -61,11 +73,21 @@ describe('pngDecodificavel', () => {
     // tRNS com o canal alfa: o png-js não pula o bloco e se perde
     const trns = blocoPng('tRNS', Buffer.alloc(6))
     expect(pngDecodificavel(pngDeBlocos([ihdrPng({ largura: 80, altura: 30 }), trns, corpo]))).toBe(false)
-    expect(pngDecodificavel(pngDeBlocos([ihdrPng({ largura: 80, altura: 30, cor: 2 }), trns, idat(80, 30, 3)]))).toBe(true)
+    // tRNS no RGB e no cinza: o pdfkit monta a máscara errada (12 números no RGB; no cinza, o byte alto, que esconde o
+    // preto e apaga o traço da assinatura)
+    expect(pngDecodificavel(pngDeBlocos([ihdrPng({ largura: 80, altura: 30, cor: 2 }), trns, idat(80, 30, 3)]))).toBe(false)
+    const trnsCinza = blocoPng('tRNS', Buffer.from([0x00, 0xff]))
+    expect(pngDecodificavel(pngDeBlocos([ihdrPng({ largura: 80, altura: 30, cor: 0 }), trnsCinza, idat(80, 30, 1)]))).toBe(false)
     // Paleta: obrigatória no tipo 3, recusada nos outros
     const plte = blocoPng('PLTE', Buffer.alloc(6, 0xff))
     expect(pngDecodificavel(pngDeBlocos([ihdrPng({ largura: 80, altura: 30, cor: 3 }), idat(80, 30, 1)]))).toBe(false)
     expect(pngDecodificavel(pngDeBlocos([ihdrPng({ largura: 80, altura: 30, cor: 3 }), plte, idat(80, 30, 1)]))).toBe(true)
+    // tRNS na paleta: até um por cor
+    const ihdr3 = ihdrPng({ largura: 80, altura: 30, cor: 3 })
+    const trnsCurto = blocoPng('tRNS', Buffer.from([0x00]))
+    expect(pngDecodificavel(pngDeBlocos([ihdr3, plte, trnsCurto, idat(80, 30, 1)]))).toBe(true)
+    const trnsLongo = blocoPng('tRNS', Buffer.from([0x00, 0xff, 0x80]))
+    expect(pngDecodificavel(pngDeBlocos([ihdr3, plte, trnsLongo, idat(80, 30, 1)]))).toBe(false)
     expect(pngDecodificavel(pngDeBlocos([ihdrPng({ largura: 80, altura: 30 }), plte, corpo]))).toBe(false)
     // O que nem é PNG
     expect(pngDecodificavel('data:image/png;base64,AAAA')).toBe(false)

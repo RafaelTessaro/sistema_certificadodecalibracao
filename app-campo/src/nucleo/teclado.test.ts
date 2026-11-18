@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import { podeRepetir, repetir, tecladoVazio, teclar, textoParaConfirmar } from './teclado.ts'
+import { calcularSha256Pacote, sha256Hex } from '../../../shared/campo/canonico.ts'
+import { APARELHO_EXEMPLO, pacotePlataforma, registroPlataforma, TECNICO_EXEMPLO } from '../../../shared/campo/exemplos.ts'
+import { resumoDoEnvio } from '../../../shared/campo/pacote.ts'
+import {
+  comecar,
+  editar,
+  folhaRecebida,
+  iniciarAssinaturas,
+  lerLeitura,
+  recebimentoConfirmado,
+  recomecarEnsaios,
+} from './folha.ts'
+import type { FolhaLocal } from './folha.ts'
+import { relogioFixo } from './relogio.ts'
+import {
+  gravarLeituraPendente,
+  leituraPendente,
+  podeRepetir,
+  repetir,
+  tecladoCom,
+  tecladoDaLeitura,
+  tecladoVazio,
+  teclar,
+  textoParaConfirmar,
+} from './teclado.ts'
 import type { EstadoTeclado } from './teclado.ts'
 
 const digitar = (teclas: string[], inicio: EstadoTeclado = tecladoVazio()) => teclas.reduce(teclar, inicio)
@@ -73,5 +97,82 @@ describe('o valor do "Repetir"', () => {
     expect(valorParaRepetir(r, 'excentricidade.posicoes.0.leitura')).toBe('')
     expect(valorParaRepetir(r, 'indicacao.pontos.p1.crescente')).toBeNull()
     expect(valorParaRepetir(r, 'ambiente.linhas.0.temperatura')).toBeNull()
+  })
+})
+
+describe('a leitura em foco e o que falta gravar', () => {
+  const agora = relogioFixo('2026-11-18T11:00:00.000Z').agora()
+
+  /** Uma folha em preenchimento com o registro completo da plataforma (ainda sem assinar). */
+  function folhaEmPreenchimento(): FolhaLocal & { registro: NonNullable<FolhaLocal['registro']> } {
+    const p = pacotePlataforma()
+    const recebida = folhaRecebida(resumoDoEnvio(p, 'ENVIADA'), p, calcularSha256Pacote(p, sha256Hex), agora)
+    const r = registroPlataforma()
+    r.assinaturas = { tecnico: null, cliente: null }
+    r.correcoesPosAssinatura = []
+    r.relogio.finalizadoEm = ''
+    return { ...comecar(recebimentoConfirmado(recebida, agora), TECNICO_EXEMPLO, APARELHO_EXEMPLO, agora), registro: r }
+  }
+
+  it('abrir uma leitura feita com "Repetir" mostra a marca, e só passar por ela não regrava nada', () => {
+    const f = folhaEmPreenchimento()
+    const campo = `repetibilidade.${f.registro.passos.repetibilidade[0].id}.leituras.1`
+    const gravada = lerLeitura(f.registro, campo)!
+    expect(gravada.via).toBe('repetir')
+    const aberto = tecladoDaLeitura(f.registro, campo)
+    expect(aberto).toEqual({ texto: gravada.valor, via: 'repetir' })
+    expect(leituraPendente(f.registro, campo, aberto)).toBeNull()
+    // Aberto como digitado (o que acontecia antes), "Próxima" ou o voltar regravariam a leitura sem a marca
+    expect(leituraPendente(f.registro, campo, tecladoCom(gravada.valor))).toEqual({ campo, texto: gravada.valor, via: 'teclado' })
+    // Digitar por cima volta a ser leitura digitada
+    expect(leituraPendente(f.registro, campo, teclar(teclar(aberto, '⌫'), '0'))).toMatchObject({ via: 'teclado' })
+    // Sem foco ou sem leitura gravada: o teclado vazio
+    expect(tecladoDaLeitura(f.registro, null)).toEqual(tecladoVazio())
+    expect(tecladoDaLeitura(f.registro, 'indicacao.pontos.nao-existe.crescente')).toEqual(tecladoVazio())
+  })
+
+  it('pendente: só o que confirmar gravaria (texto diferente do gravado, apagado ou outra marca)', () => {
+    const f = folhaEmPreenchimento()
+    const campo = `indicacao.pontos.${f.registro.passos.indicacao.pontos[2].id}.crescente`
+    const gravada = lerLeitura(f.registro, campo)!
+    expect(leituraPendente(f.registro, null, tecladoCom('1'))).toBeNull()
+    expect(leituraPendente(f.registro, campo, tecladoCom(gravada.valor))).toBeNull()
+    expect(leituraPendente(f.registro, campo, tecladoCom('150,02'))).toEqual({ campo, texto: '150,02', via: 'teclado' })
+    expect(leituraPendente(f.registro, campo, tecladoCom('150,'))).toEqual({ campo, texto: '150', via: 'teclado' })
+    expect(leituraPendente(f.registro, campo, tecladoVazio())).toEqual({ campo, texto: '', via: 'teclado' })
+    expect(leituraPendente(f.registro, campo, tecladoCom('1,2,3'))).toBeNull()
+  })
+
+  it('sair da tela sem "Próxima" grava o digitado como "Próxima" gravaria; de novo, não muda nada', () => {
+    const f = folhaEmPreenchimento()
+    const campo = `indicacao.pontos.${f.registro.passos.indicacao.pontos[2].id}.crescente`
+    const antes = lerLeitura(f.registro, campo)!
+    const p = leituraPendente(f.registro, campo, tecladoCom('150,02'))!
+    const depois = gravarLeituraPendente(f, p, 0, agora)
+    // Corrigir a digitação mantém a hora da observação; a correção vai para a trilha
+    expect(lerLeitura(depois.registro!, campo)).toEqual({ valor: '150,02', em: antes.em, via: 'teclado' })
+    expect(depois.registro!.trilha.at(-1)).toMatchObject({ campo, de: antes.valor, para: '150,02' })
+    // A mesma gravação outra vez (a tela gravou com "Próxima" e saiu logo em seguida): nada muda na leitura nem na trilha
+    const outraVez = gravarLeituraPendente(depois, p, 0, agora)
+    expect(lerLeitura(outraVez.registro!, campo)).toEqual(lerLeitura(depois.registro!, campo))
+    expect(outraVez.registro!.trilha).toEqual(depois.registro!.trilha)
+  })
+
+  it('não grava na tentativa nova (recomeçar), nem na folha que já não pode ser mudada, e não lança', async () => {
+    const f = folhaEmPreenchimento()
+    const campo = `indicacao.pontos.${f.registro.passos.indicacao.pontos[2].id}.crescente`
+    const p = leituraPendente(f.registro, campo, tecladoCom('150,02'))!
+    // Recomeçar os ensaios tira a tela: o digitado na tentativa de antes não entra na nova, que está vazia
+    const recomecada = recomecarEnsaios(f, 'Troca da célula de carga', agora)
+    expect(gravarLeituraPendente(recomecada, p, 0, agora)).toBe(recomecada)
+    expect(lerLeitura(recomecada.registro!, campo)).toBeNull()
+    // Na tentativa nova, o teclado aberto nela grava normalmente
+    expect(lerLeitura(gravarLeituraPendente(recomecada, p, 1, agora).registro!, campo)?.valor).toBe('150,02')
+    // Em assinatura (ou trancada) e entregue (sem o registro): a folha como está, sem erro
+    const emAssinatura = await iniciarAssinaturas(f, sha256Hex, agora)
+    expect(gravarLeituraPendente(emAssinatura, p, 0, agora)).toBe(emAssinatura)
+    const semRegistro = { ...f, registro: null }
+    expect(gravarLeituraPendente(semRegistro, p, 0, agora)).toBe(semRegistro)
+    expect(() => editar(emAssinatura, () => undefined, agora)).toThrow()
   })
 })

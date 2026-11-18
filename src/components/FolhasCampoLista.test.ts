@@ -189,6 +189,39 @@ describe('aba "Folhas de campo": a folha no celular (1.1.0)', () => {
     expect(t).not.toContain('Recolher do celular')
     expect(t).not.toContain('Recolher à força')
   })
+
+  it('a avulsa recolhida (o celular perdido, o técnico errado): "Enviar de novo", a mesma folha com o mesmo nº', () => {
+    entrar('COMUM')
+    const recolhida = celular({ situacao: 'RECOLHIDA' })
+    const h = tabela([folha({ celular: recolhida })])
+    expect(texto(h)).toContain('Enviar de novo')
+    expect(h).toContain('title="A mesma folha, com o mesmo nº, vai outra vez para o celular de um técnico"')
+    // A da calibração em andamento também (o mesmo nº que o editor mandaria)
+    const rascunho = { id: 'k2', status: 'RASCUNHO' as const, numero: '', clienteNome: 'Padaria Sol' }
+    expect(texto(tabela([folha({ situacao: 'ligada', calibracao: rascunho, celular: recolhida })]))).toContain('Enviar de novo')
+  })
+
+  it('"Enviar de novo" nunca para a que voltou com dados, a substituída, a que não vai ser usada ou a do emitido', () => {
+    entrar('ADMIN')
+    const recolhida = celular({ situacao: 'RECOLHIDA' })
+    const t = texto(
+      tabela([
+        // Voltou preenchida mesmo assim: para medir de novo, uma folha nova
+        folha({ numero: 'FC-2026-00045', celular: celular({ situacao: 'RECOLHIDA', registroId: 'r1' }) }),
+        folha({ numero: 'FC-2026-00044', situacao: 'substituida', substituidaPor: 'FC-2026-00046', celular: recolhida }),
+        folha({ numero: 'FC-2026-00043', situacao: 'descartada', motivo: 'Celular perdido.', celular: recolhida }),
+        folha({
+          numero: 'FC-2026-00042',
+          situacao: 'ligada',
+          calibracao: { id: 'k1', status: 'EMITIDO', numero: 'CC-2026-00107', clienteNome: 'Mercado Bom Preço' },
+          celular: recolhida,
+        }),
+        // Ainda no celular: recolher, não enviar de novo
+        folha({ numero: 'FC-2026-00041', celular: celular({ situacao: 'NO_CELULAR' }) }),
+      ]),
+    )
+    expect(t).not.toContain('Enviar de novo')
+  })
 })
 
 describe('Números não utilizados → aba "Folhas de campo"', () => {

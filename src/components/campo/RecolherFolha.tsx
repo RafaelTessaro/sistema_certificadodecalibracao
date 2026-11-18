@@ -1,14 +1,15 @@
 // Recolher a folha do celular fora do editor (1.1.0): a aba "Folhas de campo" e a ficha da balança, inclusive a folha
 // avulsa (em branco, só do cliente, da balança sem calibração), que não tem editor. "Recolher do celular" (quem pode
 // enviar pode recolher: na hora, se o celular ainda não baixou; senão, o pedido) e, só para o administrador, "Recolher à
-// força" (o celular perdido, roubado ou descadastrado nunca responde ao pedido). O editor da calibração usa a mesma
+// força" (o celular perdido, roubado ou descadastrado nunca responde ao pedido). Depois de recolhida (sem ter voltado com
+// dados), "Enviar de novo" manda a mesma folha, com o mesmo nº, para outro celular. O editor da calibração usa a mesma
 // janela para o "Recolher à força" da faixa.
 
 import { Loader2, Undo2 } from 'lucide-react'
 import { useState } from 'react'
 import type { CelularDaFolha } from '#shared/tipos.ts'
 import { api } from '../../lib/api'
-import { acoesDeRecolher, celularDe, primeiroNome } from '../../lib/campo'
+import { acoesDeRecolher, celularDe, podeEnviarDeNovo, primeiroNome } from '../../lib/campo'
 import { cn } from '../../lib/cn'
 import { useEhAdmin } from '../../store/sessao'
 import { useTempoReal } from '../../store/tempoReal'
@@ -28,23 +29,40 @@ export interface PedidoRecolher {
 /** O motivo quando a pessoa não escreve nenhum ("Recolher do celular"; à força, o motivo é obrigatório). */
 const MOTIVO_PADRAO = 'Recolhida pelo escritório'
 
-/** "Recolher do celular" e, só para o administrador, "Recolher à força" (nada fora de ENVIADA e NO_CELULAR). */
+/**
+ * "Recolher do celular" e, só para o administrador, "Recolher à força" (nada fora de ENVIADA e NO_CELULAR). Com
+ * `aoReenviar`, a folha recolhida que não voltou com dados ganha "Enviar de novo": a mesma folha, com o mesmo nº (a
+ * tela só passa `aoReenviar` quando a folha ainda pode ir, como a não ligada ou a da calibração em andamento).
+ */
 export function AcoesRecolher({
   numero,
   c,
   aoPedir,
+  aoReenviar,
   className,
 }: {
   numero: string
   c: CelularDaFolha
   aoPedir: (p: PedidoRecolher) => void
+  aoReenviar?: (numero: string) => void
   className?: string
 }) {
   const admin = useEhAdmin()
   const { recolher, forcar } = acoesDeRecolher(c, admin)
-  if (!recolher && !forcar) return null
+  const reenviar = !!aoReenviar && podeEnviarDeNovo(c)
+  if (!recolher && !forcar && !reenviar) return null
   return (
     <span className={cn('flex flex-wrap gap-x-3 gap-y-1', className)}>
+      {reenviar && (
+        <button
+          type="button"
+          onClick={() => aoReenviar?.(numero)}
+          title="A mesma folha, com o mesmo nº, vai outra vez para o celular de um técnico"
+          className="cursor-pointer text-xs font-medium text-brand-ink hover:underline"
+        >
+          Enviar de novo
+        </button>
+      )}
       {recolher && (
         <button
           type="button"

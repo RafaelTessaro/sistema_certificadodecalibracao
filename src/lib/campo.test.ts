@@ -14,6 +14,7 @@ import {
   mudouMedicao,
   novosRegistros,
   PENDENCIA_JUSTIFICATIVA,
+  podeEnviarDeNovo,
   quando,
   rotuloDoCampo,
   rotuloDoDesfecho,
@@ -126,6 +127,14 @@ describe('selos da folha no celular', () => {
     })
     for (const situacao of ['DEVOLVIDA', 'RECOLHIDA'] as const)
       expect(acoesDeRecolher(celular({ situacao }), true)).toEqual({ recolher: false, forcar: false })
+  })
+
+  it('"Enviar de novo" só para a folha recolhida que não voltou com dados (a mesma folha, o mesmo nº)', () => {
+    expect(podeEnviarDeNovo(celular({ situacao: 'RECOLHIDA' }))).toBe(true)
+    // Recolhida, mas voltou preenchida mesmo assim: para medir de novo, uma folha nova
+    expect(podeEnviarDeNovo(celular({ situacao: 'RECOLHIDA', registroId: 'r1' }))).toBe(false)
+    for (const situacao of ['ENVIADA', 'NO_CELULAR', 'DEVOLVIDA'] as const)
+      expect(podeEnviarDeNovo(celular({ situacao }))).toBe(false)
   })
 
   it('o desfecho fora da lista (registro com a marca FORMATO, app de outra versão) aparece como veio, sem quebrar', () => {

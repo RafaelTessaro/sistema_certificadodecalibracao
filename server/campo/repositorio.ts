@@ -697,12 +697,15 @@ export class RepositorioCampo {
       const agora = this.agora().toISOString()
       const imediato = e.forcar || (ativo.situacao === 'ENVIADA' && !ativo.baixado_em)
       if (imediato) {
+        // À força depois de um pedido em aberto (o celular sumiu): o motivo da força fica junto com o do pedido
+        const motivoFinal =
+          e.forcar && ativo.recolher_motivo ? `${ativo.recolher_motivo} · à força: ${motivo}` : ativo.recolher_motivo || motivo
         this.db
           .prepare(
             `UPDATE folhas_campo_envios SET situacao = 'RECOLHIDA', recolhido_em = ?, recolhido_por = ?, forcado = ?,
-                    recolher_motivo = CASE WHEN recolher_motivo = '' THEN ? ELSE recolher_motivo END WHERE id = ?`,
+                    recolher_motivo = ? WHERE id = ?`,
           )
-          .run(agora, e.por.slice(0, 120), e.forcar ? 1 : 0, motivo, ativo.id)
+          .run(agora, e.por.slice(0, 120), e.forcar ? 1 : 0, motivoFinal, ativo.id)
       } else if (!ativo.recolher_pedido_em) {
         this.db
           .prepare(

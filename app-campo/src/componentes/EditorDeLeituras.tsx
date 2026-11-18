@@ -1,10 +1,11 @@
 // O coração do app: a tabela do passo em cima, a leitura em foco no meio (40 sp, exatamente como digitada, com a
 // unidade) e o teclado do app embaixo. "Próxima" confirma, grava e vai para a próxima leitura na ORDEM FÍSICA
-// (nucleo/ordem.ts); tocar noutra célula confirma o que estava digitado e leva o foco para lá. Ao confirmar, os avisos
+// (nucleo/ordem.ts); tocar noutra célula confirma o que estava digitado e leva o foco para lá; o voltar do Android fecha
+// o teclado confirmando; sair da tela (◂, bolinhas, ⋯) também grava o que estava digitado. Ao confirmar, os avisos
 // daquela leitura aparecem embaixo dela (não interrompem: "Próxima" continua valendo, e o aviso vai para a Revisão).
 // Nada é preenchido sem um toque: a carga aparece ao lado, nunca dentro da leitura.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   avisosDaLeitura,
@@ -22,8 +23,16 @@ import type { FolhaLocal } from '../nucleo/folha.ts'
 import { proximoCampo } from '../nucleo/ordem.ts'
 import { relogioDoAparelho } from '../nucleo/relogio.ts'
 import { rotuloDoCampo, unidadeDoCampo } from '../nucleo/rotulos.ts'
-import { repetir, tecladoCom, teclar, textoParaConfirmar, valorParaRepetir } from '../nucleo/teclado.ts'
-import type { EstadoTeclado, Tecla } from '../nucleo/teclado.ts'
+import {
+  gravarLeituraPendente,
+  leituraPendente,
+  repetir,
+  tecladoDaLeitura,
+  teclar,
+  textoParaConfirmar,
+  valorParaRepetir,
+} from '../nucleo/teclado.ts'
+import type { EstadoTeclado, LeituraPendente, Tecla } from '../nucleo/teclado.ts'
 import { AvisoNaHora } from './Avisos.tsx'
 import { cn } from './base.tsx'
 import { TecladoNumerico } from './TecladoNumerico.tsx'
@@ -108,14 +117,36 @@ export function EditorDeLeituras({
   rotuloFim?: string
 }) {
   const { registro, pacote, envioId } = folha
-  const [teclado, setTeclado] = useState<EstadoTeclado>(() => tecladoCom(foco ? (lerLeitura(registro, foco)?.valor ?? '') : ''))
+  const [teclado, setTeclado] = useState<EstadoTeclado>(() => tecladoDaLeitura(registro, foco))
   const [avisosNovos, setAvisosNovos] = useState<{ campo: string; avisos: AvisoCampo[] } | null>(null)
 
-  // Ao trocar o foco, o teclado começa com a leitura gravada (para corrigir) ou vazio
+  // Ao trocar o foco, o teclado começa com a leitura gravada (para corrigir; a repetida continua repetida) ou vazio. Só
+  // quando o foco muda (o registro muda a cada gravação e apagaria o que está sendo digitado). Ajustado já no render, não
+  // num efeito: nunca há um instante com o foco novo e o texto da leitura de antes (que a gravação ao sair, abaixo,
+  // levaria para a leitura errada). `tentativas`: a tentativa dos ensaios em que o teclado abriu
+  const [aberto, setAberto] = useState(() => ({ foco, tentativas: registro.tentativas.length }))
+  if (aberto.foco !== foco) {
+    setAberto({ foco, tentativas: registro.tentativas.length })
+    setTeclado(tecladoDaLeitura(registro, foco))
+  }
+
+  // Sair da tela com uma leitura digitada e ainda não confirmada (◂ do cabeçalho, bolinhas, ⋯) grava o que está na
+  // tela, como o voltar do Android e o toque noutra célula: voltar nunca descarta nada. O que falta gravar é anotado
+  // depois de cada render (como em camadas.ts) e gravado ao desmontar, na fila das gravações
+  const pendente = useRef<{ leitura: LeituraPendente; tentativas: number } | null>(null)
   useEffect(() => {
-    setTeclado(tecladoCom(foco ? (lerLeitura(registro, foco)?.valor ?? '') : ''))
-    // Só quando o foco muda (o registro muda a cada gravação e apagaria o que está sendo digitado)
-  }, [foco]) // oxlint-disable-line react-hooks/exhaustive-deps
+    const leitura = leituraPendente(registro, foco, teclado)
+    pendente.current = leitura && { leitura, tentativas: aberto.tentativas }
+  })
+  useEffect(
+    () => () => {
+      const p = pendente.current
+      if (!p) return
+      const agora = relogioDoAparelho.agora()
+      void mudarFolha(envioId, (f) => gravarLeituraPendente(f, p.leitura, p.tentativas, agora))
+    },
+    [envioId],
+  )
 
   // As células com aviso ainda não conferido (▲): as contas do registro feitas uma vez para todas as leituras
   const comAviso = useMemo(() => {
@@ -145,9 +176,7 @@ export function EditorDeLeituras({
         avisar('Confira o número digitado.', 'erro')
         return
       }
-      const atual = lerLeitura(registro, campo)
-      const mudou = (atual?.valor ?? '') !== texto || (!!texto && teclado.via !== (atual?.via ?? 'teclado'))
-      if (mudou) {
+      if (leituraPendente(registro, campo, teclado)) {
         const agora = relogioDoAparelho.agora()
         // Corrigir a digitação mantém a hora da observação (confirmarLeitura)
         const nova = await mudarFolha(envioId, (f) =>

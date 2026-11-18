@@ -7,7 +7,8 @@ preenche no cliente, mesmo sem internet, e o celular entrega quando volta ao Wi-
 é o mesmo no celular, no computador e no papel.
 
 **Cadastrar o celular (uma vez).** No escritório, o administrador abre Usuários → Celulares dos técnicos → Cadastrar
-celular. No app, toque em **Ler o QR do computador** e crie o seu PIN (6 dígitos). Esqueceu o PIN? Peça ao escritório
+celular. No app, toque em **Ler o QR do computador** e crie o seu PIN (6 dígitos). Deixe **Data e hora automáticas**
+ligado nas configurações do celular: a hora de cada leitura vem do relógio dele. Esqueceu o PIN? Peça ao escritório
 **Parear de novo** e, no app, toque em **Menu → Esqueci o PIN**, leia o QR e crie um PIN novo: as folhas continuam no
 celular.
 
@@ -30,8 +31,9 @@ a cada toque: se o celular desligar, nada se perde.
 manutenção)? Use **Encerrar sem completar**, escolha Incompleta ou Não calibrada e escreva o motivo. Nunca invente um
 valor para conseguir assinar.
 
-**Recomeçar os ensaios.** Precisou medir tudo de novo? **Recomeçar os ensaios** guarda a tentativa anterior só para
-consulta e começa as leituras do zero.
+**Recomeçar os ensaios.** Só quando a balança precisou de manutenção no meio da calibração: no ⋯, **A balança precisou
+de manutenção: recomeçar os ensaios** guarda a tentativa anterior só para consulta e começa as leituras do zero. Para
+corrigir uma leitura digitada errado, basta tocar nela e digitar de novo.
 
 **Assinaturas e modo entrega.** Na Revisão, resolva o que estiver em **Falta para assinar**. Assine como você: PIN e o
 desenho com o dedo, com o celular deitado. Depois entregue o celular a quem acompanhou: a pessoa vê só as condições do

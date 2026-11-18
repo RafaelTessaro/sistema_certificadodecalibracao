@@ -585,6 +585,69 @@ describe('recolher', () => {
       payload: { motivo: 'Celular perdido', forcar: true },
     })
     expect(r.json()).toMatchObject({ imediato: true, envio: { situacao: 'RECOLHIDA', forcado: true } })
+    expect(envioNoBanco(envio.id).recolher_motivo).toBe('Celular perdido')
+    expect(auditoria('FOLHA_RECOLHIDA').at(-1)!.detalhe).toContain(`${envio.numero} · à força · Celular perdido`)
+  })
+
+  it('à força depois de um pedido em aberto: o motivo da força fica junto com o do pedido (e vai para a auditoria)', async () => {
+    const { envio } = await folhaNoCelular()
+    const pedido = await t.chamar('POST', `/api/folhas-campo/${envio.numero}/recolher`, {
+      cookie: t.cookieComum,
+      payload: { motivo: 'Recolhida pelo escritório' },
+    })
+    expect(pedido.json()).toMatchObject({ imediato: false, envio: { situacao: 'NO_CELULAR' } })
+    // O celular nunca responde: o administrador recolhe à força
+    const r = await t.chamar('POST', `/api/folhas-campo/${envio.numero}/recolher`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: '  Celular   roubado ', forcar: true },
+    })
+    expect(r.json()).toMatchObject({ imediato: true, envio: { situacao: 'RECOLHIDA', forcado: true } })
+    expect(r.json().envio.recolherMotivo).toBe('Recolhida pelo escritório · à força: Celular roubado')
+    expect(envioNoBanco(envio.id).recolher_motivo).toBe('Recolhida pelo escritório · à força: Celular roubado')
+    expect(auditoria('FOLHA_RECOLHIDA').at(-1)!.detalhe).toContain(`${envio.numero} · à força · Celular roubado`)
+  })
+
+  it('"Enviar de novo" (pelo nº) recusa a folha de uma calibração que não está mais em andamento', async () => {
+    const k = await c.calibracaoPronta()
+    await parearCelular(t)
+    const { envio } = await enviarCalibracao(t, k.id)
+    // Não baixada: recolhida na hora; depois, o certificado é emitido
+    await t.chamar('POST', `/api/folhas-campo/${envio.numero}/recolher`, { cookie: t.cookieAdmin, payload: { motivo: 'Papel' } })
+    const emitido = await c.emitir(t.ctx.repo.obterCalibracao(k.id)!)
+    expect(emitido.statusCode, emitido.body).toBe(200)
+    const de = await t.chamar('POST', `/api/folhas-campo/${envio.numero}/enviar-tecnico`, {
+      cookie: t.cookieAdmin,
+      payload: { tecnicoId: t.comumId },
+    })
+    expect(de.statusCode).toBe(409)
+    expect(de.json().erro).toMatch(/não está mais em andamento/)
+    expect(t.ctx.db.prepare('SELECT COUNT(*) AS n FROM folhas_campo_envios').get()).toEqual({ n: 1 })
+  })
+
+  it('"Enviar de novo" (pelo nº) recusa a avulsa marcada como "Não vai ser usada"', async () => {
+    await parearCelular(t)
+    const r = await t.chamar('POST', '/api/folha-campo/enviar-tecnico', {
+      cookie: t.cookieComum,
+      payload: { tecnicoId: t.comumId, balancaId: c.balanca.id, chave: 'chave-descartada-01' },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    const { numero } = r.json().envio as { numero: string }
+    await t.chamar('POST', `/api/folhas-campo/${numero}/recolher`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Celular perdido' },
+    })
+    const n = t.ctx.db.prepare('SELECT id FROM numeros_reservados WHERE folha = ?').get(numero) as { id: number }
+    const descarte = await t.chamar('POST', `/api/numeros-reservados/${n.id}/nao-utilizado`, {
+      cookie: t.cookieAdmin,
+      payload: { motivo: 'Papel perdido junto com o celular' },
+    })
+    expect(descarte.statusCode, descarte.body).toBe(200)
+    const de = await t.chamar('POST', `/api/folhas-campo/${numero}/enviar-tecnico`, {
+      cookie: t.cookieAdmin,
+      payload: { tecnicoId: t.comumId },
+    })
+    expect(de.statusCode).toBe(409)
+    expect(de.json().erro).toMatch(/Não vai ser usada/)
   })
 })
 

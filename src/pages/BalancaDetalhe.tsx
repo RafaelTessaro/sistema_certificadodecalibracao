@@ -449,8 +449,18 @@ export function BalancaDetalhe() {
                   <span className="tnum min-w-32 pt-0.5 text-sm font-medium text-ink">{f.numero}</span>
                   <span className="flex min-w-0 flex-1 flex-col items-start gap-1">
                     <SeloCelular c={f.celular} aoVerRegistro={setRegistroAberto} />
-                    {/* Também a folha avulsa desta balança (sem calibração, sem editor) */}
-                    <AcoesRecolher numero={f.numero} c={f.celular} aoPedir={setRecolhendo} />
+                    {/* Também a folha avulsa desta balança (sem calibração, sem editor); depois de recolhida, "Enviar
+                        de novo" manda a mesma folha (o mesmo nº), se ela ainda pode ir */}
+                    <AcoesRecolher
+                      numero={f.numero}
+                      c={f.celular}
+                      aoPedir={setRecolhendo}
+                      aoReenviar={
+                        balanca.ativo && (!f.calibracaoId || f.calibracaoId === emAndamento?.id)
+                          ? (numero) => setEnvio({ tipo: 'numero', numero })
+                          : undefined
+                      }
+                    />
                   </span>
                   {f.calibracaoId && (
                     <button
@@ -522,7 +532,9 @@ export function BalancaDetalhe() {
       <EnviarParaTecnicoModal
         alvo={envio}
         aoFechar={() => setEnvio(null)}
-        resumo={`${cliente?.nome ?? ''} · ${nome} ${capacidadeTexto(balanca)}${folha ? ` · folha ${folha.numero}` : ''}`}
+        resumo={`${cliente?.nome ?? ''} · ${nome} ${capacidadeTexto(balanca)}${
+          envio?.tipo === 'numero' ? ` · folha ${envio.numero}` : folha ? ` · folha ${folha.numero}` : ''
+        }`}
       />
       {registroAberto !== null && <RegistroCampo registroId={registroAberto} aoFechar={() => setRegistroAberto(null)} />}
       {recolhendo && <RecolherFolhaModal pedido={recolhendo} aoFechar={() => setRecolhendo(null)} />}

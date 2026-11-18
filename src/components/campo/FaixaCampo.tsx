@@ -56,7 +56,8 @@ export function FaixaCampo({
             <span className="tnum whitespace-nowrap">{registro.ligadoA || registro.numero}</span> voltou do campo
             <span className="font-normal">
               {' '}
-              ({registro.tecnico || nome || 'técnico'}, {quando(registro.recebidoEm)})
+              ({registro.tecnico || nome ? `${registro.tecnico || nome}, ` : ''}
+              {quando(registro.recebidoEm)})
             </span>
           </p>
           <p className="mt-0.5 text-[12.5px] opacity-90">

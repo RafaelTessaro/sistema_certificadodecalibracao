@@ -55,3 +55,14 @@ export const pngRgbaIdatQueNaoEZlib = () =>
 /** RGBA com o zlib certo e um filtro de linha que não existe (5): "Invalid filter algorithm" no mesmo callback. */
 export const pngRgbaFiltroInvalido = () =>
   pngDeBlocos([ihdrPng({ largura: L, altura: A }), blocoPng('IDAT', deflateSync(linhasPng(L, A, 4, 5)))])
+
+/**
+ * RGBA válida com um bloco tEXt de uns 200 KB (a data URL ainda cabe no limite do `validarPng`): o png-js passa o texto
+ * inteiro para o String.fromCharCode.apply e estoura a pilha ("Maximum call stack size exceeded").
+ */
+export const pngRgbaComTextoGrande = () =>
+  pngDeBlocos([
+    ihdrPng({ largura: L, altura: A }),
+    blocoPng('tEXt', Buffer.concat([Buffer.from('k\0', 'latin1'), Buffer.alloc(200_000, 0x61)])),
+    blocoPng('IDAT', deflateSync(linhasPng(L, A, 4))),
+  ])

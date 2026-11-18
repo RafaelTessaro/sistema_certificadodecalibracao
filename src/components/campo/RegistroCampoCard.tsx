@@ -44,6 +44,10 @@ export function CartaoRegistroCampo({
   if (!registro || registro.id === k.emissao?.campo?.registroId) return null
   const selos = selosDasMarcas(registro.marcas, registro.desfecho)
   const comparacao = campo.importacoes.filter((i) => i.registroId === registro.id && i.tipo === 'COMPARACAO').at(-1)
+  // A comparação feita no editor, antes de emitir (o piloto), foi com o rascunho, que pode ter mudado depois: não vale
+  // como conferência do certificado (as duas datas são ISO)
+  const antes = !!comparacao && !!k.emissao?.emitidoEm && comparacao.feitoEm < k.emissao.emitidoEm
+  const comparadoComCertificado = !!comparacao && !antes
   // Só o certificado que vale é comparado (o servidor recusa o cancelado; o substituído é uma versão antiga)
   const podeComparar = k.status === 'EMITIDO' && !!balanca
   const tecnico = k.emissao?.tecnico
@@ -58,9 +62,11 @@ export function CartaoRegistroCampo({
           </span>
         }
         descricao={
-          comparacao
-            ? `Comparado com o certificado em ${dataHora(comparacao.feitoEm)} por ${comparacao.feitoPor}.`
-            : 'A folha voltou do celular. Compare com o certificado: a comparação fica registrada e nada muda nele.'
+          !comparacao
+            ? 'A folha voltou do celular. Compare com o certificado: a comparação fica registrada e nada muda nele.'
+            : antes
+              ? `Comparado com o rascunho em ${dataHora(comparacao.feitoEm)} por ${comparacao.feitoPor}, antes da emissão.`
+              : `Comparado com o certificado em ${dataHora(comparacao.feitoEm)} por ${comparacao.feitoPor}.`
         }
         acoes={
           <span className="flex flex-wrap gap-2">
@@ -70,11 +76,11 @@ export function CartaoRegistroCampo({
             {podeComparar && (
               <Button
                 tamanho="sm"
-                variante={comparacao ? 'secondary' : 'primary'}
+                variante={comparadoComCertificado ? 'secondary' : 'primary'}
                 icone={<GitCompareArrows className="h-3.5 w-3.5" />}
                 onClick={() => setComparando(true)}
               >
-                {comparacao ? 'Comparar de novo' : 'Comparar com o campo'}
+                {comparadoComCertificado ? 'Comparar de novo' : 'Comparar com o campo'}
               </Button>
             )}
           </span>

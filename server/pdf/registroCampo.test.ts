@@ -21,7 +21,12 @@ import { registroInicial } from '#shared/campo/registro.ts'
 import { FRASE_ASSINATURA_CLIENTE } from '#shared/campo/resumoCliente.ts'
 import { TITULOS_PASSOS, type PacoteCampo, type RegistroCampo } from '#shared/campo/tipos.ts'
 import { EMPRESA_PADRAO } from '#shared/dominio.ts'
-import { pngRgbaFiltroInvalido, pngRgbaIdatQueNaoEZlib, pngRgbaValido } from '../campo/__fixtures__/pngTeste.ts'
+import {
+  pngRgbaComTextoGrande,
+  pngRgbaFiltroInvalido,
+  pngRgbaIdatQueNaoEZlib,
+  pngRgbaValido,
+} from '../campo/__fixtures__/pngTeste.ts'
 import { registroEmBrancoIncompleto, registroNaoCalibradaComTentativa } from './exemplosRegistroCampo.ts'
 import {
   definicaoRegistroCampo,
@@ -451,5 +456,13 @@ describe.runIf(temPdfimages)('folha impressa assinada: imagens das assinaturas (
     // A do canvas (RGBA) entra
     r.assinaturas.tecnico.png = pngRgbaValido()
     expect(imagensDoPdf(await gerar(r, pacotePlataforma()))).toEqual([expect.objectContaining({ largura: 120, altura: 40 })])
+  })
+
+  it('PNG com um bloco tEXt grande não vai para o pdfkit (o png-js estouraria a pilha e a folha daria erro): "ilegível"', async () => {
+    const r = registroPlataforma()
+    r.assinaturas.tecnico = { ...r.assinaturas.tecnico!, png: pngRgbaComTextoGrande() }
+    const pdf = await gerar(r, pacotePlataforma())
+    expect(imagensDoPdf(pdf)).toHaveLength(1)
+    if (temPdftotext) expect(corrido(textoDoPdf(pdf))).toContain('Imagem da assinatura ilegível.')
   })
 })

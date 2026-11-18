@@ -1,11 +1,14 @@
 // O teclado do app (7 8 9 ⌫ / 4 5 6 / 1 2 3 / ± 0 , Próxima), como um redutor puro: a leitura fica EXATAMENTE como foi
 // digitada ("100,0" continua "100,0"; nada é completado com zeros), com a vírgula decimal, o sinal na frente e o ⌫. A
 // tecla "Repetir" (a leitura anterior da mesma carga) existe só na repetibilidade e na excentricidade, uma leitura por
-// toque, e marca a leitura com `via: 'repetir'`. Um teclado físico também serve: o ponto vira vírgula. Puro.
+// toque, e marca a leitura com `via: 'repetir'`. Um teclado físico também serve: o ponto vira vírgula. Também o que está
+// digitado e ainda não foi gravado (a tela grava ao sair, como "Próxima" gravaria). Puro.
 
 import { REGEX_LEITURA } from '../../../shared/campo/registro.ts'
-import type { RegistroCampo, ViaLeitura } from '../../../shared/campo/tipos.ts'
+import type { Instante, RegistroCampo, ViaLeitura } from '../../../shared/campo/tipos.ts'
 import type { TipoLeituraCampo } from '../../../shared/campo/avisos.ts'
+import { confirmarLeitura, editar, lerLeitura, podeEditar } from './folha.ts'
+import type { FolhaLocal } from './folha.ts'
 
 export interface EstadoTeclado {
   /** O texto como está na tela ("100,0", "-0,", ""). */
@@ -23,6 +26,15 @@ export const tecladoVazio = (): EstadoTeclado => ({ texto: '', via: 'teclado' })
 
 /** O teclado com uma leitura que já estava gravada (para corrigir). */
 export const tecladoCom = (texto: string, via: ViaLeitura = 'teclado'): EstadoTeclado => ({ texto, via })
+
+/**
+ * O teclado ao abrir uma leitura (o foco foi para ela): a leitura gravada como está, com a marca de repetida se foi feita
+ * com "Repetir" (só passar por ela não a regrava como digitada), ou vazio.
+ */
+export function tecladoDaLeitura(registro: RegistroCampo, campo: string | null): EstadoTeclado {
+  const l = campo ? lerLeitura(registro, campo) : null
+  return tecladoCom(l?.valor ?? '', l?.via ?? 'teclado')
+}
 
 /** Uma tecla. Teclas que não cabem (segunda vírgula, algarismo além do limite) são ignoradas. */
 export function teclar(e: EstadoTeclado, tecla: Tecla | string): EstadoTeclado {
@@ -102,4 +114,35 @@ export function valorParaRepetir(registro: RegistroCampo, campo: string): string
   const exc = /^excentricidade\.posicoes\.(\d+)\.(leitura|zeroAntes)$/.exec(campo)
   if (exc) return registro.passos.excentricidade.posicoes[Number(exc[1]) - 1]?.[exc[2] as 'leitura' | 'zeroAntes']?.valor ?? ''
   return null
+}
+
+/** O que está no teclado e ainda não foi gravado na leitura em foco. */
+export interface LeituraPendente {
+  campo: string
+  texto: string
+  via: ViaLeitura
+}
+
+/**
+ * O que confirmar a leitura em foco gravaria: o texto a confirmar é outro que o gravado (ou a marca de repetida mudou).
+ * null = nada a gravar (sem foco, igual ao gravado ou não é uma leitura).
+ */
+export function leituraPendente(registro: RegistroCampo, campo: string | null, e: EstadoTeclado): LeituraPendente | null {
+  if (!campo) return null
+  const texto = textoParaConfirmar(e)
+  if (texto === null) return null
+  const gravada = lerLeitura(registro, campo)
+  const mudou = texto !== (gravada?.valor ?? '') || (!!texto && e.via !== (gravada?.via ?? 'teclado'))
+  return mudou ? { campo, texto, via: e.via } : null
+}
+
+/**
+ * Saiu da tela com uma leitura digitada e ainda não confirmada (◂ do cabeçalho, bolinhas, ⋯): grava como "Próxima"
+ * gravaria. Só se a folha ainda pode ser mudada e está na mesma tentativa dos ensaios em que o teclado abriu
+ * (`tentativas`): recomeçar os ensaios também tira a tela, e o digitado na tentativa de antes não entra na nova. Senão,
+ * a folha como está (sem gravar nada e sem erro: a folha pode ter sido entregue ou trancada nesse meio-tempo).
+ */
+export function gravarLeituraPendente(f: FolhaLocal, p: LeituraPendente, tentativas: number, agora: Instante): FolhaLocal {
+  if (!f.registro || !podeEditar(f) || f.registro.tentativas.length !== tentativas) return f
+  return editar(f, (r) => confirmarLeitura(r, p.campo, p.texto, p.via, agora), agora)
 }

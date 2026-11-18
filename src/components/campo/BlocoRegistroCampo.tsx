@@ -6,7 +6,7 @@
 import { Check, ClipboardList, Eye, Loader2, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 import type { CampoDaCalibracao } from '#shared/tipos.ts'
-import { quando, rotuloDoDesfecho, selosDasMarcas } from '../../lib/campo'
+import { celularDe, quando, rotuloDoDesfecho, selosDasMarcas } from '../../lib/campo'
 import { cn } from '../../lib/cn'
 import { dataHora } from '../../lib/format'
 import { Badge } from '../ui/Badge'
@@ -63,7 +63,7 @@ export function BlocoRegistroCampo({
             <span className="tnum font-medium whitespace-nowrap text-ink-2">{registro.ligadoA || registro.numero}</span>
           </span>
         }
-        descricao={`Voltou do celular de ${registro.tecnico || 'técnico'} ${quando(registro.recebidoEm)}${
+        descricao={`Voltou do ${celularDe(registro.tecnico)} ${quando(registro.recebidoEm)}${
           campo.registroOriginal === 'PAPEL' ? ' · piloto: o papel é o registro original' : ''
         }`}
         acoes={

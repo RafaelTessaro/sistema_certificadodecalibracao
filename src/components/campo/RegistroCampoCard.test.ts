@@ -91,6 +91,37 @@ describe('registro de campo no certificado emitido', () => {
     expect(t).toContain('Comparar de novo')
   })
 
+  it('a comparação feita no editor antes de emitir (piloto) foi com o rascunho: não vale como conferência do certificado', () => {
+    const comparacao: ImportacaoCampo = {
+      id: 'i1',
+      registroId: 'r1',
+      calibracaoId: 'k1',
+      tipo: 'COMPARACAO',
+      versaoAntes: 5,
+      versaoDepois: 5,
+      feitoEm: '2026-11-12T12:00:00.000Z',
+      feitoPor: 'Ana Ribeiro',
+      resumo: null,
+      observacao: '',
+    }
+    const emitido = calibracao({
+      emissao: { emitidoEm: '2026-11-12T15:30:00.000Z', emitidoPor: 'Ana Ribeiro' } as Calibracao['emissao'],
+    })
+    const h = cartao(campo({ registros: [registro({ piloto: true, marcas: ['PILOTO'] })], importacoes: [comparacao] }), emitido)
+    const t = texto(h)
+    expect(t).toContain('Comparado com o rascunho em 12/11/2026')
+    expect(t).toContain('por Ana Ribeiro, antes da emissão.')
+    expect(t).not.toContain('Comparado com o certificado')
+    // Ainda não comparado com o certificado: o botão é o principal, como na folha que nunca foi comparada
+    expect(t).toContain('Comparar com o campo')
+    expect(t).not.toContain('Comparar de novo')
+    // A comparação feita depois da emissão é a do certificado
+    const depois = { ...comparacao, id: 'i2', feitoEm: '2026-11-13T12:30:00.000Z' }
+    const t2 = texto(cartao(campo({ importacoes: [comparacao, depois] }), emitido))
+    expect(t2).toContain('Comparado com o certificado em 13/11/2026')
+    expect(t2).toContain('Comparar de novo')
+  })
+
   it('sem registro, ou o mesmo já congelado na emissão (puxado antes de emitir): nada', () => {
     expect(cartao(campo({ registros: [], registroId: '' }))).toBe('')
     const puxado = calibracao({

@@ -272,6 +272,13 @@ export async function rotasCelulares(app: FastifyInstance, ctx: Contexto, campo:
     if (!f) throw new ErroApi(404, `A folha ${numero} não existe.`)
     if (f.substituida_por)
       throw new ErroApi(409, `A folha ${numero} foi substituída pela ${f.substituida_por}: envie a folha nova.`)
+    // Como em POST /api/calibracoes/:id/enviar-tecnico: só a folha de uma calibração em andamento (também com os dados
+    // congelados); a folha sem calibração marcada como "Não vai ser usada" não vai mais para um celular
+    const ligada = f.calibracao_id ? repo.obterCalibracao(f.calibracao_id) : undefined
+    if (ligada && ligada.status !== 'RASCUNHO' && ligada.status !== 'REVISAO')
+      throw new ErroApi(409, `A folha ${numero} é de uma calibração que não está mais em andamento. Use uma folha nova.`)
+    if (!ligada && repo.folhaDescartada(numero))
+      throw new ErroApi(409, `A folha ${numero} foi marcada como "Não vai ser usada". Use uma folha nova.`)
     const pedido = lerPedidoEnvio(corpoDe(req))
     const tecnico = conferirDestino(pedido.tecnicoId)
     repoCampo.conferirEnviavel(numero)
@@ -337,7 +344,7 @@ export async function rotasCelulares(app: FastifyInstance, ctx: Contexto, campo:
     if (forcar && u.nivel !== 'ADMIN')
       throw new ErroApi(403, 'Só o administrador recolhe uma folha à força.', { codigo: 'SEM_PERMISSAO' })
     const { envio, imediato } = repoCampo.recolher(numero, { motivo: corpo.motivo, forcar, por: u.nome })
-    req.detalheAuditoria = `${numero} · ${forcar ? 'à força' : imediato ? 'na hora (o celular ainda não tinha baixado)' : 'pedido ao celular'}`
+    req.detalheAuditoria = `${numero} · ${forcar ? `à força · ${textoDeUmaLinha(corpo.motivo, 300)}` : imediato ? 'na hora (o celular ainda não tinha baixado)' : 'pedido ao celular'}`
     return { envio: repoCampo.envioParaLista(envio), imediato }
   })
 

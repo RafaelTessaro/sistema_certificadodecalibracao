@@ -2,8 +2,9 @@
 // cada uma foi impressa, o nº de certificado impresso nela (o que o técnico copia na etiqueta), quando e por quem, a
 // situação (ligada a uma calibração, não ligada, substituída por uma folha nova, não vai ser usada), o celular (1.1.0: a
 // folha enviada ao técnico, "No celular de Carlos desde 08:12", "Voltou do campo" e as marcas do registro, com "Recolher
-// do celular" e, só para o administrador, "Recolher à força", que valem também para a folha avulsa, sem editor) e o botão
-// de reimprimir: o PDF da primeira impressão, com os mesmos nºs (nunca um nº novo). Atualiza em tempo real.
+// do celular" e, só para o administrador, "Recolher à força", que valem também para a folha avulsa, sem editor; depois de
+// recolhida, "Enviar de novo", a mesma folha com o mesmo nº) e o botão de reimprimir: o PDF da primeira impressão, com os
+// mesmos nºs (nunca um nº novo). Atualiza em tempo real.
 
 import { Ban, CircleDashed, ClipboardList, Link2, Printer, RefreshCcw } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -25,6 +26,7 @@ import {
 import { cn } from '../lib/cn'
 import { usePode } from '../store/sessao'
 import { EsqueletoTabela } from '../pages/Clientes'
+import { EnviarParaTecnicoModal } from './campo/EnviarParaTecnicoModal'
 import { RegistroCampo } from './campo/preguicosos'
 import { AcoesRecolher, type PedidoRecolher, RecolherFolhaModal } from './campo/RecolherFolha'
 import { SeloCelular } from './campo/SeloCelular'
@@ -156,6 +158,8 @@ export function TabelaFolhas({ itens }: { itens: FolhaCampoListada[] }) {
   const [registro, setRegistro] = useState<string | null>(null)
   // A folha a recolher do celular (a janela com o motivo); a lista recarrega pelo tempo real
   const [recolhendo, setRecolhendo] = useState<PedidoRecolher | null>(null)
+  // A folha recolhida que vai de novo para um celular (a mesma folha, o mesmo nº)
+  const [reenviando, setReenviando] = useState<Reenvio | null>(null)
   // A coluna Celular só aparece quando alguma folha da página foi para um celular (1.1.0)
   const comCelular = itens.some((f) => !!f.celular)
   return (
@@ -184,6 +188,7 @@ export function TabelaFolhas({ itens }: { itens: FolhaCampoListada[] }) {
               comCelular={comCelular}
               aoVerRegistro={setRegistro}
               aoRecolher={setRecolhendo}
+              aoReenviar={setReenviando}
             />
           ))}
         </tbody>
@@ -191,9 +196,27 @@ export function TabelaFolhas({ itens }: { itens: FolhaCampoListada[] }) {
       {/* Montada só depois de aberta (a tabela também é desenhada fora do navegador, nos testes) */}
       {registro !== null && <RegistroCampo registroId={registro} aoFechar={() => setRegistro(null)} />}
       {recolhendo && <RecolherFolhaModal pedido={recolhendo} aoFechar={() => setRecolhendo(null)} />}
+      {reenviando && (
+        <EnviarParaTecnicoModal
+          alvo={{ tipo: 'numero', numero: reenviando.numero }}
+          aoFechar={() => setReenviando(null)}
+          resumo={reenviando.resumo}
+        />
+      )}
     </>
   )
 }
+
+/** A folha recolhida que vai de novo para um celular, com a linha do alto da janela ("Mercado Bom Preço · folha FC-…"). */
+interface Reenvio {
+  numero: string
+  resumo: string
+}
+
+/** A folha ainda pode ir para um celular: a não ligada ou a ligada a uma calibração em andamento. */
+const podeIrDeNovo = (f: FolhaCampoListada) =>
+  f.situacao === 'nao_ligada' ||
+  (f.situacao === 'ligada' && (f.calibracao?.status === 'RASCUNHO' || f.calibracao?.status === 'REVISAO'))
 
 function LinhaFolha({
   f,
@@ -201,12 +224,14 @@ function LinhaFolha({
   comCelular,
   aoVerRegistro,
   aoRecolher,
+  aoReenviar,
 }: {
   f: FolhaCampoListada
   indice: number
   comCelular: boolean
   aoVerRegistro: (id: string) => void
   aoRecolher: (p: PedidoRecolher) => void
+  aoReenviar: (r: Reenvio) => void
 }) {
   // Só o administrador marca a folha como “Não vai ser usada”: a dica da folha cuja impressão não terminou depende disso
   const podeDescartar = usePode('cancelarCertificado')
@@ -216,6 +241,19 @@ function LinhaFolha({
   const balanca = balancaDaFolha(f)
   const pre = preNumeroDaFolha(f)
   const impressa = quandoFoiImpressa(f)
+  // "Enviar de novo" (a folha recolhida que não voltou com dados): nunca a substituída nem a que não vai ser usada
+  const reenviar = podeIrDeNovo(f)
+    ? () => {
+        const resumo = [
+          para.vazio ? '' : para.cliente,
+          balanca.descricao ? balancaNaLista(balanca.descricao) : '',
+          `folha ${f.numero}`,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+        aoReenviar({ numero: f.numero, resumo: resumo.charAt(0).toUpperCase() + resumo.slice(1) })
+      }
+    : undefined
   return (
     <Linha indice={indice}>
       <Td>
@@ -281,7 +319,7 @@ function LinhaFolha({
         {f.celular && (
           <span className="mt-1.5 flex flex-col items-start gap-1 lg:hidden">
             <SeloCelular c={f.celular} compacto />
-            <AcoesRecolher numero={f.numero} c={f.celular} aoPedir={aoRecolher} />
+            <AcoesRecolher numero={f.numero} c={f.celular} aoPedir={aoRecolher} aoReenviar={reenviar} />
           </span>
         )}
       </Td>
@@ -290,7 +328,7 @@ function LinhaFolha({
           {f.celular ? (
             <span className="flex flex-col items-start gap-1">
               <SeloCelular c={f.celular} aoVerRegistro={aoVerRegistro} />
-              <AcoesRecolher numero={f.numero} c={f.celular} aoPedir={aoRecolher} />
+              <AcoesRecolher numero={f.numero} c={f.celular} aoPedir={aoRecolher} aoReenviar={reenviar} />
             </span>
           ) : (
             <span className="text-muted">—</span>

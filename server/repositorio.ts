@@ -2178,6 +2178,17 @@ export class Repositorio {
     return l ? numeroDaLinha(l) : null
   }
 
+  /**
+   * A folha marcada como "Não vai ser usada": o nº do certificado impresso nela foi registrado como não utilizado por
+   * alguém, sem calibração (`descartarNumeroReservado`). A mesma regra da situação 'descartada' de `listarFolhasCampo`
+   * (que vale para a folha sem calibração ligada).
+   */
+  folhaDescartada(numeroFolha: string): boolean {
+    const papel = this.numeroImpressoNaFolha(numeroFolha)
+    const n = papel ? this.linhaDoNumero(papel, numeroFolha) : null
+    return !!n && n.situacao === 'nao_utilizado' && !n.calibracaoId && n.folha === numeroFolha && n.situacaoPor !== ''
+  }
+
   /** "folha avulsa FC-2026-00042" ou "folha FC-2026-00042", para os registros e os motivos. */
   private rotuloFolha(numeroFolha: string): string {
     const l = this.db.prepare('SELECT chave FROM folhas_campo WHERE numero = ?').get(numeroFolha) as { chave: string } | undefined
