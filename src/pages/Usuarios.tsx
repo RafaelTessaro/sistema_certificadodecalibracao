@@ -1,6 +1,7 @@
 // Página Usuários (o "painel de administração"): quem acessa o sistema, o nível de cada um (Operador ou
 // Administrador), as marcas de técnico (executa as calibrações) e de signatário (autoriza os certificados com a
-// revisão por outra pessoa ligada), as ações sobre as contas, o que cada nível pode e o registro de atividades. Só o administrador chega aqui (a rota e o menu conferem a permissão
+// revisão por outra pessoa ligada), as ações sobre as contas, os celulares dos técnicos (o app BC Calibração, 1.1.0),
+// o que cada nível pode e o registro de atividades. Só o administrador chega aqui (a rota e o menu conferem a permissão
 // `usuarios`; o servidor também recusa).
 
 import {
@@ -22,6 +23,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { NOME_NIVEL } from '#shared/permissoes.ts'
 import type { ResultadoSenha, Usuario } from '#shared/tipos.ts'
 import { USUARIOS_MAX } from '#shared/usuarios.ts'
+import { CelularesTecnicos } from '../components/campo/CelularesTecnicos'
 import { abrirMinhaSenha } from '../components/sessao/minhaSenha'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
@@ -452,6 +454,9 @@ export function Usuarios() {
             </Tabela>
           )}
         </Card>
+
+        {/* O app do celular (1.1.0): os celulares de quem vai a campo e o registro original */}
+        {usuarios && <CelularesTecnicos usuarios={lista} aoMudar={registrarAcao} />}
 
         <AtividadeRecente usuarios={lista} atualizar={versaoAtividade} />
 

@@ -1,6 +1,7 @@
 // Página Certificados, aba "Folhas de campo": todas as folhas impressas, da mais nova para a mais antiga — para quem
 // cada uma foi impressa, o nº de certificado impresso nela (o que o técnico copia na etiqueta), quando e por quem, a
-// situação (ligada a uma calibração, não ligada, substituída por uma folha nova, não vai ser usada) e o botão de
+// situação (ligada a uma calibração, não ligada, substituída por uma folha nova, não vai ser usada), o celular (1.1.0: a
+// folha enviada ao técnico, "No celular do Maurício desde 08:12", "Voltou do campo" e as marcas do registro) e o botão de
 // reimprimir: o PDF da primeira impressão, com os mesmos nºs (nunca um nº novo). Atualiza em tempo real.
 
 import { Ban, CircleDashed, ClipboardList, Link2, Printer, RefreshCcw } from 'lucide-react'
@@ -23,6 +24,8 @@ import {
 import { cn } from '../lib/cn'
 import { usePode } from '../store/sessao'
 import { EsqueletoTabela } from '../pages/Clientes'
+import { RegistroCampo } from './campo/preguicosos'
+import { SeloCelular } from './campo/SeloCelular'
 import { rotaCalibracao } from './CertificadosTabela'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
@@ -147,31 +150,50 @@ export function FolhasCampoLista() {
 
 /** A tabela das folhas (sem os filtros), da mais nova para a mais antiga. */
 export function TabelaFolhas({ itens }: { itens: FolhaCampoListada[] }) {
+  // O registro de campo aberto (a folha que voltou do celular)
+  const [registro, setRegistro] = useState<string | null>(null)
+  // A coluna Celular só aparece quando alguma folha da página foi para um celular (1.1.0)
+  const comCelular = itens.some((f) => !!f.celular)
   return (
-    <Tabela>
-      <thead>
-        <tr>
-          <Th>Folha</Th>
-          {/* Cliente e Balança ficam com o espaço que sobra e cortam o texto comprido com "…" */}
-          <Th className="w-full md:w-[45%]">Cliente</Th>
-          <Th className="w-[55%] max-md:hidden">Balança</Th>
-          <Th className="max-sm:hidden">Nº do certificado</Th>
-          <Th className="max-sm:hidden">Situação</Th>
-          <Th className="w-8">
-            <span className="sr-only">Reimprimir</span>
-          </Th>
-        </tr>
-      </thead>
-      <tbody>
-        {itens.map((f, i) => (
-          <LinhaFolha key={f.numero} f={f} indice={i} />
-        ))}
-      </tbody>
-    </Tabela>
+    <>
+      <Tabela>
+        <thead>
+          <tr>
+            <Th>Folha</Th>
+            {/* Cliente e Balança ficam com o espaço que sobra e cortam o texto comprido com "…" */}
+            <Th className="w-full md:w-[45%]">Cliente</Th>
+            <Th className="w-[55%] max-md:hidden">Balança</Th>
+            <Th className="max-sm:hidden">Nº do certificado</Th>
+            <Th className="max-sm:hidden">Situação</Th>
+            {comCelular && <Th className="max-lg:hidden">Celular</Th>}
+            <Th className="w-8">
+              <span className="sr-only">Reimprimir</span>
+            </Th>
+          </tr>
+        </thead>
+        <tbody>
+          {itens.map((f, i) => (
+            <LinhaFolha key={f.numero} f={f} indice={i} comCelular={comCelular} aoVerRegistro={setRegistro} />
+          ))}
+        </tbody>
+      </Tabela>
+      {/* Montada só depois de aberta (a tabela também é desenhada fora do navegador, nos testes) */}
+      {registro !== null && <RegistroCampo registroId={registro} aoFechar={() => setRegistro(null)} />}
+    </>
   )
 }
 
-function LinhaFolha({ f, indice }: { f: FolhaCampoListada; indice: number }) {
+function LinhaFolha({
+  f,
+  indice,
+  comCelular,
+  aoVerRegistro,
+}: {
+  f: FolhaCampoListada
+  indice: number
+  comCelular: boolean
+  aoVerRegistro: (id: string) => void
+}) {
   // Só o administrador marca a folha como “Não vai ser usada”: a dica da folha cuja impressão não terminou depende disso
   const podeDescartar = usePode('cancelarCertificado')
   // A primeira impressão não terminou: não há PDF para reimprimir (a situação diz o que fazer)
@@ -241,7 +263,14 @@ function LinhaFolha({ f, indice }: { f: FolhaCampoListada; indice: number }) {
       </Td>
       <Td className="whitespace-nowrap max-sm:hidden">
         <SituacaoFolha f={f} />
+        {/* Em telas médias, sem a coluna Celular, o selo do celular vem aqui embaixo */}
+        {f.celular && <SeloCelular c={f.celular} compacto className="mt-1.5 lg:hidden" />}
       </Td>
+      {comCelular && (
+        <Td className="max-lg:hidden">
+          {f.celular ? <SeloCelular c={f.celular} aoVerRegistro={aoVerRegistro} /> : <span className="text-muted">—</span>}
+        </Td>
+      )}
       <Td className="pl-0">
         <Button
           tamanho="sm"
@@ -251,9 +280,10 @@ function LinhaFolha({ f, indice }: { f: FolhaCampoListada; indice: number }) {
           aria-label={`Reimprimir a folha ${f.numero}`}
           disabled={semPdf}
           onClick={() => void abrirFolhaCampo(api.urlReimprimirFolha(f.numero))}
-          className="max-lg:w-8 max-lg:px-0"
+          className={cn('max-lg:w-8 max-lg:px-0', comCelular && 'w-8 px-0')}
         >
-          <span className="max-lg:hidden">Reimprimir</span>
+          {/* Com a coluna Celular, só o ícone (a tabela cabe na tela do notebook) */}
+          <span className={cn('max-lg:hidden', comCelular && 'hidden')}>Reimprimir</span>
         </Button>
       </Td>
     </Linha>

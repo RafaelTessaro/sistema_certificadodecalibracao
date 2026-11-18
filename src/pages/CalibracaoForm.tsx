@@ -16,6 +16,7 @@ import {
   Repeat,
   Scale,
   ScanEye,
+  Send,
   Thermometer,
   Trash2,
   Weight,
@@ -46,11 +47,17 @@ import type {
   Padrao,
 } from '#shared/tipos.ts'
 import { BalancaFormModal } from '../components/BalancaFormModal'
+import { BlocoRegistroCampo } from '../components/campo/BlocoRegistroCampo'
+import { BotaoFolhaEmBranco } from '../components/campo/BotaoFolhaEmBranco'
+import { FaixaCampo } from '../components/campo/FaixaCampo'
+import { CompararCampo, RegistroCampo } from '../components/campo/preguicosos'
+import { type AlvoEnvio, EnviarParaTecnicoModal } from '../components/campo/EnviarParaTecnicoModal'
 import { recomporCargas } from '../components/calibracao/cargas'
 import type { ContextoEtapa, IdEtapa } from '../components/calibracao/contexto'
 import { DevolverModal } from '../components/calibracao/DevolverModal'
 import {
   balancaMudaRascunho,
+  entradaDe,
   estadoDoServidor,
   etapaAoAbrir,
   etapaCompleta,
@@ -83,6 +90,7 @@ import { Field, Input, LegendaObrigatorio, MarcaObrigatorio } from '../component
 import { Modal } from '../components/ui/Modal'
 import { EmptyState, PageHeader } from '../components/ui/Misc'
 import { api, ErroApi, type MembroEquipe } from '../lib/api'
+import { ETAPAS_DE_MEDICAO, mudouMedicao, PENDENCIA_JUSTIFICATIVA, primeiroNome } from '../lib/campo'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
 import { criarFilaGravacao } from '../lib/filaGravacao'
@@ -123,7 +131,9 @@ function NovaCalibracao() {
   const [balancaId, setBalancaId] = useState(params.get('balanca') ?? '')
   const [os, setOs] = useState('')
   const [data, setData] = useState(() => hojeISO())
-  const [criando, setCriando] = useState<'comecar' | 'folha' | null>(null)
+  const [criando, setCriando] = useState<'comecar' | 'folha' | 'enviar' | null>(null)
+  /** "Enviar para o técnico" (1.1.0): a folha do cliente com a balança em branco, ou a do rascunho que acabou de ser criado. */
+  const [envio, setEnvio] = useState<AlvoEnvio | null>(null)
   const [novoCliente, setNovoCliente] = useState<string | null>(null)
   const [novaBalanca, setNovaBalanca] = useState(false)
   const { dados: clientes } = useConsulta('clientes:false', () => api.clientes().then((r) => r.clientes), ['cliente'])
@@ -150,6 +160,24 @@ function NovaCalibracao() {
       'Folha de campo aberta em outra aba',
       'Depois da visita, cadastre a balança, comece a calibração e informe o nº da folha (no alto dela).',
     )
+  }
+
+  /** Cria o rascunho e abre "Enviar para o técnico" com a folha dele; ao fechar a janela, vai para o editor. */
+  const comecarEnviando = async () => {
+    setCriando('enviar')
+    try {
+      const r = await api.criarCalibracao({ clienteId, balancaId, ordemServico: os, dataCalibracao: data || hojeISO() })
+      useTempoReal.getState().mudou('calibracao')
+      setEnvio({ tipo: 'calibracao', calibracaoId: r.calibracao.id })
+    } catch (e) {
+      avisarErro('Não foi possível criar a calibração', e)
+      setCriando(null)
+    }
+  }
+  const fecharEnvio = () => {
+    const alvo = envio
+    setEnvio(null)
+    if (alvo?.tipo === 'calibracao') navegar(`/calibracoes/${alvo.calibracaoId}/editar`, { replace: true })
   }
 
   /** Do passo 2 para a OS (passo 3), onde a folha do cliente com a balança em branco sai com a OS e a data. */
@@ -191,13 +219,7 @@ function NovaCalibracao() {
         titulo="Nova calibração"
         descricao="Escolha o cliente e a balança. Depois é só seguir as etapas."
         acoes={
-          <Button
-            icone={<Printer className="h-4 w-4" />}
-            onClick={() => void abrirFolhaCampo(api.urlFolhaCampoAvulsa())}
-            title="Folha de campo sem cliente nem balança, para preencher à mão"
-          >
-            Folha em branco
-          </Button>
+          <BotaoFolhaEmBranco titulo="Folha de campo sem cliente nem balança, para preencher à mão ou no celular do técnico" />
         }
       />
       <div className="mx-auto flex max-w-3xl flex-col gap-6">
@@ -318,17 +340,36 @@ function NovaCalibracao() {
             </p>
             <div className="flex flex-col gap-2 sm:flex-row sm:shrink-0">
               {clienteId && !balancaId ? (
-                <Button icone={<Printer className="h-4 w-4" />} onClick={imprimirFolhaDoCliente}>
-                  Imprimir folha com a balança em branco
-                </Button>
+                <>
+                  <Button icone={<Printer className="h-4 w-4" />} onClick={imprimirFolhaDoCliente}>
+                    Imprimir folha com a balança em branco
+                  </Button>
+                  <Button
+                    icone={<Send className="h-4 w-4" />}
+                    onClick={() => setEnvio({ tipo: 'avulsa', clienteId, os, data })}
+                    title="A folha do cliente, com a OS e a data, vai para o celular do técnico; a balança é informada no local"
+                  >
+                    Enviar para o técnico
+                  </Button>
+                </>
               ) : (
-                <Button
-                  icone={criando === 'folha' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
-                  disabled={!clienteId || !balancaId || !!criando}
-                  onClick={() => void comecar(true)}
-                >
-                  Criar e imprimir folha de campo
-                </Button>
+                <>
+                  <Button
+                    icone={criando === 'folha' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                    disabled={!clienteId || !balancaId || !!criando}
+                    onClick={() => void comecar(true)}
+                  >
+                    Criar e imprimir folha de campo
+                  </Button>
+                  <Button
+                    icone={criando === 'enviar' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    disabled={!clienteId || !balancaId || !!criando}
+                    onClick={() => void comecarEnviando()}
+                    title="Cria o rascunho e manda a folha de campo dele para o celular do técnico"
+                  >
+                    Criar e enviar para o técnico
+                  </Button>
+                </>
               )}
               <Button
                 variante="primary"
@@ -359,6 +400,16 @@ function NovaCalibracao() {
         aoFechar={() => setNovaBalanca(false)}
         clienteId={clienteId}
         aoSalvar={(b) => setBalancaId(b.id)}
+      />
+      <EnviarParaTecnicoModal
+        alvo={envio}
+        aoFechar={fecharEnvio}
+        dataPrevista={data && data !== hojeISO() ? data : ''}
+        resumo={
+          envio?.tipo === 'avulsa'
+            ? `${clientes?.find((c) => c.id === clienteId)?.nome ?? 'Cliente'} · balança informada no local${os ? ` · OS ${os}` : ''}`
+            : clientes?.find((c) => c.id === clienteId)?.nome
+        }
       />
     </>
   )
@@ -444,6 +495,19 @@ function EditorCalibracao({ id }: { id: string }) {
   const [escolhaFolha, setEscolhaFolha] = useState<EscolhaFolha | null>(null)
   /** Janela "Devolver sem autorizar" aberta. */
   const [devolvendo, setDevolvendo] = useState(false)
+  // O app do celular (1.1.0): o envio e o registro de campo da folha (a faixa, a trava, comparar/puxar e a justificativa).
+  // Acompanha o tempo real (a folha que volta do campo avisa como mudança de calibração)
+  const { dados: campo, recarregar: recarregarCampo } = useConsulta(`campo:calibracao:${id}`, () => api.campoDaCalibracao(id), [
+    'calibracao',
+    'config',
+  ])
+  const [envioAberto, setEnvioAberto] = useState(false)
+  const [comparando, setComparando] = useState(false)
+  const [registroAberto, setRegistroAberto] = useState<string | null>(null)
+  /** Registro original no celular e a folha nele: os passos de medição só para leitura (como o servidor, 409 NO_CELULAR). */
+  const travada = !!campo?.travada
+  const travadaRef = useRef(travada)
+  travadaRef.current = travada
   /**
    * Por onde a pessoa já passou: as etapas de onde saiu e os campos de onde saiu o foco. O campo obrigatório ainda em
    * branco fica em destaque depois disso (e em todas as etapas ao chegar à revisão com pendências).
@@ -551,6 +615,8 @@ function EditorCalibracao({ id }: { id: string }) {
     setF((atual) => {
       if (!atual) return atual
       const novo = mudar(atual)
+      // A folha está no celular (registro original no celular): os passos de medição não mudam aqui
+      if (novo !== atual && travadaRef.current && mudouMedicao(atual, novo)) return atual
       if (novo !== atual) {
         sujo.current = true
         setSalvo('pendente')
@@ -573,6 +639,29 @@ function EditorCalibracao({ id }: { id: string }) {
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chavePadroes, balanca])
+
+  /** Volta a tela ao gravado no servidor (a folha no celular recusou a gravação, ou os dados do campo foram puxados). */
+  const recarregarDoServidor = async () => {
+    try {
+      const d = await api.calibracao(id)
+      const e = estadoDoServidor(d)
+      versao.current = e.versao
+      sujo.current = false
+      setF(e.f)
+      setFolha(e.folha)
+      setNumeroReservado(e.numeroReservado)
+      setPendenciasServidor(e.pendencias)
+      setAvisosServidor(e.avisos)
+      setSalvo('salvo')
+      setDados((x) => (x ? { ...x, calibracao: d.calibracao } : x))
+    } catch {
+      void confirmar({
+        titulo: 'Recarregue a calibração',
+        descricao: 'Não foi possível buscar de novo o que está gravado. Recarregue a página antes de continuar.',
+        confirmar: 'Recarregar',
+      }).then((recarregar) => recarregar && location.reload())
+    }
+  }
 
   // Uma gravação de cada vez: chamada com outra no ar, espera ela e grava o que ficou pendente com a versão nova (dois
   // PUT com a mesma versão davam um falso "outra pessoa alterou"). Emitir, mudar a situação e imprimir a folha esperam
@@ -598,7 +687,12 @@ function EditorCalibracao({ id }: { id: string }) {
         } catch (e) {
           sujo.current = true
           setSalvo('erro')
-          if (e instanceof ErroApi && e.status === 409) {
+          if (e instanceof ErroApi && e.status === 409 && e.dados.codigo === 'NO_CELULAR') {
+            // A folha foi para o celular (registro original no celular): a tela volta ao gravado, só para leitura
+            void recarregarDoServidor()
+            recarregarCampo()
+            toast.aviso('A folha está no celular', e.message)
+          } else if (e instanceof ErroApi && e.status === 409) {
             const outraPessoa = e.dados.codigo === 'CONFLITO'
             void confirmar({
               titulo: outraPessoa ? 'Outra pessoa alterou esta calibração' : 'Não foi possível salvar o rascunho',
@@ -771,6 +865,13 @@ function EditorCalibracao({ id }: { id: string }) {
       // lugar dela (de novo obrigatória)
       if (marcas?.zeroComoAviso) toast.aviso(TEXTO_ZERO_DA_FOLHA.marcada.titulo, TEXTO_ZERO_DA_FOLHA.marcada.texto)
       if (retiradas?.zeroComoAviso === false) toast.aviso(TEXTO_ZERO_DA_FOLHA.retirada.titulo, TEXTO_ZERO_DA_FOLHA.retirada.texto)
+      // A folha desta calibração estava no celular (1.1.0): com o papel ligado, o sistema pediu ao celular para devolvê-la
+      if (r.recolhidas)
+        toast.aviso(
+          'A folha do celular foi pedida de volta',
+          'O papel ligado passou a ser a origem. Se o técnico já começou no celular, a folha volta preenchida e fica guardada.',
+          { inteiros },
+        )
       return true
     } catch (e) {
       if (!confirmado && e instanceof ErroApi && e.dados.codigo === 'CONFIRMAR_FOLHA') {
@@ -862,6 +963,15 @@ function EditorCalibracao({ id }: { id: string }) {
 
   // Da pendência da revisão para a etapa dela e, quando há, para o campo (depois da troca de etapa animada)
   const destinoDe = (p: string) => {
+    // A justificativa das diferenças com o celular (1.1.0): o campo dela, no bloco "Registro de campo" desta etapa
+    if (p.startsWith(PENDENCIA_JUSTIFICATIVA))
+      return {
+        titulo: 'Registro de campo',
+        ir: () => {
+          irPara('revisao')
+          levarAte('justificativa-campo')
+        },
+      }
     // O POP sem registro: em Configurações, só do administrador (para o operador, o texto diz para chamá-lo)
     const fora = destinoForaDaCalibracao(p, podeConfigurar)
     if (fora) return { titulo: fora.titulo, ir: () => navegar(fora.para) }
@@ -996,6 +1106,9 @@ function EditorCalibracao({ id }: { id: string }) {
   }
 
   const emitir = async () => {
+    // A folha ainda está no celular (1.1.0): emitir pede ao celular para recolher (o técnico que já começou a entrega
+    // mesmo assim, marcada "depois de recolhida")
+    if (!(await recolherAntesDeEmitir())) return
     // Com a revisão por outra pessoa ligada, emitir é autorizar: sai com a assinatura de quem autoriza. Com folha do cliente
     // ainda não ligada, a pergunta dela vai no título e no botão (o nº de saída, uma vez só)
     const autorizar = dados.config.exigirRevisor
@@ -1020,6 +1133,79 @@ function EditorCalibracao({ id }: { id: string }) {
       navegar(`/calibracoes/${id}`, { replace: true })
     } catch (e) {
       avisarErro('Não foi possível emitir', e)
+    }
+  }
+
+  // ---- O app do celular (1.1.0) ----
+  const envioAtivo =
+    !!campo?.envio &&
+    (campo.envio.situacao === 'ENVIADA' || campo.envio.situacao === 'NO_CELULAR') &&
+    !campo.envio.recolherPedidoEm
+  const nomeTecnicoCampo = primeiroNome(campo?.envio?.tecnico ?? '') || 'técnico'
+
+  const recolher = async (motivo: string, pergunta: { titulo: string; descricao: string; confirmar: string }) => {
+    const numero = campo?.envio?.numero
+    if (!numero) return false
+    if (!(await confirmar({ ...pergunta, inteiros: [numero] }))) return false
+    try {
+      const r = await api.recolherFolha(numero, motivo)
+      useTempoReal.getState().mudou('calibracao')
+      recarregarCampo()
+      toast.sucesso(
+        r.imediato ? `Folha ${numero} recolhida` : `Pedido de recolher enviado para o celular do ${nomeTecnicoCampo}`,
+        r.imediato
+          ? 'O celular ainda não tinha baixado a folha. Pode digitar do papel.'
+          : 'As leituras já podem ser digitadas aqui. Se o técnico já começou, a folha volta preenchida e você decide.',
+        { inteiros: [numero] },
+      )
+      return true
+    } catch (e) {
+      avisarErro('Não foi possível recolher a folha', e)
+      return false
+    }
+  }
+
+  const recolherAntesDeEmitir = async (): Promise<boolean> => {
+    if (!envioAtivo || !campo?.envio) return true
+    return recolher('Certificado emitido com os dados digitados no computador', {
+      titulo: `A folha ${campo.envio.numero} ainda está no celular do ${nomeTecnicoCampo}`,
+      descricao:
+        'Para emitir, o sistema pede ao celular para recolher a folha. Se o técnico já tiver começado, ela volta preenchida e fica guardada, marcada como “depois de recolhida”.',
+      confirmar: 'Recolher e continuar',
+    })
+  }
+
+  const abrirComparar = async () => {
+    if (await salvar()) setComparando(true)
+  }
+
+  // "Puxar dados do campo" gravou o rascunho com os dados do celular: a tela fica com o gravado (e a versão nova)
+  const aposPuxar = (r: { calibracao: Calibracao; pendencias: string[]; avisos: string[] }) => {
+    versao.current = r.calibracao.versao
+    sujo.current = false
+    setF(entradaDe(r.calibracao))
+    setDados((d) => (d ? { ...d, calibracao: r.calibracao } : d))
+    setPendenciasServidor(r.pendencias)
+    setAvisosServidor(r.avisos)
+    setSalvo('salvo')
+    recarregarCampo()
+  }
+
+  const justificar = async (texto: string): Promise<boolean> => {
+    if (!(await salvar())) return false
+    try {
+      const r = await api.justificarCampo(id, texto, versao.current)
+      versao.current = r.calibracao.versao
+      setDados((d) => (d ? { ...d, calibracao: r.calibracao } : d))
+      setPendenciasServidor(r.pendencias)
+      setAvisosServidor(r.avisos)
+      useTempoReal.getState().mudou('calibracao')
+      recarregarCampo()
+      toast.sucesso(texto ? 'Justificativa salva' : 'Justificativa retirada')
+      return true
+    } catch (e) {
+      avisarErro('Não foi possível salvar a justificativa', e)
+      return false
     }
   }
 
@@ -1100,6 +1286,16 @@ function EditorCalibracao({ id }: { id: string }) {
                 Imprimir folha de campo
               </Button>
             )}
+            {/* A mesma folha vai para o celular do técnico (1.1.0); com ela já no celular, a faixa abaixo diz onde está */}
+            {!(dados.calibracao.substituiId && !folha) && !envioAtivo && !campo?.registroId && (
+              <Button
+                icone={<Send className="h-4 w-4" />}
+                onClick={() => setEnvioAberto(true)}
+                title="A folha de campo desta calibração vai para o celular do técnico (o mesmo nº do papel)"
+              >
+                Enviar para o técnico
+              </Button>
+            )}
             <BotaoPop />
             <Button icone={<ScanEye className="h-4 w-4" />} onClick={() => void verPrevia()}>
               Prévia
@@ -1107,6 +1303,31 @@ function EditorCalibracao({ id }: { id: string }) {
           </div>
         }
       />
+
+      {campo && (
+        <FaixaCampo
+          campo={campo}
+          aberta={dados.calibracao.status === 'RASCUNHO' || dados.calibracao.status === 'REVISAO'}
+          aoRecolher={() =>
+            void recolher('Recolhida pelo escritório', {
+              titulo: `Recolher a folha ${campo.envio?.numero ?? ''} do celular?`,
+              descricao:
+                'Se o celular ainda não baixou, ela sai na hora. Se já baixou, o celular apaga na próxima conexão; se o técnico já começou, ela volta preenchida.',
+              confirmar: 'Recolher',
+            })
+          }
+          aoDigitarDoPapel={() =>
+            void recolher('Feita no papel: o escritório digita do papel', {
+              titulo: 'Digitar do papel?',
+              descricao: `O sistema pede ao celular do ${nomeTecnicoCampo} para recolher a folha e libera as leituras aqui. Se o técnico já começou, a folha volta preenchida e fica guardada.`,
+              confirmar: 'Vou digitar do papel',
+            })
+          }
+          aoVerRegistro={setRegistroAberto}
+          aoComparar={() => void abrirComparar()}
+          aoPuxar={() => void abrirComparar()}
+        />
+      )}
 
       {/* Etapas no celular/tablet: faixa rolável */}
       <div className="scroll-fino -mx-4 mb-5 flex gap-2 overflow-x-auto px-4 pb-1 lg:hidden">
@@ -1183,10 +1404,24 @@ function EditorCalibracao({ id }: { id: string }) {
             >
               {etapa === 'identificacao' && <EtapaIdentificacao {...ctx} />}
               {etapa === 'instrumento' && <EtapaInstrumento {...ctx} />}
-              {etapa === 'padroes' && <EtapaPadroes {...ctx} />}
-              {etapa === 'repetibilidade' && <EtapaRepetibilidade {...ctx} />}
-              {etapa === 'excentricidade' && <EtapaExcentricidade {...ctx} />}
-              {etapa === 'indicacao' && <EtapaIndicacao {...ctx} />}
+              {/* A folha no celular (registro original no celular): os passos de medição só para leitura */}
+              {travada && (ETAPAS_DE_MEDICAO as readonly string[]).includes(etapa) && (
+                <p className="mb-3 flex items-center gap-2 rounded-xl bg-brand-soft px-3.5 py-2 text-[13px] text-brand-ink">
+                  Só para leitura: a folha está no celular do {nomeTecnicoCampo}.
+                </p>
+              )}
+              <fieldset
+                disabled={travada && (ETAPAS_DE_MEDICAO as readonly string[]).includes(etapa)}
+                className={cn(
+                  'm-0 min-w-0 border-0 p-0',
+                  travada && (ETAPAS_DE_MEDICAO as readonly string[]).includes(etapa) && 'opacity-80',
+                )}
+              >
+                {etapa === 'padroes' && <EtapaPadroes {...ctx} />}
+                {etapa === 'repetibilidade' && <EtapaRepetibilidade {...ctx} />}
+                {etapa === 'excentricidade' && <EtapaExcentricidade {...ctx} />}
+                {etapa === 'indicacao' && <EtapaIndicacao {...ctx} />}
+              </fieldset>
               {etapa === 'conclusao' && <EtapaConclusao {...ctx} />}
               {etapa === 'revisao' && (
                 <EtapaRevisao
@@ -1203,6 +1438,16 @@ function EditorCalibracao({ id }: { id: string }) {
                   aoVoltarRascunho={() => void voltarParaRascunho()}
                   aoDevolver={() => setDevolvendo(true)}
                   aoEmitir={emitir}
+                  blocoCampo={
+                    campo?.registroId ? (
+                      <BlocoRegistroCampo
+                        campo={campo}
+                        aberta={dados.calibracao.status === 'RASCUNHO' || dados.calibracao.status === 'REVISAO'}
+                        aoVerRegistro={setRegistroAberto}
+                        aoJustificar={justificar}
+                      />
+                    ) : undefined
+                  }
                 />
               )}
             </motion.div>
@@ -1247,6 +1492,35 @@ function EditorCalibracao({ id }: { id: string }) {
           void imprimirFolha(e === 'nova')
         }}
       />
+      <EnviarParaTecnicoModal
+        alvo={envioAberto ? { tipo: 'calibracao', calibracaoId: id } : null}
+        aoFechar={() => setEnvioAberto(false)}
+        resumo={`${dados.cliente.nome} · ${[balanca.fabricante, balanca.modelo].filter(Boolean).join(' ') || TIPOS_BALANCA[balanca.tipo]} ${capacidadeTexto(balanca)}${folha ? ` · folha ${folha.numero}` : ''}`}
+        dataPrevista={f.dataCalibracao > hojeISO() ? f.dataCalibracao : ''}
+        antesDeEnviar={async () => ((await salvar()) ? versao.current : false)}
+        aoEnviado={(r) => {
+          if (r.versao !== undefined) versao.current = r.versao
+          atualizarFolha()
+          recarregarCampo()
+        }}
+      />
+      {campo?.registroId && (
+        <CompararCampo
+          aberto={comparando}
+          aoFechar={() => setComparando(false)}
+          calibracaoId={id}
+          versao={versao.current}
+          rascunho={f}
+          balanca={balanca}
+          registroId={campo.registroId}
+          registroOriginal={campo.registroOriginal}
+          mesesProxima={dados.config.mesesProximaPadrao}
+          nomes={Object.fromEntries(dados.equipe.map((u) => [u.id, u.nome]))}
+          aoPuxar={aposPuxar}
+          aoComparar={recarregarCampo}
+        />
+      )}
+      <RegistroCampo registroId={registroAberto} calibracaoAtual={id} aoFechar={() => setRegistroAberto(null)} />
       <DevolverModal
         aberto={devolvendo}
         para={dados.calibracao.autorizacao?.por}

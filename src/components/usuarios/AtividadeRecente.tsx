@@ -1,4 +1,5 @@
 import {
+  ArrowDownToLine,
   ArrowUpRight,
   Ban,
   BellRing,
@@ -8,6 +9,7 @@ import {
   FileCheck2,
   FileKey2,
   FileX2,
+  GitCompareArrows,
   History,
   Hourglass,
   KeyRound,
@@ -19,6 +21,8 @@ import {
   RefreshCw,
   Send,
   ShieldAlert,
+  ShieldOff,
+  Smartphone,
   ShieldX,
   Terminal,
   Trash2,
@@ -67,6 +71,19 @@ const ICONE_ACAO: Partial<Record<AcaoAuditoria, LucideIcon>> = {
   AUTORIZACAO_PEDIDA: Hourglass,
   AUTORIZACAO_DEVOLVIDA: Undo2,
   CERTIFICADO_DIGITAL: FileKey2,
+  // O app do celular (1.1.0)
+  CELULAR_CADASTRADO: Smartphone,
+  CELULAR_PAREADO_DE_NOVO: Smartphone,
+  CELULAR_RENOMEADO: Pencil,
+  CELULAR_REVOGADO: ShieldOff,
+  FOLHA_ENVIADA_TECNICO: Send,
+  FOLHA_RECEBIDA_CELULAR: Smartphone,
+  FOLHA_RECOLHIDA: Undo2,
+  FOLHA_DEVOLVIDA_CELULAR: ArrowDownToLine,
+  REGISTRO_CAMPO_SITUACAO: Pencil,
+  CAMPO_CONFIGURADO: Pencil,
+  DADOS_PUXADOS_DO_CAMPO: ArrowDownToLine,
+  CAMPO_COMPARADO: GitCompareArrows,
 }
 
 /** Cor do ícone: alertas em vermelho/amarelo; o resto pelo grupo. */
@@ -77,6 +94,7 @@ function tomDoRegistro(r: RegistroAuditoria): string {
   const grupo = grupoDaAcao(r.acao)
   if (grupo === 'acessos') return 'bg-success-soft text-success'
   if (grupo === 'usuarios' || grupo === 'certificados') return 'bg-brand-soft text-brand-ink'
+  if (grupo === 'campo') return 'bg-info-soft text-info'
   if (grupo === 'dados') return 'bg-warning-soft text-warning'
   return 'bg-info-soft text-info'
 }

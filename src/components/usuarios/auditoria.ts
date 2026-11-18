@@ -106,6 +106,19 @@ const ACOES_DO_CERTIFICADO = new Set<AcaoAuditoria>([
  */
 const ACOES_DO_NUMERO = new Set<AcaoAuditoria>(['NUMERO_RESERVADO', 'NUMERO_NAO_UTILIZADO'])
 
+/**
+ * Ações do app do celular sobre uma folha (1.1.0): o alvo, quando há, é a calibração da folha (a frase leva a ela). As
+ * dos celulares levam ao aparelho (sem link) e as dos registros, ao registro (sem link).
+ */
+const ACOES_DA_FOLHA_NO_CELULAR = new Set<AcaoAuditoria>([
+  'FOLHA_ENVIADA_TECNICO',
+  'FOLHA_RECEBIDA_CELULAR',
+  'FOLHA_RECOLHIDA',
+  'FOLHA_DEVOLVIDA_CELULAR',
+  'DADOS_PUXADOS_DO_CAMPO',
+  'CAMPO_COMPARADO',
+])
+
 /** O que a rota acrescentou ao registro (depois de " | "), ou ''. */
 const extraDoDetalhe = (detalhe: string) => (detalhe.includes(' | ') ? detalhe.slice(detalhe.indexOf(' | ') + 3) : '')
 
@@ -163,6 +176,13 @@ export function descreverRegistro(r: RegistroAuditoria, nomes?: ReadonlyMap<stri
     // Pela tela ('POST … | instalado: …'), ou o aviso de vencimento gravado pelo próprio sistema (o texto inteiro)
     const daRota = /^(POST|DELETE) \/api\//.test(r.detalhe)
     return { titulo, detalhe: daRota ? extraDoDetalhe(r.detalhe) : r.detalhe }
+  }
+  if (grupoDaAcao(r.acao) === 'campo') {
+    // Pela tela ('POST … | FC-… · para Maurício') ou gravado pela rota do celular (o texto inteiro)
+    const daRota = /^(GET|POST|PUT|DELETE) \/api\//.test(r.detalhe)
+    const detalhe = daRota ? extraDoDetalhe(r.detalhe) : r.detalhe
+    const comLink = ACOES_DA_FOLHA_NO_CELULAR.has(r.acao) && !!r.alvo
+    return { titulo, detalhe, ...(comLink ? { link: { tipo: 'calibracao' as const, id: r.alvo } } : {}) }
   }
   if (ACOES_DO_NUMERO.has(r.acao)) {
     // Gravado pela rota do descarte ('POST … | nº · folha') ou direto (só o nº e de onde)

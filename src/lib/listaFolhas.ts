@@ -57,13 +57,15 @@ export function paramsDaAba(params: URLSearchParams, aba: AbaCertificados): URLS
 }
 
 /** Os filtros da aba "Folhas de campo" (o valor vai para o servidor). */
-export type FiltroFolhas = '' | 'NAO_LIGADAS' | 'LIGADAS' | 'NAO_USADAS'
+export type FiltroFolhas = '' | 'NAO_LIGADAS' | 'LIGADAS' | 'NAO_USADAS' | 'CELULAR'
 
 export const FILTROS_FOLHAS: Array<{ valor: FiltroFolhas; label: string }> = [
   { valor: '', label: 'Todas' },
   { valor: 'NAO_LIGADAS', label: 'Não ligadas' },
   { valor: 'LIGADAS', label: 'Ligadas' },
   { valor: 'NAO_USADAS', label: 'Não vão ser usadas' },
+  // As que foram para o celular de um técnico ou voltaram dele (1.1.0)
+  { valor: 'CELULAR', label: 'Celular' },
 ]
 
 /** "OS 2026/0777": a OS com "OS" na frente quando não o tem ('' sem OS). */

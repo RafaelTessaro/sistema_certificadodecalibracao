@@ -12,6 +12,8 @@ import {
   Printer,
   Ruler,
   Scale,
+  Send,
+  Smartphone,
   Trash2,
   TrendingUp,
 } from 'lucide-react'
@@ -30,6 +32,9 @@ import {
 import { posicoesExcentricidade } from '#shared/metrologia/index.ts'
 import type { ClasseExatidao, Faixa, Unidade } from '#shared/tipos.ts'
 import { BalancaFormModal } from '../components/BalancaFormModal'
+import { type AlvoEnvio, EnviarParaTecnicoModal } from '../components/campo/EnviarParaTecnicoModal'
+import { RegistroCampo } from '../components/campo/preguicosos'
+import { SeloCelular } from '../components/campo/SeloCelular'
 import { CertificadosTabela } from '../components/CertificadosTabela'
 import { type EscolhaFolha, FolhaCampoModal } from '../components/FolhaCampoModal'
 import { PrazoBadge } from '../components/Selos'
@@ -70,6 +75,15 @@ export function BalancaDetalhe() {
   const podeExcluir = usePode('excluirBalanca')
   const [editando, setEditando] = useState(false)
   const [escolhaFolha, setEscolhaFolha] = useState(false)
+  /** "Enviar para o técnico" (1.1.0) e o registro de campo aberto. */
+  const [envio, setEnvio] = useState<AlvoEnvio | null>(null)
+  const [registroAberto, setRegistroAberto] = useState<string | null>(null)
+  // As folhas desta balança que foram para o celular ou voltaram dele
+  const { dados: folhasCelular } = useConsulta(
+    id ? `balanca-campo:${id}` : null,
+    () => api.folhasCampoDaBalanca(id).then((r) => r.folhas),
+    ['calibracao', 'balanca'],
+  )
   const { dados, carregando, erro } = useConsulta(`balanca-detalhe:${id}`, () => api.balanca(id), [
     'balanca',
     'cliente',
@@ -216,6 +230,22 @@ export function BalancaDetalhe() {
               }
             >
               Imprimir folha de campo
+            </Button>
+            <Button
+              icone={<Send className="h-4 w-4" />}
+              disabled={!balanca.ativo}
+              onClick={() =>
+                setEnvio(
+                  daCalibracao ? { tipo: 'calibracao', calibracaoId: emAndamento.id } : { tipo: 'avulsa', balancaId: balanca.id },
+                )
+              }
+              title={
+                daCalibracao
+                  ? 'A folha da calibração em andamento vai para o celular do técnico'
+                  : 'A folha desta balança, com os pontos e os padrões da última calibração, vai para o celular do técnico'
+              }
+            >
+              Enviar para o técnico
             </Button>
             <Button
               variante="primary"
@@ -404,6 +434,33 @@ export function BalancaDetalhe() {
           </div>
         </Card>
 
+        {!!folhasCelular?.length && (
+          <Card className="overflow-hidden">
+            <CardHeader
+              icone={<Smartphone className="h-4 w-4" />}
+              titulo="Folhas no celular"
+              descricao="As folhas de campo desta balança enviadas ao técnico e as que voltaram do campo"
+            />
+            <ul className="divide-y divide-line border-t border-line">
+              {folhasCelular.map((f) => (
+                <li key={f.numero} className="flex flex-wrap items-start gap-x-4 gap-y-2 px-5 py-3">
+                  <span className="tnum min-w-32 pt-0.5 text-sm font-medium text-ink">{f.numero}</span>
+                  <SeloCelular c={f.celular} aoVerRegistro={setRegistroAberto} className="flex-1" />
+                  {f.calibracaoId && (
+                    <button
+                      type="button"
+                      onClick={() => navegar(`/calibracoes/${f.calibracaoId}/editar`)}
+                      className="cursor-pointer pt-0.5 text-[13px] font-medium text-brand-ink hover:underline"
+                    >
+                      Abrir a calibração
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
+
         <Card className="overflow-hidden">
           <CardHeader
             icone={<FileBadge2 className="h-4 w-4" />}
@@ -456,6 +513,12 @@ export function BalancaDetalhe() {
       </div>
 
       <BalancaFormModal aberto={editando} balanca={balanca} aoFechar={() => setEditando(false)} />
+      <EnviarParaTecnicoModal
+        alvo={envio}
+        aoFechar={() => setEnvio(null)}
+        resumo={`${cliente?.nome ?? ''} · ${nome} ${capacidadeTexto(balanca)}${folha ? ` · folha ${folha.numero}` : ''}`}
+      />
+      {registroAberto !== null && <RegistroCampo registroId={registroAberto} aoFechar={() => setRegistroAberto(null)} />}
       <FolhaCampoModal
         folha={escolhaFolha && folha && !folha.herdada ? folha : null}
         aoFechar={() => setEscolhaFolha(false)}

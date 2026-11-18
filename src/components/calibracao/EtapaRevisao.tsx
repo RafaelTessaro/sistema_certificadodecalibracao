@@ -13,7 +13,7 @@ import {
   Undo2,
   type LucideIcon,
 } from 'lucide-react'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import { pendenciaDoCertificadoDigital } from '#shared/dominio.ts'
 import type { Calibracao, NumeroReservado } from '#shared/tipos.ts'
 import { folhaPropriaDa } from '../../lib/folhaCampo'
@@ -51,6 +51,7 @@ export function EtapaRevisao({
   aoVoltarRascunho,
   aoDevolver,
   aoEmitir,
+  blocoCampo,
 }: {
   ctx: ContextoEtapa
   /** A situação gravada no servidor, com o pedido de autorização e a devolução (se houver). */
@@ -72,6 +73,8 @@ export function EtapaRevisao({
   /** Devolve sem autorizar (pede a nota). */
   aoDevolver: () => void
   aoEmitir: () => void | Promise<void>
+  /** O bloco "Registro de campo" (1.1.0): a folha que voltou do celular, as diferenças depois de puxar e a justificativa. */
+  blocoCampo?: ReactNode
 }) {
   const { calc, config, f, equipe } = ctx
   const usuario = useSessao((s) => s.usuario)
@@ -228,6 +231,8 @@ export function EtapaRevisao({
           </div>
         )}
       </Card>
+
+      {blocoCampo}
 
       {r && r.pontos.length > 0 && (
         <Card className="overflow-hidden">

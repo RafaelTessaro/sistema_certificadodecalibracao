@@ -174,6 +174,37 @@ describe('descreverRegistro', () => {
     })
   })
 
+  it('app do celular (1.1.0): a folha enviada, recolhida ou devolvida leva à calibração; o celular, sem link', () => {
+    const enviada = descreverRegistro(
+      registro({
+        acao: 'FOLHA_ENVIADA_TECNICO',
+        alvo: 'k1',
+        detalhe: 'POST /api/calibracoes/:id/enviar-tecnico | FC-2026-00042 · para Maurício (piloto)',
+      }),
+    )
+    expect(enviada).toEqual({
+      titulo: 'Enviou uma folha de campo para o técnico',
+      detalhe: 'FC-2026-00042 · para Maurício (piloto)',
+      link: { tipo: 'calibracao', id: 'k1' },
+    })
+    // Gravada pela rota do celular: o texto inteiro
+    expect(
+      descreverRegistro(
+        registro({ acao: 'FOLHA_DEVOLVIDA_CELULAR', alvo: '', detalhe: 'FC-2026-00042 · pelo celular Celular do Maurício' }),
+      ),
+    ).toEqual({ titulo: 'Uma folha de campo voltou do celular', detalhe: 'FC-2026-00042 · pelo celular Celular do Maurício' })
+    expect(
+      descreverRegistro(
+        registro({
+          acao: 'CELULAR_REVOGADO',
+          alvo: 'aparelho-1',
+          detalhe: 'POST /api/celulares/:id/revogar | Celular do Maurício · Maurício · Perdido',
+        }),
+      ),
+    ).toEqual({ titulo: 'Descadastrou o celular de um técnico', detalhe: 'Celular do Maurício · Maurício · Perdido' })
+    expect(grupoDaAcao('CELULAR_CADASTRADO')).toBe('campo')
+  })
+
   it('rota desconhecida aparece como a chave', () => {
     expect(descreverRegistro(registro({ detalhe: 'POST /api/novidade' })).titulo).toBe('POST /api/novidade')
   })

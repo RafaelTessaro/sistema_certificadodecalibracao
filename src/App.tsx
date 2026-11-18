@@ -1,6 +1,7 @@
 import { MotionConfig } from 'motion/react'
 import { lazy, Suspense, useEffect, useRef, useSyncExternalStore } from 'react'
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { AvisoVoltouDoCampo } from './components/campo/AvisoVoltouDoCampo'
 import { Layout } from './components/layout/Layout'
 import { TelaConexao } from './components/layout/TelaConexao'
 import { MinhaSenhaModal } from './components/sessao/MinhaSenhaModal'
@@ -77,6 +78,8 @@ function Sistema() {
     <HashRouter>
       <Rotas />
       <MinhaSenhaModal />
+      {/* "FC-… voltou do campo (Maurício)": a folha que volta do celular, em qualquer tela (1.1.0) */}
+      <AvisoVoltouDoCampo />
     </HashRouter>
   )
 }

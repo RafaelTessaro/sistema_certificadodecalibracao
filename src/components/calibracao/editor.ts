@@ -13,6 +13,7 @@ import {
 } from '#shared/dominio.ts'
 import type { Balanca, Calibracao, CalibracaoInput, Padrao } from '#shared/tipos.ts'
 import type { DetalheCalibracao } from '../../lib/api'
+import { PENDENCIA_JUSTIFICATIVA } from '../../lib/campo'
 import type { ContextoEtapa, IdEtapa } from './contexto'
 import { repetibilidadeCompleta } from './util'
 
@@ -114,7 +115,10 @@ export function pendenciasDaTela(a: {
     ...new Set([
       ...a.locais,
       ...(a.semPop ? [PENDENCIA_POP] : []),
-      ...a.servidor.filter((p) => PENDENCIAS_SO_DO_SERVIDOR.includes(p) || pendenciaDoCertificadoDigital(p)),
+      // A justificativa das diferenças com o celular (1.1.0) também só o servidor sabe: vale sempre
+      ...a.servidor.filter(
+        (p) => PENDENCIAS_SO_DO_SERVIDOR.includes(p) || pendenciaDoCertificadoDigital(p) || p.startsWith(PENDENCIA_JUSTIFICATIVA),
+      ),
       ...(a.calc?.resultado.pendencias ?? []),
       ...(a.calc?.comoEncontrado?.pendencias.map((p) => `Como encontrado: ${p}`) ?? []),
       ...(a.emDia ? a.servidor.filter((p) => p !== PENDENCIA_POP) : []),

@@ -1,9 +1,10 @@
-import { ClipboardList, Download, FileBadge2, FilePlus2, Printer } from 'lucide-react'
+import { ClipboardList, Download, FileBadge2, FilePlus2 } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useEffect, useRef, useState, type KeyboardEvent as TeclaReact } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { rotuloDaSituacao } from '#shared/dominio.ts'
 import { BotaoPop } from '../components/BotaoPop'
+import { BotaoFolhaEmBranco } from '../components/campo/BotaoFolhaEmBranco'
 import { CertificadosTabela } from '../components/CertificadosTabela'
 import { FolhasCampoLista } from '../components/FolhasCampoLista'
 import { NumerosNaoUtilizados } from '../components/NumerosNaoUtilizados'
@@ -16,7 +17,6 @@ import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
 import { exportarCSV } from '../lib/csv'
-import { abrirFolhaCampo } from '../lib/folhaCampo'
 import { dataCurta, numero } from '../lib/format'
 import { type AbaCertificados, abaDaPagina, guardarAba, lerAbaGuardada, paramsDaAba } from '../lib/listaFolhas'
 import { useSessao } from '../store/sessao'
@@ -132,13 +132,7 @@ export function Certificados() {
                 Exportar
               </Button>
             )}
-            <Button
-              icone={<Printer className="h-4 w-4" />}
-              onClick={() => void abrirFolhaCampo(api.urlFolhaCampoAvulsa())}
-              title="Folha de campo sem cliente nem balança, para preencher à mão (balança ainda não cadastrada)"
-            >
-              Folha em branco
-            </Button>
+            <BotaoFolhaEmBranco titulo="Folha de campo sem cliente nem balança, para preencher à mão ou no celular do técnico (balança ainda não cadastrada)" />
             <BotaoPop />
             <Button variante="primary" icone={<FilePlus2 className="h-4 w-4" />} onClick={() => navegar('/calibracoes/nova')}>
               Nova calibração

@@ -17,6 +17,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { diasEntre } from '#shared/dominio.ts'
 import type { CalibracaoResumo } from '#shared/tipos.ts'
 import { avisoParaAutorizar } from '../components/calibracao/equipe'
+import { CartoesCampoPainel } from '../components/campo/CartoesCampoPainel'
 import { rotaCalibracao, SituacaoDaCalibracao } from '../components/CertificadosTabela'
 import { FaixaCertificadoDigital } from '../components/certificadoDigital/FaixaCertificadoDigital'
 import { textoAguardandoAssinatura } from '../components/certificadoDigital/textos'
@@ -178,6 +179,9 @@ export function Painel() {
         </div>
 
         <div className="flex flex-col gap-6">
+          {/* O app do celular (1.1.0): o que voltou do campo e o que passou da data e continua no celular */}
+          <CartoesCampoPainel campo={p?.campo} />
+
           <Card className="overflow-hidden">
             <CardHeader
               icone={<BellRing className="h-4 w-4" />}

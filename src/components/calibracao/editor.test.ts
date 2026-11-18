@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import { PENDENCIA_POP } from '#shared/arquivos.ts'
+import { PENDENCIA_JUSTIFICATIVA_CAMPO } from '#shared/campo/importar.ts'
 import {
   BALANCA_VAZIA,
   calibracaoVazia,
@@ -388,6 +389,9 @@ describe('pendências da tela', () => {
     const vencido =
       'O certificado digital da empresa venceu: a emissão fica bloqueada até o administrador resolver em Configurações → Certificado digital.'
     expect(pendenciasDaTela({ ...base, servidor: [vencido, 'Antiga.'], emDia: false })).toEqual(['Local A.', vencido])
+    // A justificativa das diferenças com o celular depois de puxar (1.1.0): também só o servidor sabe
+    const campo = `${PENDENCIA_JUSTIFICATIVA_CAMPO} (1 diferença com o registro do celular): escreva a justificativa antes de emitir.`
+    expect(pendenciasDaTela({ ...base, servidor: [campo, 'Antiga.'], emDia: false })).toEqual(['Local A.', campo])
   })
 
   it('o POP quem diz é a consulta ao vivo (registrado em outra aba, a do servidor ficou velha)', () => {

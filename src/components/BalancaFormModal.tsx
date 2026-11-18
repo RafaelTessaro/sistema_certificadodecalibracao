@@ -181,6 +181,8 @@ export function BalancaFormModal({
   aoFechar,
   balanca: balancaAtual,
   clienteId: clienteAtual,
+  inicial,
+  descricao,
   aoSalvar,
 }: {
   aberto: boolean
@@ -188,6 +190,13 @@ export function BalancaFormModal({
   balanca?: Balanca
   /** Cliente já escolhido (cadastro a partir da tela do cliente): fica fixo no cadastro novo. */
   clienteId?: string
+  /**
+   * Cadastro novo já preenchido (1.1.0, "Cadastrar a balança com os dados do campo": a balança como o técnico a escreveu
+   * no celular): o formulário começa com ela, para conferir, e grava uma balança nova.
+   */
+  inicial?: Balanca
+  /** O texto abaixo do título (no lugar do de sempre). */
+  descricao?: string
   /** Depois de gravar; a janela fica em "Salvando…" até a promessa terminar (ex.: o editor recarregando o rascunho). */
   aoSalvar?: (b: Balanca) => void | Promise<void>
 }) {
@@ -214,7 +223,7 @@ export function BalancaFormModal({
       largura="max-w-3xl"
       icone={<Scale className="h-5 w-5" />}
       titulo={balanca ? 'Editar balança' : nomeFixo ? `Nova balança para ${nomeFixo}` : 'Nova balança'}
-      descricao="Copie os dados da plaqueta da balança: eles saem no certificado."
+      descricao={descricao ?? 'Copie os dados da plaqueta da balança: eles saem no certificado.'}
       rodape={
         <>
           <Button onClick={aoFechar}>Cancelar</Button>
@@ -226,8 +235,9 @@ export function BalancaFormModal({
     >
       {/* O formulário só existe com o modal aberto, então sempre começa com os dados atuais */}
       <FormularioBalanca
-        key={balanca?.id ?? `nova-${clienteId ?? ''}`}
+        key={balanca?.id ?? `nova-${clienteId ?? ''}${inicial ? '-campo' : ''}`}
         balanca={balanca}
+        inicial={balanca ? undefined : inicial}
         clienteId={clienteId}
         fixo={fixo}
         clientes={clientes}
@@ -241,6 +251,7 @@ export function BalancaFormModal({
 
 function FormularioBalanca({
   balanca,
+  inicial,
   clienteId,
   fixo,
   clientes,
@@ -249,6 +260,7 @@ function FormularioBalanca({
   setSalvando,
 }: {
   balanca?: Balanca
+  inicial?: Balanca
   clienteId?: string
   fixo: boolean
   clientes: ClienteResumo[] | undefined
@@ -258,7 +270,11 @@ function FormularioBalanca({
 }) {
   const ids = useId()
   const formRef = useRef<HTMLFormElement>(null)
-  const [f, setF] = useState<FormBalanca>(() => formularioInicial(balanca, clienteId))
+  const [f, setF] = useState<FormBalanca>(() =>
+    balanca || !inicial
+      ? formularioInicial(balanca, clienteId)
+      : formularioInicial({ ...inicial, clienteId: clienteId || inicial.clienteId }, clienteId),
+  )
   // Versão que a pessoa abriu para editar: se outra pessoa salvar antes, o servidor avisa
   const [versaoBase, setVersaoBase] = useState(balanca?.versao)
   const [tentou, setTentou] = useState(false)
