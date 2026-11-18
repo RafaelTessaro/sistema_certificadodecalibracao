@@ -51,11 +51,18 @@ if ! assinatura="$("$build_tools/apksigner" verify --print-certs "$apk" 2>/dev/n
   "$build_tools/apksigner" verify --print-certs "$apk" >&2 || true
   falhar "assinatura do APK não confere (APK sem assinatura ou alterado)."
 fi
-dn="$(sed -n 's/^Signer #1 certificate DN: //p' <<<"$assinatura")"
-cert="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$assinatura" | tr 'A-F' 'a-f')"
-[ -n "$cert" ] || falhar "não foi possível ler a impressão SHA-256 do certificado."
-assinantes="$(grep -c '^Signer #[0-9]* certificate DN:' <<<"$assinatura" || true)"
-[ "$assinantes" = 1 ] || falhar "o APK tem $assinantes assinantes (esperado: 1)."
+# Dois formatos de saída: até o build-tools 36, "Signer #1 certificate SHA-256 digest: …"; a partir do 37, uma linha
+# por esquema ("V2 Signer: certificate SHA-256 digest: …", e também V1/V3 quando o APK os tem). Conta os certificados
+# diferentes (o mesmo certificado em vários esquemas é um assinante só).
+dn="$(sed -n 's/^.*Signer[^:]*:\{0,1\} certificate DN: //p' <<<"$assinatura" | head -n1)"
+certs="$(sed -n 's/^.*Signer[^:]*:\{0,1\} certificate SHA-256 digest: //p' <<<"$assinatura" | tr 'A-F' 'a-f' | sort -u)"
+cert="$(head -n1 <<<"$certs")"
+if ! [[ "$cert" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "$assinatura" >&2
+  falhar "não foi possível ler a impressão SHA-256 do certificado (saída do apksigner acima)."
+fi
+assinantes="$(grep -c . <<<"$certs" || true)"
+[ "$assinantes" = 1 ] || falhar "o APK tem $assinantes certificados de assinatura diferentes (esperado: 1)."
 echo "Assinado por: $dn"
 echo "Impressão SHA-256 do certificado: $cert"
 if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "cert=$cert" >>"$GITHUB_OUTPUT"; fi
