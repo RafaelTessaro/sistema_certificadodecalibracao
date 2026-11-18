@@ -5,6 +5,7 @@ import {
   esperaRestante,
   lerHashPin,
   lerTentativas,
+  pareamentoApagaPin,
   pinValido,
   registrarAcertoPin,
   registrarErroPin,
@@ -26,6 +27,14 @@ describe('PIN do técnico', () => {
     expect(lerHashPin(JSON.stringify(h))).toEqual(h)
     expect(lerHashPin('{')).toBeNull()
     expect(lerHashPin(null)).toBeNull()
+  })
+
+  it('parear de novo: o mesmo técnico mantém o PIN; outro técnico ou "Esqueci o PIN" pedem um PIN novo', () => {
+    expect(pareamentoApagaPin({ tecnicoAnterior: 'tec-a', tecnicoNovo: 'tec-a' })).toBe(false)
+    expect(pareamentoApagaPin({ esqueciPin: true, tecnicoAnterior: 'tec-a', tecnicoNovo: 'tec-a' })).toBe(true)
+    // O celular da empresa passou para outro técnico: o PIN do anterior não assina pelo novo
+    expect(pareamentoApagaPin({ tecnicoAnterior: 'tec-a', tecnicoNovo: 'tec-b' })).toBe(true)
+    expect(pareamentoApagaPin({ tecnicoAnterior: null, tecnicoNovo: 'tec-b' })).toBe(true)
   })
 
   it('o PIN tem 6 dígitos', async () => {

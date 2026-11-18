@@ -12,7 +12,7 @@ import { comecar, ErroFolha } from './folha.ts'
 import type { FolhaLocal } from './folha.ts'
 import { relogioFixo } from './relogio.ts'
 import { META, RepositorioMemoria } from './repositorio.ts'
-import { frasesDoResultado, sincronizar } from './sincronia.ts'
+import { frasesDoResultado, MOTIVO_ENTREGA_DESCADASTRADO, sincronizar } from './sincronia.ts'
 import { ServidorFalso, TOKEN_TESTE } from './testes/servidorFalso.ts'
 
 const PLATAFORMA = pacotePlataforma()
@@ -194,6 +194,11 @@ describe('sincronia', () => {
     const r = await sync()
     expect(r.descadastrado).toBe(true)
     expect(r.naoEntregues[0].motivo).toMatch(/descadastrado/)
+    // Ele já está na empresa (o servidor respondeu): a frase manda pedir o cadastro de novo, não esperar
+    expect(r.naoEntregues[0].motivo).toBe(MOTIVO_ENTREGA_DESCADASTRADO)
+    expect(r.naoEntregues[0].motivo).toMatch(/cadastrar o celular de novo \(Parear de novo\)/)
+    expect(r.naoEntregues[0].motivo).not.toMatch(/quando você estiver na empresa/)
+    expect((await repo.obter(f.envioId))!.entrega.erro).toBe(MOTIVO_ENTREGA_DESCADASTRADO)
     expect((await repo.obter(f.envioId))!.estado).toBe('FINALIZADA')
   })
 

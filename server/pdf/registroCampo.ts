@@ -31,7 +31,7 @@ import {
 import { FORMULARIO_FOLHA_CAMPO, METODO_EXCENTRICIDADE_FOLHA } from '#shared/folhaCampo.ts'
 import { identificacaoDaBalanca, nomeDoCliente } from '#shared/campo/pacote.ts'
 import { LIMITE_RELOGIO_MS, textoRelogioDiferente } from '#shared/campo/protocolo.ts'
-import { REGEX_INSTANTE, textoDaCarga, tipoAssinaturaCliente, validarPng } from '#shared/campo/registro.ts'
+import { REGEX_INSTANTE, textoDaCarga, tipoAssinaturaCliente } from '#shared/campo/registro.ts'
 import { FRASE_ASSINATURA_CLIENTE } from '#shared/campo/resumoCliente.ts'
 import {
   CAMPOS_CONFERIR,
@@ -48,6 +48,7 @@ import {
   TITULOS_PASSOS,
 } from '#shared/campo/tipos.ts'
 import type { ClasseExatidao, DadosEmpresa, Padrao, Receptor, TipoFaixas } from '#shared/tipos.ts'
+import { pngDecodificavel } from '../campo/png.ts'
 import {
   A4,
   BASE_RODAPE,
@@ -1438,8 +1439,9 @@ function blocoExcentricidade(ctx: Contexto, e: Ensaios, base: string): No[] {
 
 // ---- 8. Assinaturas ------------------------------------------------------------------------------------------------
 
+/** A imagem só vai para o pdfkit conferida por inteiro (`pngDecodificavel`): um PNG estragado derrubaria o servidor. */
 function imagemAssinatura(png: unknown): No {
-  if (typeof png === 'string' && validarPng(png) === null)
+  if (typeof png === 'string' && pngDecodificavel(png))
     return { image: png, fit: [200, 58], alignment: 'left', margin: [0, 2, 0, 2] }
   return { text: 'Imagem da assinatura ilegível.', style: 'nota', margin: [0, 18, 0, 18] }
 }

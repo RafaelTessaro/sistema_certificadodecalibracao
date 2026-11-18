@@ -1,4 +1,4 @@
-// O aviso "FC-2026-00042 voltou do campo (Maurício)" (1.1.0): quando uma folha volta do celular, em qualquer tela. Usa o
+// O aviso "FC-2026-00042 voltou do campo (Carlos)" (1.1.0): quando uma folha volta do celular, em qualquer tela. Usa o
 // mesmo tempo real de sempre (a entrega avisa como mudança de calibração): a cada mudança, confere os registros mais novos
 // e avisa os que chegaram desde que a tela abriu (os que já estavam lá não avisam).
 

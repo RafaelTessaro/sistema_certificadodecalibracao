@@ -86,7 +86,7 @@ export const MARCAS_REGISTRO: readonly MarcaRegistro[] = [
 
 /**
  * Situação do registro guardado: VALIDO, SUPERADO (chegou uma revisão mais nova do mesmo envio, depois de reabrir: a
- * cadeia `reaberturas[].sha256Anterior` aponta o anterior) e DESCARTADO (pela Lizi, com motivo; o registro nunca é
+ * cadeia `reaberturas[].sha256Anterior` aponta o anterior) e DESCARTADO (pelo escritório, com motivo; o registro nunca é
  * apagado).
  */
 export type SituacaoRegistro = 'VALIDO' | 'SUPERADO' | 'DESCARTADO'
@@ -707,7 +707,7 @@ export interface RegistroCampo {
   correcoesPosAssinatura: CorrecaoPosAssinaturaCampo[]
 }
 
-/** Um problema que `validarRegistro` achou: o caminho no registro e a frase para a Lizi (ou para o técnico). */
+/** Um problema que `validarRegistro` achou: o caminho no registro e a frase para o escritório (ou para o técnico). */
 export interface ProblemaRegistro {
   campo: string
   mensagem: string

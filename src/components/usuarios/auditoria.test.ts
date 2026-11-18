@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RegistroAuditoria } from '#shared/tipos.ts'
+import { ROTULO_ACAO_AUDITORIA } from '#shared/usuarios.ts'
 import { autorDoRegistro, descreverRegistro, enderecoDoLink, grupoDaAcao, textoDoAutor } from './auditoria'
 
 const registro = (r: Partial<RegistroAuditoria>): RegistroAuditoria => ({
@@ -179,30 +180,53 @@ describe('descreverRegistro', () => {
       registro({
         acao: 'FOLHA_ENVIADA_TECNICO',
         alvo: 'k1',
-        detalhe: 'POST /api/calibracoes/:id/enviar-tecnico | FC-2026-00042 · para Maurício (piloto)',
+        detalhe: 'POST /api/calibracoes/:id/enviar-tecnico | FC-2026-00042 · para Carlos (piloto)',
       }),
     )
     expect(enviada).toEqual({
       titulo: 'Enviou uma folha de campo para o técnico',
-      detalhe: 'FC-2026-00042 · para Maurício (piloto)',
+      detalhe: 'FC-2026-00042 · para Carlos (piloto)',
       link: { tipo: 'calibracao', id: 'k1' },
     })
     // Gravada pela rota do celular: o texto inteiro
     expect(
       descreverRegistro(
-        registro({ acao: 'FOLHA_DEVOLVIDA_CELULAR', alvo: '', detalhe: 'FC-2026-00042 · pelo celular Celular do Maurício' }),
+        registro({ acao: 'FOLHA_DEVOLVIDA_CELULAR', alvo: '', detalhe: 'FC-2026-00042 · pelo celular Celular do Carlos' }),
       ),
-    ).toEqual({ titulo: 'Uma folha de campo voltou do celular', detalhe: 'FC-2026-00042 · pelo celular Celular do Maurício' })
+    ).toEqual({ titulo: 'Uma folha de campo voltou do celular', detalhe: 'FC-2026-00042 · pelo celular Celular do Carlos' })
     expect(
       descreverRegistro(
         registro({
           acao: 'CELULAR_REVOGADO',
           alvo: 'aparelho-1',
-          detalhe: 'POST /api/celulares/:id/revogar | Celular do Maurício · Maurício · Perdido',
+          detalhe: 'POST /api/celulares/:id/revogar | Celular do Carlos · Carlos · Perdido',
         }),
       ),
-    ).toEqual({ titulo: 'Descadastrou o celular de um técnico', detalhe: 'Celular do Maurício · Maurício · Perdido' })
+    ).toEqual({ titulo: 'Descadastrou o celular de um técnico', detalhe: 'Celular do Carlos · Carlos · Perdido' })
     expect(grupoDaAcao('CELULAR_CADASTRADO')).toBe('campo')
+  })
+
+  it('"Criar calibração com os dados do campo": o alvo é o id do registro, não de uma calibração (sem link)', () => {
+    const criada = descreverRegistro(
+      registro({
+        acao: 'DADOS_PUXADOS_DO_CAMPO',
+        alvo: 'reg-1',
+        detalhe: 'POST /api/campo/registros/:id/criar-calibracao | FC-2026-00042',
+      }),
+    )
+    expect(criada.titulo).toBe(ROTULO_ACAO_AUDITORIA.DADOS_PUXADOS_DO_CAMPO)
+    expect(criada.detalhe).toBe('FC-2026-00042')
+    expect(criada.link).toBeUndefined()
+    // Puxar na calibração: o alvo é a calibração (o link leva a ela)
+    expect(
+      descreverRegistro(
+        registro({
+          acao: 'DADOS_PUXADOS_DO_CAMPO',
+          alvo: 'k1',
+          detalhe: 'POST /api/calibracoes/:id/puxar-campo | FC-2026-00042',
+        }),
+      ).link,
+    ).toEqual({ tipo: 'calibracao', id: 'k1' })
   })
 
   it('rota desconhecida aparece como a chave', () => {

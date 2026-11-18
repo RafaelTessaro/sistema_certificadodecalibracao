@@ -178,10 +178,12 @@ export function descreverRegistro(r: RegistroAuditoria, nomes?: ReadonlyMap<stri
     return { titulo, detalhe: daRota ? extraDoDetalhe(r.detalhe) : r.detalhe }
   }
   if (grupoDaAcao(r.acao) === 'campo') {
-    // Pela tela ('POST … | FC-… · para Maurício') ou gravado pela rota do celular (o texto inteiro)
+    // Pela tela ('POST … | FC-… · para Carlos') ou gravado pela rota do celular (o texto inteiro)
     const daRota = /^(GET|POST|PUT|DELETE) \/api\//.test(r.detalhe)
     const detalhe = daRota ? extraDoDetalhe(r.detalhe) : r.detalhe
-    const comLink = ACOES_DA_FOLHA_NO_CELULAR.has(r.acao) && !!r.alvo
+    // As rotas dos registros (/api/campo/registros/:id/…, como "Criar calibração com os dados do campo") gravam o id do
+    // REGISTRO como alvo: o link levaria a uma calibração que não existe
+    const comLink = ACOES_DA_FOLHA_NO_CELULAR.has(r.acao) && !!r.alvo && !r.detalhe.startsWith('POST /api/campo/registros/')
     return { titulo, detalhe, ...(comLink ? { link: { tipo: 'calibracao' as const, id: r.alvo } } : {}) }
   }
   if (ACOES_DO_NUMERO.has(r.acao)) {

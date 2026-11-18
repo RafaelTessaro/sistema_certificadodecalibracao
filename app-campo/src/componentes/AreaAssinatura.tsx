@@ -50,7 +50,7 @@ export function AreaAssinatura({
 }: {
   titulo: string
   passo?: string
-  /** "Maurício · técnico que executou". */
+  /** "Carlos · técnico que executou". */
   legenda: string
   /** O que a assinatura significa ("Executei as medições desta folha…"). */
   frase: string

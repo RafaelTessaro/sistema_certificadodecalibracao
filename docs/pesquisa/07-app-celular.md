@@ -10,9 +10,9 @@ essencial, as decisões e as fontes principais. Onde o plano e os ajustes finais
 
 ## 1. O que é e as decisões do dono
 
-A folha de campo FOR-CAL-01 vai para o celular Android do técnico (Maurício). Ele preenche no cliente, sem internet, colhe
-as duas assinaturas com o dedo e, de volta ao Wi-Fi da empresa, o celular entrega a folha ao servidor. No escritório, a
-Lizi compara (piloto) ou puxa (depois do piloto) os dados para a calibração.
+A folha de campo FOR-CAL-01 vai para o celular Android do técnico. Ele preenche no cliente, sem internet, colhe as duas
+assinaturas com o dedo e, de volta ao Wi-Fi da empresa, o celular entrega a folha ao servidor. O escritório compara
+(piloto) ou puxa (depois do piloto) os dados para a calibração.
 
 Decisões do dono:
 
@@ -37,9 +37,11 @@ Decisões do dono:
 - **Conflito se evita no desenho:** como no "check-out" da Fluke, enquanto a folha está com o técnico só o celular escreve
   nela (no sistema: a trava `NO_CELULAR`, ligada só depois do piloto). "Vence a última sincronização" (Fulcrum) perde dado
   sem ninguém ver.
-- **Assinatura com o dedo** vale entre empresas privadas (MP 2.200-2/2001, art. 10, §2º) quando amarrada ao conteúdo
-  assinado e reaberta se algo mudar. O cliente assina que **acompanhou o serviço e está ciente das condições, não dos
-  resultados**, como na folha de papel.
+- **Assinatura com o dedo** é uma assinatura eletrônica simples (na classificação da Lei 14.063/2020): não confere a
+  identidade de quem assina. Entre particulares, a MP 2.200-2/2001 (art. 10, § 2º) admite outros meios de comprovar a
+  autoria e a integridade de um documento eletrônico, desde que as partes os aceitem; amarrar a assinatura ao conteúdo
+  assinado e reabri-la se algo mudar reforça a prova. **O valor como prova está a confirmar com o jurídico.** O cliente
+  assina que **acompanhou o serviço e está ciente das condições, não dos resultados**, como na folha de papel.
 - **ISO/IEC 17025, 7.5:** o que o técnico registra no celular é o registro original. Guardar como chegou, com quem e
   quando, e cada correção sem apagar o valor anterior.
 - **LGPD:** guardar só a **imagem** da assinatura (velocidade e pressão do traço a aproximariam de dado biométrico), apagar
@@ -88,8 +90,8 @@ Decisões do dono:
 
 ## 5. Interface (pesquisa 04)
 
-- **O app é a FOR-CAL-01 em forma de celular:** os mesmos 8 passos, nomes e a marca ● de obrigatório para emitir. A Lizi
-  reconhece cada campo quando os dados chegam.
+- **O app é a FOR-CAL-01 em forma de celular:** os mesmos 8 passos, nomes e a marca ● de obrigatório para emitir. O
+  escritório reconhece cada campo quando os dados chegam.
 - **Minhas folhas** é a tela inicial, por cliente, com o estado da entrega sempre à vista.
 - **Teclado numérico do próprio app**, com teclas grandes (dá para usar de luva) e vírgula sempre visível: o teclado da
   Samsung esconde a vírgula em vários aparelhos. O valor fica **exatamente como digitado** (as casas decimais contam).
@@ -121,7 +123,7 @@ tiraram do plano:
 | Fila de PDF, tabela de versões de PDF, sha256 e código no rodapé | PDF da folha gerado na hora em que é pedido; rodapé "FC-… · FOR-CAL-01 rev. 05 · gerado em …" |
 | Justificativa por diferença | Um texto só na emissão, guardado em `emissao.campo` (o PDF do certificado não muda) |
 | "Continuei no papel a partir daqui" | Encerrar sem completar, com o motivo |
-| Plugin Kotlin próprio, checagem do bloqueio de tela, SQLCipher, minify, fotos, assinatura A1 do PDF da folha | Só plugins oficiais/consagrados; bloqueio de tela como recomendação no LEIA-ME |
+| Plugin Kotlin próprio, checagem do bloqueio de tela, SQLCipher, minify, fotos, assinatura A1 do PDF da folha | Só plugins oficiais/consagrados; bloqueio de tela obrigatório pelo POP-CAL-01 (seção 11), conferido pelo administrador no cadastro (o app não confere) |
 | Teste do aparelho em etapas | Teste de 1 minuto (abrir `http://IP:4850` no navegador do celular) + emulador no CI, informativo |
 
 Ficaram: o piloto `registroOriginal` = `PAPEL` (padrão; "Comparar com o campo", nada vai para o rascunho) ou `CELULAR`
@@ -161,7 +163,8 @@ com o recibo do servidor; o APK no instalador; sem a chave de assinatura no GitH
 
 - Beamex bMobile e LOGiCAL; Fluke MET/TEAM Mobile; TMA ProCal; IndySoft Scales; Fulcrum (sincronização e conflitos);
   GoFormz (assinaturas reabertas se o conteúdo muda).
-- MP 2.200-2/2001, art. 10, §2º; ISO/IEC 17025:2017, 7.5; LGPD (Lei 13.709/2018).
+- MP 2.200-2/2001, art. 10, § 2º; Lei 14.063/2020 (classificação das assinaturas eletrônicas); ISO/IEC 17025:2017, 7.5;
+  LGPD (Lei 13.709/2018).
 - Capacitor 8 (capacitorjs.com/docs), `@capacitor-community/sqlite`, `@capacitor-mlkit/barcode-scanning`, `signature_pad`.
 - Android: configuração de segurança de rede (developer.android.com/privacy-and-security/security-config), backup e
   `dataExtractionRules`, assinatura de apps (developer.android.com/studio/publish/app-signing).

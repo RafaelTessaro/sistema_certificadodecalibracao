@@ -35,7 +35,7 @@ import {
   type RespostaRecebida,
   type ResumoEnvio,
 } from '#shared/campo/protocolo.ts'
-import { conferirAssinaturas, validarRegistro } from '#shared/campo/registro.ts'
+import { conferirAssinaturas, validarPng, validarRegistro } from '#shared/campo/registro.ts'
 import {
   DESFECHOS,
   ESTADOS_FOLHA_CELULAR,
@@ -74,6 +74,7 @@ import { MOTIVOS_REVOGACAO } from '#shared/tipos.ts'
 import { type Banco, transacao } from '../db.ts'
 import { ErroApi } from '../erros.ts'
 import type { Repositorio } from '../repositorio.ts'
+import { pngDecodificavel } from './png.ts'
 
 /** sha256 (hex minúsculo) do UTF-8 de um texto: o mesmo do celular (`sha256Hex`, `sha256WebCrypto`). */
 export const sha256 = (texto: string) => createHash('sha256').update(texto, 'utf8').digest('hex')
@@ -536,7 +537,7 @@ export class RepositorioCampo {
       const atual = this.obterDispositivo(e.aparelhoId)
       const tecnico = this.usuario(e.usuarioId)
       const primeiroNome = (tecnico?.nome ?? '').trim().split(/\s+/)[0] ?? ''
-      const nomePadrao = primeiroNome ? `Celular do ${primeiroNome}` : 'Celular do técnico'
+      const nomePadrao = primeiroNome ? `Celular de ${primeiroNome}` : 'Celular do técnico'
       if (atual) {
         const trocouTecnico = atual.usuario_id !== e.usuarioId
         this.db
@@ -568,7 +569,7 @@ export class RepositorioCampo {
 
   renomear(id: string, nome: unknown): { celular: CelularListado; antes: string } {
     const novo = textoDeUmaLinha(nome, 60)
-    if (!novo) throw new ErroApi(400, 'Informe o nome do celular (por exemplo, "Celular do Maurício").')
+    if (!novo) throw new ErroApi(400, 'Informe o nome do celular (por exemplo, "Celular de Ana").')
     return transacao(this.db, () => {
       const l = this.obterDispositivo(id)
       if (!l) throw new ErroApi(404, 'Celular não encontrado.')
@@ -757,10 +758,10 @@ export class RepositorioCampo {
     const antes = normalizarCalibracao(atual).valor as CalibracaoInput
     const mudou = CAMPOS_DE_MEDICAO.some((c) => JSON.stringify(novo[c] ?? null) !== JSON.stringify(antes[c] ?? null))
     if (!mudou) return
-    const nome = this.nomes().get(envio.usuario_id) ?? 'o técnico'
+    const nome = this.nomes().get(envio.usuario_id)
     throw new ErroApi(
       409,
-      `A folha ${envio.numero} está no celular de ${nome}: as leituras ficam só para leitura aqui até ela voltar. Para digitar do papel, recolha a folha.`,
+      `A folha ${envio.numero} está no ${nome ? `celular de ${nome}` : 'celular do técnico'}: as leituras ficam só para leitura aqui até ela voltar. Para digitar do papel, recolha a folha.`,
       { codigo: 'NO_CELULAR', numero: envio.numero, envioId: envio.id },
     )
   }
@@ -997,11 +998,25 @@ export class RepositorioCampo {
     } catch {
       problemas.push({ campo: 'assinaturas', mensagem: 'Não foi possível conferir as assinaturas.' })
     }
+    // O cabeçalho certo não basta: a imagem que não decodifica fica marcada (a folha impressa diz "ilegível"; nada é
+    // recusado)
+    const assinaturas = ehObj(e.corpo.assinaturas) ? e.corpo.assinaturas : {}
+    for (const quem of ['tecnico', 'cliente'] as const) {
+      const a = assinaturas[quem]
+      const png = ehObj(a) ? a.png : undefined
+      if (typeof png === 'string' && validarPng(png) === null && !pngDecodificavel(png))
+        problemas.push({ campo: `assinaturas.${quem}.png`, mensagem: 'A imagem da assinatura está corrompida.' })
+    }
     if (e.corpo.envioId !== e.envioId && !problemas.some((p) => p.campo === 'envioId'))
       problemas.push({ campo: 'envioId', mensagem: 'O registro diz ser de outro envio.' })
     const d = e.dispositivo.linha
     if (envioAntes && envioAntes.usuario_id !== d.usuario_id && envioAntes.dispositivo_id !== d.id)
       problemas.push({ campo: 'aparelho', mensagem: 'A folha foi entregue pelo celular de outro técnico.' })
+    // O técnico que o registro diz é o que o celular declara: o escritório vê quando não é o do celular nem o da folha
+    // (a importação também não o põe na calibração)
+    const tecnicoId = ehObj(registro.tecnico) && typeof registro.tecnico.id === 'string' ? registro.tecnico.id : ''
+    if (tecnicoId && tecnicoId !== d.usuario_id && tecnicoId !== envioAntes?.usuario_id)
+      problemas.push({ campo: 'tecnico', mensagem: 'O técnico do registro não é o do celular nem o da folha.' })
 
     return transacao(this.db, () => {
       const outra = this.registroPorSha(sha)
@@ -1030,16 +1045,28 @@ export class RepositorioCampo {
       const inteiro = (v: unknown) => (typeof v === 'number' && Number.isSafeInteger(v) ? v : 0)
 
       // Revisões do mesmo envio: a mais nova vale; as anteriores (pela cadeia das reaberturas, ou pela revisão) ficam
-      // SUPERADO. Uma revisão que chega atrasada, depois da mais nova, já entra SUPERADO
+      // SUPERADO. Uma revisão que chega atrasada, depois da mais nova, já entra SUPERADO. Na mesma revisão, o mesmo
+      // conteúdo assinado com outro sha256 só difere nas correções depois da assinatura ("Corrigir…", só por acréscimo):
+      // vale a que tem mais correções (no empate, a que chegou por último)
       const doMesmoEnvio = this.db
         .prepare("SELECT * FROM registros_campo WHERE envio_id = ? AND situacao = 'VALIDO'")
         .all(e.envioId) as unknown as LinhaRegistro[]
-      const superadas = doMesmoEnvio.filter((r) => anteriores.has(r.sha256) || r.revisao_local < revisao)
-      const maisNova = doMesmoEnvio.some(
-        (r) =>
-          r.revisao_local > revisao ||
-          lerJson<RegistroCampo | null>(r.conteudo, null)?.reaberturas?.some?.((x) => x?.sha256Anterior === sha),
+      const nCorrecoes = (r: { correcoesPosAssinatura?: unknown } | null | undefined) =>
+        Array.isArray(r?.correcoesPosAssinatura) ? r.correcoesPosAssinatura.length : 0
+      const correcoes = nCorrecoes(registro)
+      const mesmaVersao = (r: LinhaRegistro) => r.revisao_local === revisao && r.conteudo_sha256 === conteudoSha
+      const correcoesDe = (r: LinhaRegistro) => nCorrecoes(lerJson<RegistroCampo | null>(r.conteudo, null))
+      const superadas = doMesmoEnvio.filter(
+        (r) => anteriores.has(r.sha256) || r.revisao_local < revisao || (mesmaVersao(r) && correcoesDe(r) <= correcoes),
       )
+      const corrigidaDepois = doMesmoEnvio.some((r) => mesmaVersao(r) && correcoesDe(r) > correcoes)
+      const maisNova =
+        corrigidaDepois ||
+        doMesmoEnvio.some(
+          (r) =>
+            r.revisao_local > revisao ||
+            lerJson<RegistroCampo | null>(r.conteudo, null)?.reaberturas?.some?.((x) => x?.sha256Anterior === sha),
+        )
       const situacao: SituacaoRegistro = maisNova ? 'SUPERADO' : 'VALIDO'
       const id = randomUUID()
       this.db
@@ -1070,7 +1097,11 @@ export class RepositorioCampo {
           situacao,
           JSON.stringify(naOrdem(marcas)),
           JSON.stringify(problemas.slice(0, 200)),
-          maisNova ? 'Chegou depois de uma revisão mais nova da mesma folha.' : '',
+          corrigidaDepois
+            ? 'Chegou depois de uma versão mais nova da mesma folha (corrigida no celular).'
+            : maisNova
+              ? 'Chegou depois de uma revisão mais nova da mesma folha.'
+              : '',
           maisNova ? 'sistema' : '',
           maisNova ? recebidoEm : '',
         )
@@ -1080,7 +1111,13 @@ export class RepositorioCampo {
       )
       if (situacao === 'VALIDO')
         for (const r of superadas)
-          superar.run('Chegou uma revisão mais nova da mesma folha (reaberta no celular).', recebidoEm, r.id)
+          superar.run(
+            mesmaVersao(r)
+              ? 'Chegou uma versão mais nova da mesma folha (corrigida no celular).'
+              : 'Chegou uma revisão mais nova da mesma folha (reaberta no celular).',
+            recebidoEm,
+            r.id,
+          )
       // O envio vivo passa a DEVOLVIDA (um envio encerrado nunca volta a ser vivo)
       if (envio && (envio.situacao === 'ENVIADA' || envio.situacao === 'NO_CELULAR'))
         this.db

@@ -6,7 +6,7 @@
 import { Check, ClipboardList, Eye, Loader2, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 import type { CampoDaCalibracao } from '#shared/tipos.ts'
-import { quando, ROTULO_DESFECHO, selosDasMarcas } from '../../lib/campo'
+import { quando, rotuloDoDesfecho, selosDasMarcas } from '../../lib/campo'
 import { cn } from '../../lib/cn'
 import { dataHora } from '../../lib/format'
 import { Badge } from '../ui/Badge'
@@ -84,7 +84,7 @@ export function BlocoRegistroCampo({
             ))}
             {campo.desfecho && campo.desfecho !== 'COMPLETA' && campo.motivoDesfecho && (
               <span className="text-[13px] text-ink-2">
-                {ROTULO_DESFECHO[campo.desfecho]}: {campo.motivoDesfecho}
+                {rotuloDoDesfecho(campo.desfecho)}: {campo.motivoDesfecho}
               </span>
             )}
           </div>

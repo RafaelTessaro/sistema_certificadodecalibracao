@@ -69,6 +69,15 @@ export function lerHashPin(texto: string | null | undefined): HashPin | null {
   }
 }
 
+/**
+ * O pareamento novo apaga o PIN guardado? Sim em "Esqueci o PIN" e quando o celular passa para outro técnico: o PIN é
+ * pessoal, e o do técnico anterior não pode assinar pelo novo. Sem pareamento anterior também (não há PIN de outro
+ * técnico para manter). Parear de novo o mesmo técnico mantém o PIN.
+ */
+export function pareamentoApagaPin(o: { esqueciPin?: boolean; tecnicoAnterior?: string | null; tecnicoNovo: string }): boolean {
+  return Boolean(o.esqueciPin) || !o.tecnicoAnterior || o.tecnicoAnterior !== o.tecnicoNovo
+}
+
 // ---- Tentativas ---------------------------------------------------------------------------------------------------------
 
 export interface TentativasPin {

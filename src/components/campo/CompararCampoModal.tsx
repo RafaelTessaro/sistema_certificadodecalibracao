@@ -4,6 +4,7 @@
 // iguais"), as diferenças em destaque. No piloto, nada vai para o rascunho e a observação é opcional. Com o celular, cada
 // diferença escolhe o que fica (o do celular vem marcado); o rascunho sem leituras recebe tudo, com o resumo ("47
 // leituras, 6 horários, 2 anotações"). As anotações do técnico aparecem ao lado, nunca vão sozinhas para o certificado.
+// No certificado já emitido (a folha que volta depois da emissão), só a comparação: Celular | Certificado, nada muda nele.
 
 import { ArrowDownToLine, Eye, EyeOff, GitCompareArrows, Loader2, StickyNote, TriangleAlert } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -49,6 +50,7 @@ export function CompararCampoModal({
   nomes,
   aoPuxar,
   aoComparar,
+  emitido,
 }: {
   aberto: boolean
   aoFechar: () => void
@@ -65,8 +67,10 @@ export function CompararCampoModal({
   nomes?: Record<string, string>
   aoPuxar?: (r: { calibracao: Calibracao; pendencias: string[]; avisos: string[]; texto: string }) => void
   aoComparar?: () => void
+  /** O certificado já emitido: só comparar (nunca puxar), com "Certificado" no lugar de "Rascunho". */
+  emitido?: boolean
 }) {
-  const puxar = registroOriginal === 'CELULAR'
+  const puxar = registroOriginal === 'CELULAR' && !emitido
   return (
     <Modal
       aberto={aberto}
@@ -77,7 +81,9 @@ export function CompararCampoModal({
       descricao={
         puxar
           ? 'O que o técnico anotou no celular vai para o rascunho. Em cada diferença, escolha o que fica: o do celular vem marcado.'
-          : 'Piloto: a folha de papel é o registro original. A comparação fica registrada e nada é escrito no rascunho.'
+          : emitido
+            ? 'O certificado já foi emitido: a comparação fica registrada e nada muda nele.'
+            : 'Piloto: a folha de papel é o registro original. A comparação fica registrada e nada é escrito no rascunho.'
       }
     >
       {aberto && (
@@ -93,6 +99,7 @@ export function CompararCampoModal({
           aoFechar={aoFechar}
           aoPuxar={aoPuxar}
           aoComparar={aoComparar}
+          emitido={!!emitido}
         />
       )}
     </Modal>
@@ -111,6 +118,7 @@ function Conteudo({
   aoFechar,
   aoPuxar,
   aoComparar,
+  emitido,
 }: {
   calibracaoId: string
   versao?: number
@@ -123,7 +131,10 @@ function Conteudo({
   aoFechar: () => void
   aoPuxar?: (r: { calibracao: Calibracao; pendencias: string[]; avisos: string[]; texto: string }) => void
   aoComparar?: () => void
+  emitido: boolean
 }) {
+  /** "Rascunho" ou, no certificado emitido, "Certificado" (a coluna e as frases). */
+  const nomeDoLado = emitido ? 'certificado' : 'rascunho'
   const [d, setD] = useState<RegistroCampoDetalhe | null>(null)
   const [erro, setErro] = useState('')
   const [verIguais, setVerIguais] = useState(false)
@@ -192,7 +203,7 @@ function Conteudo({
         useTempoReal.getState().mudou('calibracao')
         toast.sucesso(
           'Comparação registrada',
-          `${textoIguais(r.iguais)}, ${r.diferentes} ${r.diferentes === 1 ? 'diferença' : 'diferenças'}. Nada mudou no rascunho.`,
+          `${textoIguais(r.iguais)}, ${r.diferentes} ${r.diferentes === 1 ? 'diferença' : 'diferenças'}. Nada mudou no ${nomeDoLado}.`,
         )
         aoComparar?.()
       }
@@ -257,7 +268,7 @@ function Conteudo({
         <div className="min-w-0">
           {comparacao && visiveis.length === 0 ? (
             <p className="rounded-xl border border-line px-4 py-6 text-center text-[13px] text-muted">
-              Tudo igual: o rascunho já tem o mesmo que o celular.
+              Tudo igual: o {nomeDoLado} já tem o mesmo que o celular.
             </p>
           ) : (
             <div className="scroll-fino max-h-[52vh] overflow-auto rounded-xl border border-line">
@@ -266,7 +277,7 @@ function Conteudo({
                   <tr className="bg-surface-2 text-left text-xs text-muted">
                     <th className="px-3 py-2 font-medium">Campo</th>
                     <th className="px-3 py-2 font-medium">Celular</th>
-                    <th className="px-3 py-2 font-medium">Rascunho</th>
+                    <th className="px-3 py-2 font-medium">{emitido ? 'Certificado' : 'Rascunho'}</th>
                     {puxar && <th className="px-3 py-2 font-medium">Fica</th>}
                   </tr>
                 </thead>
@@ -288,7 +299,7 @@ function Conteudo({
                               <span className={cn('block', igual ? 'text-muted' : 'font-medium text-ink')}>{x.rotulo}</span>
                               {s && (
                                 <Badge tom={s.tom} ponto={false} className="mt-0.5 h-5 px-2 text-[11px]">
-                                  {s.rotulo}
+                                  {s.rotulo.replace('rascunho', nomeDoLado)}
                                 </Badge>
                               )}
                             </td>

@@ -6,6 +6,7 @@ import { SystemBars, SystemBarsStyle } from '@capacitor/core'
 import { sha256Hex, sha256WebCrypto } from '../../../shared/campo/canonico.ts'
 import {
   lerQrPareamento,
+  MENSAGEM_SEM_SERVIDOR,
   MENSAGENS_ERRO_CAMPO,
   normalizarCodigo,
   normalizarEnderecoServidor,
@@ -23,6 +24,7 @@ import {
   esperaRestante,
   lerHashPin,
   lerTentativas,
+  pareamentoApagaPin,
   registrarAcertoPin,
   registrarErroPin,
   textoDaEspera,
@@ -40,6 +42,7 @@ import { ficarEmPe } from '../plataforma/orientacao.ts'
 import { gravarJson, gravarPreferencia, lerJson, lerPreferencia, PREF } from '../plataforma/preferencias.ts'
 import { cancelarLeituraQr, ErroQr, lerQr } from '../plataforma/qr.ts'
 import { abrirRepositorio } from '../plataforma/sqlite.ts'
+import { camadaDeCima } from './camadas.ts'
 import { lerEstado, mudarEstado, telaAtual } from './loja.ts'
 import type { Pareamento, Tela, Tema } from './loja.ts'
 
@@ -121,7 +124,23 @@ export function irDaLista(tela?: Tela): void {
   mudarEstado({ pilha: tela ? [{ nome: 'lista' }, tela] : [{ nome: 'lista' }] })
 }
 
-/** Voltar (◂ ou o gesto do Android). Nunca descarta nada: tudo já está gravado. false = já está na lista. */
+/**
+ * O botão/gesto de voltar do Android: fecha o que está aberto por cima da tela (app/camadas.ts: a folha que sobe de
+ * baixo, o PIN, o teclado do app); sem nada aberto, é o voltar da tela.
+ */
+export function voltarDoAndroid(): boolean {
+  const fechar = lerEstado().lendoQr ? undefined : camadaDeCima()
+  if (fechar) {
+    fechar()
+    return true
+  }
+  return voltar()
+}
+
+/**
+ * Voltar da tela (◂, ou o gesto do Android sem nada aberto por cima). Nunca descarta nada: tudo já está gravado. false =
+ * já está na lista.
+ */
 export function voltar(): boolean {
   const e = lerEstado()
   if (e.lendoQr) {
@@ -211,7 +230,7 @@ export async function iniciar(): Promise<void> {
       // Foi para segundo plano com o celular na mão do cliente: volta pedindo o PIN
       if (telaAtual(lerEstado()).nome === 'entregaCliente') mudarEstado({ pinAoVoltar: true })
     },
-    aoVoltarTela: voltar,
+    aoVoltarTela: voltarDoAndroid,
   })
   if (pareamento) void sincronizar()
 }
@@ -360,7 +379,13 @@ export async function parear(dados: { endereco: string; codigo: string; novoPin?
   if (!codigo) return 'O código tem 6 dígitos. Confira na tela do computador.'
   const api = cliente(e.endereco, '')
   const saude = await api.saude()
-  if (!saude.ok) return saude.falha.tipo === 'REDE' ? saude.falha.mensagem : 'Esse endereço não é de um servidor BC Calibração.'
+  if (!saude.ok) {
+    if (saude.falha.tipo !== 'REDE') return 'Esse endereço não é de um servidor BC Calibração.'
+    // Antes do primeiro cadastro ainda não existe o Menu: o endereço se digita nesta mesma tela
+    if (!lerEstado().pareamento && saude.falha.mensagem === MENSAGEM_SEM_SERVIDOR(e.endereco))
+      return `Servidor não encontrado em ${e.endereco}. Confira se o celular está no Wi-Fi da empresa e leia o QR de novo, ou digite o endereço e o código.`
+    return saude.falha.mensagem
+  }
   const r = await api.parear({
     codigo,
     aparelhoId: await idDoAparelho(),
@@ -374,6 +399,12 @@ export async function parear(dados: { endereco: string; codigo: string; novoPin?
       ? `${r.falha.mensagem} (${restantes === 1 ? 'resta 1 tentativa' : `restam ${restantes} tentativas`})`
       : r.falha.mensagem
   }
+  // O PIN é pessoal: "Esqueci o PIN" ou o celular passando para outro técnico pedem um PIN novo (as folhas ficam)
+  const apagarPin = pareamentoApagaPin({
+    esqueciPin: dados.novoPin,
+    tecnicoAnterior: lerEstado().pareamento?.tecnico.id,
+    tecnicoNovo: r.valor.tecnico.id,
+  })
   const pareamento: Pareamento = {
     endereco: e.endereco,
     token: r.valor.token,
@@ -389,8 +420,7 @@ export async function parear(dados: { endereco: string; codigo: string; novoPin?
   await gravarPreferencia(PREF.pareadoEm, pareamento.pareadoEm)
   await gravarPreferencia(PREF.descadastrado, null)
   await gravarPreferencia(PREF.naoPareado, null)
-  // "Esqueci o PIN": o pareamento novo pede um PIN novo (as folhas ficam)
-  if (dados.novoPin) {
+  if (apagarPin) {
     await gravarPreferencia(PREF.pinHash, null)
     await gravarPreferencia(PREF.pinTentativas, null)
   }
@@ -398,8 +428,8 @@ export async function parear(dados: { endereco: string; codigo: string; novoPin?
     pareamento,
     descadastrado: false,
     naoPareado: false,
-    temPin: dados.novoPin ? false : s.temPin,
-    tentativasPin: dados.novoPin ? registrarAcertoPin() : s.tentativasPin,
+    temPin: apagarPin ? false : s.temPin,
+    tentativasPin: apagarPin ? registrarAcertoPin() : s.tentativasPin,
     pilha: [{ nome: 'lista' }],
   }))
   void sincronizar()

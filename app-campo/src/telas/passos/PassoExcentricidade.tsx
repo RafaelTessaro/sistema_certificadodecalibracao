@@ -10,7 +10,13 @@ import { Botao, Cartao, cn, MarcaObrigatorio } from '../../componentes/base.tsx'
 import { CampoTextoDaFolha, useGravar } from '../../componentes/CamposDaFolha.tsx'
 import { Celula, EditorDeLeituras } from '../../componentes/EditorDeLeituras.tsx'
 import type { ContextoTabela } from '../../componentes/EditorDeLeituras.tsx'
-import { excentricidadeComZero, lidoNoCaminho, ordemExcentricidade } from '../../nucleo/ordem.ts'
+import {
+  excentricidadeComZero,
+  lidoNoCaminho,
+  ordemExcentricidade,
+  textoCargaPrevista,
+  textoDaCargaDoItem,
+} from '../../nucleo/ordem.ts'
 import type { PropsPasso } from '../Passo.tsx'
 
 /** Onde desenhar cada posição (x, y de 0 a 1): centro e 4 cantos; senão, em volta do centro. */
@@ -77,7 +83,7 @@ export function PassoExcentricidade({ f, foco, aoFocar, irPara }: PropsPasso) {
     )
 
   const descrever = (campo: string): ReactNode => {
-    const carga = e.cargaAplicada?.valor ?? e.cargaPrevista
+    const carga = textoDaCargaDoItem(e, r, pacote)
     if (campo === 'excentricidade.cargaAplicada') return 'A carga usada nas posições'
     return [
       carga ? `Carga ${carga} ${u}` : '',
@@ -97,7 +103,7 @@ export function PassoExcentricidade({ f, foco, aoFocar, irPara }: PropsPasso) {
         </span>
         {e.cargaPrevista ? (
           <span className="text-[18px] font-semibold tabular-nums">
-            {e.cargaPrevista} {u}
+            {textoCargaPrevista(e.cargaPrevista, r, pacote)} {u}
             {pesos && <span className="block text-right text-[14px] font-normal text-ink-2">{pesos}</span>}
           </span>
         ) : (
@@ -129,7 +135,7 @@ export function PassoExcentricidade({ f, foco, aoFocar, irPara }: PropsPasso) {
               }
               aria-label={`Posição ${p.rotulo}${feita ? ', feita' : ''}`}
               className={cn(
-                'absolute grid size-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 text-[15px] font-semibold',
+                'absolute grid size-12 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 text-[15px] font-semibold',
                 atual
                   ? 'border-brand bg-brand text-on-brand'
                   : feita
@@ -162,7 +168,11 @@ export function PassoExcentricidade({ f, foco, aoFocar, irPara }: PropsPasso) {
       </div>
       <Botao
         variante="texto"
-        onClick={() => void gravar((x) => void (x.passos.excentricidade.aplicavel = false))}
+        onClick={() => {
+          // Fecha o teclado do app: sem foco, o rodapé ("Próximo passo ▸") volta na vista do motivo
+          aoFocar(null)
+          void gravar((x) => void (x.passos.excentricidade.aplicavel = false))
+        }}
         className="self-start"
       >
         Não foi possível fazer o ensaio

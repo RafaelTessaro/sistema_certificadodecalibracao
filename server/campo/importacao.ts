@@ -6,7 +6,8 @@
 //   observação opcional, e NÃO escreve nada no rascunho.
 // - Registro original = CELULAR: "Puxar dados do campo" aplica no rascunho o que foi escolhido em cada diferença (sem
 //   escolha, o do celular), com a conferência da versão (409 CONFLITO). O técnico que assinou no celular fica sendo o
-//   técnico e quem o definiu (`tecnicoConfirmado`): quem puxa os dados não fica impedido de autorizar.
+//   técnico e quem o definiu (`tecnicoConfirmado`): quem puxa os dados não fica impedido de autorizar. Só vale o técnico
+//   que é o dono do celular que entregou ou aquele a quem a folha foi enviada (o id do registro é o que o celular diz).
 //   "Criar calibração com os dados do campo": a folha sem rascunho (a avulsa da balança, a da calibração excluída, ou a
 //   só do cliente / em branco depois de cadastrar a balança) vira um rascunho ligado à folha e com os dados puxados.
 // - Depois de puxar, um dado bruto mudado (leitura, carga, ambiente, data, padrões) é pendência de emissão até existir uma
@@ -375,10 +376,21 @@ function conferirRegistroOriginalCelular(campo: ServicosCampo) {
     )
 }
 
-/** O técnico que assinou no celular, se ainda existe: fica sendo o técnico e quem o definiu. */
-function tecnicoDoRegistro(ctx: Contexto, registro: RegistroCampo): string {
+/**
+ * O técnico que assinou no celular: fica sendo o técnico e quem o definiu. Só vale se ainda existe e se é o dono do
+ * celular que entregou (o token) ou o técnico a quem a folha foi enviada: o id que o registro traz é o que o celular
+ * declara, e um celular não põe outra pessoa na calibração (quem executou não autoriza). Senão, '' (a calibração fica
+ * com o técnico dela).
+ */
+function tecnicoDoRegistro(
+  ctx: Contexto,
+  campo: ServicosCampo,
+  registro: RegistroCampo,
+  listado: Pick<RegistroCampoListado, 'tecnicoId' | 'envioId'>,
+): string {
   const id = typeof registro.tecnico?.id === 'string' ? registro.tecnico.id : ''
-  return id && ctx.usuarios.obter(id) ? id : ''
+  if (!id || !ctx.usuarios.obter(id)) return ''
+  return id === listado.tecnicoId || id === campo.repo.envio(listado.envioId)?.usuario_id ? id : ''
 }
 
 /** Aplica o registro no rascunho gravado e grava a importação (dentro de uma transação). */
@@ -386,7 +398,14 @@ function aplicarEGravar(
   ctx: Contexto,
   campo: ServicosCampo,
   k: Calibracao,
-  e: { registroId: string; registro: RegistroCampo; pacote: PacoteCampo | null; escolhas: EscolhasCampo; autor: Autor },
+  e: {
+    registroId: string
+    listado: RegistroCampoListado
+    registro: RegistroCampo
+    pacote: PacoteCampo | null
+    escolhas: EscolhasCampo
+    autor: Autor
+  },
 ): { calibracao: Calibracao; resumo: ResumoImportacao; importacao: ImportacaoCampo } {
   let aplicado: { rascunho: Calibracao; resumo: ResumoImportacao }
   try {
@@ -398,10 +417,10 @@ function aplicarEGravar(
       { codigo: 'FORMATO' },
     )
   }
-  const tecnico = tecnicoDoRegistro(ctx, e.registro)
+  const tecnico = tecnicoDoRegistro(ctx, campo, e.registro, e.listado)
   const entrada: CalibracaoInput & { versao: number } = {
     ...aplicado.rascunho,
-    // O técnico que não existe mais no sistema não substitui o da calibração
+    // O técnico que não existe mais no sistema (ou que não é o do celular nem o da folha) não substitui o da calibração
     tecnicoId: tecnico || k.tecnicoId,
     versao: k.versao,
   }
@@ -448,7 +467,14 @@ export function puxarDoCampo(
     const listado = registroListado(campo, registroId)
     conferirRegistroDaCalibracao(ctx, k, listado)
     const { registro, pacote } = lerRegistro(campo, registroId)
-    return aplicarEGravar(ctx, campo, k, { registroId, registro, pacote, escolhas: lerEscolhas(c.escolhas), autor })
+    return aplicarEGravar(ctx, campo, k, {
+      registroId,
+      listado,
+      registro,
+      pacote,
+      escolhas: lerEscolhas(c.escolhas),
+      autor,
+    })
   })
 }
 
@@ -504,7 +530,7 @@ export function criarCalibracaoDoCampo(
   if (!balanca) throw new ErroApi(404, 'A balança desta folha não existe mais no cadastro.')
   if (folha.cliente_id && balanca.clienteId !== folha.cliente_id)
     throw new ErroApi(409, 'A balança escolhida é de outro cliente que o da folha.')
-  const tecnico = tecnicoDoRegistro(ctx, registro)
+  const tecnico = tecnicoDoRegistro(ctx, campo, registro, listado)
   // A base: o rascunho como a folha impressa o mostrava (os mesmos ids dos pontos); sem ele (balança informada no local),
   // o rascunho novo da balança cadastrada agora
   const base: CalibracaoInput =
@@ -524,7 +550,7 @@ export function criarCalibracaoDoCampo(
     const criada = ctx.repo.criarCalibracao({ ...base, tecnicoId: tecnico || base.tecnicoId }, autor)
     const { eventos } = ctx.repo.vincularFolhaCampo(numero, criada, { confirmar: true, por: autor.nome })
     const ligada = ctx.repo.obterCalibracao(criada.id) ?? criada
-    const r = aplicarEGravar(ctx, campo, ligada, { registroId, registro, pacote, escolhas: {}, autor })
+    const r = aplicarEGravar(ctx, campo, ligada, { registroId, listado, registro, pacote, escolhas: {}, autor })
     return { ...r, eventos }
   })
 }

@@ -34,6 +34,7 @@ import { capacidadeTexto, inscricaoEstadualNoCertificado, LIMITES, LOCAIS, TIPOS
 import type { Calibracao } from '#shared/tipos.ts'
 import { GraficoErro } from '../components/calibracao/GraficoErro'
 import { CampoDaEmissaoCard } from '../components/campo/CampoDaEmissaoCard'
+import { RegistroCampoCard } from '../components/campo/RegistroCampoCard'
 import { casasDe } from '../components/calibracao/util'
 import { assinaturaDaEmissao } from '../components/certificadoDigital/textos'
 import { EnviarCertificadoModal } from '../components/EnviarCertificadoModal'
@@ -388,6 +389,9 @@ function Certificado({ dados }: { dados: DetalheCalibracao }) {
 
           {/* Os dados puxados do celular (1.1.0): o registro, as diferenças e a justificativa, congelados na emissão */}
           {k.emissao?.campo && <CampoDaEmissaoCard campo={k.emissao.campo} />}
+          {/* A folha que voltou do celular sem ter sido puxada antes da emissão (o piloto, ou a que voltou "depois de
+              recolhida"): "Ver registro" e "Comparar com o campo" */}
+          <RegistroCampoCard calibracao={k} balanca={balanca} />
 
           <Card>
             <CardHeader icone={<Building2 className="h-4 w-4" />} titulo="Cliente" />

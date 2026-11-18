@@ -71,6 +71,7 @@ export function PassoPadroes({ f, analise }: PropsPasso) {
       {escolhendo && (
         <Folha
           titulo="Usei outro padrão"
+          aoFechar={() => setEscolhendo(false)}
           rodape={
             <Botao className="flex-1" onClick={() => setEscolhendo(false)}>
               Fechar

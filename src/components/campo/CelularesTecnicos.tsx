@@ -202,9 +202,9 @@ export function CelularesTecnicos({ usuarios, aoMudar }: { usuarios: Usuario[]; 
           )
         )}
         <p className="border-t border-line bg-surface-2/50 px-5 py-3 text-xs text-muted">
-          O celular grava o endereço deste computador que vem no QR. Reserve o IP dele no roteador para não mudar. O app registra
-          os horários das leituras e os contatos com o servidor só para a integridade da folha de campo, nunca para controle de
-          ponto.
+          O celular grava o endereço do servidor que vem no QR. Reserve o IP do servidor no roteador para não mudar. O app
+          registra os horários das leituras e os contatos com o servidor só para a integridade da folha de campo, nunca para
+          controle de ponto.
         </p>
       </Card>
 
@@ -452,7 +452,7 @@ function ConfiguracaoCampoCard() {
               aoEscolher={() => void escolher('PAPEL')}
               desabilitada={salvando}
               titulo="A folha de papel (piloto)"
-              texto="O técnico leva o papel e o celular. Nada trava no computador, a Lizi digita do papel e usa “Comparar com o campo” para conferir. Nada do celular vai para o rascunho."
+              texto="O técnico leva o papel e o celular. Nada trava no computador: quem digita a calibração digita do papel e usa “Comparar com o campo” para conferir. Nada do celular vai para o rascunho."
             />
             <OpcaoEscolha
               marcada={config.registroOriginal === 'CELULAR'}

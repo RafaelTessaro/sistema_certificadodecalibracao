@@ -354,7 +354,7 @@ function campoDoCelular(db: Banco) {
     CREATE TABLE IF NOT EXISTS dispositivos (
       id              TEXT PRIMARY KEY,               -- aparelhoId (UUID gerado no celular; o mesmo ao parear de novo)
       usuario_id      TEXT NOT NULL,                  -- o técnico dono do celular (sem chave estrangeira: transplante)
-      nome            TEXT NOT NULL,                  -- "Celular do Maurício"
+      nome            TEXT NOT NULL,                  -- "Celular de Carlos"
       modelo          TEXT NOT NULL DEFAULT '',
       token_sha256    TEXT NOT NULL DEFAULT '',       -- sha256 (hex) do token; o token nunca é guardado
       pareado_em      TEXT NOT NULL,

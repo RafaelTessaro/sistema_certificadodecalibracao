@@ -69,17 +69,21 @@ export function App() {
         {erro}
       </div>
     )
-  if (lendoQr) return <MolduraQr aoCancelar={cancelarLeituraQr} />
   return (
     <>
-      {!pareado ? <TelaPareamento motivo="PRIMEIRA" /> : !temPin ? <TelaCriarPin /> : <TelaDeCima />}
-      {pinAoVoltar && (
-        <FolhaDePin
-          titulo="PIN do técnico"
-          explicacao="O app saiu da tela durante a assinatura do cliente. Para continuar, o técnico digita o PIN."
-          aoConfirmar={() => mudarEstado({ pinAoVoltar: false })}
-        />
-      )}
+      {/* Enquanto a câmera lê o QR, as telas ficam montadas, só escondidas: a tela que pediu a leitura continua viva para
+          mostrar o erro (QR de outro sistema, código vencido, servidor fora do Wi-Fi, câmera sem permissão) */}
+      <div className="contents" style={lendoQr ? { visibility: 'hidden' } : undefined} aria-hidden={lendoQr || undefined}>
+        {!pareado ? <TelaPareamento motivo="PRIMEIRA" /> : !temPin ? <TelaCriarPin /> : <TelaDeCima />}
+        {pinAoVoltar && (
+          <FolhaDePin
+            titulo="PIN do técnico"
+            explicacao="O app saiu da tela durante a assinatura do cliente. Para continuar, o técnico digita o PIN."
+            aoConfirmar={() => mudarEstado({ pinAoVoltar: false })}
+          />
+        )}
+      </div>
+      {lendoQr && <MolduraQr aoCancelar={cancelarLeituraQr} />}
       {aviso && (
         <div
           role="status"
@@ -87,7 +91,7 @@ export function App() {
           className={cn(
             'entra fixed inset-x-4 z-[60] rounded-2xl px-4 py-3 text-[16px] font-medium shadow-float',
             aviso.tom === 'erro'
-              ? 'bg-danger text-white'
+              ? 'bg-danger text-on-danger'
               : aviso.tom === 'aviso'
                 ? 'bg-warning-soft text-warning-ink'
                 : 'bg-ink text-bg',

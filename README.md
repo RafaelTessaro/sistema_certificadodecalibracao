@@ -168,8 +168,9 @@ cd android && ./gradlew assembleDebug         # APK de debug: app/build/outputs/
 Precisa do JDK 21 e do Android SDK (plataforma 36, build-tools 35) em `ANDROID_HOME`. O APK de release só sai assinado
 com a chave da empresa, pelas variáveis `BC_APP_KEYSTORE_FILE`, `BC_APP_KEYSTORE_SENHA`, `BC_APP_CHAVE_ALIAS` e
 `BC_APP_CHAVE_SENHA`; `scripts/conferir-apk-celular.sh <apk> <versão> <versionCode>` confere a versão, a assinatura e as
-permissões. No GitHub, o workflow **App do celular** compila o APK de debug em todo push que mexe em `app-campo/` ou
-`shared/`, o de release quando a chave está nos segredos, e abre o app num Android simulado (informativo).
+permissões. No GitHub, o workflow **App do celular**, em todo push que mexe em `app-campo/` ou `shared/`, roda os testes
+do núcleo com o ponta a ponta contra o servidor de verdade (`server/campo/sincronia.e2e.test.ts`) e compila o APK de debug;
+compila o de release quando a chave está nos segredos e abre o app num Android simulado (informativo).
 
 ### Organização do código
 

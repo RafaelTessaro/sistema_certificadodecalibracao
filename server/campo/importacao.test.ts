@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PENDENCIA_JUSTIFICATIVA_CAMPO } from '#shared/campo/importar.ts'
 import type { LeituraCampo, PacoteCampo, RegistroCampo } from '#shared/campo/tipos.ts'
 import { BALANCA_VAZIA } from '#shared/dominio.ts'
+import { impedimentoParaEmitir, TECNICO_NAO_AUTORIZA } from '#shared/permissoes.ts'
 import type { Calibracao, CampoDaCalibracao, FolhaCampoDaBalanca, TecnicoParaEnvio } from '#shared/tipos.ts'
 import { type AppComLogin, cenarioCalibracao, criarAppComLogin } from '../auxiliaresTeste.ts'
 import { gerarPdf } from '../certificados.ts'
@@ -198,6 +199,40 @@ describe('registro original no celular: puxar, justificar e emitir', () => {
     expect((await campoDe(k.id)).puxado).toBe(true)
   })
 
+  it('o técnico que o registro diz e que não é o do celular nem o da folha não entra na calibração (quem executou não autoriza)', async () => {
+    await configurar('CELULAR')
+    const sig = await t.chamar('PUT', `/api/usuarios/${t.comumId}`, { cookie: t.cookieAdmin, payload: { signatario: true } })
+    expect(sig.statusCode, sig.body).toBe(200)
+    // O celular é do comum (signatário), mas o registro diz que quem executou foi o administrador
+    const { k } = await folhaQueVoltou({
+      mudar: { c: '30,00' },
+      ajustar: (r) => (r.tecnico = { id: t.adminId, nome: 'Admin Teste' }),
+    })
+    const [listado] = (await campoDe(k.id)).registros
+    expect(listado.marcas).toContain('FORMATO')
+    expect(listado.problemas).toEqual([
+      { campo: 'tecnico', mensagem: 'O técnico do registro não é o do celular nem o da folha.' },
+    ])
+    // Quem executou foi o comum (o técnico da calibração)
+    const atual = t.ctx.repo.obterCalibracao(k.id)!
+    const com = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...atual, tecnicoId: t.comumId, versao: atual.versao },
+    })
+    expect(com.statusCode, com.body).toBe(200)
+    const antes = t.ctx.repo.obterCalibracao(k.id)!
+    const r = await t.chamar('POST', `/api/calibracoes/${k.id}/puxar-campo`, {
+      cookie: t.cookieComum,
+      payload: { registroId: listado.id, versao: antes.versao },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    const puxada = r.json().calibracao as Calibracao
+    expect(pontoC(puxada).crescente).toBe(30)
+    expect(puxada.tecnicoId).toBe(t.comumId)
+    expect(puxada.tecnicoDefinidoPorId).not.toBe(t.adminId)
+    expect(impedimentoParaEmitir(true, puxada, { id: t.comumId, signatario: true })).toBe(TECNICO_NAO_AUTORIZA)
+  })
+
   it('a escolha "o do rascunho" mantém o valor digitado', async () => {
     await configurar('CELULAR')
     const { k } = await folhaQueVoltou({ mudar: { c: '30,00' } })
@@ -222,7 +257,7 @@ describe('registro original no celular: puxar, justificar e emitir', () => {
         payload: { registroId: campo.registroId, versao: k.versao },
       })
     ).json().calibracao as Calibracao
-    // A Lizi digita de novo a leitura do papel
+    // O escritório digita de novo a leitura do papel
     const mudada = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
       cookie: t.cookieComum,
       payload: {
@@ -340,6 +375,22 @@ describe('criar a calibração com os dados do campo', () => {
     const de = await t.chamar('POST', `/api/campo/registros/${registroId}/criar-calibracao`, { cookie: t.cookieComum })
     expect(de.statusCode).toBe(409)
     expect(de.json()).toMatchObject({ codigo: 'TEM_CALIBRACAO', calibracaoId: k.id })
+  })
+
+  it('o técnico que o registro diz e que não é o do celular nem o da folha não vira o técnico da calibração nova', async () => {
+    await configurar('CELULAR')
+    const sig = await t.chamar('PUT', `/api/usuarios/${t.comumId}`, { cookie: t.cookieAdmin, payload: { signatario: true } })
+    expect(sig.statusCode, sig.body).toBe(200)
+    const { registroId } = await avulsaQueVoltou(
+      { balancaId: c.balanca.id },
+      (r) => (r.tecnico = { id: t.adminId, nome: 'Admin Teste' }),
+    )
+    const r = await t.chamar('POST', `/api/campo/registros/${registroId}/criar-calibracao`, { cookie: t.cookieComum })
+    expect(r.statusCode, r.body).toBe(201)
+    const k = r.json().calibracao as Calibracao
+    expect(k.tecnicoId).toBe(t.comumId)
+    expect(k.tecnicoDefinidoPorId).toBe(t.comumId)
+    expect(impedimentoParaEmitir(true, k, { id: t.comumId, signatario: true })).toBe(TECNICO_NAO_AUTORIZA)
   })
 
   it('folha só do cliente: pede a balança cadastrada antes (de outro cliente, recusada); no piloto, recusada', async () => {

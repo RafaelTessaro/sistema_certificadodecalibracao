@@ -4,7 +4,9 @@ import { lerQrPareamento } from '#shared/campo/protocolo.ts'
 import type { RegistroCampo } from '#shared/campo/tipos.ts'
 import type { CelularDaFolha } from '#shared/tipos.ts'
 import {
+  acoesDeRecolher,
   avisoDoEnvio,
+  celularDe,
   contagemDoRegistro,
   contagemRegressiva,
   desde,
@@ -14,6 +16,7 @@ import {
   PENDENCIA_JUSTIFICATIVA,
   quando,
   rotuloDoCampo,
+  rotuloDoDesfecho,
   seloDoCelular,
   selosDasMarcas,
   textoContagem,
@@ -30,7 +33,7 @@ const AGORA = new Date('2026-11-18T13:00:00.000Z')
 const celular = (c: Partial<CelularDaFolha> = {}): CelularDaFolha => ({
   envioId: 'e1',
   situacao: 'ENVIADA',
-  tecnico: 'Maurício Souza',
+  tecnico: 'Carlos Eduardo Lima',
   tecnicoId: 'u1',
   em: '2026-11-18T11:12:00.000Z',
   estadoCelular: '',
@@ -68,7 +71,19 @@ describe('selos da folha no celular', () => {
         celular({ situacao: 'NO_CELULAR', estadoCelular: 'EM_PREENCHIMENTO', estadoCelularEm: '2026-11-18T12:00:00.000Z' }),
         AGORA,
       ),
-    ).toMatchObject({ rotulo: 'No celular do Maurício', detalhe: 'desde 08:12 · Em preenchimento · informado hoje' })
+    ).toMatchObject({
+      rotulo: 'No celular de Carlos',
+      detalhe: 'desde 08:12 · Em preenchimento · informado hoje',
+      dica: 'A folha está no celular de Carlos Eduardo Lima (Em preenchimento · informado hoje).',
+    })
+    // Sem o nome do técnico, nada de "celular de técnico"
+    expect(seloDoCelular(celular({ situacao: 'NO_CELULAR', tecnico: '' }), AGORA)).toMatchObject({
+      rotulo: 'No celular do técnico',
+      dica: 'A folha está no celular do técnico.',
+    })
+    expect(seloDoCelular(celular({ situacao: 'NO_CELULAR', tecnico: '', recolherPedido: true }), AGORA).detalhe).toBe(
+      'Aguardando o celular do técnico confirmar',
+    )
     expect(seloDoCelular(celular({ situacao: 'NO_CELULAR', recolherPedido: true }), AGORA).rotulo).toBe('Recolher pedido')
     expect(seloDoCelular(celular({ situacao: 'NO_CELULAR', recolherPedido: true, jaComecei: true }), AGORA).rotulo).toBe(
       'Já começada · vai voltar',
@@ -81,6 +96,11 @@ describe('selos da folha no celular', () => {
     expect(seloDoCelular(celular({ situacao: 'RECOLHIDA' }), AGORA).rotulo).toBe('Recolhida')
   })
 
+  it('"celular de Ana" (sem artigo antes do nome) e "celular do técnico" sem nome', () => {
+    expect(celularDe('Ana')).toBe('celular de Ana')
+    expect(celularDe('')).toBe('celular do técnico')
+  })
+
   it('as marcas e o desfecho viram selos curtos', () => {
     expect(selosDasMarcas(['PILOTO', 'RELOGIO'], 'INCOMPLETA').map((s) => s.rotulo)).toEqual([
       'Piloto',
@@ -90,6 +110,30 @@ describe('selos da folha no celular', () => {
     expect(
       selosDasMarcas(['ORFAO', 'APARELHO_REVOGADO', 'APOS_RECOLHER', 'FORMATO'], 'NAO_CALIBRADA').map((s) => s.rotulo),
     ).toEqual(['Órfã', 'Aparelho revogado', 'Depois de recolhida', 'Formato com problema', 'Não calibrada'])
+  })
+
+  it('"Recolher do celular" sem pedido em aberto; "Recolher à força" só para o administrador, também com o pedido', () => {
+    expect(acoesDeRecolher(celular(), false)).toEqual({ recolher: true, forcar: false })
+    expect(acoesDeRecolher(celular({ situacao: 'NO_CELULAR' }), true)).toEqual({ recolher: true, forcar: true })
+    // O celular perdido ou descadastrado nunca responde ao pedido: só o administrador libera a folha
+    expect(acoesDeRecolher(celular({ situacao: 'NO_CELULAR', recolherPedido: true }), false)).toEqual({
+      recolher: false,
+      forcar: false,
+    })
+    expect(acoesDeRecolher(celular({ situacao: 'NO_CELULAR', recolherPedido: true }), true)).toEqual({
+      recolher: false,
+      forcar: true,
+    })
+    for (const situacao of ['DEVOLVIDA', 'RECOLHIDA'] as const)
+      expect(acoesDeRecolher(celular({ situacao }), true)).toEqual({ recolher: false, forcar: false })
+  })
+
+  it('o desfecho fora da lista (registro com a marca FORMATO, app de outra versão) aparece como veio, sem quebrar', () => {
+    expect(rotuloDoDesfecho('NAO_CALIBRADA')).toBe('Não calibrada')
+    expect(rotuloDoDesfecho('PARCIAL')).toBe('PARCIAL')
+    expect(rotuloDoDesfecho(undefined)).toBe('')
+    expect(rotuloDoDesfecho(3)).toBe('3')
+    expect(rotuloDoDesfecho('constructor')).toBe('constructor')
   })
 
   it('o aviso do envio muda com o registro original', () => {
@@ -107,9 +151,9 @@ describe('pareamento', () => {
     expect(
       textoPareamento({
         situacao: 'PAREADO',
-        celular: { modelo: 'Samsung A54', tecnicoNome: 'Maurício' } as never,
+        celular: { modelo: 'Samsung A54', tecnicoNome: 'Carlos' } as never,
       }),
-    ).toBe('Pareado: Samsung A54 · Maurício')
+    ).toBe('Pareado: Samsung A54 · Carlos')
     expect(lerQrPareamento(qrComEndereco('http://192.168.0.11:4850', '123456'))).toEqual({
       servidor: 'http://192.168.0.11:4850',
       codigo: '123456',
@@ -198,8 +242,8 @@ describe('aviso "voltou do campo"', () => {
     const b = novosRegistros(a.todos, [r('3'), r('4', 'DESCARTADO'), r('1'), r('2')])
     expect(b.novos.map((x) => x.id)).toEqual(['3'])
     expect([...b.todos].sort()).toEqual(['1', '2', '3', '4'])
-    expect(textoVoltou({ numero: 'FC-2026-00042', ligadoA: '', tecnico: 'Maurício Souza', marcas: [] }).titulo).toBe(
-      'FC-2026-00042 voltou do campo (Maurício)',
+    expect(textoVoltou({ numero: 'FC-2026-00042', ligadoA: '', tecnico: 'Carlos Eduardo Lima', marcas: [] }).titulo).toBe(
+      'FC-2026-00042 voltou do campo (Carlos)',
     )
   })
 })

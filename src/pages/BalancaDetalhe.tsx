@@ -34,6 +34,7 @@ import type { ClasseExatidao, Faixa, Unidade } from '#shared/tipos.ts'
 import { BalancaFormModal } from '../components/BalancaFormModal'
 import { type AlvoEnvio, EnviarParaTecnicoModal } from '../components/campo/EnviarParaTecnicoModal'
 import { RegistroCampo } from '../components/campo/preguicosos'
+import { AcoesRecolher, type PedidoRecolher, RecolherFolhaModal } from '../components/campo/RecolherFolha'
 import { SeloCelular } from '../components/campo/SeloCelular'
 import { CertificadosTabela } from '../components/CertificadosTabela'
 import { type EscolhaFolha, FolhaCampoModal } from '../components/FolhaCampoModal'
@@ -75,9 +76,10 @@ export function BalancaDetalhe() {
   const podeExcluir = usePode('excluirBalanca')
   const [editando, setEditando] = useState(false)
   const [escolhaFolha, setEscolhaFolha] = useState(false)
-  /** "Enviar para o técnico" (1.1.0) e o registro de campo aberto. */
+  /** "Enviar para o técnico" (1.1.0), o registro de campo aberto e a folha a recolher do celular. */
   const [envio, setEnvio] = useState<AlvoEnvio | null>(null)
   const [registroAberto, setRegistroAberto] = useState<string | null>(null)
+  const [recolhendo, setRecolhendo] = useState<PedidoRecolher | null>(null)
   // As folhas desta balança que foram para o celular ou voltaram dele
   const { dados: folhasCelular } = useConsulta(
     id ? `balanca-campo:${id}` : null,
@@ -445,7 +447,11 @@ export function BalancaDetalhe() {
               {folhasCelular.map((f) => (
                 <li key={f.numero} className="flex flex-wrap items-start gap-x-4 gap-y-2 px-5 py-3">
                   <span className="tnum min-w-32 pt-0.5 text-sm font-medium text-ink">{f.numero}</span>
-                  <SeloCelular c={f.celular} aoVerRegistro={setRegistroAberto} className="flex-1" />
+                  <span className="flex min-w-0 flex-1 flex-col items-start gap-1">
+                    <SeloCelular c={f.celular} aoVerRegistro={setRegistroAberto} />
+                    {/* Também a folha avulsa desta balança (sem calibração, sem editor) */}
+                    <AcoesRecolher numero={f.numero} c={f.celular} aoPedir={setRecolhendo} />
+                  </span>
                   {f.calibracaoId && (
                     <button
                       type="button"
@@ -519,6 +525,7 @@ export function BalancaDetalhe() {
         resumo={`${cliente?.nome ?? ''} · ${nome} ${capacidadeTexto(balanca)}${folha ? ` · folha ${folha.numero}` : ''}`}
       />
       {registroAberto !== null && <RegistroCampo registroId={registroAberto} aoFechar={() => setRegistroAberto(null)} />}
+      {recolhendo && <RecolherFolhaModal pedido={recolhendo} aoFechar={() => setRecolhendo(null)} />}
       <FolhaCampoModal
         folha={escolhaFolha && folha && !folha.herdada ? folha : null}
         aoFechar={() => setEscolhaFolha(false)}

@@ -23,6 +23,7 @@ import type {
   RegistroCampoListado,
 } from '#shared/tipos.ts'
 import { ClienteCampo } from '../../app-campo/src/nucleo/cliente.ts'
+import { MOTIVO_ENTREGA_DESCADASTRADO } from '../../app-campo/src/nucleo/sincronia.ts'
 import { type AppComLogin, cenarioCalibracao, criarAppComLogin } from '../auxiliaresTeste.ts'
 import { abrirPortaIntermediaria, ACOMPANHANTE, CelularSimulado, rota } from './__fixtures__/celularSimulado.ts'
 
@@ -330,7 +331,7 @@ describe('um dia de campo, de ponta a ponta', () => {
       problemas: [],
       desfecho: 'COMPLETA',
       tecnico: 'Comum Teste',
-      celular: 'Celular do Comum',
+      celular: 'Celular de Comum',
     })
     const pdf = await t.chamar('GET', `/api/campo/registros/${gravados[0].id}/pdf`, { cookie: t.cookieComum })
     expect(pdf.statusCode).toBe(200)
@@ -360,8 +361,8 @@ describe('um dia de campo, de ponta a ponta', () => {
     expect(t.ctx.repo.obterCalibracao(k.id)!.versao).toBe(versaoAntes)
 
     // O celular passa a ser o registro original: "Puxar dados do campo" leva as leituras ao rascunho. O rascunho foi
-    // digitado do papel no piloto, com a descida no zero e em Max, que o celular não anota (como a folha impressa): a
-    // Lizi escolhe "Fica: o do celular" nas duas
+    // digitado do papel no piloto, com a descida no zero e em Max, que o celular não anota (como a folha impressa): o
+    // escritório escolhe "Fica: o do celular" nas duas
     await configurar('CELULAR')
     const puxado = await puxar(k, { 'indicacao.pontos.z.decrescente': 'CELULAR', 'indicacao.pontos.c.decrescente': 'CELULAR' })
     const puxada = puxado.calibracao
@@ -379,7 +380,7 @@ describe('um dia de campo, de ponta a ponta', () => {
     expect(puxada.tecnicoId).toBe(t.comumId)
     expect(puxado.pendencias.filter((x) => x.startsWith(PENDENCIA_JUSTIFICATIVA_CAMPO))).toEqual([])
 
-    // A Lizi digita de novo uma leitura do papel: a emissão fica pendente até a justificativa
+    // O escritório digita de novo uma leitura do papel: a emissão fica pendente até a justificativa
     const mudada = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
       cookie: t.cookieComum,
       payload: {
@@ -563,7 +564,7 @@ describe('variações do dia', () => {
     const pdf = await t.chamar('GET', `/api/campo/registros/${orfaos[0].id}/pdf`, { cookie: t.cookieComum })
     expect(pdf.statusCode).toBe(200)
     expect(pdf.headers['content-type']).toMatch(/^application\/pdf/)
-    // O órfão só vale para a calibração depois que a Lizi o liga à folha
+    // O órfão só vale para a calibração depois que o escritório o liga à folha
     expect((await campoDe(b.k)).registroId).toBe('')
     const ligado = await t.chamar('POST', `/api/campo/registros/${orfaos[0].id}/ligar`, {
       cookie: t.cookieComum,
@@ -612,9 +613,9 @@ describe('variações do dia', () => {
     r = await cel.sincronizar()
     expect(cel.rede.conversa(desde)).toEqual(['POST /api/campo/ola → 401', `PUT /api/campo/registros/${e2.id} → 401`])
     expect(r).toMatchObject({ descadastrado: true, entregues: [] })
-    expect(r.naoEntregues).toEqual([{ numero: e2.numero, motivo: MENSAGENS_ERRO_CAMPO.DESCADASTRADO }])
+    expect(r.naoEntregues).toEqual([{ numero: e2.numero, motivo: MOTIVO_ENTREGA_DESCADASTRADO }])
     const guardada = await cel.exigirFolha(e2.numero)
-    expect(guardada).toMatchObject({ estado: 'FINALIZADA', entrega: { erro: MENSAGENS_ERRO_CAMPO.DESCADASTRADO } })
+    expect(guardada).toMatchObject({ estado: 'FINALIZADA', entrega: { erro: MOTIVO_ENTREGA_DESCADASTRADO } })
     expect(guardada.registro).not.toBeNull()
     expect(await registrosDaFolha(e2.numero)).toEqual([])
     semErroDoServidor(cel)
@@ -760,6 +761,46 @@ describe('variações do dia', () => {
     expect(anterior.situacaoMotivo).toMatch(/revisão mais nova/)
     expect((await registroGravado(nova.id)).conteudo.passos.indicacao.retornoZero!.valor).toBe('0,01')
     expect((await campoDe(k)).registroId).toBe(nova.id)
+  })
+
+  it('corrigir depois de um recibo perdido: a versão corrigida vale e a anterior fica SUPERADO', async () => {
+    await configurar('CELULAR')
+    const cel = await celularPareado()
+    const { k, envio, fc } = await folhaNoCelular(cel)
+    await cel.preencher(fc)
+    await cel.finalizarEAssinar(fc)
+    cel.rede.cairDepois(rota('PUT', '/api/campo/registros/'))
+    expect((await cel.sincronizar()).naoEntregues.map((x) => x.numero)).toEqual([fc])
+    expect(await registrosDaFolha(fc)).toHaveLength(1)
+
+    // O técnico não sabe que chegou: corrige por acréscimo (sem reabrir; as assinaturas continuam valendo) e entrega
+    const f = await cel.corrigir(fc, 'indicacao.pontos.c.crescente', '30,03', 'Anotei errado: conferido de novo no mostrador.')
+    expect(f).toMatchObject({ estado: 'FINALIZADA', registro: { reaberturas: [] } })
+    const corrigida = structuredClone(f.registro!)
+    expect((await cel.sincronizar()).entregues.map((e) => e.numero)).toEqual([fc])
+    expect((await cel.exigirFolha(fc)).recibo).toMatchObject({ sha256: shaDoRegistro(corrigida), situacao: 'VALIDO' })
+    const registros = await registrosDaFolha(fc)
+    expect(registros).toHaveLength(2)
+    const [nova, anterior] = registros
+    expect(nova).toMatchObject({ envioId: envio.id, situacao: 'VALIDO', revisaoLocal: 0 })
+    expect(anterior).toMatchObject({ envioId: envio.id, situacao: 'SUPERADO', revisaoLocal: 0 })
+    expect(anterior.situacaoMotivo).toBe('Chegou uma versão mais nova da mesma folha (corrigida no celular).')
+    expect((await campoDe(k)).registroId).toBe(nova.id)
+    // O Painel conta a folha uma vez só; depois de puxar, nada fica "voltou" para sempre
+    const voltaram = async () =>
+      (await t.chamar('GET', '/api/painel', { cookie: t.cookieComum }))
+        .json()
+        .painel.campo.voltaram.map((v: { numero: string }) => v.numero)
+    expect(await voltaram()).toEqual([fc])
+    expect(ponto((await puxar(k)).calibracao, 'c').crescente).toBe(30.03)
+    expect(await voltaram()).toEqual([])
+    // A versão anterior não pode mais ser puxada
+    const antiga = await t.chamar('POST', `/api/calibracoes/${k.id}/puxar-campo`, {
+      cookie: t.cookieComum,
+      payload: { registroId: anterior.id, versao: t.ctx.repo.obterCalibracao(k.id)!.versao, escolhas: {} },
+    })
+    expect(antiga.statusCode).toBe(409)
+    expect(antiga.json().codigo).toBe('REGISTRO_NAO_VALE')
   })
 
   it('no laboratório: só o técnico assina (o cliente fica dispensado) e a folha tranca na hora', async () => {

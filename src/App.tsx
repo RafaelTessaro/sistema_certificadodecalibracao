@@ -78,7 +78,7 @@ function Sistema() {
     <HashRouter>
       <Rotas />
       <MinhaSenhaModal />
-      {/* "FC-… voltou do campo (Maurício)": a folha que volta do celular, em qualquer tela (1.1.0) */}
+      {/* "FC-… voltou do campo (Carlos)": a folha que volta do celular, em qualquer tela (1.1.0) */}
       <AvisoVoltouDoCampo />
     </HashRouter>
   )

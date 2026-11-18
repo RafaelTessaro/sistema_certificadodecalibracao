@@ -181,6 +181,16 @@ export function faltaParaAssinar(original: RegistroCampo, pacote: PacoteCampo | 
         texto: 'Carga aplicada na repetibilidade',
         campo: `repetibilidade.${r.id}.cargaAplicada`,
       })
+  // E o ponto acrescentado no local ("+ Acrescentar ponto") com leitura e sem a carga: a carga não se inventa (o ponto
+  // acrescentado e deixado em branco sai da folha ao finalizar)
+  for (const p of ps.indicacao.pontos)
+    if (p.acrescentado && !p.cargaAplicada && !p.cargaPrevista && (p.crescente || p.decrescente))
+      item({
+        codigo: 'FALTA_CARGA_INDICACAO',
+        etapa: 'indicacao',
+        texto: 'Carga do ponto acrescentado',
+        campo: `indicacao.pontos.${p.id}.cargaAplicada`,
+      })
 
   // As leituras mínimas e todas as posições (as regras do POP; na calibração medida antes delas, só aviso)
   if (!minimosDoPopComoAviso(k)) {

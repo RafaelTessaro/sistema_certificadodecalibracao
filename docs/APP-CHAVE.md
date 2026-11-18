@@ -92,8 +92,9 @@ Mensagens de erro do CI:
 ## 5. Se a chave se perder ou vazar
 
 - **Perdeu (e não há cópia):** crie outra chave (passo 1) e troque os segredos e a variável. Em cada celular: entregue
-  **todas** as folhas, desinstale o app (desinstalar apaga as folhas não entregues), instale o novo e cadastre o celular de
-  novo (Parear de novo).
+  **todas** as folhas, desinstale o app (desinstalar apaga as folhas não entregues), instale o novo e cadastre o celular
+  como novo em **Cadastrar celular** (o app reinstalado ganha outra identificação, e o **Parear de novo** não serve). Depois,
+  revogue o cadastro antigo com o motivo **Troca de aparelho**.
 - **Vazou:** faça o mesmo, o quanto antes, e troque também as senhas.
 
 ## 6. Cadastro de desenvolvedor no Google (fazer antes de 2027)

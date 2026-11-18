@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { conferirPinDoTecnico } from '../app/acoes.ts'
+import { useFecharNoVoltar } from '../app/camadas.ts'
 import { useApp } from '../app/loja.ts'
 import { esperaRestante, textoDaEspera } from '../nucleo/pin.ts'
 import { Botao, cn } from './base.tsx'
@@ -98,8 +99,14 @@ export function PedidoDePin({
   )
 }
 
-/** O pedido de PIN numa folha que sobe de baixo, por cima da tela. */
+const nada = () => undefined
+
+/**
+ * O pedido de PIN numa folha que sobe de baixo, por cima da tela. O voltar do Android é o Cancelar; sem Cancelar (o PIN
+ * que o modo entrega pede ao voltar do segundo plano), o voltar não faz nada.
+ */
 export function FolhaDePin(props: Parameters<typeof PedidoDePin>[0]) {
+  useFecharNoVoltar(props.aoCancelar ?? nada)
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/50" role="dialog" aria-modal="true">
       <div className="entra rounded-t-3xl bg-surface px-4 pt-5" style={{ paddingBottom: 'calc(16px + var(--base))' }}>

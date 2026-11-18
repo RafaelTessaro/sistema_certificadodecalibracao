@@ -55,6 +55,8 @@
   --warning-soft: #fdf3e0;
   --danger: #c93636;
   --danger-soft: #fcecec;
+  /* O texto sobre o vermelho cheio (o aviso de erro): ≥ 4,5:1 nos dois temas */
+  --on-danger: #ffffff;
   --neutral: #5d636c;
   --neutral-soft: #eff1f3;
 
@@ -96,6 +98,7 @@
   --warning-soft: rgb(242 182 74 / 0.13);
   --danger: #f07474;
   --danger-soft: rgb(240 116 116 / 0.13);
+  --on-danger: #1a0505;
   --neutral: #a2a8b1;
   --neutral-soft: rgb(162 168 177 / 0.12);
 
@@ -128,6 +131,7 @@
   --color-warning-soft: var(--warning-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
+  --color-on-danger: var(--on-danger);
   --color-neutral: var(--neutral);
   --color-neutral-soft: var(--neutral-soft);
   --color-papel: var(--papel);

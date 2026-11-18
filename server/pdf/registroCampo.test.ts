@@ -21,6 +21,7 @@ import { registroInicial } from '#shared/campo/registro.ts'
 import { FRASE_ASSINATURA_CLIENTE } from '#shared/campo/resumoCliente.ts'
 import { TITULOS_PASSOS, type PacoteCampo, type RegistroCampo } from '#shared/campo/tipos.ts'
 import { EMPRESA_PADRAO } from '#shared/dominio.ts'
+import { pngRgbaFiltroInvalido, pngRgbaIdatQueNaoEZlib, pngRgbaValido } from '../campo/__fixtures__/pngTeste.ts'
 import { registroEmBrancoIncompleto, registroNaoCalibradaComTentativa } from './exemplosRegistroCampo.ts'
 import {
   definicaoRegistroCampo,
@@ -437,5 +438,18 @@ describe.runIf(temPdfimages)('folha impressa assinada: imagens das assinaturas (
     const p = pacotePlataforma()
     const vazio = registroInicial(p, TECNICO_EXEMPLO, APARELHO_EXEMPLO, { agora: '2026-10-21T08:05:00-03:00' })
     expect(imagensDoPdf(await gerar(vazio, p))).toHaveLength(0)
+  })
+
+  it('PNG com o cabeçalho certo e os dados estragados não vai para o pdfkit (derrubaria o servidor): "ilegível"', async () => {
+    const r = registroPlataforma()
+    r.assinaturas.tecnico = { ...r.assinaturas.tecnico!, png: pngRgbaIdatQueNaoEZlib() }
+    const c = r.assinaturas.cliente as { png: string }
+    c.png = pngRgbaFiltroInvalido()
+    const pdf = await gerar(r, pacotePlataforma())
+    expect(imagensDoPdf(pdf)).toHaveLength(0)
+    if (temPdftotext) expect(corrido(textoDoPdf(pdf)).match(/Imagem da assinatura ilegível\./g)).toHaveLength(2)
+    // A do canvas (RGBA) entra
+    r.assinaturas.tecnico.png = pngRgbaValido()
+    expect(imagensDoPdf(await gerar(r, pacotePlataforma()))).toEqual([expect.objectContaining({ largura: 120, altura: 40 })])
   })
 })

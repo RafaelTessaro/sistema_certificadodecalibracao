@@ -1,13 +1,14 @@
 // Peças das telas da folha: a fileira de bolinhas (✓ feito, ◉ atual, ○ a fazer, ▲ com aviso), "Confere / Algo
 // diferente…", o resumo do cliente e a folha da Anotação.
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { EtapaFolha, SituacaoEtapa } from '../../../shared/campo/progresso.ts'
 import { formatarInstante } from '../../../shared/campo/registro.ts'
 import type { ResumoDoCliente } from '../../../shared/campo/resumoCliente.ts'
 import type { AnotacaoCampo, ConferenciaCampo, NumeroPasso, TipoAnotacao } from '../../../shared/campo/tipos.ts'
 import { ROTULO_TIPO_ANOTACAO, TIPOS_ANOTACAO } from '../../../shared/campo/tipos.ts'
 import { novoId } from '../../../shared/id.ts'
+import { useFecharNoVoltar } from '../app/camadas.ts'
 import { AreaTexto, Botao, cn, Escolha, Linha } from './base.tsx'
 
 export function Bolinhas({ etapas, atual, aoIr }: { etapas: SituacaoEtapa[]; atual: EtapaFolha; aoIr: (e: EtapaFolha) => void }) {
@@ -24,7 +25,7 @@ export function Bolinhas({ etapas, atual, aoIr }: { etapas: SituacaoEtapa[]; atu
             aria-label={`${e.titulo}${e.completa ? ', completo' : ''}${e.comAviso ? ', com aviso' : ''}${eh ? ', atual' : ''}`}
             aria-current={eh ? 'step' : undefined}
             className={cn(
-              'flex min-h-[44px] min-w-[44px] flex-col items-center justify-center rounded-xl text-[13px] font-semibold',
+              'flex min-h-[48px] min-w-[48px] flex-col items-center justify-center rounded-xl text-[13px] font-semibold',
               eh ? 'bg-brand-soft text-brand-ink ring-2 ring-brand' : 'text-ink-2 active:bg-surface-2',
               e.comAviso && 'text-warning-ink',
               e.completa && !e.comAviso && !eh && 'text-brand-ink',
@@ -55,6 +56,18 @@ export function ConfereOuDiferente({
   aoAnotar: () => void
 }) {
   const [observado, setObservado] = useState(item.observado ?? '')
+  // O valor visto grava ao sair do campo e também quando o campo sai da tela (o voltar do Android tira a tela sem o blur)
+  const pendente = useRef<string | null>(null)
+  const gravar = useRef(aoMudar)
+  useEffect(() => {
+    gravar.current = aoMudar
+  })
+  useEffect(
+    () => () => {
+      if (pendente.current !== null) gravar.current({ confere: false, observado: pendente.current })
+    },
+    [],
+  )
   return (
     <div className="border-b border-line py-3 last:border-0">
       <div className="text-[14px] text-ink-2">{item.rotulo}</div>
@@ -93,8 +106,14 @@ export function ConfereOuDiferente({
             <input
               value={observado}
               maxLength={60}
-              onChange={(e) => setObservado(e.target.value)}
-              onBlur={() => aoMudar({ confere: false, observado })}
+              onChange={(e) => {
+                setObservado(e.target.value)
+                pendente.current = e.target.value
+              }}
+              onBlur={() => {
+                pendente.current = null
+                aoMudar({ confere: false, observado })
+              }}
               className="min-h-[52px] w-full rounded-xl border-2 border-campo bg-surface px-3 text-[17px] outline-none focus:border-brand"
             />
           </label>
@@ -158,6 +177,7 @@ export function FolhaAnotacao({
 }) {
   const [tipo, setTipo] = useState<TipoAnotacao>(tipoInicial)
   const [texto, setTexto] = useState(textoInicial)
+  useFecharNoVoltar(aoCancelar)
   return (
     <div className="fixed inset-0 z-40 flex flex-col justify-end bg-black/45" role="dialog" aria-modal="true">
       <div className="entra rounded-t-3xl bg-surface px-4 pt-3" style={{ paddingBottom: 'calc(16px + var(--base))' }}>

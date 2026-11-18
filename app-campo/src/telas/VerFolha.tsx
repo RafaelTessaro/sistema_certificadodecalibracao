@@ -11,7 +11,7 @@ import { useFolha } from '../app/loja.ts'
 import { Cabecalho, Linha, SecaoTitulo, Tela } from '../componentes/base.tsx'
 import { dataBr } from '../nucleo/datas.ts'
 import { rotuloDoCampo, unidadeDoCampo, valorLegivel } from '../nucleo/rotulos.ts'
-import { assinantes } from './Comprovante.tsx'
+import { assinantes, TelaComprovante } from './Comprovante.tsx'
 
 function Bloco({ titulo, children }: { titulo: string; children: ReactNode }) {
   return (
@@ -27,6 +27,8 @@ const conf = (c: { confere: boolean | null; observado?: string }) =>
 
 export function TelaVerFolha({ envioId }: { envioId: string }) {
   const f = useFolha(envioId)
+  // Entregue enquanto a tela estava aberta (a sincronia apaga as leituras): o resumo da entrega, não a tela em branco
+  if (f && !f.registro) return <TelaComprovante envioId={envioId} />
   if (!f?.registro) return null
   const r: RegistroCampo = f.registro
   const ps = r.passos

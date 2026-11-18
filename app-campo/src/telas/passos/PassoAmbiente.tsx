@@ -65,7 +65,7 @@ function Instrumentos({
               aria-pressed={marcado}
               onClick={() => aoMudar(marcado ? ids.filter((x) => x !== o.id) : [...ids, o.id])}
               className={cn(
-                'min-h-[44px] rounded-xl border-2 px-3 text-[15px] font-medium',
+                'min-h-[48px] rounded-xl border-2 px-3 text-[15px] font-medium',
                 marcado ? 'border-brand bg-brand-soft text-brand-ink' : 'border-campo bg-surface',
               )}
             >

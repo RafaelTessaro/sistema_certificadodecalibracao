@@ -1,10 +1,12 @@
 // "Cadastrar celular" (Usuários → Celulares dos técnicos; só o administrador), em dois passos:
 // 1. Instalar o app BC Calibração: pelo cabo USB (adb install -r) ou pelo navegador do celular (o QR do endereço do APK
-//    que este computador serve, com o aviso de "download inseguro" do Android);
+//    que o servidor serve, com o aviso de "download inseguro" do Android);
 // 2. Ligar ao sistema: o QR com o endereço do servidor e o código de 6 dígitos (os dois também em texto, para digitar se a
-//    câmera falhar), a escolha do endereço quando o computador tem mais de um, a contagem dos 10 minutos e a situação ao
-//    vivo ("Aguardando o celular…" → "Pareado: Samsung A54 · Maurício"). O QR some quando o celular pareia.
+//    câmera falhar), a escolha do endereço quando o servidor tem mais de um, a contagem dos 10 minutos e a situação ao
+//    vivo ("Aguardando o celular…" → "Pareado: Samsung A54 · Carlos"). O QR some quando o celular pareia.
 // "Parear de novo" abre direto no passo 2, com o mesmo aparelho (as folhas do celular ficam).
+// A janela também abre numa estação (que só mostra a interface do servidor): os endereços, o APK e a pasta campo são os
+// do SERVIDOR, e os textos dizem isso ("Reserve o IP do servidor"), não "deste computador".
 
 import { CircleCheck, Globe, Link2, Loader2, RefreshCw, Smartphone, TriangleAlert, Usb } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -85,7 +87,7 @@ function Conteudo({
   const [endereco, setEndereco] = useState('')
   const [apk, setApk] = useState<InfoApk | null | 'sem'>(null)
 
-  // Os endereços deste computador na rede (o do QR e os outros) e o APK que veio no instalador
+  // Os endereços do servidor na rede (o do QR e os outros) e o APK que veio no instalador
   useEffect(() => {
     let valendo = true
     api.enderecoServidor().then(
@@ -198,9 +200,9 @@ function EscolhaEndereco({
   if (enderecos.length < 2) return null
   return (
     <Field
-      label="Endereço deste computador na rede"
+      label="Endereço do servidor na rede"
       htmlFor="celular-endereco"
-      hint="Este computador tem mais de um endereço. Use o da rede Wi-Fi em que o celular vai entrar."
+      hint="O servidor tem mais de um endereço. Use o da rede Wi-Fi em que o celular vai entrar."
     >
       <Select id="celular-endereco" value={endereco} onChange={(e) => setEndereco(e.target.value)}>
         {enderecos.map((e) => (
@@ -261,8 +263,8 @@ function Instalar({
         <p className="flex items-start gap-2 rounded-xl bg-warning-soft px-3.5 py-2.5 text-[13px] text-warning">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
-            Este computador não tem o app do celular (a pasta <span className="font-mono">campo</span> da instalação). Instale
-            pelo cabo com o arquivo que veio junto da atualização, ou atualize o sistema.
+            O servidor não tem o app do celular (a pasta <span className="font-mono">campo</span> da instalação do servidor).
+            Instale pelo cabo com o arquivo que veio junto da atualização, ou atualize o sistema no servidor.
           </span>
         </p>
       )}
@@ -283,8 +285,8 @@ function Instalar({
           <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-[13px] text-ink-2">
             <li>Com o celular no Wi-Fi da empresa, abra a câmera e leia o QR (ou digite o endereço abaixo no navegador).</li>
             <li>
-              O Android avisa que o arquivo pode ser perigoso (“download inseguro”): é o app da própria empresa, servido por este
-              computador. Toque em <b className="font-semibold text-ink">Baixar mesmo assim</b>.
+              O Android avisa que o arquivo pode ser perigoso (“download inseguro”): é o app da própria empresa, servido pelo
+              servidor do BC Calibração. Toque em <b className="font-semibold text-ink">Baixar mesmo assim</b>.
             </li>
             <li>
               Abra o arquivo e toque em <b className="font-semibold text-ink">Instalar</b>. Se pedir, permita “instalar apps
@@ -307,14 +309,30 @@ function Instalar({
               desenvolvedor, ligue a <b className="font-semibold text-ink">Depuração USB</b>.
             </li>
             <li>
-              No computador, baixe o <b className="font-semibold text-ink">Android SDK Platform-Tools</b> (no site
-              developer.android.com) e descompacte. O adb vem nele; o sistema não instala o adb.
+              No computador em que vai ligar o celular, baixe o{' '}
+              <b className="font-semibold text-ink">Android SDK Platform-Tools</b> (no site developer.android.com) e descompacte.
+              O adb vem nele; o sistema não instala o adb.
             </li>
-            <li>Ligue o celular neste computador pelo cabo e aceite “Permitir depuração USB” no celular.</li>
             <li>
-              No Prompt de Comando, na pasta do Platform-Tools (troque o caminho se o sistema foi instalado em outra pasta):
+              Ligue o celular pelo cabo no computador onde estiver o arquivo do app e aceite “Permitir depuração USB” no celular.
+            </li>
+            <li>
+              No Prompt de Comando, na pasta do Platform-Tools:
               <span className="mt-1 block w-fit rounded-lg bg-surface px-2 py-1 font-mono text-[12px] text-ink select-all">
                 adb install -r "C:\Program Files\BC Calibracao\campo\{nomeArquivo}"
+              </span>
+              <span className="mt-1 block text-xs text-muted">
+                Este caminho é o do servidor (troque se o sistema foi instalado em outra pasta). Em outro computador, baixe antes
+                o app
+                {endereco ? (
+                  <>
+                    {' '}
+                    em <span className="tnum font-mono break-all text-ink-2 select-all">{enderecoDoApk(endereco)}</span>
+                  </>
+                ) : (
+                  ' pelo endereço do servidor'
+                )}{' '}
+                e use o caminho do arquivo baixado.
               </span>
             </li>
             <li>
@@ -477,8 +495,19 @@ function Ligar({
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-3">
             <p className="text-[13px] text-ink-2">
-              No app do celular, toque em <b className="font-semibold text-ink">Ler o QR do sistema</b> e aponte para o código. Se
-              a câmera não ler, digite o endereço e o código:
+              {pareandoDeNovo ? (
+                <>
+                  No celular, abra <b className="font-semibold text-ink">Menu → Esqueci o PIN</b> (para criar um PIN novo) ou{' '}
+                  <b className="font-semibold text-ink">Menu → Ler o QR de novo</b> (o PIN continua), toque em{' '}
+                  <b className="font-semibold text-ink">Ler o QR do computador</b> e aponte para o código.
+                </>
+              ) : (
+                <>
+                  No app do celular, toque em <b className="font-semibold text-ink">Ler o QR do computador</b> e aponte para o
+                  código.
+                </>
+              )}{' '}
+              Se a câmera não ler, digite o endereço e o código:
             </p>
             <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5">
               <dt className="text-xs text-muted">Endereço</dt>
@@ -520,7 +549,7 @@ function Ligar({
       {sit !== 'PAREADO' && <EscolhaEndereco endereco={endereco} enderecos={enderecos} setEndereco={setEndereco} />}
       {sit !== 'PAREADO' && (
         <p className="text-xs text-muted">
-          O celular grava este endereço e usa sempre ele. Reserve o IP deste computador no roteador para ele não mudar.
+          O celular grava este endereço e usa sempre ele. Reserve o IP do servidor no roteador para ele não mudar.
         </p>
       )}
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-4">

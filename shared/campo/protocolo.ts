@@ -53,7 +53,7 @@
 //    apaga, responde {resposta: 'JA_COMECEI'} (o escritório é avisado) e entrega quando puder. `recebida` de um envio com
 //    pedido de recolher responde RECOLHIDA (a folha em RECEBENDO nunca foi começada). `desconhecidos` (envios que o
 //    servidor não conhece, por exemplo depois de "Apagar os testes"): não começada → o app apaga sem avisar ninguém;
-//    começada → entrega (o servidor grava como ORFAO, e a Lizi decide).
+//    começada → entrega (o servidor grava como ORFAO, e o escritório decide).
 // 8. REVOGAR. O token deixa de valer para receber folhas: o olá, o pacote, a confirmação e o recolhimento respondem 401
 //    DESCADASTRADO, e o app mostra "Este celular foi descadastrado no sistema." sem apagar nada. A entrega das folhas
 //    começadas continua aceita (marcada APARELHO_REVOGADO), salvo o motivo "roubado". Token desconhecido (ou nenhum):

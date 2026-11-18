@@ -15,7 +15,15 @@ import { CampoTextoDaFolha, useGravar } from '../../componentes/CamposDaFolha.ts
 import { Celula, EditorDeLeituras } from '../../componentes/EditorDeLeituras.tsx'
 import type { ContextoTabela } from '../../componentes/EditorDeLeituras.tsx'
 import { formatarInstante } from '../../../../shared/campo/registro.ts'
-import { cargaDoPonto, colunasDaIndicacao, metodoDaFolha, ordemIndicacao, pontoComDescida } from '../../nucleo/ordem.ts'
+import {
+  cargaDoPonto,
+  colunasDaIndicacao,
+  metodoDaFolha,
+  ordemIndicacao,
+  pontoComDescida,
+  textoCargaPrevista,
+  textoDaCargaDoItem,
+} from '../../nucleo/ordem.ts'
 import { unidadeDoRegistro } from '../../../../shared/campo/importar.ts'
 import { relogioDoAparelho } from '../../nucleo/relogio.ts'
 import type { PropsPasso } from '../Passo.tsx'
@@ -36,7 +44,7 @@ export function PassoIndicacao({ f, foco, aoFocar }: PropsPasso) {
     return p?.acrescentado ? [`indicacao.pontos.${p.id}.cargaAplicada`, c] : [c]
   })
   const pontos = ind.pontos
-    .map((p, i) => ({ p, i, carga: cargaDoPonto(p) }))
+    .map((p, i) => ({ p, i, carga: cargaDoPonto(p, r, pacote) }))
     .sort((a, b) => (a.carga ?? Infinity) - (b.carga ?? Infinity) || a.i - b.i)
   const etapas = ind.substituicao?.etapas ?? []
   const cadastro = (pacote?.padroes.cadastro ?? []) as Padrao[]
@@ -51,7 +59,7 @@ export function PassoIndicacao({ f, foco, aoFocar }: PropsPasso) {
     const m = /^indicacao\.pontos\.([^.]+)\./.exec(campo)
     const p = m && ind.pontos.find((x) => x.id === m[1])
     if (p) {
-      const carga = p.cargaAplicada?.valor ?? p.cargaPrevista
+      const carga = textoDaCargaDoItem(p, r, pacote)
       const pesos = pesosDoPonto(p)
       return [
         carga ? `Carga ${carga} ${u}` : 'Digite a carga aplicada',
@@ -92,7 +100,7 @@ export function PassoIndicacao({ f, foco, aoFocar }: PropsPasso) {
         {p.acrescentado ? (
           <Celula campo={`indicacao.pontos.${p.id}.cargaAplicada`} ctx={ctx} registro={r} vazio="carga?" />
         ) : (
-          p.cargaPrevista
+          textoCargaPrevista(p.cargaPrevista, r, pacote)
         )}
       </td>
       {sobe && (

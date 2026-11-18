@@ -7,13 +7,16 @@ import {
 } from '../../../shared/campo/canonico.ts'
 import {
   APARELHO_EXEMPLO,
+  pacoteClasseI,
   pacoteDoCliente,
   pacotePlataforma,
   pacoteRodoviaria,
+  registroClasseI,
   registroPlataforma,
   registroRodoviaria,
   TECNICO_EXEMPLO,
 } from '../../../shared/campo/exemplos.ts'
+import { deltaTValido, indiceDeltaTValido, indiceInicioValido } from '../../../shared/campo/importar.ts'
 import { resumoDoEnvio } from '../../../shared/campo/pacote.ts'
 import { conferirAssinaturas, validarRegistro } from '../../../shared/campo/registro.ts'
 import type { PacoteCampo, RegistroCampo } from '../../../shared/campo/tipos.ts'
@@ -26,6 +29,7 @@ import {
   clienteAssinouSoOPapel,
   clienteNaoAssinou,
   comecar,
+  confirmarLeitura,
   corrigirDepoisDaAssinatura,
   desfazerAssinaturaTecnico,
   editar,
@@ -168,6 +172,29 @@ describe('trilha de correções (o risco único do papel)', () => {
     f = editar(f, (r) => gravarLeitura(r, 'ambiente.deltaT0.origem', l('22,0')), agora())
     expect(f.registro!.passos.ambiente.deltaT0).toMatchObject({ origem: { valor: '22,0' }, sala: null })
   })
+
+  it('corrigir a digitação mantém a hora da observação: o ΔT e a linha do início que valem não mudam', () => {
+    // Classe I: ΔT 1,6 (antes da aclimatação) e 0,6 (medido de novo), os dois antes do 1º ensaio; corrigido bem depois
+    const original = registroClasseI()
+    const segundo = original.passos.ambiente.deltaT[1].valor
+    let f = folhaCompleta(original, pacoteClasseI())
+    expect(indiceDeltaTValido(f.registro!)).toBe(1)
+    f = editar(f, (r) => confirmarLeitura(r, 'ambiente.deltaT.1.valor', '0,7', 'teclado', agora()), agora())
+    expect(f.registro!.passos.ambiente.deltaT[1].valor).toEqual({ valor: '0,7', em: segundo.em, via: 'teclado' })
+    expect(indiceDeltaTValido(f.registro!)).toBe(1)
+    expect(deltaTValido(f.registro!)!.valor.valor).toBe('0,7')
+    // A correção fica na trilha, com a hora da correção
+    expect(f.registro!.trilha.at(-1)).toMatchObject({ campo: 'ambiente.deltaT.1.valor', de: '0,6', para: '0,7', em: agora() })
+    // A linha "início, medido de novo" sem "Data e hora": corrigida a temperatura, ela continua sendo a do início
+    f = editar(f, (r) => void (r.passos.ambiente.linhas[1].em = ''), agora())
+    expect(indiceInicioValido(f.registro!)).toBe(1)
+    f = editar(f, (r) => confirmarLeitura(r, 'ambiente.linhas.1.temperatura', '21,6', 'teclado', agora()), agora())
+    expect(indiceInicioValido(f.registro!)).toBe(1)
+    // Apagada e digitada de novo, é uma observação nova (a hora de agora)
+    f = editar(f, (r) => confirmarLeitura(r, 'ambiente.deltaT.1.valor', '', 'teclado', agora()), agora())
+    f = editar(f, (r) => confirmarLeitura(r, 'ambiente.deltaT.1.valor', '0,6', 'teclado', agora()), agora())
+    expect(f.registro!.passos.ambiente.deltaT[1].valor.em).toBe(agora())
+  })
 })
 
 describe('finalizar e assinar', () => {
@@ -246,6 +273,40 @@ describe('finalizar e assinar', () => {
     f = folhaCompleta(registroRodoviaria(), pacoteRodoviaria())
     f = await assinarTecnico(await iniciarAssinaturas(f, sha256Hex, agora()), ASSINATURA_EXEMPLO_1, sha256Hex, agora())
     expect(() => clienteAssinouSoOPapel(f, agora())).toThrow(/piloto/)
+  })
+
+  it('ponto acrescentado e deixado em branco sai da folha ao finalizar; com leitura e sem carga, a frase do que fazer', async () => {
+    const vazio = (id: string) => ({
+      id,
+      acrescentado: true,
+      cargaPrevista: '',
+      cargaAplicada: null,
+      pecas: [],
+      pecasTrocadas: false,
+      nivelSubstituicao: 0,
+      crescente: null,
+      decrescente: null,
+    })
+    const base = folhaCompleta()
+    const n = base.registro!.passos.indicacao.pontos.length
+    let f = editar(base, (r) => void r.passos.indicacao.pontos.push(vazio('cel-vazio')), agora())
+    f = await iniciarAssinaturas(f, sha256Hex, agora())
+    expect(f.registro!.passos.indicacao.pontos.map((p) => p.id)).toEqual(base.registro!.passos.indicacao.pontos.map((p) => p.id))
+    expect(f.conteudoSha256).toBe(calcularConteudoSha256(f.registro!, sha256Hex))
+    expect(validarRegistro(f.registro!, { pacote: f.pacote, momento: 'FINALIZAR' })).toEqual([])
+    // "Encerrar sem completar" passa pelo mesmo Finalizar
+    let e = editar(base, (r) => void r.passos.indicacao.pontos.push(vazio('cel-vazio')), agora())
+    e = encerrarSemCompletar(e, 'INCOMPLETA', 'Faltou energia no local.', agora())
+    expect((await iniciarAssinaturas(e, sha256Hex, agora())).registro!.passos.indicacao.pontos).toHaveLength(n)
+    // Com a leitura e sem a carga: nada de "problema de formato"
+    const lido = editar(
+      base,
+      (r) => void r.passos.indicacao.pontos.push({ ...vazio('cel-lido'), crescente: l('150,00') }),
+      agora(),
+    )
+    await expect(iniciarAssinaturas(encerrarSemCompletar(lido, 'INCOMPLETA', 'x', agora()), sha256Hex, agora())).rejects.toThrow(
+      `Falta a carga do ponto ${n + 1}, acrescentado no passo 5`,
+    )
   })
 
   it('voltar da assinatura e desfazer a do técnico devolvem a folha para edição', async () => {

@@ -41,6 +41,8 @@ export function TelaPareamento({ motivo }: { motivo: 'PRIMEIRA' | 'DE_NOVO' | 'E
   }
 
   const lerQr = async () => {
+    // Ocupado da câmera até o fim do cadastro: um segundo toque não começa outro pareamento ao mesmo tempo
+    setOcupado(true)
     setErro('')
     try {
       const qr = await lerQrDoComputador()
@@ -48,6 +50,8 @@ export function TelaPareamento({ motivo }: { motivo: 'PRIMEIRA' | 'DE_NOVO' | 'E
     } catch (e) {
       setErro(e instanceof ErroQr ? e.message : 'Não consegui ler o QR. Digite o endereço e o código.')
       setDigitar(true)
+    } finally {
+      setOcupado(false)
     }
   }
 

@@ -1726,7 +1726,7 @@ export interface JustificativaCampo {
 
 /**
  * GET /api/calibracoes/:id/campo: o celular e o registro de campo da folha da calibração, para o editor (a faixa "No
- * celular do Maurício desde 08:12", a trava, "Comparar com o campo" / "Puxar dados do campo") e para "Revisão e emissão"
+ * celular de Carlos desde 08:12", a trava, "Comparar com o campo" / "Puxar dados do campo") e para "Revisão e emissão"
  * (o bloco "Registro de campo", as diferenças depois de puxar e a justificativa).
  */
 export interface CampoDaCalibracao {

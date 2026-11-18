@@ -1,7 +1,8 @@
 {
-  "//": "Os testes do núcleo rodam no vitest da raiz (com o node:); confira os tipos com: npx tsc -p app-campo/tsconfig.testes.json (a partir da raiz)",
+  "//": "Os testes do núcleo rodam no vitest da raiz (com o node:); confira os tipos com: npx tsc -p app-campo/tsconfig.testes.json (a partir da raiz). Sem a lib DOM: o núcleo não pode usar tipos só do navegador",
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "lib": ["ES2023"],
     "types": ["node"]
   },
   "include": ["src/nucleo"],

@@ -10,36 +10,67 @@
 //
 // Os caminhos são os mesmos dos avisos e das correções ("indicacao.pontos.p3.crescente"). Puro.
 
-import { instrumentoDoCampo, unidadeDoRegistro } from '../../../shared/campo/importar.ts'
-import { numeroDaLeitura, numeroDoTexto } from '../../../shared/campo/registro.ts'
-import type { PacoteCampo, PontoCampo, RegistroCampo } from '../../../shared/campo/tipos.ts'
-import { minimoLeiturasRepetibilidade } from '../../../shared/metrologia/index.ts'
-import type { MetodoCarregamento } from '../../../shared/tipos.ts'
+import { converterMassa, UNIDADES } from '../../../shared/dominio.ts'
+import {
+  colunasDaIndicacao,
+  excentricidadeComZero,
+  instrumentoDoCampo,
+  maxDaFolha,
+  unidadeDoRegistro,
+} from '../../../shared/campo/importar.ts'
+import { casasDaLeitura, numeroDaLeitura, numeroDoTexto } from '../../../shared/campo/registro.ts'
+import type { LeituraCampo, PacoteCampo, PontoCampo, RegistroCampo } from '../../../shared/campo/tipos.ts'
+import { formatarNumero, minimoLeiturasRepetibilidade } from '../../../shared/metrologia/index.ts'
 import { lerNoCaminho } from './folha.ts'
+
+// O que a folha pede no local (o método, as colunas, o Max e o zero antes da excentricidade): as mesmas regras da
+// comparação com o rascunho, numa cópia só (shared/campo/importar.ts)
+export { colunasDaIndicacao, excentricidadeComZero, maxDaFolha, metodoDaFolha } from '../../../shared/campo/importar.ts'
 
 const TOL = 1e-9
 
-/** A carga de um ponto (a digitada no local ou a prevista da folha); null se não der para ler. */
-export function cargaDoPonto(p: Pick<PontoCampo, 'cargaAplicada' | 'cargaPrevista'>): number | null {
-  return numeroDaLeitura(p.cargaAplicada) ?? numeroDoTexto(p.cargaPrevista)
+// ---- As cargas na unidade do registro --------------------------------------------------------------------------------
+// A carga prevista vem da folha na unidade do cadastro ("100,00" kg). Com a unidade marcada "Algo diferente…" (vista em
+// t ou em g), as leituras e as cargas digitadas estão na unidade vista, e registroParaRascunho converte as previstas para
+// ela: a tela, a ordem e as descidas também (senão o ponto de 100 kg aparece como "100,00 g" e as descidas somem).
+
+/** A carga prevista (texto da folha) em número, na unidade do registro; null se não der para ler. */
+export function cargaPrevistaNaUnidade(
+  texto: string,
+  registro: RegistroCampo,
+  pacote: PacoteCampo | null | undefined,
+): number | null {
+  const n = numeroDoTexto(texto)
+  const de = pacote?.balanca?.unidade
+  return n === null || !de ? n : converterMassa(n, de, unidadeDoRegistro(registro, pacote))
 }
 
-/** O método de carregamento da folha (o do plano; sem plano, o do rascunho do pacote). */
-export function metodoDaFolha(pacote: PacoteCampo | null | undefined): MetodoCarregamento {
-  return pacote?.plano?.metodo ?? pacote?.entrada.indicacao.metodo ?? 'CRESCENTE_DECRESCENTE'
+/** A carga prevista como texto na unidade do registro ("100,00" kg, vista em t: "0,10000"); a da folha sem conversão. */
+export function textoCargaPrevista(texto: string, registro: RegistroCampo, pacote: PacoteCampo | null | undefined): string {
+  const de = pacote?.balanca?.unidade
+  const para = unidadeDoRegistro(registro, pacote)
+  const n = numeroDoTexto(texto)
+  if (!de || de === para || n === null) return texto
+  const passos = UNIDADES.indexOf(de) - UNIDADES.indexOf(para)
+  return formatarNumero(converterMassa(n, de, para), Math.max(0, casasDaLeitura(texto) - 3 * passos))
 }
 
-/** Max da balança como o técnico a viu (o plano, o valor visto ou a informada); null se desconhecido. */
-export function maxDaFolha(registro: RegistroCampo, pacote: PacoteCampo | null | undefined): number | null {
-  const i = instrumentoDoCampo(registro, pacote).instrumento
-  if (i && i.faixas.length) return i.faixas[i.faixas.length - 1].max
-  return pacote?.plano?.max ?? null
+/** A carga como o técnico a vê: a digitada (já na unidade do registro) ou a prevista convertida. */
+export function textoDaCargaDoItem(
+  x: { cargaAplicada: LeituraCampo | null; cargaPrevista: string },
+  registro: RegistroCampo,
+  pacote: PacoteCampo | null | undefined,
+): string {
+  return x.cargaAplicada?.valor ?? textoCargaPrevista(x.cargaPrevista, registro, pacote)
 }
 
-/** As colunas do passo 5: lê a subida? lê a descida? */
-export function colunasDaIndicacao(pacote: PacoteCampo | null | undefined): { sobe: boolean; desce: boolean } {
-  const m = metodoDaFolha(pacote)
-  return { sobe: m !== 'DECRESCENTE', desce: m === 'CRESCENTE_DECRESCENTE' || m === 'DECRESCENTE' }
+/** A carga de um ponto (a digitada no local ou a prevista da folha), na unidade do registro; null se não der para ler. */
+export function cargaDoPonto(
+  p: Pick<PontoCampo, 'cargaAplicada' | 'cargaPrevista'>,
+  registro: RegistroCampo,
+  pacote: PacoteCampo | null | undefined,
+): number | null {
+  return numeroDaLeitura(p.cargaAplicada) ?? cargaPrevistaNaUnidade(p.cargaPrevista, registro, pacote)
 }
 
 /** O ponto tem a leitura decrescente? (no "crescente e decrescente": não no zero nem em Max, como no papel) */
@@ -51,16 +82,16 @@ export function pontoComDescida(
   const { sobe, desce } = colunasDaIndicacao(pacote)
   if (!desce) return false
   if (!sobe) return true
-  const carga = cargaDoPonto(p)
+  const carga = cargaDoPonto(p, registro, pacote)
   if (carga === null || carga <= 0) return false
   const max = maxDaFolha(registro, pacote)
   return !(max !== null && max > 0 && carga >= max * (1 - TOL))
 }
 
 /** Os pontos na ordem de carga (do menor para o maior; os sem carga legível no fim, na ordem da lista). */
-function pontosPorCarga(pontos: PontoCampo[]): PontoCampo[] {
+function pontosPorCarga(pontos: PontoCampo[], registro: RegistroCampo, pacote: PacoteCampo | null | undefined): PontoCampo[] {
   return pontos
-    .map((p, i) => ({ p, i, carga: cargaDoPonto(p) }))
+    .map((p, i) => ({ p, i, carga: cargaDoPonto(p, registro, pacote) }))
     .sort((a, b) => (a.carga ?? Infinity) - (b.carga ?? Infinity) || a.i - b.i)
     .map((x) => x.p)
 }
@@ -70,7 +101,7 @@ export function ordemIndicacao(registro: RegistroCampo, pacote: PacoteCampo | nu
   const ind = registro.passos.indicacao
   const { sobe } = colunasDaIndicacao(pacote)
   const ordem: string[] = []
-  const pontos = pontosPorCarga(ind.pontos)
+  const pontos = pontosPorCarga(ind.pontos, registro, pacote)
   const etapas = ind.substituicao?.etapas ?? []
   const etapa = (k: number) => {
     ordem.push(`indicacao.substituicao.etapas.${k}.padroes`, `indicacao.substituicao.etapas.${k}.substituicao`)
@@ -96,7 +127,7 @@ export function leiturasPrevistas(registro: RegistroCampo, pacote: PacoteCampo |
   const i = pacote?.entrada.repetibilidade.findIndex((x) => x.id === ensaioId) ?? -1
   const doPlano = i >= 0 ? pacote?.plano?.repetibilidade[i] : undefined
   const instrumento = instrumentoDoCampo(registro, pacote).instrumento
-  const carga = numeroDaLeitura(r.cargaAplicada) ?? numeroDoTexto(r.cargaPrevista)
+  const carga = numeroDaLeitura(r.cargaAplicada) ?? cargaPrevistaNaUnidade(r.cargaPrevista, registro, pacote)
   const minimo =
     carga !== null
       ? minimoLeiturasRepetibilidade(carga, {
@@ -115,15 +146,6 @@ export function ordemRepetibilidade(registro: RegistroCampo, pacote: PacoteCampo
     for (let j = 0; j < n; j++) ordem.push(`repetibilidade.${r.id}.leituras.${j}`)
   }
   return ordem
-}
-
-/** O zero antes de cada posição (classe I, método 3 do sistema). */
-export function excentricidadeComZero(registro: RegistroCampo, pacote: PacoteCampo | null | undefined): boolean {
-  return (
-    pacote?.plano?.excentricidade.metodo === 3 ||
-    pacote?.entrada.excentricidade.metodo === 3 ||
-    registro.passos.indicacao.calInterno !== null
-  )
 }
 
 /** A ordem das leituras da excentricidade (passo 7); vazia quando o ensaio não é feito. */

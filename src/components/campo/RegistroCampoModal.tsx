@@ -34,7 +34,7 @@ import { LOCAIS } from '#shared/dominio.ts'
 import type { Balanca, RegistroCampoDetalhe } from '#shared/tipos.ts'
 import { BalancaFormModal } from '../BalancaFormModal'
 import { api, ErroApi } from '../../lib/api'
-import { MARCA_REGISTRO, quando, ROTULO_DESFECHO, rotuloDoCampo, selosDasMarcas } from '../../lib/campo'
+import { MARCA_REGISTRO, quando, rotuloDoCampo, rotuloDoDesfecho, selosDasMarcas } from '../../lib/campo'
 import { cn } from '../../lib/cn'
 import { dataHora } from '../../lib/format'
 import { useTempoReal } from '../../store/tempoReal'
@@ -183,7 +183,8 @@ function Detalhe({
       )}
       {r.desfecho && r.desfecho !== 'COMPLETA' && (
         <Faixa tom="warning" icone={<TriangleAlert className="h-4 w-4" />}>
-          <b className="font-semibold">Encerrada sem completar ({ROTULO_DESFECHO[r.desfecho].toLowerCase()}).</b>{' '}
+          {/* O registro com a marca FORMATO pode trazer um desfecho fora da lista: aparece como veio, sem quebrar a tela */}
+          <b className="font-semibold">Encerrada sem completar ({rotuloDoDesfecho(r.desfecho).toLowerCase()}).</b>{' '}
           {r.motivoDesfecho}
         </Faixa>
       )}

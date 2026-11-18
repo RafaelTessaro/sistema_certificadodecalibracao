@@ -14,10 +14,10 @@ import {
   prepararAvisos,
 } from '../../../shared/campo/avisos.ts'
 import type { AvisoCampo, PreparoAvisos } from '../../../shared/campo/avisos.ts'
-import { novaLeitura } from '../../../shared/campo/registro.ts'
 import type { PacoteCampo, RegistroCampo } from '../../../shared/campo/tipos.ts'
 import { avisar, mudarFolha } from '../app/acoes.ts'
-import { editar, gravarLeitura, lerLeitura } from '../nucleo/folha.ts'
+import { useFecharNoVoltar } from '../app/camadas.ts'
+import { confirmarLeitura, editar, lerLeitura } from '../nucleo/folha.ts'
 import type { FolhaLocal } from '../nucleo/folha.ts'
 import { proximoCampo } from '../nucleo/ordem.ts'
 import { relogioDoAparelho } from '../nucleo/relogio.ts'
@@ -74,7 +74,7 @@ export function Celula({
       type="button"
       onClick={() => ctx.selecionar(campo)}
       className={cn(
-        'min-h-[44px] w-full rounded-lg px-2 text-right text-[16px] tabular-nums',
+        'min-h-[48px] w-full rounded-lg px-2 text-right text-[16px] tabular-nums',
         emFoco ? 'bg-brand-soft font-semibold text-brand-ink ring-2 ring-brand' : 'active:bg-surface-2',
         !valor && !emFoco && 'text-muted',
       )}
@@ -129,7 +129,10 @@ export function EditorDeLeituras({
     return (campo: string) => marcados.has(campo)
   }, [registro, pacote, campos])
 
-  /** Confirma o que está digitado no campo em foco e leva o foco para `destino` ('auto' = a próxima da ordem). */
+  /**
+   * Confirma o que está digitado no campo em foco e leva o foco para `destino` ('auto' = a próxima da ordem; null =
+   * fecha o teclado).
+   */
   const confirmar = useCallback(
     async (destino: string | null | 'auto') => {
       const campo = foco
@@ -146,8 +149,9 @@ export function EditorDeLeituras({
       const mudou = (atual?.valor ?? '') !== texto || (!!texto && teclado.via !== (atual?.via ?? 'teclado'))
       if (mudou) {
         const agora = relogioDoAparelho.agora()
+        // Corrigir a digitação mantém a hora da observação (confirmarLeitura)
         const nova = await mudarFolha(envioId, (f) =>
-          editar(f, (r) => gravarLeitura(r, campo, texto ? novaLeitura(texto, teclado.via, agora) : null), agora),
+          editar(f, (r) => confirmarLeitura(r, campo, texto, teclado.via, agora), agora),
         )
         if (!nova?.registro) return
         const avisos = texto ? avisosDoCampo(nova.registro, nova.pacote, campo) : []
@@ -155,13 +159,16 @@ export function EditorDeLeituras({
       }
       const proximo = destino === 'auto' ? proximoCampo(campos, campo) : destino
       if (proximo) aoFocar(proximo)
-      else if (destino === 'auto') {
+      else {
         aoFocar(null)
-        aoTerminar?.()
+        if (destino === 'auto') aoTerminar?.()
       }
     },
     [foco, teclado, registro, envioId, campos, aoFocar, aoTerminar],
   )
+
+  // O voltar do Android com o teclado do app aberto confirma o que está digitado e fecha o teclado (não sai da tela)
+  useFecharNoVoltar(foco ? () => void confirmar(null) : null)
 
   const aoTeclar = useCallback((t: Tecla) => setTeclado((e) => teclar(e, t)), [])
   const aoProxima = useCallback(() => void confirmar('auto'), [confirmar])

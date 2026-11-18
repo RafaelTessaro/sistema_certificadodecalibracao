@@ -11,7 +11,7 @@ import { Botao, Cartao, MarcaObrigatorio } from '../../componentes/base.tsx'
 import { useGravar } from '../../componentes/CamposDaFolha.tsx'
 import { Celula, EditorDeLeituras } from '../../componentes/EditorDeLeituras.tsx'
 import type { ContextoTabela } from '../../componentes/EditorDeLeituras.tsx'
-import { leiturasPrevistas, ordemRepetibilidade } from '../../nucleo/ordem.ts'
+import { leiturasPrevistas, ordemRepetibilidade, textoCargaPrevista, textoDaCargaDoItem } from '../../nucleo/ordem.ts'
 import type { PropsPasso } from '../Passo.tsx'
 
 export function PassoRepetibilidade({ f, foco, aoFocar }: PropsPasso) {
@@ -46,7 +46,7 @@ export function PassoRepetibilidade({ f, foco, aoFocar }: PropsPasso) {
     const id = campo.split('.')[1]
     const e = ensaios.find((x) => x.id === id)
     if (!e) return null
-    const carga = e.cargaAplicada?.valor ?? e.cargaPrevista
+    const carga = textoDaCargaDoItem(e, r, pacote)
     return [
       carga ? `Carga ${carga} ${u}` : 'Digite a carga aplicada',
       pesos(id) ? `pesos ${pesos(id)}` : '',
@@ -73,7 +73,7 @@ export function PassoRepetibilidade({ f, foco, aoFocar }: PropsPasso) {
               </div>
               {e.cargaPrevista ? (
                 <div className="text-[18px] font-semibold tabular-nums">
-                  {e.cargaPrevista} {u}
+                  {textoCargaPrevista(e.cargaPrevista, r, pacote)} {u}
                 </div>
               ) : (
                 <div className="w-36">
@@ -82,7 +82,7 @@ export function PassoRepetibilidade({ f, foco, aoFocar }: PropsPasso) {
               )}
             </div>
             {pesos(e.id) && <div className="text-[14px] text-ink-2">pesos: {pesos(e.id)}</div>}
-            <div className="mt-2 grid grid-cols-3 gap-1">
+            <div className="mt-2 grid grid-cols-3 gap-2">
               {Array.from({ length: n }, (_, j) => (
                 <div key={j} className="flex items-center gap-1">
                   <span className="w-5 text-right text-[13px] text-ink-2">{j + 1}</span>

@@ -26,6 +26,7 @@ function DetalhesDaEntrega({ aoFechar }: { aoFechar: () => void }) {
   return (
     <Folha
       titulo="Entrega"
+      aoFechar={aoFechar}
       rodape={
         <Botao className="flex-1" onClick={aoFechar}>
           Fechar

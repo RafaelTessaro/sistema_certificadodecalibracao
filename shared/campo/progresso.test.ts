@@ -27,7 +27,7 @@ import {
   situacaoDasEtapas,
 } from './progresso.ts'
 import { registroInicial } from './registro.ts'
-import type { LeituraCampo, PacoteCampo } from './tipos.ts'
+import type { LeituraCampo, PacoteCampo, PontoCampo } from './tipos.ts'
 
 const HOJE = '2026-11-18'
 const L = (valor: string, em = '2026-10-21T09:00:00-03:00'): LeituraCampo => ({ valor, em, via: 'teclado' })
@@ -155,6 +155,38 @@ describe('falta para assinar', () => {
     expect(codigos(faltaParaAssinar(exc, pacoteDoCliente()))).toEqual(['FALTA_CARGA_EXCENTRICIDADE'])
   })
 
+  it('o ponto acrescentado no local com leitura e sem carga: a carga é ● (em branco de todo, não falta nada)', () => {
+    const p = pacotePlataforma()
+    const r = registroPlataforma()
+    const novo: PontoCampo = {
+      id: 'cel-extra',
+      acrescentado: true,
+      cargaPrevista: '',
+      cargaAplicada: null,
+      pecas: [],
+      pecasTrocadas: false,
+      nivelSubstituicao: 0,
+      crescente: null,
+      decrescente: null,
+    }
+    r.passos.indicacao.pontos.push(novo)
+    // "+ Acrescentar ponto" tocado e deixado em branco: sai da folha ao finalizar, não é ●
+    expect(codigos(faltaParaAssinar(r, p))).not.toContain('FALTA_CARGA_INDICACAO')
+    novo.crescente = L('120,05')
+    expect(faltaParaAssinar(r, p).filter((x) => x.codigo === 'FALTA_CARGA_INDICACAO')).toEqual([
+      {
+        codigo: 'FALTA_CARGA_INDICACAO',
+        etapa: 'indicacao',
+        passo: 5,
+        texto: 'Carga do ponto acrescentado',
+        campo: 'indicacao.pontos.cel-extra.cargaAplicada',
+      },
+    ])
+    expect(podeFinalizar(r, p).pode).toBe(false)
+    novo.cargaAplicada = L('120')
+    expect(codigos(faltaParaAssinar(r, p))).not.toContain('FALTA_CARGA_INDICACAO')
+  })
+
   it('excentricidade prevista como não aplicável: confirmar no local; não feita, o motivo', () => {
     const p = pacotePlataforma()
     const r = registroPlataforma()
@@ -162,6 +194,25 @@ describe('falta para assinar', () => {
     expect(codigos(faltaParaAssinar(r, p))).toEqual(['EXCENTRICIDADE_A_CONFIRMAR'])
     Object.assign(r.passos.excentricidade, { aplicavel: false, motivo: '' })
     expect(codigos(faltaParaAssinar(r, p))).toEqual(['FALTA_MOTIVO_EXCENTRICIDADE'])
+  })
+
+  it('excentricidade prevista como não aplicável e feita no local: as posições para digitar, e nada mais falta', () => {
+    const p = pacotePlataforma()
+    const naoAplicavel = { aplicavel: false, motivo: 'Copiado do certificado anterior.', carga: 0 }
+    Object.assign(p.plano!.excentricidade, { ...naoAplicavel, posicoes: [] })
+    Object.assign(p.entrada.excentricidade, { ...naoAplicavel, posicoes: [] })
+    const r = registroPlataforma()
+    r.correcoesPosAssinatura = []
+    r.passos.excentricidade = vazia(p).passos.excentricidade
+    // "Fazer o ensaio"
+    r.passos.excentricidade.aplicavel = true
+    expect(r.passos.excentricidade.posicoes).toHaveLength(5)
+    expect(codigos(faltaParaAssinar(r, p))).toEqual(['FALTA_LEITURAS_EXCENTRICIDADE'])
+    // A carga escrita no local (não há prevista) e as posições
+    r.passos.excentricidade.cargaAplicada = L('100,00')
+    r.passos.excentricidade.posicoes.forEach((x, i) => (x.leitura = L(i % 2 ? '100,05' : '100,00')))
+    expect(faltaParaAssinar(r, p)).toEqual([])
+    expect(registroParaRascunho(r, p).excentricidade).toMatchObject({ aplicavel: true, motivo: '', carga: 100 })
   })
 
   it('folha só do cliente e em branco: a balança e o cliente informados', () => {

@@ -89,11 +89,13 @@ jobs:
           node-version: 24
           cache: npm
 
-      # Os testes do núcleo (app-campo/src/nucleo) e de shared/campo rodam no Vitest da raiz, com o node:http
+      # Os testes do núcleo (app-campo/src/nucleo) e de shared/campo rodam no Vitest da raiz, com o node:http. O
+      # sincronia.e2e.test.ts junta o núcleo de verdade e o servidor (Fastify) de verdade: roda aqui também, para uma
+      # mudança no núcleo que quebre a conversa com o servidor não aparecer só no release (o resto de server/ roda na tag)
       - name: npm ci, testes e tipos do núcleo
         run: |
           npm ci --no-audit --no-fund
-          npx vitest run app-campo/src/nucleo shared/campo
+          npx vitest run app-campo/src/nucleo shared/campo server/campo/sincronia.e2e.test.ts
           npx tsc -p app-campo/tsconfig.testes.json
 
   apk:

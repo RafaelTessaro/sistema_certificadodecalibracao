@@ -17,6 +17,7 @@ import type { ResumoEnvio } from '../../../shared/campo/protocolo.ts'
 import {
   instanteValido,
   leituraTextoValida,
+  novaLeitura,
   registroInicial,
   validarPng,
   validarRegistro,
@@ -30,9 +31,11 @@ import type {
   LeituraCampo,
   PacoteCampo,
   PessoaCampo,
+  PontoCampo,
   ProblemaRegistro,
   ReciboCampo,
   RegistroCampo,
+  ViaLeitura,
 } from '../../../shared/campo/tipos.ts'
 import { ESTADOS_COMECADOS } from '../../../shared/campo/tipos.ts'
 
@@ -329,7 +332,22 @@ export function gravarLeitura(r: RegistroCampo, campo: string, leitura: LeituraC
   no[ultima] = leitura
 }
 
+/**
+ * Confirma o que foi digitado numa leitura (o "Próxima" ou o toque noutra célula), numa cópia de trabalho (`editar`).
+ * Mudar uma leitura que já existe é corrigir a digitação: fica a hora da observação, não a da correção (a hora decide o
+ * ΔT e a linha do início que valem; uma medição nova é "Medir de novo"). Apagada e digitada de novo, vale a hora nova.
+ * Texto vazio apaga.
+ */
+export function confirmarLeitura(r: RegistroCampo, campo: string, texto: string, via: ViaLeitura, agora: Instante): void {
+  const antes = lerLeitura(r, campo)
+  gravarLeitura(r, campo, texto ? novaLeitura(texto, via, antes?.em || agora) : null)
+}
+
 // ---- Finalizar e assinar --------------------------------------------------------------------------------------------
+
+/** O ponto acrescentado no local sem carga e sem leitura ("+ Acrescentar ponto" tocado e deixado em branco). */
+export const pontoAcrescentadoVazio = (p: PontoCampo): boolean =>
+  p.acrescentado && p.cargaAplicada === null && p.crescente === null && p.decrescente === null
 
 /**
  * "Finalizar e colher assinaturas": confere o "Falta para assinar" (ou o motivo de encerrar sem completar) e o formato
@@ -342,6 +360,15 @@ export async function iniciarAssinaturas(f: FolhaLocal, sha: FuncaoSha256, agora
   const congelado = copia(f.registro)
   congelado.relogio.finalizadoEm = agora
   if (congelado.desfecho === 'COMPLETA') congelado.motivoDesfecho = ''
+  // "+ Acrescentar ponto" tocado e deixado em branco (sem carga e sem leitura) não é dado: sai da folha. Com leitura e
+  // sem a carga, a frase do que fazer (o Nº da tabela), em vez do "problema de formato": a carga não se inventa
+  const ind = congelado.passos.indicacao
+  const semCarga = ind.pontos.findIndex((p) => p.acrescentado && p.cargaAplicada === null && !pontoAcrescentadoVazio(p))
+  exigir(
+    semCarga < 0,
+    `Falta a carga do ponto ${semCarga + 1}, acrescentado no passo 5 (Erro de indicação). Digite a carga aplicada ou apague as leituras desse ponto.`,
+  )
+  ind.pontos = ind.pontos.filter((p) => !pontoAcrescentadoVazio(p))
   const problemas = validarRegistro(congelado, { pacote: f.pacote, momento: 'FINALIZAR' })
   if (problemas.length)
     throw new ErroFolha(

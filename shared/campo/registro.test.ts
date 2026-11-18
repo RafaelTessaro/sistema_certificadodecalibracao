@@ -228,6 +228,28 @@ describe('registroInicial', () => {
     expect(cl.passos.repetibilidade[0].cargaPrevista).toBe('200,0000')
   })
 
+  it('excentricidade prevista como não aplicável: a confirmar, com as posições do desenho prontas para "Fazer o ensaio"', () => {
+    const p = pacotePlataforma()
+    Object.assign(p.plano!.excentricidade, { aplicavel: false, motivo: 'Prato pequeno.', posicoes: [], carga: 0 })
+    const r = registroInicial(p, TECNICO_EXEMPLO, APARELHO_EXEMPLO, { agora: AGORA })
+    expect(r.passos.excentricidade).toMatchObject({ aplicavel: null, motivo: 'Prato pequeno.', cargaPrevista: '' })
+    expect(r.passos.excentricidade.posicoes.map((x) => x.rotulo)).toEqual([
+      'Centro',
+      'Frente esquerda',
+      'Trás esquerda',
+      'Trás direita',
+      'Frente direita',
+    ])
+    expect(r.passos.excentricidade.posicoes.every((x) => x.leitura === null && x.zeroAntes === null)).toBe(true)
+    // Plataforma com apoios: uma posição por apoio; gancho (sem desenho): as 1 a 5 da folha em branco
+    p.balanca = { ...p.balanca!, receptor: 'APOIOS', apoios: 6 }
+    expect(registroInicial(p, TECNICO_EXEMPLO, APARELHO_EXEMPLO, { agora: AGORA }).passos.excentricidade.posicoes).toHaveLength(6)
+    p.balanca = { ...p.balanca, receptor: 'GANCHO' }
+    const gancho = registroInicial(p, TECNICO_EXEMPLO, APARELHO_EXEMPLO, { agora: AGORA })
+    expect(gancho.passos.excentricidade.posicoes.map((x) => x.rotulo)).toEqual(['1', '2', '3', '4', '5'])
+    expect(validarRegistro(gancho, { pacote: p, momento: 'FINALIZAR' })).toEqual([])
+  })
+
   it('só do cliente e em branco: balança (e cliente) informados, posições 1 a 5', () => {
     const cli = registroInicial(pacoteDoCliente(), TECNICO_EXEMPLO, APARELHO_EXEMPLO, { agora: AGORA })
     expect(cli.passos.balanca.informada).toMatchObject({ classe: '', unidade: '', faixas: [{ max: '', e: '', d: '' }] })

@@ -58,8 +58,8 @@ outra chave, o Android não atualiza (e desinstalar apaga as folhas não entregu
 
 ## Recomendações para o celular do técnico
 
-- Bloqueio de tela ligado (PIN ou digital do Android) e "Data e hora automáticas" ligado.
-- No roteador da empresa, reservar o IP do servidor (o app usa o endereço que veio no QR; se mudar, "Ler o QR de novo"
-  ou Menu → "Endereço do servidor").
+- Bloqueio de tela ligado (PIN ou digital do Android; obrigatório pelo POP-CAL-01) e "Data e hora automáticas" ligado.
+- No roteador da empresa, reservar o IP do servidor (o app usa o endereço que veio no QR; se mudar, Menu → "Endereço do
+  servidor" ou Menu → "Ler o QR de novo", com o QR que o escritório gera em "Parear de novo").
 - Teste de 1 minuto: abrir `http://IP-DO-SERVIDOR:4850` no navegador do celular; se a tela de entrar do sistema
   aparecer, a rede está certa.

@@ -238,6 +238,7 @@ export async function sincronizar(dep: DependenciasSincronia): Promise<Resultado
     let motivo: string
     if (x.ok) motivo = 'O recibo do servidor não confere com a folha. Ela continua no celular; vou tentar de novo.'
     else if (rede(x.falha)) motivo = 'A conexão caiu durante a entrega. A folha continua no celular; vou tentar de novo.'
+    else if (x.falha.tipo === 'HTTP' && x.falha.codigo === 'DESCADASTRADO') motivo = MOTIVO_ENTREGA_DESCADASTRADO
     else motivo = x.falha.mensagem
     if (atual) await repo.gravar(registrarFalhaEntrega(atual, motivo, relogio.agora()))
     r.naoEntregues.push({ numero: f.numero, motivo })
@@ -251,6 +252,13 @@ export async function sincronizar(dep: DependenciasSincronia): Promise<Resultado
   }
   return terminar(dep, r)
 }
+
+/**
+ * A entrega recusada por descadastro (o servidor só recusa o "roubado"). O servidor respondeu, então o técnico já está na
+ * rede da empresa e esperar não adianta: só o escritório cadastrando o celular de novo destrava a folha.
+ */
+export const MOTIVO_ENTREGA_DESCADASTRADO =
+  'Este celular foi descadastrado e a entrega foi recusada. A folha continua guardada aqui: peça ao escritório para cadastrar o celular de novo (Parear de novo).'
 
 /** Limpa o que expirou e grava o resultado da rodada. */
 async function terminar(dep: DependenciasSincronia, r: ResultadoSincronia): Promise<ResultadoSincronia> {

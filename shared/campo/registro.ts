@@ -9,7 +9,7 @@
 
 import { converterMassa, dataIsoValida } from '../dominio.ts'
 import { numeroDaFolha } from '../folhaCampo.ts'
-import { casasDecimais, faixaDoValor, formatarNumero } from '../metrologia/index.ts'
+import { casasDecimais, faixaDoValor, formatarNumero, posicoesExcentricidade } from '../metrologia/index.ts'
 import type { Unidade } from '../tipos.ts'
 import { bytesUtf8, calcularConteudoSha256, jsonCanonico, REGEX_SHA256 } from './canonico.ts'
 import { comSubstituicao } from './pacote.ts'
@@ -241,6 +241,9 @@ export function validarPng(dataUrl: unknown): string | null {
 
 // ---- Registro vazio ------------------------------------------------------------------------------------------------
 
+/** As posições da excentricidade sem o desenho da balança: as 1 a 5 dos desenhos de referência (como no papel). */
+const POSICOES_EM_BRANCO = ['1', '2', '3', '4', '5']
+
 /**
  * O registro vazio de uma folha, pronto para preencher, ao tocar em "Começar a folha": os passos com os itens do pacote
  * (padrões da lista, dados impressos para conferir, pontos com os ids e as cargas da folha, ensaios de repetibilidade,
@@ -285,13 +288,20 @@ export function registroInicial(
         ? { etapas: [] }
         : null
   const e = plano?.excentricidade
+  // Prevista como não aplicável, o técnico pode ver no local que dá para fazer ("Fazer o ensaio"): as posições do desenho
+  // da balança ficam prontas (sem desenho, como no gancho, as 1 a 5), e a carga ele escreve no local
+  const desenho = e && !e.aplicavel && balanca ? posicoesExcentricidade(balanca.receptor, balanca.apoios) : undefined
   const excentricidade: ExcentricidadeCampo = e
     ? {
         aplicavel: e.aplicavel ? true : null,
         motivo: e.aplicavel ? '' : e.motivo,
         cargaPrevista: e.aplicavel && e.carga > 0 ? cargaTexto(e.carga) : '',
         cargaAplicada: null,
-        posicoes: e.posicoes.map((rotulo) => ({ rotulo, zeroAntes: null, leitura: null })),
+        posicoes: (e.aplicavel ? e.posicoes : desenho?.length ? desenho : POSICOES_EM_BRANCO).map((rotulo) => ({
+          rotulo,
+          zeroAntes: null,
+          leitura: null,
+        })),
       }
     : {
         // Folha sem balança cadastrada: as posições 1 a 5 dos desenhos de referência (como no papel)
@@ -299,7 +309,7 @@ export function registroInicial(
         motivo: '',
         cargaPrevista: '',
         cargaAplicada: null,
-        posicoes: ['1', '2', '3', '4', '5'].map((rotulo) => ({ rotulo, zeroAntes: null, leitura: null })),
+        posicoes: POSICOES_EM_BRANCO.map((rotulo) => ({ rotulo, zeroAntes: null, leitura: null })),
       }
   const linha = (momento: 'INICIO' | 'FIM') => ({
     momento,

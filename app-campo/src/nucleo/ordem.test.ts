@@ -9,7 +9,9 @@ import {
 } from '../../../shared/campo/exemplos.ts'
 import { registroInicial } from '../../../shared/campo/registro.ts'
 import type { PacoteCampo } from '../../../shared/campo/tipos.ts'
+import { rotuloDoCampo } from './rotulos.ts'
 import {
+  cargaDoPonto,
   colunasDaIndicacao,
   contagem,
   leiturasPrevistas,
@@ -19,6 +21,7 @@ import {
   pontoComDescida,
   primeiroVazio,
   proximoCampo,
+  textoCargaPrevista,
 } from './ordem.ts'
 
 const AGORA = '2026-11-18T08:00:00-03:00'
@@ -129,6 +132,54 @@ describe('ordem física da "Próxima"', () => {
       'indicacao.pontos.cel-a.crescente',
       'indicacao.pontos.cel-b.crescente',
     ])
+  })
+
+  it('unidade vista diferente da do cadastro (t ou g): as cargas na unidade vista; a descida entre zero e Max continua', () => {
+    const p = pacotePlataforma()
+    const r = registro(p)
+    const unidade = r.passos.balanca.conferencias.find((x) => x.campo === 'balanca.unidade')!
+    const pontos = r.passos.indicacao.pontos
+    const max = p.plano!.max
+    const cargas = p.plano!.pontos.map((x) => x.carga)
+    const comDescida = cargas.map((x) => x > 0 && x < max)
+    expect(p.balanca!.unidade).toBe('kg')
+    expect(pontos.map((x) => pontoComDescida(x, r, p))).toEqual(comDescida)
+    const descidas = ordemIndicacao(r, p).filter((c) => c.endsWith('.decrescente'))
+    const i100 = cargas.indexOf(100)
+    const id100 = pontos[i100].id
+    expect(rotuloDoCampo(r, p, `indicacao.pontos.${id100}.crescente`)).toBe(`Ponto ${i100 + 1} ↑ · 100,00 kg`)
+
+    // "Algo diferente…": t
+    Object.assign(unidade, { confere: false, observado: 't' })
+    expect(pontos.map((x) => pontoComDescida(x, r, p))).toEqual(comDescida)
+    expect(ordemIndicacao(r, p).filter((c) => c.endsWith('.decrescente'))).toEqual(descidas)
+    expect(cargaDoPonto(pontos[i100], r, p)).toBe(0.1)
+    expect(textoCargaPrevista(pontos[i100].cargaPrevista, r, p)).toBe('0,10000')
+    expect(rotuloDoCampo(r, p, `indicacao.pontos.${id100}.crescente`)).toBe(`Ponto ${i100 + 1} ↑ · 0,10000 t`)
+    // Uma carga digitada (já em t) entra na ordem no lugar dela, entre as previstas convertidas
+    pontos.push({
+      id: 'cel-x',
+      acrescentado: true,
+      cargaPrevista: '',
+      cargaAplicada: { valor: '0,125', em: AGORA, via: 'teclado' },
+      pecas: [],
+      pecasTrocadas: false,
+      nivelSubstituicao: 0,
+      crescente: null,
+      decrescente: null,
+    })
+    const subida = ordemIndicacao(r, p).filter((c) => c.endsWith('.crescente'))
+    expect(subida.indexOf('indicacao.pontos.cel-x.crescente')).toBe(subida.indexOf(`indicacao.pontos.${id100}.crescente`) + 1)
+    expect(pontoComDescida(pontos.at(-1)!, r, p)).toBe(true)
+    pontos.pop()
+
+    // "Algo diferente…": g (sem descida a mais em Max)
+    Object.assign(unidade, { confere: false, observado: 'g' })
+    expect(pontos.map((x) => pontoComDescida(x, r, p))).toEqual(comDescida)
+    expect(textoCargaPrevista(pontos[i100].cargaPrevista, r, p)).toMatch(/^100\s000$/)
+    expect(rotuloDoCampo(r, p, `indicacao.pontos.${id100}.decrescente`)).toMatch(
+      new RegExp(`^Ponto ${i100 + 1} ↓ · 100\\s000 g$`),
+    )
   })
 
   it('próxima, primeira em branco e a contagem', () => {

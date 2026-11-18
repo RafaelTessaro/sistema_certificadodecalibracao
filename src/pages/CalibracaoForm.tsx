@@ -51,6 +51,7 @@ import { BlocoRegistroCampo } from '../components/campo/BlocoRegistroCampo'
 import { BotaoFolhaEmBranco } from '../components/campo/BotaoFolhaEmBranco'
 import { FaixaCampo } from '../components/campo/FaixaCampo'
 import { CompararCampo, RegistroCampo } from '../components/campo/preguicosos'
+import { type PedidoRecolher, RecolherFolhaModal } from '../components/campo/RecolherFolha'
 import { type AlvoEnvio, EnviarParaTecnicoModal } from '../components/campo/EnviarParaTecnicoModal'
 import { recomporCargas } from '../components/calibracao/cargas'
 import type { ContextoEtapa, IdEtapa } from '../components/calibracao/contexto'
@@ -90,7 +91,7 @@ import { Field, Input, LegendaObrigatorio, MarcaObrigatorio } from '../component
 import { Modal } from '../components/ui/Modal'
 import { EmptyState, PageHeader } from '../components/ui/Misc'
 import { api, ErroApi, type MembroEquipe } from '../lib/api'
-import { ETAPAS_DE_MEDICAO, mudouMedicao, PENDENCIA_JUSTIFICATIVA, primeiroNome } from '../lib/campo'
+import { celularDe, ETAPAS_DE_MEDICAO, mudouMedicao, PENDENCIA_JUSTIFICATIVA, primeiroNome } from '../lib/campo'
 import { cn } from '../lib/cn'
 import { useConsulta } from '../lib/consulta'
 import { criarFilaGravacao } from '../lib/filaGravacao'
@@ -113,7 +114,7 @@ import {
 } from '../lib/folhaCampo'
 import { dataCurta, hojeISO } from '../lib/format'
 import { avisoNumeroDaFolha } from '../lib/numeros'
-import { usePode, useSessao } from '../store/sessao'
+import { useEhAdmin, usePode, useSessao } from '../store/sessao'
 import { useTempoReal } from '../store/tempoReal'
 import { avisarErro, toast } from '../store/ui'
 
@@ -504,6 +505,9 @@ function EditorCalibracao({ id }: { id: string }) {
   const [envioAberto, setEnvioAberto] = useState(false)
   const [comparando, setComparando] = useState(false)
   const [registroAberto, setRegistroAberto] = useState<string | null>(null)
+  /** "Recolher à força" (só o administrador, com o pedido de recolher em aberto): a janela com o motivo. */
+  const [recolhendoAForca, setRecolhendoAForca] = useState<PedidoRecolher | null>(null)
+  const ehAdmin = useEhAdmin()
   /** Registro original no celular e a folha nele: os passos de medição só para leitura (como o servidor, 409 NO_CELULAR). */
   const travada = !!campo?.travada
   const travadaRef = useRef(travada)
@@ -1141,7 +1145,10 @@ function EditorCalibracao({ id }: { id: string }) {
     !!campo?.envio &&
     (campo.envio.situacao === 'ENVIADA' || campo.envio.situacao === 'NO_CELULAR') &&
     !campo.envio.recolherPedidoEm
-  const nomeTecnicoCampo = primeiroNome(campo?.envio?.tecnico ?? '') || 'técnico'
+  // O primeiro nome, sem artigo nos textos ("celular de Ana"; sem o nome, "celular do técnico")
+  const nomeTecnicoCampo = primeiroNome(campo?.envio?.tecnico ?? '')
+  /** Envio ainda vivo (enviada ou no celular), com ou sem pedido de recolher: enviar de novo daria 409 ENVIO_ATIVO. */
+  const envioNoCelular = !!campo?.envio && (campo.envio.situacao === 'ENVIADA' || campo.envio.situacao === 'NO_CELULAR')
 
   const recolher = async (motivo: string, pergunta: { titulo: string; descricao: string; confirmar: string }) => {
     const numero = campo?.envio?.numero
@@ -1152,7 +1159,7 @@ function EditorCalibracao({ id }: { id: string }) {
       useTempoReal.getState().mudou('calibracao')
       recarregarCampo()
       toast.sucesso(
-        r.imediato ? `Folha ${numero} recolhida` : `Pedido de recolher enviado para o celular do ${nomeTecnicoCampo}`,
+        r.imediato ? `Folha ${numero} recolhida` : `Pedido de recolher enviado para o ${celularDe(nomeTecnicoCampo)}`,
         r.imediato
           ? 'O celular ainda não tinha baixado a folha. Pode digitar do papel.'
           : 'As leituras já podem ser digitadas aqui. Se o técnico já começou, a folha volta preenchida e você decide.',
@@ -1168,7 +1175,7 @@ function EditorCalibracao({ id }: { id: string }) {
   const recolherAntesDeEmitir = async (): Promise<boolean> => {
     if (!envioAtivo || !campo?.envio) return true
     return recolher('Certificado emitido com os dados digitados no computador', {
-      titulo: `A folha ${campo.envio.numero} ainda está no celular do ${nomeTecnicoCampo}`,
+      titulo: `A folha ${campo.envio.numero} ainda está no ${celularDe(nomeTecnicoCampo)}`,
       descricao:
         'Para emitir, o sistema pede ao celular para recolher a folha. Se o técnico já tiver começado, ela volta preenchida e fica guardada, marcada como “depois de recolhida”.',
       confirmar: 'Recolher e continuar',
@@ -1286,8 +1293,9 @@ function EditorCalibracao({ id }: { id: string }) {
                 Imprimir folha de campo
               </Button>
             )}
-            {/* A mesma folha vai para o celular do técnico (1.1.0); com ela já no celular, a faixa abaixo diz onde está */}
-            {!(dados.calibracao.substituiId && !folha) && !envioAtivo && !campo?.registroId && (
+            {/* A mesma folha vai para o celular do técnico (1.1.0); com ela já no celular (também com o pedido de recolher
+                em aberto, até o celular responder), a faixa abaixo diz onde está */}
+            {!(dados.calibracao.substituiId && !folha) && !envioNoCelular && !campo?.registroId && (
               <Button
                 icone={<Send className="h-4 w-4" />}
                 onClick={() => setEnvioAberto(true)}
@@ -1316,10 +1324,15 @@ function EditorCalibracao({ id }: { id: string }) {
               confirmar: 'Recolher',
             })
           }
+          aoRecolherAForca={
+            ehAdmin && campo.envio
+              ? () => setRecolhendoAForca({ numero: campo.envio!.numero, tecnico: campo.envio!.tecnico, forcar: true })
+              : undefined
+          }
           aoDigitarDoPapel={() =>
             void recolher('Feita no papel: o escritório digita do papel', {
               titulo: 'Digitar do papel?',
-              descricao: `O sistema pede ao celular do ${nomeTecnicoCampo} para recolher a folha e libera as leituras aqui. Se o técnico já começou, a folha volta preenchida e fica guardada.`,
+              descricao: `O sistema pede ao ${celularDe(nomeTecnicoCampo)} para recolher a folha e libera as leituras aqui. Se o técnico já começou, a folha volta preenchida e fica guardada.`,
               confirmar: 'Vou digitar do papel',
             })
           }
@@ -1407,7 +1420,7 @@ function EditorCalibracao({ id }: { id: string }) {
               {/* A folha no celular (registro original no celular): os passos de medição só para leitura */}
               {travada && (ETAPAS_DE_MEDICAO as readonly string[]).includes(etapa) && (
                 <p className="mb-3 flex items-center gap-2 rounded-xl bg-brand-soft px-3.5 py-2 text-[13px] text-brand-ink">
-                  Só para leitura: a folha está no celular do {nomeTecnicoCampo}.
+                  Só para leitura: a folha está no {celularDe(nomeTecnicoCampo)}.
                 </p>
               )}
               <fieldset
@@ -1521,6 +1534,9 @@ function EditorCalibracao({ id }: { id: string }) {
         />
       )}
       <RegistroCampo registroId={registroAberto} calibracaoAtual={id} aoFechar={() => setRegistroAberto(null)} />
+      {recolhendoAForca && (
+        <RecolherFolhaModal pedido={recolhendoAForca} aoFechar={() => setRecolhendoAForca(null)} aoRecolhido={recarregarCampo} />
+      )}
       <DevolverModal
         aberto={devolvendo}
         para={dados.calibracao.autorizacao?.por}

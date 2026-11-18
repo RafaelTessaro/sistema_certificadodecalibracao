@@ -16,6 +16,7 @@ import { AvisoNaHora } from '../componentes/Avisos.tsx'
 import { AreaTexto, Botao, Cabecalho, Cartao, Escolha, Folha, SecaoTitulo, Tela } from '../componentes/base.tsx'
 import { editar, encerrarSemCompletar, iniciarAssinaturas, podeEditar, voltarACompletar } from '../nucleo/folha.ts'
 import { relogioDoAparelho } from '../nucleo/relogio.ts'
+import { TelaComprovante } from './Comprovante.tsx'
 
 const DESFECHO = { INCOMPLETA: 'Incompleta', NAO_CALIBRADA: 'Não calibrada' } as const
 
@@ -36,6 +37,8 @@ export function TelaRevisao({ envioId }: { envioId: string }) {
   const [desfecho, setDesfecho] = useState<'INCOMPLETA' | 'NAO_CALIBRADA' | ''>('')
   const [motivo, setMotivo] = useState('')
   const [finalizando, setFinalizando] = useState(false)
+  // Entregue enquanto a tela estava aberta (a sincronia apaga as leituras): o resumo da entrega, não a tela em branco
+  if (f && !f.registro) return <TelaComprovante envioId={envioId} />
   if (!f?.registro || !rev) return null
   const r = f.registro
   const editavel = podeEditar(f)
@@ -185,6 +188,7 @@ export function TelaRevisao({ envioId }: { envioId: string }) {
       {encerrando && (
         <Folha
           titulo="Encerrar sem completar"
+          aoFechar={() => setEncerrando(false)}
           rodape={
             <>
               <Botao className="flex-1" onClick={() => setEncerrando(false)}>

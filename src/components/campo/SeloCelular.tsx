@@ -1,5 +1,5 @@
 // O selo da folha que foi para o celular (a aba "Folhas de campo", a ficha da balança e o Painel): a situação do envio
-// ("No celular do Maurício desde 08:12", "Voltou do campo"…), o que o celular informou e as marcas do registro.
+// ("No celular de Carlos desde 08:12", "Voltou do campo"…), o que o celular informou e as marcas do registro.
 
 import { Smartphone } from 'lucide-react'
 import type { CelularDaFolha } from '#shared/tipos.ts'

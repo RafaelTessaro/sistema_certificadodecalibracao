@@ -107,6 +107,7 @@ export function TelaMenu() {
       {registra && (
         <Folha
           titulo="O que o app registra sobre você"
+          aoFechar={() => setRegistra(false)}
           rodape={
             <Botao className="flex-1" onClick={() => setRegistra(false)}>
               Fechar
@@ -132,6 +133,7 @@ export function TelaMenu() {
       {descadastrando && (
         <Folha
           titulo="Descadastrar este celular"
+          aoFechar={() => (setDescadastrando(false), setMsgDescadastro(''))}
           rodape={
             <>
               <Botao className="flex-1" onClick={() => (setDescadastrando(false), setMsgDescadastro(''))}>

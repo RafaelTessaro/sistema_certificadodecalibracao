@@ -19,6 +19,7 @@ import { IconeLapis } from '../componentes/Icones.tsx'
 import { definirEtapaAtual, emAssinatura, podeEditar, recomecarEnsaios } from '../nucleo/folha.ts'
 import type { FolhaLocal } from '../nucleo/folha.ts'
 import { relogioDoAparelho } from '../nucleo/relogio.ts'
+import { TelaComprovante } from './Comprovante.tsx'
 import { PassoAmbiente } from './passos/PassoAmbiente.tsx'
 import { PassoBalanca } from './passos/PassoBalanca.tsx'
 import { PassoChegada } from './passos/PassoChegada.tsx'
@@ -59,6 +60,8 @@ export function TelaPasso({ envioId, etapa, foco: focoInicial }: { envioId: stri
     if (f && podeEditar(f) && f.etapaAtual !== etapa) void mudarFolha(envioId, (x) => definirEtapaAtual(x, etapa))
   }, [etapa]) // oxlint-disable-line react-hooks/exhaustive-deps
 
+  // Entregue enquanto a tela estava aberta (a sincronia apaga as leituras): o resumo da entrega, não a tela em branco
+  if (f && !f.registro) return <TelaComprovante envioId={envioId} />
   if (!f?.registro) return null
   if (!podeEditar(f)) {
     return (
@@ -206,6 +209,7 @@ export function TelaPasso({ envioId, etapa, foco: focoInicial }: { envioId: stri
       {menu && (
         <Folha
           titulo="Opções"
+          aoFechar={() => setMenu(false)}
           rodape={
             <Botao className="flex-1" onClick={() => setMenu(false)}>
               Fechar
@@ -230,6 +234,7 @@ export function TelaPasso({ envioId, etapa, foco: focoInicial }: { envioId: stri
       {recomecar && (
         <Folha
           titulo="Recomeçar os ensaios"
+          aoFechar={() => setRecomecar(false)}
           rodape={
             <>
               <Botao className="flex-1" onClick={() => setRecomecar(false)}>

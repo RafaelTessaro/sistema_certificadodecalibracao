@@ -9,6 +9,7 @@ import { CONTRATO_CAMPO, reciboConfere } from '#shared/campo/protocolo.ts'
 import type { PacoteCampo, ReciboCampo } from '#shared/campo/tipos.ts'
 import type { Calibracao, CampoDaFolha, CelularListado, FolhaCampoListada, RegistroCampoDetalhe } from '#shared/tipos.ts'
 import { type AppComLogin, cenarioCalibracao, criarAppComLogin } from '../auxiliaresTeste.ts'
+import { pngRgbaIdatQueNaoEZlib } from './__fixtures__/pngTeste.ts'
 import {
   APARELHO_TESTE,
   assinar,
@@ -71,7 +72,7 @@ describe('pareamento', () => {
     const linha = t.ctx.db.prepare('SELECT * FROM dispositivos').get() as Record<string, string>
     expect(linha.token_sha256).toBe(sha256Hex(corpo.token))
     expect(JSON.stringify(linha)).not.toContain(corpo.token)
-    expect(linha.nome).toBe('Celular do Comum')
+    expect(linha.nome).toBe('Celular de Comum')
     // De novo: já usado
     const outra = await mandarCodigo(t, p.codigo, { aparelhoId: OUTRO_APARELHO })
     expect(outra.statusCode).toBe(400)
@@ -164,7 +165,7 @@ describe('pareamento', () => {
     const [cel] = (await t.chamar('GET', '/api/celulares', { cookie: t.cookieAdmin })).json().celulares as CelularListado[]
     expect(cel).toMatchObject({
       id: APARELHO_TESTE,
-      nome: 'Celular do Comum',
+      nome: 'Celular de Comum',
       modelo: 'Samsung SM-A546E',
       versaoApp: '1.1.0',
       tecnicoId: t.comumId,
@@ -178,10 +179,10 @@ describe('pareamento', () => {
     void envio
     const r = await t.chamar('PUT', `/api/celulares/${APARELHO_TESTE}`, {
       cookie: t.cookieAdmin,
-      payload: { nome: 'Celular do Maurício' },
+      payload: { nome: 'Celular de Ana' },
     })
-    expect(r.json().celular.nome).toBe('Celular do Maurício')
-    expect(auditoria('CELULAR_RENOMEADO')[0].detalhe).toContain('Celular do Comum → Celular do Maurício')
+    expect(r.json().celular.nome).toBe('Celular de Ana')
+    expect(auditoria('CELULAR_RENOMEADO')[0].detalhe).toContain('Celular de Comum → Celular de Ana')
     // Só o administrador vê a lista (com o IP)
     expect((await t.chamar('GET', '/api/celulares', { cookie: t.cookieComum })).statusCode).toBe(403)
   })
@@ -723,6 +724,23 @@ describe('entrega do registro', () => {
     expect(lixo.json().marcas).toContain('FORMATO')
   })
 
+  it('assinatura PNG com o cabeçalho certo e os dados estragados: grava com a marca FORMATO e a folha impressa sai', async () => {
+    const { token, envio, pacote } = await folhaNoCelular()
+    const reg = registroDoPacote(pacote, { tecnico: { id: t.comumId, nome: 'Comum Teste' } })
+    reg.assinaturas.tecnico!.png = pngRgbaIdatQueNaoEZlib()
+    const r = await entregar(t, token, envio.id, reg)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().marcas).toContain('FORMATO')
+    const linha = t.ctx.db.prepare('SELECT id, problemas FROM registros_campo').get() as { id: string; problemas: string }
+    expect(JSON.parse(linha.problemas)).toEqual([
+      { campo: 'assinaturas.tecnico.png', mensagem: 'A imagem da assinatura está corrompida.' },
+    ])
+    // Abrir a folha impressa assinada não derruba o servidor: a imagem sai como ilegível
+    const pdf = await t.chamar('GET', `/api/campo/registros/${linha.id}/pdf`, { cookie: t.cookieComum })
+    expect(pdf.statusCode).toBe(200)
+    expect(pdf.headers['content-type']).toBe('application/pdf')
+  })
+
   it('corpo que não é objeto JSON: 400 REGISTRO_ILEGIVEL; acima de 3 MB: 413 REGISTRO_GRANDE', async () => {
     const { token, envio } = await folhaNoCelular()
     const lista = await entregar(t, token, envio.id, [1, 2])
@@ -781,6 +799,55 @@ describe('entrega do registro', () => {
     // O primeiro reenviado (recibo perdido) devolve o recibo dele, agora SUPERADO
     expect((await entregar(t, token, envio.id, primeiro)).json().situacao).toBe('SUPERADO')
   })
+
+  it('corrigida depois da assinatura (sem reabrir) e entregue de novo: vale a com mais correções, em qualquer ordem', async () => {
+    const { token, envio, pacote } = await folhaNoCelular()
+    const assinado = registroDoPacote(pacote, { tecnico: { id: t.comumId, nome: 'Comum Teste' } })
+    const corrigir = (r: typeof assinado, para: string) => {
+      const c = structuredClone(r)
+      c.correcoesPosAssinatura.push({
+        campo: 'final.termino',
+        de: c.passos.final.termino,
+        para,
+        em: '2026-11-18T08:30:00-03:00',
+        motivo: 'A hora do término foi anotada errada.',
+        mostradoAoCliente: false,
+      })
+      return c
+    }
+    const uma = corrigir(assinado, '2026-11-18T08:10:00-03:00')
+    const duas = corrigir(uma, '2026-11-18T08:12:00-03:00')
+    const tres = corrigir(duas, '2026-11-18T08:14:00-03:00')
+    const situacoes = () =>
+      t.ctx.db.prepare('SELECT sha256, situacao, situacao_motivo FROM registros_campo ORDER BY recebido_em, rowid').all()
+
+    // Na ordem: cada versão corrigida deixa a anterior SUPERADO
+    const r0 = (await entregar(t, token, envio.id, assinado)).json() as ReciboCampo
+    const r1 = (await entregar(t, token, envio.id, uma)).json() as ReciboCampo
+    expect([r0.situacao, r1.situacao]).toEqual(['VALIDO', 'VALIDO'])
+    expect(situacoes()).toEqual([
+      {
+        sha256: r0.sha256,
+        situacao: 'SUPERADO',
+        situacao_motivo: 'Chegou uma versão mais nova da mesma folha (corrigida no celular).',
+      },
+      { sha256: r1.sha256, situacao: 'VALIDO', situacao_motivo: '' },
+    ])
+    // Fora de ordem: a de três correções chega e vale; a de duas, que chega depois dela, já entra SUPERADO
+    const r3 = (await entregar(t, token, envio.id, tres)).json() as ReciboCampo
+    expect(r3.situacao).toBe('VALIDO')
+    const atrasada = (await entregar(t, token, envio.id, duas)).json() as ReciboCampo
+    expect(atrasada.situacao).toBe('SUPERADO')
+    const validos = t.ctx.db
+      .prepare("SELECT sha256 FROM registros_campo WHERE envio_id = ? AND situacao = 'VALIDO'")
+      .all(envio.id) as Array<{ sha256: string }>
+    expect(validos.map((x) => x.sha256)).toEqual([r3.sha256])
+    expect(situacoes().at(-1)).toMatchObject({
+      sha256: atrasada.sha256,
+      situacao: 'SUPERADO',
+      situacao_motivo: 'Chegou depois de uma versão mais nova da mesma folha (corrigida no celular).',
+    })
+  })
 })
 
 describe('trava da calibração (registro original no celular)', () => {
@@ -801,12 +868,21 @@ describe('trava da calibração (registro original no celular)', () => {
     })
     expect(travada.statusCode).toBe(409)
     expect(travada.json().codigo).toBe('NO_CELULAR')
+    expect(travada.json().erro).toContain('está no celular de Comum Teste:')
     // Fora dos passos de medição, continua livre
     const livre = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
       cookie: t.cookieAdmin,
       payload: { ...atual(), observacoes: 'Livre', versao: atual().versao },
     })
     expect(livre.statusCode, livre.body).toBe(200)
+    // O técnico excluído do sistema: a folha continua no celular (o envio vivo) e a frase não fica "de o técnico"
+    expect((await t.chamar('DELETE', `/api/usuarios/${t.comumId}`, { cookie: t.cookieAdmin })).statusCode).toBeLessThan(300)
+    const semNome = await t.chamar('PUT', `/api/calibracoes/${k.id}`, {
+      cookie: t.cookieAdmin,
+      payload: { ...mudarLeitura(atual()), ambiente: { ...atual().ambiente, temperaturaInicial: 26 } },
+    })
+    expect(semNome.statusCode).toBe(409)
+    expect(semNome.json().erro).toContain('está no celular do técnico:')
     // Recolher (pedido) libera a trava
     const numero = t.ctx.repo.folhaCampoDaCalibracao(k.id)!.numero
     await t.chamar('POST', `/api/folhas-campo/${numero}/recolher`, {
@@ -879,7 +955,7 @@ describe('no escritório', () => {
     expect(det.registro).toMatchObject({
       numero: envio.numero,
       situacao: 'VALIDO',
-      celular: 'Celular do Comum',
+      celular: 'Celular de Comum',
       importado: false,
     })
     expect(det.pacote?.envioId).toBe(envio.id)

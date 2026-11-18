@@ -5,7 +5,7 @@ import { unidadeDoRegistro } from '../../../shared/campo/importar.ts'
 import { formatarInstante } from '../../../shared/campo/registro.ts'
 import type { LeituraCampo, PacoteCampo, RegistroCampo } from '../../../shared/campo/tipos.ts'
 import { dataBr } from './datas.ts'
-import { cargaDoPonto } from './ordem.ts'
+import { cargaDoPonto, textoDaCargaDoItem } from './ordem.ts'
 
 const ROTULO_AMBIENTE = { temperatura: 'Temperatura', umidade: 'Umidade', pressao: 'Pressão' } as const
 export const UNIDADE_AMBIENTE = { temperatura: '°C', umidade: '%', pressao: 'hPa' } as const
@@ -16,7 +16,7 @@ export function rotuloDaLinha(r: RegistroCampo, i: number): string {
   return m === 'FIM' ? 'Ambiente (fim)' : m === 'INICIO_REPETIDA' ? 'Ambiente (início, medido de novo)' : 'Ambiente (início)'
 }
 
-/** A carga de um ponto como texto, com a unidade ("100,00 kg"). */
+/** A carga como texto, com a unidade ("100,00 kg"). */
 function cargaComUnidade(texto: string, unidade: string): string {
   return texto ? `${texto} ${unidade}` : ''
 }
@@ -40,7 +40,7 @@ export function rotuloDoCampo(r: RegistroCampo, pacote: PacoteCampo | null | und
     const i = ps.indicacao.pontos.findIndex((p) => p.id === m![1])
     const p = ps.indicacao.pontos[i]
     if (!p) return 'Erro de indicação'
-    const carga = cargaComUnidade(p.cargaAplicada?.valor ?? p.cargaPrevista, u)
+    const carga = cargaComUnidade(textoDaCargaDoItem(p, r, pacote), u)
     const n = `Ponto ${i + 1}`
     if (m[2] === 'crescente') return `${n} ↑${carga ? ` · ${carga}` : ''}`
     if (m[2] === 'decrescente') return `${n} ↓${carga ? ` · ${carga}` : ''}`
@@ -56,7 +56,7 @@ export function rotuloDoCampo(r: RegistroCampo, pacote: PacoteCampo | null | und
   }
   if ((m = /^repetibilidade\.([^.]+)(?:\.(leituras)\.(\d+)|\.(cargaAplicada))?$/.exec(campo))) {
     const r2 = ps.repetibilidade.find((x) => x.id === m![1])
-    const carga = r2 ? cargaComUnidade(r2.cargaAplicada?.valor ?? r2.cargaPrevista, u) : ''
+    const carga = r2 ? cargaComUnidade(textoDaCargaDoItem(r2, r, pacote), u) : ''
     const base = `Repetibilidade${carga ? ` ${carga}` : ''}`
     if (m[2]) return `${base} · leitura ${Number(m[3]) + 1}`
     if (m[4]) return `${base} · carga aplicada`

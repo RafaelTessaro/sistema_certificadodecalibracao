@@ -7,7 +7,7 @@
 //                          dias); a data real no lugar da prevista; a pressão do certificado é a do início;
 //   diferencasDoCampo      a tabela Campo | Celular | Rascunho: os pontos casam pelo id e, sem id, pela carga (com
 //                          tolerância); o que sobra é "do celular, sem par"; as tentativas descartadas e as anotações
-//                          nunca entram (as anotações aparecem ao lado, para a Lizi copiar se quiser);
+//                          nunca entram (as anotações aparecem ao lado, para o escritório copiar);
 //   aplicarDoCampo         "Puxar dados do campo" (registro original = CELULAR): escreve no rascunho o que foi escolhido;
 //   divergenciasParaEmissao a regra de uma justificativa só (05-ajustes-finais §10): os dados brutos da calibração que
 //                          ficaram diferentes do registro depois de puxar.
@@ -35,6 +35,7 @@ import type {
   ClasseExatidao,
   EnsaioRepetibilidade,
   Faixa,
+  MetodoCarregamento,
   Padrao,
   PecaCarga,
   PontoIndicacao,
@@ -272,6 +273,37 @@ export function balancaDoCampo(registro: RegistroCampo, pacote?: PacoteCampo | n
   }
 }
 
+// ---- O que a folha pede no local ------------------------------------------------------------------------------------
+// As mesmas regras da tela do celular (app-campo/src/nucleo/ordem.ts) e do papel (server/pdf/folhaCampo.ts): a
+// comparação com o rascunho só conta como divergência a leitura que o técnico tinha como fazer.
+
+/** O método de carregamento da folha (o do plano; sem plano, o do rascunho do pacote). */
+export function metodoDaFolha(pacote: PacoteCampo | null | undefined): MetodoCarregamento {
+  return pacote?.plano?.metodo ?? pacote?.entrada.indicacao.metodo ?? 'CRESCENTE_DECRESCENTE'
+}
+
+/** As colunas do passo 5: lê a subida? lê a descida? */
+export function colunasDaIndicacao(pacote: PacoteCampo | null | undefined): { sobe: boolean; desce: boolean } {
+  const m = metodoDaFolha(pacote)
+  return { sobe: m !== 'DECRESCENTE', desce: m === 'CRESCENTE_DECRESCENTE' || m === 'DECRESCENTE' }
+}
+
+/** Max da balança como o técnico a viu (o plano, o valor visto ou a informada), na unidade do registro; null se desconhecido. */
+export function maxDaFolha(registro: RegistroCampo, pacote: PacoteCampo | null | undefined): number | null {
+  const i = instrumentoDoCampo(registro, pacote).instrumento
+  if (i && i.faixas.length) return i.faixas[i.faixas.length - 1].max
+  return pacote?.plano?.max ?? null
+}
+
+/** O zero antes de cada posição da excentricidade (classe I, método 3 do sistema). */
+export function excentricidadeComZero(registro: RegistroCampo, pacote: PacoteCampo | null | undefined): boolean {
+  return (
+    pacote?.plano?.excentricidade.metodo === 3 ||
+    pacote?.entrada.excentricidade.metodo === 3 ||
+    registro.passos.indicacao.calInterno !== null
+  )
+}
+
 // ---- Horários: o ambiente que vale, o ΔT que vale e a aclimatação ----------------------------------------------------
 
 /** O instante da 1ª leitura do erro de indicação (o 1º ensaio, na ordem da folha); null sem leituras com hora. */
@@ -385,8 +417,10 @@ const ehLeitura = (v: unknown): v is LeituraCampo =>
 /**
  * O registro com as correções depois da assinatura aplicadas, na ordem (cada uma por acréscimo, com PIN e motivo: o valor
  * assinado continua no registro guardado, e o corrigido é o que vale para a calibração). O caminho de cada correção é o
- * de `passos` (tipos.ts): a leitura corrigida ganha o texto novo e a hora da correção; um texto (motivo, endereço, data)
- * troca o texto. Caminho que não existe: ignorado. Sem correções, o mesmo registro.
+ * de `passos` (tipos.ts): a leitura corrigida ganha o texto novo e fica com a hora da observação (corrigir a digitação
+ * não muda quando foi lido: a hora decide o ΔT e a linha do início que valem, e a correção guarda a dela); a leitura que
+ * estava em branco ganha a hora da correção. Um texto (motivo, endereço, data) troca o texto. Caminho que não existe:
+ * ignorado. Sem correções, o mesmo registro.
  */
 export function registroCorrigido(registro: RegistroCampo): RegistroCampo {
   if (!registro.correcoesPosAssinatura?.length) return registro
@@ -408,7 +442,8 @@ export function registroCorrigido(registro: RegistroCampo): RegistroCampo {
     const alvo = no as Record<string | number, unknown>
     const atual = alvo[k]
     if (ehLeitura(atual) || (atual === null && (lista ? /leituras$/.test(partes.at(-2) ?? '') : CHAVES_DE_LEITURA.has(chave)))) {
-      alvo[k] = c.para.trim() ? { valor: c.para.trim(), em: c.em, via: 'teclado' } : null
+      const em = ehLeitura(atual) && atual.em ? atual.em : c.em
+      alvo[k] = c.para.trim() ? { valor: c.para.trim(), em, via: 'teclado' } : null
     } else if (typeof atual === 'string') alvo[k] = c.para
   }
   return r
@@ -539,7 +574,7 @@ export function registroParaRascunho(original: RegistroCampo, pacote?: PacoteCam
       umidadeInicial: num(ini?.umidade),
       temperaturaFinal: num(fim?.temperatura),
       umidadeFinal: num(fim?.umidade),
-      // A pressão do certificado é a do início (como a Lizi faz hoje); a do fim só quando a do início ficou em branco
+      // A pressão do certificado é a do início (como o escritório faz hoje); a do fim só quando a do início ficou em branco
       pressao: num(ini?.pressao) ?? num(fim?.pressao),
       deltaTPesos: dt ? num(dt.valor) : null,
       aclimatacao: deltaT0 !== null && minutos !== null ? { deltaT0, minutos } : null,
@@ -608,7 +643,7 @@ export interface CadastroDiferente {
   observado: string
   /** O texto da anotação "Dado impresso diferente" do campo, se houver. */
   anotacao: string
-  /** d, e, Max, Min, classe ou unidade: "Cadastro da balança diferente"; a Lizi corrige o cadastro antes de emitir. */
+  /** d, e, Max, Min, classe ou unidade: "Cadastro da balança diferente"; o escritório corrige o cadastro antes de emitir. */
   metrologico: boolean
 }
 
@@ -752,7 +787,11 @@ function compararInterno(
   /** A carga como o técnico a viu: a digitada ou, sem ela, a da folha ("100,00"). */
   const cargaEscrita = (x: { cargaAplicada: LeituraCampo | null; cargaPrevista: string }): LeituraCampo | null =>
     x.cargaAplicada ?? (x.cargaPrevista ? { valor: x.cargaPrevista, em: '', via: 'teclado' } : null)
-  /** Uma leitura: o texto como foi digitado (sem conversão) e o número do rascunho. */
+  /**
+   * Uma leitura: o texto como foi digitado (sem conversão) e o número do rascunho. `coletado`: a folha pede essa leitura
+   * no local; a que o celular nunca pede (a descida no zero e em Max, a coluna fora do método, o zero antes fora do
+   * método 3) e só o rascunho tem continua na tabela, mas não é dado bruto do campo (não pede a justificativa).
+   */
   const leitura = (
     chave: string,
     grupo: GrupoDiferenca,
@@ -763,6 +802,7 @@ function compararInterno(
     noRascunho: number | null,
     aplicar: (k: CalibracaoInput, v: number | null) => void,
     ehMassa = true,
+    coletado = true,
   ) => {
     const casas = doCampo ? casasDaLeitura(doCampo) : 0
     const celular =
@@ -781,7 +821,7 @@ function compararInterno(
       rascunho: textoNumero(noRascunho, ehMassa && convertido ? 0 : casas),
       situacao,
       sugestao: sugestaoDe(situacao),
-      bruto: true,
+      bruto: coletado || noCampo !== null,
       aplicar: (k) => aplicar(k, noCampo),
     })
   }
@@ -970,6 +1010,12 @@ function compararInterno(
   const pontosCampo = campo.indicacao.pontos
   const pontosCelular = new Map(ps.indicacao.pontos.map((p) => [p.id, p]))
   const { pares, soCelular, soRascunho } = casar(pontosCampo, rascunho.indicacao.pontos, tolerancia)
+  // O que o celular pede no passo 5 (como o papel): a subida fora do "Decrescente"; a descida no "crescente e decrescente"
+  // e no "Decrescente", nunca no zero nem em Max (a virada) no "crescente e decrescente"
+  const { sobe, desce } = colunasDaIndicacao(pacote)
+  const maxFolha = maxDaFolha(registro, pacote)
+  const maxCmp = maxFolha !== null && maxFolha > 0 ? conv(maxFolha) : 0
+  const comDescida = (carga: number) => desce && (!sobe || (carga > 0 && !(maxCmp > 0 && carga >= maxCmp * (1 - 1e-9))))
   for (const [c, r] of pares) {
     const pc = pontosCelular.get(c.id)!
     const rot = `Ponto de ${textoCarga(c.carga)}`
@@ -980,15 +1026,58 @@ function compararInterno(
         const p = alvo(k)
         if (p && v !== null) p.carga = v
       })
-    leitura(`${base}.crescente`, 'indicacao', 5, `${rot} ↑`, pc.crescente, c.crescente, r.crescente, (k, v) => {
-      const p = alvo(k)
-      if (p) p.crescente = v
-    })
-    if (pc.decrescente || r.decrescente !== null)
-      leitura(`${base}.decrescente`, 'indicacao', 5, `${rot} ↓`, pc.decrescente, c.decrescente, r.decrescente, (k, v) => {
+    // As substituições por baixo do ponto (rodoviária): as da folha (a sugerida pelo plano vai no pacote), que o rascunho
+    // pode não ter; sem elas, o ponto fica sem os pesos no cálculo. Nível 0 no celular (a etapa sem os pesos no plano)
+    // nunca apaga o nível do escritório
+    if (pc.nivelSubstituicao > 0 && pc.nivelSubstituicao !== r.nivelSubstituicao)
+      textoItem(
+        `${base}.nivel`,
+        'indicacao',
+        5,
+        `${rot}: substituições por baixo`,
+        String(pc.nivelSubstituicao),
+        r.nivelSubstituicao ? String(r.nivelSubstituicao) : '',
+        false,
+        (k) => {
+          const p = alvo(k)
+          if (!p) return
+          p.nivelSubstituicao = c.nivelSubstituicao
+          // As peças da folha para esse nível; as trocadas no local vêm pelo item dos pesos, as do escritório ficam
+          if (!p.pecasManuais && !pc.pecasTrocadas) p.pecas = copia(c.pecas)
+        },
+        true,
+      )
+    leitura(
+      `${base}.crescente`,
+      'indicacao',
+      5,
+      `${rot} ↑`,
+      pc.crescente,
+      c.crescente,
+      r.crescente,
+      (k, v) => {
         const p = alvo(k)
-        if (p) p.decrescente = v
-      })
+        if (p) p.crescente = v
+      },
+      true,
+      sobe,
+    )
+    if (pc.decrescente || r.decrescente !== null)
+      leitura(
+        `${base}.decrescente`,
+        'indicacao',
+        5,
+        `${rot} ↓`,
+        pc.decrescente,
+        c.decrescente,
+        r.decrescente,
+        (k, v) => {
+          const p = alvo(k)
+          if (p) p.decrescente = v
+        },
+        true,
+        comDescida(c.carga),
+      )
     if (pc.pecasTrocadas)
       textoItem(
         `${base}.pecas`,
@@ -1184,6 +1273,7 @@ function compararInterno(
       false,
     )
   if (ec.aplicavel) {
+    const zeroAntes = excentricidadeComZero(registro, pacote)
     if (!iguaisNumeros(ec.carga, er.carga) || ex.cargaAplicada)
       leitura(
         'excentricidade.carga',
@@ -1218,6 +1308,8 @@ function compararInterno(
           ec.posicoes[i]?.referencia ?? null,
           pr.referencia,
           (k, v) => (garantir(k).referencia = v),
+          true,
+          zeroAntes,
         )
       leitura(
         `excentricidade.posicoes.${i}.leitura`,

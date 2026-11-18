@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react'
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import { useFecharNoVoltar } from '../app/camadas.ts'
 import { useApp } from '../app/loja.ts'
 import { IconeVoltar } from './Icones.tsx'
 
@@ -128,8 +129,20 @@ export function SecaoTitulo({ children, direita }: { children: ReactNode; direit
   )
 }
 
-/** A folha que sobe de baixo (anotação, motivos, confirmações). Fecha só pelos botões dela. */
-export function Folha({ titulo, children, rodape }: { titulo: ReactNode; children: ReactNode; rodape?: ReactNode }) {
+/** A folha que sobe de baixo (anotação, motivos, confirmações). Fecha pelos botões dela ou pelo voltar do Android (`aoFechar`). */
+export function Folha({
+  titulo,
+  children,
+  rodape,
+  aoFechar,
+}: {
+  titulo: ReactNode
+  children: ReactNode
+  rodape?: ReactNode
+  /** A mesma ação do Cancelar/Fechar da folha: é o que o voltar do Android faz. */
+  aoFechar: () => void
+}) {
+  useFecharNoVoltar(aoFechar)
   return (
     <div className="fixed inset-0 z-40 flex flex-col justify-end bg-black/45" role="dialog" aria-modal="true">
       <div

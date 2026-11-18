@@ -57,7 +57,7 @@ describe('endereços do QR', () => {
 
   it('o QR leva o endereço e o código, e o app o lê', () => {
     const p = new Pareamentos({ placas: () => PLACAS })
-    const i = p.iniciar({ usuarioId: 'u1', tecnicoNome: 'Maurício', por, endereco: 'http://192.168.0.10:4850' })
+    const i = p.iniciar({ usuarioId: 'u1', tecnicoNome: 'Carlos', por, endereco: 'http://192.168.0.10:4850' })
     expect(lerQrPareamento(i.qr)).toEqual({ servidor: 'http://192.168.0.10:4850', codigo: i.codigo })
   })
 })

@@ -77,6 +77,7 @@ function FolhaCorrigir({ f, aoFechar }: { f: FolhaLocal; aoFechar: () => void })
   return (
     <Folha
       titulo="Corrigir depois da assinatura"
+      aoFechar={aoFechar}
       rodape={
         <>
           <Botao className="flex-1" onClick={aoFechar}>
@@ -255,6 +256,7 @@ export function TelaComprovante({ envioId }: { envioId: string }) {
       {reabrindo && (
         <Folha
           titulo="Reabrir a folha"
+          aoFechar={() => setReabrindo(false)}
           rodape={
             <>
               <Botao className="flex-1" onClick={() => setReabrindo(false)}>

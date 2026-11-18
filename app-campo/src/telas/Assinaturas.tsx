@@ -26,6 +26,7 @@ import {
 } from '../nucleo/folha.ts'
 import type { FolhaLocal } from '../nucleo/folha.ts'
 import { relogioDoAparelho } from '../nucleo/relogio.ts'
+import { TelaComprovante } from './Comprovante.tsx'
 
 const agora = () => relogioDoAparelho.agora()
 
@@ -44,6 +45,8 @@ export function fraseDoTecnico(f: FolhaLocal): string {
 export function TelaAssinaturaTecnico({ envioId }: { envioId: string }) {
   const f = useFolha(envioId)
   const [pinOk, setPinOk] = useState(false)
+  // Entregue enquanto a tela estava aberta (a sincronia apaga as leituras): o resumo da entrega, não a tela em branco
+  if (f && !f.registro) return <TelaComprovante envioId={envioId} />
   if (!f?.registro) return null
   const nome = f.registro.tecnico.nome
   const laboratorio = f.registro.passos.chegada.local === 'LABORATORIO'
@@ -103,10 +106,15 @@ export function TelaEntregaCliente({ envioId }: { envioId: string }) {
   const m = f?.modoEntrega
 
   useEffect(() => {
-    // Folha sem modo entrega (já saiu): volta para o que couber
+    // Folha sem modo entrega (já saiu, ou foi entregue com o "Pronto" na tela): volta para o que couber
     if (f && !f.modoEntrega)
-      trocar(f.estado === 'FINALIZADA' ? { nome: 'comprovante', envioId } : { nome: 'clientePendente', envioId })
+      trocar(
+        f.estado === 'FINALIZADA' || f.estado === 'ENTREGUE'
+          ? { nome: 'comprovante', envioId }
+          : { nome: 'clientePendente', envioId },
+      )
   }, [f, envioId])
+  if (f && !f.registro) return <TelaComprovante envioId={envioId} />
   if (!f?.registro || !m) return null
 
   const gravarDados = () =>
@@ -228,6 +236,7 @@ export function TelaEntregaCliente({ envioId }: { envioId: string }) {
       {pedindoMotivo && (
         <Folha
           titulo="Cliente não assinou"
+          aoFechar={() => setPedindoMotivo(false)}
           rodape={
             <>
               <Botao className="flex-1" onClick={() => setPedindoMotivo(false)}>
@@ -261,6 +270,7 @@ export function TelaEntregaCliente({ envioId }: { envioId: string }) {
       {lgpd && (
         <Folha
           titulo="Seus dados nesta folha"
+          aoFechar={() => setLgpd(false)}
           rodape={
             <Botao className="flex-1" onClick={() => setLgpd(false)}>
               Fechar
@@ -289,6 +299,8 @@ export function TelaClientePendente({ envioId }: { envioId: string }) {
   const [saida, setSaida] = useState<'NAO_ASSINOU' | 'SO_PAPEL' | null>(null)
   const [pedindoMotivo, setPedindoMotivo] = useState(false)
   const [motivo, setMotivo] = useState('')
+  // Entregue enquanto a tela estava aberta (a sincronia apaga as leituras): o resumo da entrega, não a tela em branco
+  if (f && !f.registro) return <TelaComprovante envioId={envioId} />
   if (!f?.registro) return null
   if (!faltaOCliente(f))
     return (
@@ -348,6 +360,7 @@ export function TelaClientePendente({ envioId }: { envioId: string }) {
       {pedindoMotivo && (
         <Folha
           titulo="Cliente não assinou"
+          aoFechar={() => setPedindoMotivo(false)}
           rodape={
             <>
               <Botao className="flex-1" onClick={() => setPedindoMotivo(false)}>

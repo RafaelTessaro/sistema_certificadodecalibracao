@@ -1,5 +1,5 @@
 // Os textos das telas do computador sobre o app do celular (1.1.0): os selos da folha que foi para o celular ("No celular
-// do Maurício desde 08:12", "Voltou do campo"…), as marcas do registro, o "visto hoje às 07:55 · 192.168.0.23" da lista
+// de Carlos desde 08:12", "Voltou do campo"…), as marcas do registro, o "visto hoje às 07:55 · 192.168.0.23" da lista
 // dos celulares, a contagem do código do pareamento e o resumo do registro ("47 leituras, 6 horários, 2 anotações").
 // Sem DOM, para ser testado. O nº da folha (FC-AAAA-NNNNN) é o que identifica a folha: não há código de conferência.
 
@@ -78,8 +78,14 @@ export function textoVisto(ultimoContato: string, ip: string, agora = new Date()
   return [`visto ${q}`, ip].filter(Boolean).join(' · ')
 }
 
-/** O primeiro nome ("Maurício Souza" → "Maurício"), para os selos curtos. */
+/** O primeiro nome ("Carlos Eduardo Lima" → "Carlos"), para os selos curtos. */
 export const primeiroNome = (nome: string) => nome.trim().split(/\s+/)[0] ?? ''
+
+/**
+ * "celular de Ana" / "celular de Carlos": sem artigo antes do nome (o técnico pode ser uma técnica). Sem o nome,
+ * "celular do técnico".
+ */
+export const celularDe = (nome: string) => (nome.trim() ? `celular de ${nome.trim()}` : 'celular do técnico')
 
 /** O que o celular informou sobre a folha, como a tela mostra. */
 export const ROTULO_ESTADO_CELULAR: Partial<Record<EstadoFolhaCelular, string>> = {
@@ -133,6 +139,16 @@ export const ROTULO_DESFECHO: Record<Desfecho, string> = {
   NAO_CALIBRADA: 'Não calibrada',
 }
 
+/**
+ * O rótulo do desfecho; fora da lista (o registro guardado como chegou, com a marca FORMATO: app de outra versão), o
+ * valor como veio, para a tela do registro abrir mesmo assim.
+ */
+export function rotuloDoDesfecho(desfecho: unknown): string {
+  if (typeof desfecho === 'string' && Object.prototype.hasOwnProperty.call(ROTULO_DESFECHO, desfecho))
+    return ROTULO_DESFECHO[desfecho as Desfecho]
+  return desfecho === undefined || desfecho === null ? '' : String(desfecho)
+}
+
 export interface SeloCelular {
   rotulo: string
   tom: Tone
@@ -156,11 +172,11 @@ export function selosDasMarcas(
 }
 
 /**
- * O selo da folha que foi para o celular: "Enviada · aguardando o celular", "No celular do Maurício desde 08:12" (com o
+ * O selo da folha que foi para o celular: "Enviada · aguardando o celular", "No celular de Carlos desde 08:12" (com o
  * que o celular informou: "Em preenchimento", "Finalizada"), "Recolher pedido", "Voltou do campo", "Recolhida".
  */
 export function seloDoCelular(c: CelularDaFolha, agora = new Date()): SeloCelular {
-  const nome = primeiroNome(c.tecnico) || 'técnico'
+  const nome = primeiroNome(c.tecnico)
   const estado = c.estadoCelular ? ROTULO_ESTADO_CELULAR[c.estadoCelular] : ''
   const informado = c.estadoCelularEm ? informadoEm(c.estadoCelularEm, agora) : ''
   const comEstado = [estado, informado].filter(Boolean).join(' · ')
@@ -169,15 +185,15 @@ export function seloDoCelular(c: CelularDaFolha, agora = new Date()): SeloCelula
       rotulo: 'Voltou do campo',
       tom: 'success',
       detalhe: `${c.tecnico || 'Técnico'} · ${quando(c.em, agora)}`,
-      dica: `A folha voltou do celular de ${c.tecnico || 'técnico'}: compare ou puxe os dados na calibração.`,
+      dica: `A folha voltou do ${celularDe(c.tecnico)}: compare ou puxe os dados na calibração.`,
     }
   if ((c.situacao === 'ENVIADA' || c.situacao === 'NO_CELULAR') && c.recolherPedido)
     return {
       rotulo: c.jaComecei ? 'Já começada · vai voltar' : 'Recolher pedido',
       tom: 'warning',
       detalhe: c.jaComecei
-        ? `${nome} já tinha começado a folha: ela volta preenchida`
-        : `Aguardando o celular de ${nome} confirmar`,
+        ? `${nome || 'O técnico'} já tinha começado a folha: ela volta preenchida`
+        : `Aguardando o ${celularDe(nome)} confirmar`,
       dica: c.jaComecei
         ? 'O técnico já tinha começado a folha quando o escritório pediu para recolher: ela vai voltar preenchida.'
         : 'O escritório pediu para recolher: o celular apaga a folha na próxima vez que estiver na rede da empresa.',
@@ -188,15 +204,15 @@ export function seloDoCelular(c: CelularDaFolha, agora = new Date()): SeloCelula
         rotulo: 'Enviada · aguardando o celular',
         tom: 'info',
         detalhe: comEstado || `Para ${c.tecnico || 'o técnico'}`,
-        dica: `Chega quando ${nome} abrir o app BC Calibração na rede da empresa.`,
+        dica: `Chega quando ${nome || 'o técnico'} abrir o app BC Calibração na rede da empresa.`,
       }
     case 'NO_CELULAR':
       // A pílula curta (cabe na lista) e, embaixo, desde quando e o que o celular informou
       return {
-        rotulo: `No celular do ${nome}`,
+        rotulo: `No ${celularDe(nome)}`,
         tom: 'brand',
         detalhe: [desde(c.em, agora), comEstado].filter(Boolean).join(' · '),
-        dica: `A folha está no celular de ${c.tecnico || 'técnico'}${comEstado ? ` (${comEstado})` : ''}.`,
+        dica: `A folha está no ${celularDe(c.tecnico)}${comEstado ? ` (${comEstado})` : ''}.`,
       }
     case 'DEVOLVIDA':
       return {
@@ -215,6 +231,19 @@ export function seloDoCelular(c: CelularDaFolha, agora = new Date()): SeloCelula
   }
 }
 
+/**
+ * O que dá para fazer com a folha enviada ou no celular: "Recolher do celular" (quem pode enviar pode recolher; sem pedido
+ * em aberto) e, só o administrador, "Recolher à força" (também com o pedido em aberto: o celular perdido, roubado ou
+ * descadastrado nunca responde). Vale para a folha da calibração e para a avulsa.
+ */
+export function acoesDeRecolher(
+  c: Pick<CelularDaFolha, 'situacao' | 'recolherPedido'>,
+  admin: boolean,
+): { recolher: boolean; forcar: boolean } {
+  const ativo = c.situacao === 'ENVIADA' || c.situacao === 'NO_CELULAR'
+  return { recolher: ativo && !c.recolherPedido, forcar: ativo && admin }
+}
+
 /** O aviso de "Enviar para o técnico", pelo registro original. */
 export function avisoDoEnvio(registroOriginal: RegistroOriginal): string {
   return registroOriginal === 'PAPEL'
@@ -230,7 +259,7 @@ export function contagemRegressiva(expiraEm: string, agora = Date.now()): string
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-/** A frase da situação do pareamento ("Aguardando o celular…" → "Pareado: Samsung A54 · Maurício"). */
+/** A frase da situação do pareamento ("Aguardando o celular…" → "Pareado: Samsung A54 · Carlos"). */
 export function textoPareamento(s: Pick<SituacaoPareamento, 'situacao' | 'celular'>): string {
   switch (s.situacao) {
     case 'PAREADO':
@@ -309,7 +338,7 @@ export const TITULO_GRUPO: Record<string, string> = {
 /** "38 iguais" / "1 igual". */
 export const textoIguais = (n: number) => `${n} ${n === 1 ? 'igual' : 'iguais'}`
 
-/** Os registros de uma folha que precisam de atenção da Lizi (órfão sem folha, formato com problema). */
+/** Os registros de uma folha que precisam de atenção do escritório (órfão sem folha, formato com problema). */
 export const precisaAtencao = (marcas: readonly MarcaRegistro[]) => marcas.includes('ORFAO') || marcas.includes('FORMATO')
 
 const MOMENTO: Record<string, string> = { INICIO: 'início', INICIO_REPETIDA: 'início (repetido)', FIM: 'fim' }
@@ -394,7 +423,7 @@ export function novosRegistros<T extends { id: string; situacao: string }>(
   return { novos: registros.filter((r) => !conhecidos.has(r.id) && r.situacao === 'VALIDO'), todos }
 }
 
-/** "FC-2026-00042 voltou do campo (Maurício)". */
+/** "FC-2026-00042 voltou do campo (Carlos)". */
 export function textoVoltou(r: { numero: string; ligadoA: string; tecnico: string; marcas: readonly MarcaRegistro[] }): {
   titulo: string
   descricao: string

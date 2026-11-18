@@ -4,6 +4,7 @@
 // da justificativa na emissão.
 
 import { describe, expect, it } from 'vitest'
+import { calcularCalibracao } from '../calibracao.ts'
 import { calibracaoVazia } from '../dominio.ts'
 import type { Calibracao, CalibracaoInput } from '../tipos.ts'
 import { classeDaPendencia } from './avisos.ts'
@@ -26,11 +27,13 @@ import {
   deltaTValido,
   diferencasDoCampo,
   divergenciasParaEmissao,
+  indiceDeltaTValido,
   indiceInicioValido,
   inicioDosEnsaios,
   instrumentoDoCampo,
   MINUTOS_ACLIMATACAO_MAX,
   minutosDeAclimatacao,
+  padroesDoPacote,
   padroesUsadosNoCampo,
   PENDENCIA_JUSTIFICATIVA_CAMPO,
   pendenciaJustificativaCampo,
@@ -93,11 +96,13 @@ describe('registro como rascunho', () => {
     expect(registroParaRascunho(r, p).excentricidade.posicoes[3].leitura).toBe(100)
     expect(r.passos.excentricidade.posicoes[3].leitura!.valor).toBe('100,05')
     const corrigido = registroCorrigido(r)
+    // Corrigir a digitação não muda quando foi lido: fica a hora da observação (a correção guarda a dela)
     expect(corrigido.passos.excentricidade.posicoes[3].leitura).toEqual({
       valor: '100,00',
-      em: r.correcoesPosAssinatura[0].em,
+      em: r.passos.excentricidade.posicoes[3].leitura!.em,
       via: 'teclado',
     })
+    expect(r.correcoesPosAssinatura[0].em).not.toBe(r.passos.excentricidade.posicoes[3].leitura!.em)
     // Pelo id do item, numa lista de leituras, e num texto; caminho que não existe é ignorado
     r.correcoesPosAssinatura.push(
       {
@@ -138,6 +143,24 @@ describe('registro como rascunho', () => {
     expect(k.repetibilidade[0].leituras[2]).toBe(150)
     expect(k.dataCalibracao).toBe('2026-10-22')
     expect(registroCorrigido(registroRodoviaria())).toEqual(registroRodoviaria())
+  })
+
+  it('a correção depois da assinatura não muda a hora da leitura: o ΔT que vale continua o mesmo (classe I)', () => {
+    const r = registroClasseI()
+    expect(indiceDeltaTValido(r)).toBe(1)
+    // O 2º ΔT (o medido de novo, antes do 1º ensaio) corrigido depois da assinatura, horas depois dos ensaios
+    r.correcoesPosAssinatura.push({
+      campo: 'ambiente.deltaT.1.valor',
+      de: '0,6',
+      para: '0,7',
+      em: '2026-10-26T18:00:00-03:00',
+      motivo: 'Digitei errado.',
+      mostradoAoCliente: false,
+    })
+    const corrigido = registroCorrigido(r)
+    expect(corrigido.passos.ambiente.deltaT[1].valor).toEqual({ ...r.passos.ambiente.deltaT[1].valor, valor: '0,7' })
+    expect(indiceDeltaTValido(corrigido)).toBe(1)
+    expect(registroParaRascunho(r, pacoteClasseI()).ambiente.deltaTPesos).toBe(0.7)
   })
 
   it('texto → número sem perder casas (classe I: 0,1 mg; rodoviária: 20 kg)', () => {
@@ -394,7 +417,7 @@ describe('comparar e puxar (03-codigo.md §9.7)', () => {
     expect(de_novo.iguais).toBe(de_novo.itens.length)
   })
 
-  it('a Lizi já digitou do papel: vazio recebe, igual fica, diferente mostra os dois com o do celular marcado', () => {
+  it('o escritório já digitou do papel: vazio recebe, igual fica, diferente mostra os dois com o do celular marcado', () => {
     const p = pacotePlataforma()
     const r = registroPlataforma()
     const digitado = registroParaRascunho(r, p)
@@ -415,7 +438,7 @@ describe('comparar e puxar (03-codigo.md §9.7)', () => {
     expect(item(c.itens, 'indicacao.pontos.p6.decrescente')).toMatchObject({ situacao: 'VAZIO_NO_CELULAR', sugestao: 'RASCUNHO' })
     expect(item(c.itens, 'ambiente.pressao')).toMatchObject({ situacao: 'DIFERENTE', celular: '948,7', rascunho: '948,3' })
     expect(item(c.itens, 'indicacao.pontos.p1.crescente')!.situacao).toBe('IGUAL')
-    // Sem escolha: a sugestão; com escolha, o que a Lizi escolheu (e fica registrado)
+    // Sem escolha: a sugestão; com escolha, o que o escritório escolheu (e fica registrado)
     const padrao = aplicarDoCampo(digitado, r, p).rascunho
     expect(padrao.indicacao.pontos.find((x) => x.id === 'p3')!.crescente).toBe(100.05)
     expect(padrao.indicacao.pontos.find((x) => x.id === 'p4')!.decrescente).toBe(150.1)
@@ -646,6 +669,61 @@ describe('comparar e puxar (03-codigo.md §9.7)', () => {
     r.passos.padroes.forEach((x) => (x.usado = false))
     expect(padroesUsadosNoCampo(r, pacoteClasseI())).toEqual(['pad-th01', 'pad-br01', 'pad-td01'])
   })
+
+  it('rodoviária: o nível de substituição da folha (a sugerida) entra no rascunho que não tinha a substituição', () => {
+    const p = pacoteRodoviaria()
+    const r = registroRodoviaria()
+    // O escritório contou com a sugestão da folha: o rascunho sem a substituição, nível 0 e sem pesos acima de 10 t
+    const k: CalibracaoInput = structuredClone(p.entrada)
+    k.indicacao.substituicao = { ativa: false, pecas: [], etapas: [] }
+    for (const x of k.indicacao.pontos) {
+      x.nivelSubstituicao = 0
+      if (x.carga > 10000) x.pecas = []
+    }
+    const c = diferencasDoCampo(k, r, p)
+    expect(item(c.itens, 'indicacao.pontos.p3.nivel')!.rotulo).toMatch(/^Ponto de 20\s000 kg: substituições por baixo$/)
+    expect(item(c.itens, 'indicacao.pontos.p3.nivel')).toMatchObject({
+      celular: '1',
+      rascunho: '',
+      situacao: 'VAZIO_NO_RASCUNHO',
+      sugestao: 'CELULAR',
+      bruto: true,
+    })
+    expect(item(c.itens, 'indicacao.pontos.p5.nivel')).toMatchObject({ celular: '3', situacao: 'VAZIO_NO_RASCUNHO' })
+    // Os pontos só com pesos não ganham item
+    expect(item(c.itens, 'indicacao.pontos.p2.nivel')).toBeUndefined()
+    const { rascunho } = aplicarDoCampo(k, r, p)
+    const esperado = registroParaRascunho(r, p)
+    expect(rascunho.indicacao.pontos.map((x) => x.nivelSubstituicao)).toEqual([0, 0, 0, 1, 2, 3])
+    expect(rascunho.indicacao.pontos.map((x) => x.pecas)).toEqual(esperado.indicacao.pontos.map((x) => x.pecas))
+    expect(rascunho.indicacao.substituicao.ativa).toBe(true)
+    // A comparação seguinte fica sem diferença, e o cálculo tem os pesos de todos os pontos
+    expect(diferencasDoCampo(rascunho, r, p).itens.filter((x) => x.situacao !== 'IGUAL')).toEqual([])
+    const pendencias = calcularCalibracao(rascunho, p.balanca!, padroesDoPacote(p, rascunho.padroesIds)).resultado.pendencias
+    expect(pendencias.filter((x) => /peso padrão/.test(x))).toEqual([])
+    // Mudado no escritório depois de puxar: divergência
+    rascunho.indicacao.pontos.find((x) => x.id === 'p4')!.nivelSubstituicao = 1
+    expect(divergenciasParaEmissao(rascunho, r, p)).toEqual([
+      expect.objectContaining({ chave: 'indicacao.pontos.p4.nivel', celular: '2', certificado: '1' }),
+    ])
+  })
+
+  it('nível 0 no celular (a etapa sem os pesos no plano) não apaga o nível do escritório; as peças do escritório ficam', () => {
+    const p = pacoteRodoviaria()
+    const r = registroRodoviaria()
+    const k = registroParaRascunho(r, p)
+    // O plano sem os pesos da etapa: o celular desce com nível 0, e o rascunho tem 2
+    r.passos.indicacao.pontos.find((x) => x.id === 'p4')!.nivelSubstituicao = 0
+    expect(item(diferencasDoCampo(k, r, p).itens, 'indicacao.pontos.p4.nivel')).toBeUndefined()
+    expect(aplicarDoCampo(k, r, p).rascunho.indicacao.pontos.find((x) => x.id === 'p4')!.nivelSubstituicao).toBe(2)
+    // Peças montadas à mão no escritório: o nível vem do celular, as peças ficam
+    const r2 = registroRodoviaria()
+    const k2 = registroParaRascunho(r2, p)
+    const p5 = k2.indicacao.pontos.find((x) => x.id === 'p5')!
+    Object.assign(p5, { nivelSubstituicao: 2, pecasManuais: true, pecas: p5.pecas.slice(0, 1) })
+    const puxado = aplicarDoCampo(k2, r2, p).rascunho.indicacao.pontos.find((x) => x.id === 'p5')!
+    expect(puxado).toMatchObject({ nivelSubstituicao: 3, pecasManuais: true, pecas: p5.pecas })
+  })
 })
 
 describe('justificativa na emissão (uma só, 05-ajustes-finais §10)', () => {
@@ -700,6 +778,60 @@ describe('justificativa na emissão (uma só, 05-ajustes-finais §10)', () => {
       nivelSubstituicao: 0,
     })
     expect(divergenciasParaEmissao(k, r, p).map((x) => x.chave)).toEqual(['indicacao.pontos.p5', 'indicacao.pontos.esc'])
+  })
+
+  it('leitura que o celular nunca pede (↓ no zero e em Max, coluna fora do método, zero antes fora do método 3) não conta', () => {
+    // "Sugerir pontos" grava 0 nas duas colunas do zero; o celular não pede a descida no zero nem em Max
+    const p = pacotePlataforma()
+    const r = registroPlataforma()
+    const k: CalibracaoInput = structuredClone(p.entrada)
+    Object.assign(
+      k.indicacao.pontos.find((x) => x.carga === 0)!,
+      { crescente: 0, decrescente: 0 },
+    )
+    const puxado = aplicarDoCampo(k, r, p).rascunho
+    expect(item(diferencasDoCampo(puxado, r, p).itens, 'indicacao.pontos.p0.decrescente')).toMatchObject({
+      situacao: 'VAZIO_NO_CELULAR',
+      sugestao: 'RASCUNHO',
+      bruto: false,
+    })
+    expect(divergenciasParaEmissao(puxado, r, p)).toEqual([])
+    // A descida em Max digitada do papel depois de puxar também não; a de 100 kg, que o celular pede, sim
+    puxado.indicacao.pontos.find((x) => x.id === 'p6')!.decrescente = 300.05
+    expect(divergenciasParaEmissao(puxado, r, p)).toEqual([])
+    r.passos.indicacao.pontos.find((x) => x.id === 'p3')!.decrescente = null
+    expect(divergenciasParaEmissao(puxado, r, p)).toEqual([
+      { chave: 'indicacao.pontos.p3.decrescente', rotulo: 'Ponto de 100,00 kg ↓', celular: '', certificado: '100,1' },
+    ])
+    // O zero antes da excentricidade fora do método 3 (a plataforma é o método 1)
+    const semZero = aplicarDoCampo(p.entrada, registroPlataforma(), p).rascunho
+    semZero.excentricidade.posicoes[0].referencia = 0
+    expect(divergenciasParaEmissao(semZero, registroPlataforma(), p)).toEqual([])
+  })
+
+  it('classe I (crescente com descarga): a descida em ponto nenhum; o zero antes de cada posição conta', () => {
+    const p = pacoteClasseI()
+    const r = registroClasseI()
+    const k = aplicarDoCampo(p.entrada, r, p).rascunho
+    for (const x of k.indicacao.pontos) x.decrescente = x.crescente
+    expect(divergenciasParaEmissao(k, r, p)).toEqual([])
+    // O zero antes (método 3) é leitura que o celular pede
+    r.passos.excentricidade.posicoes[1].zeroAntes = null
+    expect(divergenciasParaEmissao(k, r, p).map((x) => x.chave)).toEqual(['excentricidade.posicoes.1.referencia'])
+  })
+
+  it('método "Decrescente" (registro de antes): a subida não é lida no local', () => {
+    const p = pacotePlataforma()
+    p.plano!.metodo = 'DECRESCENTE'
+    const r = registroPlataforma()
+    const k = aplicarDoCampo(p.entrada, r, p).rascunho
+    for (const x of r.passos.indicacao.pontos) x.crescente = null
+    const d = divergenciasParaEmissao(k, r, p)
+    expect(d.some((x) => x.chave.endsWith('.crescente'))).toBe(false)
+    // A descida é lida em todos os pontos, também no zero e em Max
+    r.passos.indicacao.pontos.find((x) => x.id === 'p6')!.decrescente = null
+    k.indicacao.pontos.find((x) => x.id === 'p6')!.decrescente = 300.05
+    expect(divergenciasParaEmissao(k, r, p).map((x) => x.chave)).toContain('indicacao.pontos.p6.decrescente')
   })
 
   it('a pressão do certificado é a do início: a do fim no certificado é divergência', () => {

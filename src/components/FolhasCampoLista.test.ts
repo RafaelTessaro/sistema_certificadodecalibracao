@@ -5,10 +5,22 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
-import type { FolhaCampoListada, NumeroReservado } from '#shared/tipos.ts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { CelularDaFolha, FolhaCampoListada, NivelUsuario, NumeroReservado } from '#shared/tipos.ts'
 import { TabelaFolhas } from './FolhasCampoLista'
 import { ListaNumeros } from './NumerosNaoUtilizados'
+
+// Quem está usando (no servidor, o zustand desenha com o estado inicial: ninguém entrou)
+const sessao = vi.hoisted(() => ({ nivel: undefined as NivelUsuario | undefined }))
+vi.mock('../store/sessao', async (original) => {
+  const real = await original<typeof import('../store/sessao')>()
+  const { pode } = await import('#shared/permissoes.ts')
+  return {
+    ...real,
+    usePode: (p: Parameters<typeof pode>[1]) => pode(sessao.nivel, p),
+    useEhAdmin: () => sessao.nivel === 'ADMIN',
+  }
+})
 
 const texto = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 
@@ -117,6 +129,65 @@ describe('aba "Folhas de campo"', () => {
       /<button[^>]*disabled=""[^>]*aria-label="Reimprimir a folha FC-2026-00042"|<button[^>]*aria-label="Reimprimir a folha FC-2026-00042"[^>]*disabled=""/,
     )
     expect(h).toContain('title="A primeira impressão não terminou (o sistema foi interrompido), então a folha não saiu no papel.')
+  })
+})
+
+describe('aba "Folhas de campo": a folha no celular (1.1.0)', () => {
+  afterEach(() => {
+    sessao.nivel = undefined
+  })
+  const celular = (c: Partial<CelularDaFolha>): CelularDaFolha => ({
+    envioId: 'e1',
+    situacao: 'NO_CELULAR',
+    tecnico: 'Ana Ribeiro',
+    tecnicoId: 'u1',
+    em: '2026-11-18T11:12:00.000Z',
+    estadoCelular: '',
+    estadoCelularEm: '',
+    dataPrevista: '',
+    piloto: true,
+    marcas: [],
+    ...c,
+  })
+  const entrar = (nivel: NivelUsuario) => {
+    sessao.nivel = nivel
+  }
+
+  it('a avulsa no celular: "Recolher do celular" (sem editor nem faixa para isso); à força, só para o administrador', () => {
+    entrar('COMUM')
+    const comum = texto(tabela([folha({ celular: celular({}) })]))
+    expect(comum).toContain('No celular de Ana')
+    expect(comum).toContain('Recolher do celular')
+    expect(comum).not.toContain('Recolher à força')
+    entrar('ADMIN')
+    const admin = texto(tabela([folha({ celular: celular({ situacao: 'ENVIADA' }) })]))
+    expect(admin).toContain('Recolher do celular')
+    expect(admin).toContain('Recolher à força')
+  })
+
+  it('com o pedido em aberto (o celular descadastrado nunca responde), só o administrador libera: "Recolher à força"', () => {
+    const pedido = folha({ celular: celular({ recolherPedido: true }) })
+    entrar('COMUM')
+    const comum = texto(tabela([pedido]))
+    expect(comum).toContain('Recolher pedido')
+    expect(comum).not.toContain('Recolher do celular')
+    expect(comum).not.toContain('Recolher à força')
+    entrar('ADMIN')
+    const admin = texto(tabela([pedido]))
+    expect(admin).not.toContain('Recolher do celular')
+    expect(admin).toContain('Recolher à força')
+  })
+
+  it('a que voltou ou foi recolhida: nada a recolher', () => {
+    entrar('ADMIN')
+    const t = texto(
+      tabela([
+        folha({ celular: celular({ situacao: 'DEVOLVIDA', voltou: true, registroId: 'r1' }) }),
+        folha({ numero: 'FC-2026-00041', celular: celular({ situacao: 'RECOLHIDA' }) }),
+      ]),
+    )
+    expect(t).not.toContain('Recolher do celular')
+    expect(t).not.toContain('Recolher à força')
   })
 })
 
